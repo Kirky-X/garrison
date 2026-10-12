@@ -5,10 +5,7 @@
 
 use std::fmt;
 
-/// DAO key 前缀枚举。
-///
-/// 统一管理所有 DAO key 前缀，避免硬编码字符串。
-/// 使用 `build_key()` 方法构造完整 key。
+/// DAO key 前缀枚举，统一管理前缀字符串避免硬编码；用 `build_key()` 构造完整 key。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DaoKeyPrefix {
     /// 会话相关 key 前缀：`session:`
@@ -41,18 +38,11 @@ pub enum DaoKeyPrefix {
     OAuth2AuthCode,
     /// OAuth2 access_token key 前缀：`oauth2:atoken:`
     OAuth2AccessToken,
-    /// OAuth2 授权码已签发 token 的吊销追踪记录前缀：`oauth2:codeused:`
-    ///
-    /// 授权码被原子消费（删除）后，其签发的 access/refresh token 记录在此，
-    /// 供重放/双花检测时吊销。
+    /// OAuth2 授权码已签发 token 的吊销追踪前缀：`oauth2:codeused:`；授权码被原子消费（删除）后其签发的 access/refresh token 记录在此，供重放/双花检测吊销。
     OAuth2CodeUsed,
     /// MFA 编排相关 key 前缀：`mfa:`（恢复码 / 误用计数等）。
     Mfa,
-    /// 找回密码流程 key 前缀：`pwdreset:`
-    ///
-    /// 找回密码 flow 会话状态（`pwdreset:bind:{jti}` code-subject 绑定）、
-    /// 一次性消费登记（`pwdreset:jti:{jti}`）与防枚举限流计数
-    /// （`pwdreset:rate:{identifier}`）的独立键空间。
+    /// 找回密码流程 key 前缀：`pwdreset:`；flow 会话绑定（`bind:{jti}`）、一次性消费登记（`jti:{jti}`）与防枚举限流（`rate:{identifier}`）的独立键空间。
     PasswordReset,
 }
 
@@ -83,25 +73,8 @@ impl DaoKeyPrefix {
 
     /// 构造完整 key：`prefix + id`。
     ///
-    /// # ⚠️ id 冒号约束（解析歧义）
-    ///
-    /// 多段前缀（`perm:cache:` / `role:cache:` / `user:cache:` / `oauth2:client:` 等）
-    /// 与含 `:` 的 id 直接拼接会产生**解析歧义**：结果 key 无法唯一反解出
-    /// (前缀, id) 二元组。例如 `Cred.build_key("user:pass")` 得到
-    /// `cred:user:pass`——它既可解读为前缀 `cred:` + id `user:pass`，也可被
-    /// 误解读为某个更长的多段前缀 + 剩余 id，不同解读会碰撞出相同 key。
-    ///
-    /// 约定：
-    /// - `id` **不得含 `:`**（UUID / 数字 ID / 无冒号用户名等）。debug 构建下
-    ///   以 `debug_assert!` 强制校验（release 构建零开销，不做校验）；
-    /// - 含 `:` 的复合 id（如 `cred:{user}:{cred}` 场景）请调用方先行编码
-    ///   （URL-safe base64 / 十六进制等），或改用自定义前缀拼接并自行负责
-    ///   反解与碰撞排查。
-    ///
-    /// # Panics（仅 debug 构建）
-    ///
-    /// `id` 含 `:` 时 `debug_assert!` 触发 panic——歧义 key 在开发期即暴露，
-    /// 而非静默写入存储层。
+    /// id 不得含 `:`：多段前缀与含 `:` 的 id 拼接存在解析歧义（`Role`+`"cache:x"` 与 `RoleCache`+`"x"` 同得 `role:cache:x`），无法唯一反解出 (前缀, id)。
+    /// debug 构建以 `debug_assert!` 拒绝（panic 早暴露，release 零开销不校验）；复合 id 请调用方先行编码（base64/hex）或自担反解与碰撞排查。
     ///
     /// # 示例
     /// ```
@@ -109,9 +82,7 @@ impl DaoKeyPrefix {
     /// assert_eq!(DaoKeyPrefix::Session.build_key("abc"), "session:abc");
     /// ```
     pub fn build_key(&self, id: &str) -> String {
-        // 冒号歧义防护：多段前缀（perm:cache: / role:cache: / user:cache: 等）
-        // 与含 `:` 的 id 拼接后无法唯一反解（Role+"cache:x" 与 RoleCache+"x"
-        // 同得 "role:cache:x"）。debug 构建直接拒绝，release 不校验（零开销）。
+        // 冒号歧义防护：含 `:` 的 id 拼接后无法唯一反解（Role+"cache:x" 与 RoleCache+"x" 同得 "role:cache:x"），debug 拒绝、release 零开销不校验。
         debug_assert!(
             !id.contains(':'),
             "dao_keys::build_key: id must not contain ':' (ambiguous key) — got {:?}",
@@ -174,10 +145,7 @@ mod tests {
         assert_eq!(format!("{}", DaoKeyPrefix::Token), "token:");
     }
 
-    /// build_key 冒号歧义防护（debug_assert 契约）：含 `:` 的 id 在 debug 构建
-    /// 下被拒绝——多段前缀 + 含冒号 id 会碰撞出无法唯一反解的 key
-    ///（`Role` + `"cache:x"` 与 `RoleCache` + `"x"` 同得 `role:cache:x`）。
-    /// 仅 debug 构建校验（release 下 `debug_assert!` 编译期消除，不 panic）。
+    /// build_key 冒号歧义防护：debug 构建拒绝含 `:` 的 id（`Role`+`"cache:x"` 与 `RoleCache`+`"x"` 碰撞）；release 下 `debug_assert!` 编译期消除不 panic。
     #[cfg(debug_assertions)]
     #[test]
     #[should_panic(expected = "id must not contain ':'")]

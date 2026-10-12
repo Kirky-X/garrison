@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! sign_utils 示例测试（secure-sign feature）。
-//!
-//! 验证 run() 完整执行（内部已包含 HMAC-SHA256/SHA512 + Base64 断言）。
+//! sign_utils 示例测试（secure-sign feature）：验证 run() 完整执行（内部已包含 HMAC-SHA256/SHA512 + Base64 断言）。
 
 #![cfg(feature = "secure-sign")]
 

@@ -1,22 +1,15 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! resilience 域验收。
-//! 异常韧性场景，编号 ：
-//! oxcache 故障时 JWT 无状态降级 / 配置错误 fail-fast / auth-server 内网
-//! API Key 错误 401 / 限流 429 / BackendRemote 500 与超时的错误传播及
-//! 熔断打开-恢复。
+//! resilience 域验收：异常韧性场景——oxcache 故障时 JWT 无状态降级 / 配置错误
+//! fail-fast / auth-server 内网 API Key 错误 401 / 限流 429 / BackendRemote 500
+//! 与超时的错误传播及熔断打开-恢复。
 //!
-//! - 不经 GarrisonManager（独立 `GarrisonLogicDefault` 双实例：
-//!   健康 DAO 签发 + FailingDao 故障验证），无需 `#[serial]`。
-//! - 只构造配置与 builder，不触碰全局单例，无需 `#[serial]`。
-//! - 使用 `InMemoryAuthBackend` 双端口服务器（镜像
-//!   tests/auth_server_integration.rs 的已知良好装配），无全局状态。
-//! - BackendRemote 的错误/超时/熔断场景一律打真实服务路径（2026-09 起
-//!   验收层禁止 mock）：上游 HTTP 错误来自真实 GarrisonAuthServer（内网
-//!   API Key 校验 401），超时来自真实挂起 TCP 对端（accept 后不响应的
-//!   真实网络条件），熔断由真实连接拒绝（无监听端口）驱动打开、真实
-//!   auth-server 恢复（见 src/backend/remote.rs）。
+//! 不经 `GarrisonManager` 独立装配（双实例 `GarrisonLogicDefault` + FailingDao、
+//! 纯配置构造、`InMemoryAuthBackend` 双端口服务器），无需 `#[serial]`。BackendRemote
+//! 场景打真实服务路径：上游 HTTP 错误来自真实 GarrisonAuthServer（内网 API Key 校验
+//! 401），超时来自真实挂起 TCP 对端（accept 后不响应），熔断由真实连接拒绝（无监听
+//! 端口）驱动打开、真实 auth-server 恢复。
 
 use crate::relay::SendRelayRetry;
 use async_trait::async_trait;
@@ -628,13 +621,12 @@ async fn acc_res_006_backend_remote_upstream_error_propagates() {
     assert!(!checked, "未知 token 应业务层返回 false（对照锚点）");
 }
 
-/// （异常）：BackendRemote 上游无响应——客户端超时显性传播为
-/// `GarrisonError::Network`（传输层错误），且耗时落在客户端超时窗口内。
+/// （异常）：BackendRemote 上游无响应——客户端超时显性传播为 `GarrisonError::Network`
+/// （传输层错误），且耗时落在客户端超时窗口内。
 ///
-/// 上游为「真实挂起 TCP 对端」：bind 后 accept 连接但永不响应（accept 即
-/// drop，不发送任何字节）——这是真实网络分区/对端僵死的网络条件，非协议
-/// 模拟（2026-09 起验收层禁止 mock）。客户端超时 300ms << 对端永不响应，
-/// 排除立即失败与慢速成功路径。
+/// 上游为「真实挂起 TCP 对端」：bind 后 accept 连接但永不响应（不发送任何字节）——
+/// 真实网络分区/对端僵死条件；客户端超时 300ms << 对端永不响应，排除立即失败与慢速
+/// 成功路径。
 #[tokio::test]
 async fn acc_res_007_backend_remote_timeout_error_propagates() {
     // 挂起对端：真实 TCP 监听，accept 后持有连接但不读不写不关（连接建立后
@@ -893,7 +885,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
     let (external_url, internal_url, _handle) = start_test_server(100, "test-key").await;
     let client = reqwest::Client::new();
 
-    // 1. 空 body → 4xx
+    // 空 body → 4xx
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
         .body("")
@@ -903,7 +895,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
         .expect("空 body 请求失败");
     assert_is_4xx!(resp.status(), "空 body 应返回 4xx");
 
-    // 2. 非 JSON 字符串 → 4xx
+    // 非 JSON 字符串 → 4xx
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
         .body("not json")
@@ -913,7 +905,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
         .expect("非 JSON 请求失败");
     assert_is_4xx!(resp.status(), "非 JSON 字符串应返回 4xx");
 
-    // 3. 空 JSON 对象（缺必填字段）→ 4xx
+    // 空 JSON 对象（缺必填字段）→ 4xx
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
         .json(&serde_json::json!({}))
@@ -922,7 +914,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
         .expect("空 JSON 对象请求失败");
     assert_is_4xx!(resp.status(), "空 JSON 对象应返回 4xx");
 
-    // 4. 缺 login_id 字段 → 4xx
+    // 缺 login_id 字段 → 4xx
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
         .json(&serde_json::json!({ "params": LoginParams::default() }))
@@ -931,7 +923,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
         .expect("缺 login_id 请求失败");
     assert_is_4xx!(resp.status(), "缺 login_id 字段应返回 4xx");
 
-    // 5. login_id 类型错误（数字而非字符串）→ 4xx
+    // login_id 类型错误（数字而非字符串）→ 4xx
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
         .json(&serde_json::json!({ "login_id": 123, "params": LoginParams::default() }))
@@ -940,7 +932,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
         .expect("类型错误请求失败");
     assert_is_4xx!(resp.status(), "login_id 类型错误应返回 4xx");
 
-    // 6. login_id 含 null 字节 → 4xx 或 200+token（serde_json 可接受 null 字节；
+    // login_id 含 null 字节 → 4xx 或 200+token（serde_json 可接受 null 字节；
     // 200 时业务层正常处理，token 非空）
     let null_byte_body = "{\"login_id\": \"a\\u0000b\", \"params\": {}}";
     let resp = client
@@ -965,7 +957,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
         );
     }
 
-    // 7. check-login 缺失必填 token 字段 → 4xx
+    // check-login 缺失必填 token 字段 → 4xx
     let resp = client
         .post(format!("{}/api/v1/auth/check-login", internal_url))
         .header("x-api-key", "test-key")

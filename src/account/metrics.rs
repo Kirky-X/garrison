@@ -1,43 +1,23 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 账号安全能力 Prometheus 指标。
-//! 启用 `metrics-prometheus` feature 时编译，提供 4 个指标覆盖凭证验证 / 策略校验 /
-//! 锁定触发 / 认证流程执行。未启用时 `AccountMetrics` 为 unit type 别名。
+//! 账号安全能力 Prometheus 指标（`metrics-prometheus` feature）：4 个指标——凭证验证 / 策略校验 /
+//! 认证流程执行耗时 Histogram + 锁定触发 Counter，指标名分别为
+//! `garrison_credential_verify_duration_seconds` / `garrison_policy_validate_duration_seconds` /
+//! `garrison_authflow_execute_duration_seconds` / `garrison_lockout_triggered_total`。
 //!
-//! # 指标清单
+//! 集成点：`UserLockoutStrategy::record_failure` 触发锁定时 `record_lockout`；`PasswordPolicyEngine::validate`
+//! 每条规则后 `observe_policy_validate`；`AuthExecutor::execute_with_metrics` 计流程与 Login/Mfa 凭证验证耗时。
 //!
-//! | 指标名 | 类型 | 标签 | 说明 |
-//! |--------|------|------|------|
-//! | `garrison_credential_verify_duration_seconds` | Histogram | `credential_type` | 凭证验证耗时 |
-//! | `garrison_policy_validate_duration_seconds` | Histogram | `rule_name` | 密码策略校验耗时 |
-//! | `garrison_lockout_triggered_total` | Counter | `lockout_type=temporary\|permanent` | 锁定触发次数 |
-//! | `garrison_authflow_execute_duration_seconds` | Histogram | `flow_name` | 认证流程执行耗时 |
-//!
-//! # 集成点
-//!
-//! - `UserLockoutStrategy::record_failure`：触发锁定时调用 `record_lockout`
-//! - `PasswordPolicyEngine::validate`：每条规则校验后调用 `observe_policy_validate`
-//! - `AuthExecutor::execute_with_metrics`：流程执行前后计 `observe_authflow_execute`，
-//! Login/Mfa 步骤 `Credential::verify` 前后计 `observe_credential_verify`
-//!
-//! # Feature 门控
-//!
-//! 与 `crate::observability::GarrisonMetrics` 一致：未启用 `metrics-prometheus` 时
-//! `AccountMetrics` 为 `()` 别名，调用方使用 `Option<Arc<AccountMetrics>>` 仍可编译。
+//! 与 `crate::observability::GarrisonMetrics` 一致：未启用 `metrics-prometheus` 时 `AccountMetrics`
+//! 为 `()` 别名，调用方使用 `Option<Arc<AccountMetrics>>` 仍可编译。
 
 #[cfg(feature = "metrics-prometheus")]
 use std::time::Duration;
 
-// ============================================================================
-// AccountMetrics：账号安全指标集合（feature = "metrics-prometheus"）
-// ============================================================================
-
-/// 账号安全能力 Prometheus 指标集合。
-///
-/// 模式与 `crate::observability::GarrisonMetrics` 一致：4 个指标注册到指定 registry，
-/// 通过 `with_metrics` builder 注入到 `UserLockoutStrategy` / `PasswordPolicyEngine`，
-/// 或作为 `AuthExecutor::execute_with_metrics` 的参数传入（保持五字段约束）。
+/// 账号安全能力 Prometheus 指标集合（模式与 `crate::observability::GarrisonMetrics` 一致）：
+/// 4 个指标注册到指定 registry，经 `with_metrics` builder 注入 `UserLockoutStrategy` /
+/// `PasswordPolicyEngine`，或作为 `AuthExecutor::execute_with_metrics` 的参数传入（保持五字段约束）。
 ///
 /// # 使用示例
 ///
@@ -69,16 +49,10 @@ pub struct AccountMetrics {
 impl AccountMetrics {
     /// 创建新的指标集合，注册到默认 registry（进程级单例，OnceLock 缓存）。
     ///
-    /// # Panics
-    ///
-    /// 本方法**不会 panic**：若默认 registry 已存在同名指标
-    /// （重复调用 `new` / 与 `register_to(default_registry)` 混用），以
-    /// `tracing::warn` 记录后返回一个未注册的本地实例（`observe_*` /
-    /// `record_*` / `gather()` 均可用，仅默认 registry 不再新增采集——
-    /// 已注册实例不受影响）。生产环境建议使用 [`Self::register_to`]
-    /// 注册到自定义 registry。
+    /// 本方法不会 panic：默认 registry 已存在同名指标时（重复 `new` / 与 `register_to(default_registry)`
+    /// 混用），`tracing::warn` 后返回未注册的本地实例（`observe_*` / `record_*` / `gather()` 均可用，仅默认
+    /// registry 不再新增采集，已注册实例不受影响）；生产环境建议用 [`Self::register_to`] 注册到自定义 registry。
     pub fn new() -> Self {
-        // 使用 OnceLock 确保只注册一次
         use std::sync::OnceLock;
         static INSTANCE: OnceLock<AccountMetrics> = OnceLock::new();
         INSTANCE.get_or_init(Self::init_default).clone()
@@ -92,8 +66,11 @@ impl AccountMetrics {
             Err(e) => {
                 tracing::warn!(
                     error = %e,
-                    "AccountMetrics 已注册到 prometheus 默认 registry（重复 new 或与 \
-                     register_to 混用），返回未注册的本地实例；已注册实例不受影响"
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-metrics-already-registered",
+                        &[("arg0", "AccountMetrics")]
+                    )
                 );
                 // build() 仅在指标名/帮助文本非法时失败——静态字面量下不可达
                 Self::build().expect("AccountMetrics: static metric opts are valid (unreachable)")
@@ -101,10 +78,8 @@ impl AccountMetrics {
         }
     }
 
-    /// 创建并注册到指定 registry（用于自定义 registry 场景，测试隔离）。
-    ///
-    /// # 错误
-    /// - 指标已注册：返回 `Err(prometheus::Error::AlreadyReg)`。
+    /// 创建并注册到指定 registry（自定义 registry 场景、测试隔离）；已注册同名指标返回
+    /// `Err(prometheus::Error::AlreadyReg)`。
     pub fn register_to(registry: &prometheus::Registry) -> Result<Self, prometheus::Error> {
         let metrics = Self::build()?;
         registry.register(Box::new(metrics.credential_verify_duration.clone()))?;
@@ -159,32 +134,21 @@ impl AccountMetrics {
         })
     }
 
-    /// 观测一次凭证验证耗时。
-    ///
-    /// # 参数
-    /// - `credential_type`: 凭证类型（如 `"password"` / `"totp"`）。
-    /// - `duration`: 验证耗时。
+    /// 观测一次凭证验证耗时（`credential_type` 标签）。
     pub fn observe_credential_verify(&self, credential_type: &str, duration: Duration) {
         self.credential_verify_duration
             .with_label_values(&[credential_type])
             .observe(duration.as_secs_f64());
     }
 
-    /// 观测一次密码策略规则校验耗时。
-    ///
-    /// # 参数
-    /// - `rule_name`: 规则名称（如 `"length"` / `"complexity"`）。
-    /// - `duration`: 校验耗时。
+    /// 观测一次密码策略规则校验耗时（`rule_name` 标签）。
     pub fn observe_policy_validate(&self, rule_name: &str, duration: Duration) {
         self.policy_validate_duration
             .with_label_values(&[rule_name])
             .observe(duration.as_secs_f64());
     }
 
-    /// 记录一次锁定触发。
-    ///
-    /// # 参数
-    /// - `permanent`: `true` 永久锁定，`false` 临时锁定。
+    /// 记录一次锁定触发（`permanent` 区分 permanent / temporary 标签）。
     pub fn record_lockout(&self, permanent: bool) {
         let label = if permanent { "permanent" } else { "temporary" };
         self.lockout_triggered_total
@@ -192,24 +156,16 @@ impl AccountMetrics {
             .inc();
     }
 
-    /// 观测一次认证流程执行耗时。
-    ///
-    /// # 参数
-    /// - `flow_name`: 流程名称（`AuthenticationFlow::name`）。
-    /// - `duration`: 执行耗时。
+    /// 观测一次认证流程执行耗时（`flow_name` 标签）。
     pub fn observe_authflow_execute(&self, flow_name: &str, duration: Duration) {
         self.authflow_execute_duration
             .with_label_values(&[flow_name])
             .observe(duration.as_secs_f64());
     }
 
-    /// 收集所有指标为 Prometheus 文本格式。
-    ///
-    /// 用于暴露给 `/metrics` 端点供 Prometheus 抓取。
-    /// 直接从自身 4 个字段（`HistogramVec` / `CounterVec`）调用 `Collector::collect`，
-    /// 不依赖任何外部 registry（包括 `prometheus::default_registry()`）。
-    /// 这样无论 metrics 注册到 default registry 还是自定义 registry，
-    /// `gather()` 均能正确返回指标数据。
+    /// 收集所有指标为 Prometheus 文本格式（供 `/metrics` 端点抓取）：直接从自身 4 个字段
+    /// （`HistogramVec` / `CounterVec`）调用 `Collector::collect`，不依赖任何外部 registry，
+    /// 故注册到 default 或自定义 registry 均能正确返回。
     pub fn gather(&self) -> String {
         use prometheus::core::Collector;
         use prometheus::Encoder;
@@ -220,9 +176,8 @@ impl AccountMetrics {
         metric_families.extend(self.authflow_execute_duration.collect());
         let mut buffer = Vec::new();
         let encoder = prometheus::TextEncoder::new();
-        // 编码失败显式记录 warn（不中断主流程，但禁止静默吞掉）。
-        // 编码失败时返回显式错误标记（Prometheus 文本注释行），
-        // 调用方可区分「无指标记录」与「编码失败」，不再静默返回空串。
+        // 编码失败显式记录 warn（不中断主流程）；返回显式错误标记行（Prometheus 文本注释），
+        // 使调用方可区分「无指标记录」与「编码失败」，不静默返回空串
         match encoder.encode(&metric_families, &mut buffer) {
             Ok(()) => String::from_utf8_lossy(&buffer).into_owned(),
             Err(e) => {
@@ -252,14 +207,8 @@ impl std::fmt::Debug for AccountMetrics {
     }
 }
 
-// ============================================================================
-// 公共 API（feature 未启用时提供 no-op 占位）
-// ============================================================================
-
-/// 指标集合的 feature-gated 别名。
-///
-/// - `metrics-prometheus` 启用：解析为 [`AccountMetrics`]
-/// - 未启用：解析为 `()` unit type，调用方使用 `Option<Arc<AccountMetrics>>` 仍可编译
+/// 指标集合的 feature-gated 别名：启用 `metrics-prometheus` 时解析为 [`AccountMetrics`]，
+/// 未启用时解析为 `()` unit type（调用方使用 `Option<Arc<AccountMetrics>>` 仍可编译）。
 #[cfg(not(feature = "metrics-prometheus"))]
 pub type AccountMetrics = ();
 

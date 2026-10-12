@@ -82,18 +82,9 @@ pub struct UserCacheService {
 impl UserCacheService {
     /// 创建三层缓存服务实例。
     ///
-    /// # 参数
-    /// - `dao`: L2 持久化缓存后端（`Arc<dyn GarrisonDao>`）。
-    /// - `interface`: L3 数据源（`Arc<dyn GarrisonPermissionStrategy>`）。
-    /// - `l1_ttl_secs`: L1 内存缓存 TTL（秒，必须 > 0）。若为 0，L1 条目将立即过期，缓存形同虚设。
-    /// - `l2_ttl_secs`: L2 DAO 缓存 TTL（秒，必须 > 0）。若为 0，L2 写入将使用永久 TTL，可能导致内存泄漏。
-    ///
-    /// # 返回
-    /// 已初始化的 `UserCacheService` 实例。
-    ///
-    /// # 错误
-    /// - `GarrisonError::Config`：`l1_ttl_secs` 或 `l2_ttl_secs` 为 0。
-    /// - `GarrisonError::Internal`：oxcache L1 初始化失败。
+    /// TTL 必须 > 0：`l1_ttl_secs` 为 0 时 L1 条目立即过期（缓存形同虚设），
+    /// `l2_ttl_secs` 为 0 时 L2 写入使用永久 TTL（可能内存泄漏）；为 0 返回
+    /// `GarrisonError::Config`，oxcache L1 初始化失败返回 `Internal`。
     ///
     /// # 示例
     /// ```ignore
@@ -118,22 +109,10 @@ impl UserCacheService {
 
     /// 创建三层缓存服务实例（显式指定 L1 容量）。
     ///
-    /// 生产路径应使用本构造器把 `GarrisonConfig::l1_cache_capacity` 接入
-    /// L1 内存后端（历史版本该配置项静默无效，L1 恒为库默认容量）。
-    ///
-    /// # 参数
-    /// - `dao`: L2 持久化缓存后端（`Arc<dyn GarrisonDao>`）。
-    /// - `interface`: L3 数据源（`Arc<dyn GarrisonPermissionStrategy>`）。
-    /// - `l1_ttl_secs`: L1 内存缓存 TTL（秒，必须 > 0）。若为 0，L1 条目将立即过期，缓存形同虚设。
-    /// - `l2_ttl_secs`: L2 DAO 缓存 TTL（秒，必须 > 0）。若为 0，L2 写入将使用永久 TTL，可能导致内存泄漏。
-    /// - `l1_capacity`: L1 内存缓存最大条目数（必须 > 0）。
-    ///
-    /// # 返回
-    /// 已初始化的 `UserCacheService` 实例。
-    ///
-    /// # 错误
-    /// - `GarrisonError::Config`：`l1_ttl_secs`、`l2_ttl_secs` 或 `l1_capacity` 为 0。
-    /// - `GarrisonError::Internal`：oxcache L1 初始化失败。
+    /// 生产路径应使用本构造器把 `GarrisonConfig::l1_cache_capacity` 接入 L1
+    /// 内存后端。`l1_ttl_secs` / `l2_ttl_secs` / `l1_capacity` 必须 > 0（否则
+    /// 缓存失效 / 永久 TTL / 无效容量，返回 `GarrisonError::Config`）；
+    /// oxcache L1 初始化失败返回 `Internal`。
     pub fn new_with_capacity(
         dao: Arc<dyn GarrisonDao>,
         interface: Arc<dyn GarrisonPermissionStrategy>,
@@ -349,22 +328,12 @@ impl UserCacheService {
         }
     }
 
-    /// 获取主体的权限列表（三层缓存查询）。
+    /// 获取主体的权限列表（缓存键：`perm:cache:{login_id}`）。
     ///
-    /// 缓存键：`perm:cache:{login_id}`
-    ///
-    /// # 查询流程
-    /// 1. L1 命中 → 反序列化返回（不查询 L2/L3）
-    /// 2. L1 未命中 → L2 命中 → 链自动回填 L1 → 返回
-    /// 3. L1+L2 未命中 → leader 执行 L3 查询 → 链写回全部后端 → 返回
-    ///    （并发同 key 请求由 `get_or` singleflight 合并为一次 L3）
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    ///
-    /// # 错误
-    /// - L3 interface 回调失败：透传原始 `GarrisonError`（错误码契约不变）。
-    /// - 缓存反序列化失败：`GarrisonError::Internal`。
+    /// 查询流程：L1 命中直接返回；未命中经链读 L2，命中自动回填 L1；两级未命中
+    /// 由 leader 回源 L3 并写回全部后端（并发同 key 请求由 `get_or` singleflight
+    /// 合并为一次 L3）。L3 回调失败透传原始 `GarrisonError`；缓存反序列化失败
+    /// 为 `GarrisonError::Internal`。
     pub async fn get_permissions(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         let key = DaoKeyPrefix::PermissionCache.build_key(login_id);
         self.record_hot_key(&key);
@@ -402,27 +371,19 @@ impl UserCacheService {
         .await
     }
 
-    /// 失效指定主体的所有缓存（权限/角色/用户）。
+    /// 失效指定主体的所有缓存（权限/角色/用户三类键）。
     ///
-    /// 同时清除 L1（oxcache）和 L2（DAO）中 `login_id` 对应的三类缓存键。
+    /// 同时清除 L1（oxcache）和 L2（DAO）中 `login_id` 对应的三类缓存键，
     /// 用于登出、权限变更等场景。
     ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
+    /// 残留窗口：leader 的 L3 回源写回若恰好落在删除之后完成，旧数据会重新
+    /// 驻留至 TTL 过期——窗口为「L3 回源耗时」量级，且仅发生在「失效与并发
+    /// 首访同一 key」的组合；对强一致失效有要求的调用方应在业务层串行化
+    /// （如先拒绝新请求再失效）。
     ///
-    /// # 与 singleflight 的互斥（残留窗口声明）
-    ///
-    /// 旧实现以 per-key 写锁串「在途加载回填」与「删除」；新实现由 `get_or`
-    /// 的 leader/follower 单飞承载在途加载。**残留窗口**：leader 的 L3 回源
-    /// 写回若恰好落在本删除之后完成，旧数据会重新驻留至 TTL 过期——窗口为
-    /// 「L3 回源耗时」量级，且仅发生在「失效与并发首访同一 key」的组合。
-    /// 调用方对强一致失效有要求时，应在业务层串行化（如先拒绝新请求再失效）。
-    ///
-    /// # 部分失败语义
-    ///
-    /// 全部 6 次删除（3 键 × L2/L1）**都会尝试执行**，不因中途失败跳过后续
-    /// 删除；返回**首个**错误，已成功删除的数量经 `tracing::warn` 记录。
-    /// 删除是幂等的，调用方收到错误后应重试。
+    /// 部分失败语义：全部 6 次删除（3 键 × L2/L1）都会尝试执行，不因中途失败
+    /// 跳过；返回**首个**错误，已成功删除的数量经 `tracing::warn` 记录。删除
+    /// 幂等，调用方收到错误后应重试。
     pub async fn invalidate(&self, login_id: &str) -> GarrisonResult<()> {
         let keys = [
             DaoKeyPrefix::PermissionCache.build_key(login_id),
@@ -1118,9 +1079,6 @@ mod tests {
     // ------------------------------------------------------------------------
 
     /// I1: 登出后缓存失效 — invalidate 后再次查询走 L3。
-    ///
-    /// 注：logout 集成到 stp/session.rs 需修改 GarrisonManager::builder()，
-    /// 留到 统一接线。此处验证 invalidate 的行为。
     #[tokio::test]
     async fn logout_invalidates_cache() {
         let (dao, interface, service) = make_default_service();
@@ -1266,11 +1224,8 @@ mod tests {
     // singleflight per-key RwLock 防击穿测试
     // ------------------------------------------------------------------------
 
-    /// singleflight 防击穿 — 并发 10 次同一 key 请求只触发 1 次 L3 加载。
-    ///
-    /// 验证 UserCacheService 的 per-key RwLock singleflight 机制：
-    /// 10 个并发任务同时请求同一 login_id 的权限列表时，
-    /// L3 interface.get_permission_list 应只被调用一次（而非 10 次）。
+    /// singleflight 防击穿 — 并发 10 次同一 key 请求只触发 1 次 L3 加载
+    /// （per-key singleflight 机制）。
     #[tokio::test(flavor = "multi_thread")]
     async fn singleflight_prevents_cache_stampede() {
         let dao = Arc::new(CountingMockDao::new());
@@ -1310,10 +1265,8 @@ mod tests {
         );
     }
 
-    /// singleflight 不同 key 不互相阻塞。
-    ///
-    /// 验证 per-key 锁不会阻塞不同 key 的并发请求：
-    /// 同时请求 10 个不同 login_id，每个 key 应独立加载，perm_count 应为 10。
+    /// singleflight 不同 key 不互相阻塞：同时请求 10 个不同 login_id，
+    /// 每个 key 独立加载，perm_count 为 10。
     #[tokio::test(flavor = "multi_thread")]
     async fn singleflight_different_keys_no_blocking() {
         let dao = Arc::new(CountingMockDao::new());
@@ -1562,10 +1515,8 @@ mod tests {
     // 补充测试：错误处理路径
     // ------------------------------------------------------------------------
 
-    /// L2 损坏值容错：逐出坏键回源 L3，读取不失败。
-    ///
-    /// 链式缓存下（反）序列化由 typed Cache 承载；L2 损坏值在链读时失败，
-    /// 缓存层逐出并回源 L3（失败经 warn 显性化，不向调用方抛错）。
+    /// L2 损坏值容错：链读失败时缓存层逐出坏键回源 L3，读取不失败
+    /// （失败经 warn 显性化，不向调用方抛错）。
     #[tokio::test]
     async fn l2_corrupt_permission_cache_returns_internal_error() {
         let (dao, interface, service) = make_default_service();
@@ -1736,12 +1687,11 @@ mod tests {
     // 补充测试：L1 缓存反序列化失败路径（覆盖 line 141-143 / 220-222）
     // ------------------------------------------------------------------------
 
-    /// 缓存数据损坏（反序列化失败）返回 Internal 错误。
+    /// 缓存数据损坏（反序列化失败）返回 `Internal` 错误。
     ///
-    /// 链式缓存下负载的（反）序列化由 oxcache typed Cache 承载，garrison 侧
-    /// 不再有手工 `from_str` 步骤——损坏数据在链读取时于 typed 层失败，
-    /// 经 `load_*_with` 的兜底映射为 Internal（错误串 `cache-chain-get::`）。
-    /// 直接向 L2 DAO 注入非负载 JSON 模拟损坏。
+    /// 负载（反）序列化由 oxcache typed Cache 承载，损坏数据在链读取时于
+    /// typed 层失败，经 `load_*_with` 兜底映射为 `Internal`（`cache-chain-get::`）；
+    /// 测试直接向 L2 DAO 注入非负载 JSON 模拟损坏。
     #[tokio::test]
     async fn l1_corrupt_permission_cache_returns_internal_error() {
         let (dao, interface, service) = make_default_service();

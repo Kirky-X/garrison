@@ -3,15 +3,11 @@
 
 //! 管理器模块，提供全局管理器单例与编译期工厂注册。
 //!
-//! 对应 `SaManager`，
-//! 统筹 DAO、配置、策略等组件的全局生命周期。
-//!
-//! ## 设计
-//!
-//! - `GarrisonManager` 持有 `Arc<GarrisonLogicDefault>` 全局单例（基于 `arc_swap::ArcSwapOption`，读路径无锁、支持重复 init）
-//! - `GarrisonLogicFactory` trait 通过 `inventory::submit!` 编译期注册
-//! - 业务方调用 `GarrisonManager::builder().dao(dao).config(config).interface(interface).build().await` 注入依赖
-//! - `GarrisonUtil::login(id)` 等静态方法委托到 `GARRISON_MANAGER` 单例
+//! `GarrisonManager` 对应 `SaManager`，统筹 DAO、配置、策略等组件的全局生命周期：持有
+//! `Arc<GarrisonLogicDefault>` 全局单例（基于 `arc_swap::ArcSwapOption`，读路径无锁、支持
+//! 重复 init）；`GarrisonLogicFactory` trait 通过 `inventory::submit!` 编译期注册；业务方经
+//! `GarrisonManager::builder().dao(dao).config(config).interface(interface).build().await`
+//! 注入依赖；`GarrisonUtil::login(id)` 等静态方法委托到 `GARRISON_MANAGER` 单例。
 //!
 //! ## 初始化流程
 //!
@@ -66,21 +62,19 @@ pub use builder::GarrisonManagerBuilder;
 
 /// 全局管理器，统筹 `GarrisonLogicDefault` 的生命周期。
 ///
-/// 对应 `SaManager`，
-/// 持有全局 `Arc<GarrisonLogicDefault>` 引用，提供静态方法入口。
+/// 对应 `SaManager`，持有全局 `Arc<GarrisonLogicDefault>` 引用，提供静态方法入口。
 ///
 /// # 初始化
 ///
-/// 业务方启动时调用 `GarrisonManager::builder().dao(dao).config(config).interface(interface).build().await`
+/// 启动时调用 `GarrisonManager::builder().dao(dao).config(config).interface(interface).build().await`
 /// 注入依赖。未初始化时调用 `GarrisonUtil::login(id)` 等返回 `GarrisonError::Session`
 /// （错误码 `manager-not-init`，与 locales 键一致）。
 ///
 /// # 并发写入契约
 ///
-/// `logic` 与 `strategy` 是两个独立的 `ArcSwapOption`，单次 `store` 原子但两者成对
-/// 非原子；并发调用 `GarrisonManagerBuilder::build()` 可能产生 `(logic_B, strategy_A)`
-/// 错配对。该风险由 builder 内进程级 `BUILD_LOCK` 串行化单例写入段消除——
-/// 不要绕过 builder 直接 `store` 全局单例字段。
+/// `logic` 与 `strategy` 是两个独立的 `ArcSwapOption`，单次 `store` 原子但两者成对非原子；
+/// 并发 `build()` 可能产生 `(logic_B, strategy_A)` 错配对。该风险由 builder 内进程级
+/// `BUILD_LOCK` 串行化单例写入段消除——不要绕过 builder 直接 `store` 全局单例字段。
 pub struct GarrisonManager {
     /// 全局 `GarrisonLogicDefault` 引用（ArcSwapOption 支持测试时重复 init 与 reset）。
     logic: ArcSwapOption<GarrisonLogicDefault>,
@@ -109,10 +103,7 @@ pub struct GarrisonManager {
     anomalous_analyzer_shutdown_tx: RwLock<Option<watch::Sender<bool>>>,
 }
 
-/// 全局管理器单例。
-///
-/// 通过 `std::sync::LazyLock` 实现懒加载，
-/// 首次访问时调用 `GarrisonManager::new()`。
+/// 全局管理器单例（`LazyLock` 懒加载，首次访问时调用 `GarrisonManager::new()`）。
 pub static GARRISON_MANAGER: LazyLock<GarrisonManager> = LazyLock::new(GarrisonManager::new);
 
 #[cfg(test)]

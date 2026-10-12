@@ -1,46 +1,22 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 决策组合器（forbid 优先语义）。
-//!
-//! 提供 [`DecisionCombinator::combine`] 方法聚合多个 [`Decision`]，
-//! 优先级为 Forbid > Deny > Allow：
-//! - 任一 Forbid 决策存在 → 返回第一个 Forbid
-//! - 无 Forbid 但有 Deny → 返回第一个 Deny
-//! - 全部 Allow（或空列表）→ 返回 Allow
-//!
-//! # 使用场景
-//!
-//! 多策略鉴权场景下，需聚合多个策略的决策为一个最终决策。
-//! Forbid 优先语义确保"强制拒绝"不可被其他策略的 Allow 覆盖。
+//! 决策组合器（forbid 优先语义）：[`DecisionCombinator::combine`] 聚合多个 [`Decision`]，
+//! 优先级 Forbid > Deny > Allow（任一 Forbid 即返回第一个 Forbid；无 Forbid 有 Deny 返回第一个
+//! Deny；全 Allow 返回 Allow，空列表按 fail-closed 返回 deny）。Forbid 优先确保"强制拒绝"
+//! 不可被其他策略的 Allow 覆盖。
 
 use super::{Decision, DecisionReason};
 
-/// 决策组合器，聚合多个 [`Decision`] 为单个最终决策。
-///
-/// 优先级：Forbid > Deny > Allow。
+/// 决策组合器，聚合多个 [`Decision`] 为单个最终决策（优先级 Forbid > Deny > Allow）。
 pub struct DecisionCombinator;
 
 impl DecisionCombinator {
-    /// 聚合多个决策为单个最终决策。
+    /// 聚合多个决策为单个最终决策，优先级 Forbid > Deny > Allow：遇第一个 Forbid 立即返回
+    ///（短路），否则返回第一个 Deny，否则 Allow。
     ///
-    /// 优先级为 Forbid > Deny > Allow：
-    /// 1. 遇到第一个 Forbid 决策立即返回（短路）
-    /// 2. 无 Forbid 时返回第一个 Deny 决策
-    /// 3. 无 Forbid 且无 Deny 时返回 Allow
-    ///
-    /// # 空列表行为
-    ///
-    /// 空列表返回 `Decision::deny(ExplicitDeny)`（fail-closed）。空列表
-    /// 通常表示策略未填充的 bug，fail-closed 确保不会因 bug 导致权限绕过。
-    ///
-    /// # 参数
-    ///
-    /// - `decisions`: 待聚合的决策切片
-    ///
-    /// # 返回
-    ///
-    /// 聚合后的最终决策。
+    /// 空列表返回 `Decision::deny(ExplicitDeny)`（fail-closed）：空列表通常表示策略未填充的
+    /// bug，fail-closed 确保不因 bug 导致权限绕过。
     pub fn combine(decisions: &[Decision]) -> Decision {
         if decisions.is_empty() {
             return Decision::deny(DecisionReason::ExplicitDeny);
@@ -66,9 +42,7 @@ mod tests {
     use super::super::DecisionReason;
     use super::*;
 
-    /// combine 在含 Forbid 时返回 Forbid（优先级最高）。
-    ///
-    /// 验证 `[allow, forbid("r1"), deny(NoMatchingPermission)]` → forbid("r1")。
+    /// combine 含 Forbid 时返回 Forbid（优先级最高）：[allow, forbid("r1"), deny(NoMatching)]。
     #[test]
     fn combine_returns_forbid_when_any_forbid() {
         let decisions = vec![
@@ -86,9 +60,7 @@ mod tests {
         );
     }
 
-    /// combine 在无 Forbid 但有 Deny 时返回第一个 Deny。
-    ///
-    /// 验证 `[allow, deny(NoMatchingPermission), allow]` → deny(NoMatchingPermission)。
+    /// 无 Forbid 但有 Deny 时返回第一个 Deny：[allow, deny(NoMatchingPermission), allow]。
     #[test]
     fn combine_returns_deny_when_no_forbid_but_has_deny() {
         let decisions = vec![
@@ -106,9 +78,7 @@ mod tests {
         );
     }
 
-    /// combine 在全部 Allow 时返回 Allow。
-    ///
-    /// 验证 `[allow, allow]` → allow。
+    /// 全部 Allow 时返回 Allow。
     #[test]
     fn combine_returns_allow_when_all_allow() {
         let decisions = vec![Decision::allow(), Decision::allow()];
@@ -121,9 +91,7 @@ mod tests {
         );
     }
 
-    /// combine 对空列表返回 Deny（fail-closed 安全默认）。
-    ///
-    /// 验证 `[]` → deny(ExplicitDeny)。
+    /// 空列表返回 Deny（fail-closed 安全默认）。
     #[test]
     fn combine_returns_deny_for_empty_list() {
         let decisions: Vec<Decision> = vec![];
@@ -136,9 +104,7 @@ mod tests {
         );
     }
 
-    /// combine 返回第一个 Forbid（多个 Forbid 时取首个）。
-    ///
-    /// 验证 `[forbid("r1"), forbid("r2")]` → forbid("r1")。
+    /// 多个 Forbid 时返回第一个（[forbid("r1"), forbid("r2")] → forbid("r1")）。
     #[test]
     fn combine_returns_first_forbid() {
         let decisions = vec![Decision::forbid("r1"), Decision::forbid("r2")];
@@ -151,9 +117,7 @@ mod tests {
         );
     }
 
-    /// combine 返回第一个 Deny（多个 Deny 时取首个）。
-    ///
-    /// 验证 `[deny(NoMatchingPermission), deny(ExplicitDeny)]` → deny(NoMatchingPermission)。
+    /// 多个 Deny 时返回第一个。
     #[test]
     fn combine_returns_first_deny() {
         let decisions = vec![
@@ -170,9 +134,7 @@ mod tests {
         );
     }
 
-    /// combine 在 Forbid + Deny 时返回 Forbid（Forbid 优先于 Deny）。
-    ///
-    /// 验证 `[forbid("r"), deny(NoMatchingPermission)]` → forbid("r")。
+    /// Forbid + Deny 时返回 Forbid（Forbid 优先于 Deny）。
     #[test]
     fn combine_forbid_plus_deny() {
         let decisions = vec![
@@ -188,9 +150,7 @@ mod tests {
         );
     }
 
-    /// combine 在 Deny + Allow 时返回 Deny（Deny 优先于 Allow）。
-    ///
-    /// 验证 `[deny(NoMatchingPermission), allow]` → deny(NoMatchingPermission)。
+    /// Deny + Allow 时返回 Deny（Deny 优先于 Allow）。
     #[test]
     fn combine_deny_plus_allow() {
         let decisions = vec![
@@ -207,11 +167,8 @@ mod tests {
         );
     }
 
-    /// Deny 在前、Forbid 在后时仍返回 Forbid（Forbid 始终最高优先级）。
-    ///
-    /// 验证移除 `is_forbid()` 的 `safe-defaults` feature-gate 后，
-    /// 无论 Forbid 在列表中的位置如何，combine 始终优先返回 Forbid。
-    /// 回归测试：防止 feature-gate 被重新引入导致 Forbid 降级为 Deny。
+    /// Deny 在前、Forbid 在后仍返回 Forbid（始终最高优先级）；回归测试防止 feature-gate
+    /// 重新引入导致 Forbid 降级为 Deny。
     #[test]
     fn combine_deny_before_forbid_still_returns_forbid() {
         let decisions = vec![

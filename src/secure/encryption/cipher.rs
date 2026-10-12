@@ -3,19 +3,14 @@
 
 //! 密钥注入与字段加解密门面。
 //!
-//! 密钥来源抽象为 [`FieldKeyProvider`]（按 key_id 取钥 + 主钥 id），多 key_id
-//! 共存：密文中嵌入加密所用的 key_id，解密按嵌入 id 取钥——轮换期间旧密文
-//! 仍可解。注入路径二选一：
-//! - **生产配置面**（不依赖额外 feature）：[`FieldCipher::from_key_entries`](crate::secure::encryption::FieldCipher::from_key_entries)
-//!   从 (key_id, hex32) 配置表目装配（如 auth_server
-//!   `GARRISON_FIELD_ENCRYPTION_KEYS` 环境变量），内部用
-//!   [`StaticFieldKeyProvider`]
-//! - **config-encryption 既有密钥设施**（`config-encryption` feature 门控）：
-//!   `ConfersFieldKeyProvider` 包装 confers `KeyRegistry`（version 即 key_id）
+//! 密钥来源抽象为 [`FieldKeyProvider`]（按 key_id 取钥 + 主钥 id）；多 key_id 共存：密文嵌入加密所用 key_id，
+//! 解密按嵌入 id 取钥，轮换期间旧密文仍可解。注入路径二选一：生产配置面
+//! [`FieldCipher::from_key_entries`](crate::secure::encryption::FieldCipher::from_key_entries)（(key_id, hex32) 配置表目，
+//! 如 auth_server `GARRISON_FIELD_ENCRYPTION_KEYS`，内部用 [`StaticFieldKeyProvider`]）；或 `config-encryption` feature 下的
+//! `ConfersFieldKeyProvider`（包装 confers `KeyRegistry`，version 即 key_id）。
 //!
-//! fail-closed：启用 `field-encryption` 但未配置任何密钥时，装配期
-//! （[`FieldCipher::new`] / [`FieldCipher::from_key_entries`](crate::secure::encryption::FieldCipher::from_key_entries)）即报错
-//! （启动失败），绝不允许无钥明文运行。
+//! fail-closed：启用 `field-encryption` 但未配密钥时，装配期（[`FieldCipher::new`] /
+//! [`FieldCipher::from_key_entries`](crate::secure::encryption::FieldCipher::from_key_entries)）即报错（启动失败），绝不允许无钥明文运行。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -35,12 +30,9 @@ pub trait FieldKeyProvider: Send + Sync {
     fn primary_key_id(&self) -> GarrisonResult<String>;
 }
 
-/// [`FieldKeyProvider`] 的静态实现：内存 key_id → 密钥表。
+/// [`FieldKeyProvider`] 的静态实现：内存 key_id → 密钥表（生产配置面底层载体，亦供测试与直连装配）。
 ///
-/// [`FieldCipher::from_key_entries`](crate::secure::encryption::FieldCipher::from_key_entries) 生产配置面的底层载体（配置解析产物），
-/// 亦供测试与直连装配。首个注册项为主钥；
-/// [`StaticFieldKeyProvider::with_primary`] 可切换（主钥切换后旧密文仍按
-/// 嵌入 key_id 可解）。
+/// 首个注册项为主钥；[`StaticFieldKeyProvider::with_primary`] 可切换（切换后旧密文仍按嵌入 key_id 可解）。
 #[derive(Debug, Clone)]
 pub struct StaticFieldKeyProvider {
     keys: HashMap<String, [u8; KEY_LEN]>,
@@ -57,9 +49,8 @@ impl StaticFieldKeyProvider {
         let mut map = HashMap::with_capacity(keys.len());
         for (idx, (id, key)) in keys.into_iter().enumerate() {
             if is_degenerate_key(&key) {
-                // 主钥（首项，新写入一律使用）严格拒绝；非主钥（仅解密存量密文）
-                // 降级 warn 放行——否则含退役弱钥的部署无法经 garrison-cli
-                // change-key 携旧钥重加密后摘除（迁移出口被 fail-closed 锁死）。
+                // 主钥（首项，新写入用）严格拒绝；非主钥（仅解存量）降级 warn 放行——否则含退役弱钥的部署
+                // 无法经 garrison-cli change-key 携旧钥重加密后摘除（迁移出口被 fail-closed 锁死）。
                 if idx == 0 {
                     return Err(config_err(&format!("weak-key:{id}")));
                 }
@@ -102,28 +93,24 @@ impl FieldKeyProvider for StaticFieldKeyProvider {
     }
 }
 
-/// 退化钥检测（confers `is_weak_key` 的等价本地检查：上游该函数所在模块
-/// `pub(crate)` 不可跨 crate 调用）：`[u8; KEY_LEN]` 非空，退化形态即
-/// **单字节重复**（全零 / 全 0xFF / 单字符填充）——此类钥熵不足，
-/// 装配期 fail-fast 而非静默接受。
+/// 退化钥检测（confers `is_weak_key` 的等价本地检查；上游该函数所在模块 `pub(crate)` 不可跨 crate 调用）：
+/// **单字节重复**（全零 / 全 0xFF / 单字符填充）即熵不足，装配期 fail-fast 而非静默接受。
 fn is_degenerate_key(key: &[u8; KEY_LEN]) -> bool {
     key.iter().all(|&b| b == key[0])
 }
 
 /// 字段加解密门面：多 key_id 取钥 + 迁移期双读。
 ///
-/// - `encrypt`：主钥加密，产出 `enc:v1:<key_id>:<...>` 编码串
-/// - `decrypt`：双读——有 `enc:v1:` 前缀则按嵌入 key_id 取钥解密；
-///   无前缀（迁移期明文遗留行）原样返回
+/// `encrypt` 用主钥加密并产出 `enc:v1:<key_id>:<...>` 编码串；`decrypt` 双读——有 `enc:v1:` 前缀则按嵌入 key_id 解密，
+/// 无前缀（迁移期明文遗留行）原样返回。
 #[derive(Clone)]
 pub struct FieldCipher {
     provider: Arc<dyn FieldKeyProvider>,
 }
 
 impl FieldCipher {
-    /// 装配：探测主钥可取（未配密钥 / 取钥失败 → 装配期显性失败）；
-    /// 主钥为退化形态（单字节重复）同样装配期拒绝——静态 provider 已在
-    /// 注册时逐钥拒绝，此处兜底自定义 provider。
+    /// 装配：探测主钥可取（未配密钥 / 取钥失败 → 装配期显性失败）；主钥退化（单字节重复）同样拒绝——
+    /// 静态 provider 已在注册时逐钥拒绝，此处兜底自定义 provider。
     pub fn new(provider: Arc<dyn FieldKeyProvider>) -> GarrisonResult<Self> {
         let primary = provider.primary_key_id()?;
         let primary_key = provider.key_for(&primary)?;
@@ -133,11 +120,8 @@ impl FieldCipher {
         Ok(Self { provider })
     }
 
-    /// 生产配置面装配：从 (key_id, hex 编码 32 字节钥材) 表目构建。
-    ///
-    /// 校验逐项显性：表目非空、key_id 非空且不含 `:`、hex 可解且恰 32 字节
-    /// （64 个 hex 字符）、key_id 互异。任一违规即装配失败（启动期 fail-closed）。
-    /// 首项为主钥。
+    /// 生产配置面装配：从 (key_id, hex 编码 32 字节钥材) 表目构建，逐项显性校验——
+    /// 表目非空、key_id 非空且不含 `:`、hex 恰 64 字符、key_id 互异；任一违规即启动期 fail-closed。首项为主钥。
     pub fn from_key_entries(entries: &[(String, String)]) -> GarrisonResult<Self> {
         if entries.is_empty() {
             return Err(config_err("no-keys-configured"));
@@ -178,20 +162,16 @@ impl FieldCipher {
     }
 }
 
-/// config-encryption 既有密钥设施（confers `KeyRegistry`）适配器。
-///
-/// confers KeyRegistry 的 version 即 garrison 的 key_id；密钥材料必须恰好
-/// 32 字节（AES-256），非 32 字节显性报错。
+/// config-encryption 既有密钥设施（confers `KeyRegistry`）适配器：version 即 garrison 的 key_id，
+/// 密钥材料必须恰 32 字节（AES-256），否则显性报错。
 ///
 /// # 弱钥门禁的不对称性（已记录的残留缺口）
 ///
-/// 退化钥（单字节重复）拦检的覆盖边界：[`StaticFieldKeyProvider::new`]
-/// 仅严格拒绝退化**主钥**（首项），非主钥退化钥 warn 放行（保留轮换出口）；
-/// [`FieldCipher::new`] 兜底校验当前主钥。本适配器直连 confers KeyRegistry
-///（其 `register_key` 不做弱钥校验），故经 config-encryption 注册的退化钥
-///（含运行期 `rotate_to` 切换的退化主钥）不被本仓门禁拦截——注意 `encrypt`
-/// 每次实时读取主钥，运行期切换到退化钥会使新写入使用弱钥，下游注册钥时
-/// 请自行保证钥材质量（如 garrison-cli key-rotate 产出 OS CSPRNG 钥）。
+/// 退化钥（单字节重复）拦检的覆盖边界：[`StaticFieldKeyProvider::new`] 仅严格拒绝退化**主钥**（首项），
+/// 非主钥退化钥 warn 放行（保留轮换出口）；[`FieldCipher::new`] 兜底校验当前主钥。本适配器直连 confers
+/// KeyRegistry（其 `register_key` 不做弱钥校验），故经 config-encryption 注册的退化钥（含运行期 `rotate_to`
+/// 切换的退化主钥）不被本仓门禁拦截——`encrypt` 每次实时读取主钥，运行期切换到退化钥会使新写入用弱钥；
+/// 下游注册钥时须自行保证钥材质量（如 garrison-cli key-rotate 产出 OS CSPRNG 钥）。
 #[cfg(feature = "config-encryption")]
 pub struct ConfersFieldKeyProvider {
     registry: Arc<confers::secret::KeyRegistry>,
@@ -317,8 +297,7 @@ mod tests {
         assert!(matches!(empty, GarrisonError::Config(_)));
     }
 
-    /// 生产配置面 `from_key_entries`：合法 hex32 表目装配可用（首项主钥）；
-    /// 空表目 / 坏 hex / 长度非 32 字节 / 含冒号 key_id 逐项显性拒绝。
+    /// 生产配置面 `from_key_entries`：合法 hex32 表目装配可用（首项主钥）；空表目 / 坏 hex / 长度非 32 字节 / 含冒号 key_id 逐项显性拒绝。
     #[test]
     fn from_key_entries_config_surface() {
         let hex1 = key_hex(1);
@@ -369,8 +348,7 @@ mod tests {
         assert!(cipher.decrypt(&other_row, &stored).is_err());
     }
 
-    /// confers KeyRegistry 适配器：注册两把 32 字节钥，按 version（key_id）取钥、
-    /// 主钥切换跟随；非 32 字节钥材显性报错。
+    /// confers KeyRegistry 适配器：注册两把 32 字节钥，按 version（key_id）取钥、主钥切换跟随；非 32 字节钥材显性报错。
     #[cfg(feature = "config-encryption")]
     #[test]
     fn confers_registry_adapter_resolves_keys() {
@@ -411,10 +389,7 @@ mod tests {
         assert!(adapter.key_for("short").is_err());
     }
 
-    // ========================================================================
-    // 退化密钥 fail-fast（confers is_weak_key 的等价本地检查：
-    // 上游该函数所在模块 pub(crate) 不可跨 crate 调用）
-    // ========================================================================
+    // 退化密钥 fail-fast 测试（confers is_weak_key 的等价本地检查，上游函数 pub(crate) 不可跨 crate 调用）
 
     /// 全零（单字节重复）钥被 StaticFieldKeyProvider::new 拒绝，错误含 key_id。
     #[test]

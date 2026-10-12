@@ -1,27 +1,25 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 邀请码定向注册协议模块，提供可设失效时间、单次/N 次有效、可吊销的邀请码全生命周期管理。
-//!
-//! 对应 邀请码注册 机制，
-//! 覆盖签发（`create`/`create_batch`）、只读校验（`validate`）、原子消费（`redeem`）、
-//! 吊销（`revoke`）与列出（`list`），并内置防爆破尝试锁定与可选的注册编排钩子
+//! 邀请码定向注册协议模块（对应 邀请码注册 机制）：可设失效时间、单次/N 次有效、
+//! 可吊销的邀请码全生命周期管理，覆盖签发（`create`/`create_batch`）、只读校验
+//! （`validate`）、原子消费（`redeem`）、吊销（`revoke`）与列出（`list`），并内置
+//! 防爆破尝试锁定与可选注册编排钩子
 //! （[`InvitationRedeemHook`](crate::protocol::invitation::InvitationRedeemHook)）。
 //!
 //! 仅在启用 `protocol-invitation` 特性时编译。
 //!
 //! ## Key 命名空间
 //!
-//! 邀请码记录存储在 `garrison:invitation:code:<normalized_code>` 命名空间下，
-//! 与 session/temp/sign/apikey 模块隔离。防爆破计数存储在
-//! `garrison:invitation:attempt:<sha256(source)>` 命名空间下（source 先经 SHA-256 摘要：
-//! source 为攻击者可控 IP，MD5 chosen-prefix 碰撞可污染他人计数键，故弃用 MD5）。
+//! 记录存于 `garrison:invitation:code:<normalized_code>`；防爆破计数存于
+//! `garrison:invitation:attempt:<sha256(source)>`（source 为攻击者可控 IP，MD5 存在
+//! chosen-prefix 碰撞可污染他人计数键，故用 SHA-256），与 session/temp/sign/apikey 隔离。
 //!
 //! ## 消费原子性
 //!
-//! `redeem` 经 `GarrisonDao::get_and_delete` 原子取出并删除记录（check-and-restore）：
-//! 并发消费同一单次码时恰有一个调用成功，其余收到 NotFound；
-//! N 次码在取出后更新 `used_count`，仍有剩余次数时以剩余 TTL 回写。
+//! `redeem` 经 `GarrisonDao::get_and_delete` 原子取出并删除（check-and-restore）：
+//! 并发消费单次码恰一成功、其余 NotFound；N 次码取出后更新 `used_count`，有剩余
+//! 次数时以剩余 TTL 回写。
 
 use crate::error::GarrisonResult;
 use serde::{Deserialize, Serialize};
@@ -131,10 +129,8 @@ pub trait InvitationRedeemHook: Send + Sync {
     async fn on_redeem(&self, record: &InvitationRecord) -> GarrisonResult<()>;
 }
 
-/// 邀请码处理器。
-///
-/// 持有 `Arc<dyn GarrisonDao>` 用于邀请码存储，可选注入 listener 管理器与注册编排钩子。
-/// 实现 `Send + Sync`，可在多线程环境共享。
+/// 邀请码处理器：持有 `Arc<dyn GarrisonDao>` 用于存储，可选注入 listener
+/// 管理器与注册编排钩子。
 pub struct InvitationHandler {
     /// DAO 抽象层，用于邀请码存储与原子消费。
     pub(crate) dao: Arc<dyn crate::dao::GarrisonDao>,

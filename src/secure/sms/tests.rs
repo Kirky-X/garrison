@@ -47,9 +47,7 @@ async fn hourly_limit_blocks_6th() {
     );
 }
 
-/// 测试 3：天限速 10/d 拦截第 11 次。
-///
-/// 通过手动递增小时窗口计数器绕过小时限速，验证天窗口独立拦截。
+/// 测试 3：天限速 10/d 拦截第 11 次（手动递增小时窗计数绕过小时限速，验证天窗独立拦截）。
 #[tokio::test]
 async fn daily_limit_blocks_11th() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -271,9 +269,7 @@ async fn unverified_threshold_recycles_channel() {
     );
 }
 
-// ============================================================================
 // 常量时间比较测试（verify_code 存储码与用户输入的统一比较原语）
-// ============================================================================
 
 /// 验证 constant_time_eq 对相同输入返回 true。
 #[test]
@@ -312,11 +308,9 @@ fn constant_time_eq_last_byte_diff_returns_false() {
     assert!(!constant_time_eq(b"123450", b"123456"));
 }
 
-/// 超长/短验证码输入按「错误验证码」失败路径处理（计入尝试次数）。
+/// 超长/短验证码按「错误验证码」失败路径处理（计入尝试次数）。
 ///
-/// 安全属性：验证码定长 6 位（`generate_code` 保证），长度不符必然不等，
-/// `verify_code` 在进入比较前即拒绝（与 email 侧同型防线）——用户可控的
-/// 输入长度不得放大服务端计算量；长度是公开参数，提前拒绝不泄露秘密。
+/// 安全属性：定长 6 位保证长度不符必然不等，`verify_code` 进入比较前即拒绝——用户可控长度不得放大服务端计算量；长度公开，提前拒绝不泄露秘密。
 #[tokio::test]
 async fn wrong_length_code_counts_as_failed_attempt() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -344,9 +338,7 @@ async fn wrong_length_code_counts_as_failed_attempt() {
     );
 }
 
-// ============================================================================
 // 验证码生成范围测试（排除 000000）
-// ============================================================================
 
 /// 验证 generate_code 返回 6 位字符串。
 #[test]
@@ -357,9 +349,7 @@ fn generate_code_returns_6_char_string() {
 
 /// 验证 generate_code 永不返回 "000000"（弱验证码）。
 ///
-/// 生成 10000 次，断言无 "000000" 且所有结果均为 6 位数字字符。
-/// 旧实现 `gen_range(0..1000000)` 有 1/1000000 概率生成 0，
-/// 虽然单次概率低，但在高频发送场景下累积风险不可忽视。
+/// 生成 10000 次断言无 "000000" 且均为 6 位数字：旧 `gen_range(0..1000000)` 有 1/1000000 概率生成 0，高频下累积风险不可忽视。
 #[test]
 fn generate_code_never_returns_000000() {
     for _ in 0..10000 {
@@ -369,11 +359,7 @@ fn generate_code_never_returns_000000() {
     }
 }
 
-/// 验证 generate_code 所有结果均为 [100000, 999999] 范围内的 6 位数字。
-///
-/// 此测试在旧实现（`gen_range(0..1000000)`）下会失败：
-/// 旧实现 ~10% 概率生成 < 100000 的值（格式化后首位为 '0'），
-/// 10000 次迭代中全部 >= 100000 的概率约为 0.9^10000 ≈ 0（必然失败）。
+/// 断言结果均落在 [100000, 999999]：旧 `gen_range(0..1000000)` 约 10% 概率生成 < 100000（首位 '0'），10000 次迭代必然暴露。
 #[test]
 fn generate_code_always_in_6_digit_range() {
     for _ in 0..10000 {
@@ -396,9 +382,7 @@ fn generate_code_always_in_6_digit_range() {
     }
 }
 
-// ============================================================================
 // SmsRateLimiter::validate_phone 校验分支测试（key 注入 / DoS 防护）
-// ============================================================================
 
 /// 空手机号返回 InvalidParam（secure-phone-empty）。
 #[test]
@@ -457,9 +441,7 @@ fn validate_phone_accepts_valid() {
     assert!(rate_limiter::validate_phone("+8613800138000").is_ok());
 }
 
-// ============================================================================
 // SmsRateLimiter 错误路径 / 回滚测试（FaultDao：incr/decr 可独立注入失败）
-// ============================================================================
 
 /// 可注入故障的 DAO：incr / decr 可独立配置失败，其余委托内存 MockDao。
 struct FaultDao {
@@ -566,9 +548,7 @@ impl GarrisonDao for FaultDao {
     }
 }
 
-/// 读取指定手机号当前小时/天窗口账本值（不存在返回 None）。
-///
-/// 账本键形 `quota:{hour,day}:sms:{phone}`（QuotaStorage 模型，无时间成分）。
+/// 读取指定手机号当前小时/天窗口账本值（不存在返回 None）；账本键 `quota:{hour,day}:sms:{phone}`，无时间成分。
 async fn window_counter_value(
     dao: &Arc<dyn GarrisonDao>,
     phone: &str,
@@ -720,9 +700,7 @@ async fn rollback_decr_failure_propagates_error() {
     );
 }
 
-// ============================================================================
-// 窗口桶信息携带（check 与 rollback 共用同一桶键，防跨窗口边界递减错桶）
-// ============================================================================
+// 窗口桶信息携带：check 与 rollback 共用同一账本
 
 /// check_and_increment_with / rollback_with：携带窗口信息的精确回滚路径。
 #[tokio::test]
@@ -755,8 +733,7 @@ async fn rollback_with_uses_check_windows() {
     );
 }
 
-/// 前后空白归一化：带空白填充的手机号与裸手机号命中同一限速 key
-/// （防 `" 13800138000 "` 绕过限速），key 中不含空白。
+/// 前后空白归一化：带空白手机号与裸手机号命中同一限速 key（防 `" 13800138000 "` 绕过限速），key 不含空白。
 #[tokio::test]
 async fn check_and_increment_normalizes_phone_whitespace() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(FaultDao::ok());
@@ -799,14 +776,11 @@ fn validate_phone_rejects_inner_whitespace() {
     );
 }
 
-// ============================================================================
 // 达到最大尝试次数后的验证行为（安全属性：耗尽后正确码也不得通过）
-// ============================================================================
 
-/// 达到最大尝试次数后提交**正确**验证码仍被拒绝。
+/// 达到上限后提交**正确**验证码仍被拒绝。
 ///
-/// 安全属性：max attempts 耗尽后验证码已失效（code 被删除），
-/// 此后无论提交错误码还是正确码都不得验证通过，也不得开启新的尝试窗口。
+/// 安全属性：max attempts 耗尽后验证码已删除失效，此后无论错误码还是正确码都不得通过，也不得开启新尝试窗口。
 #[tokio::test]
 async fn correct_code_after_max_attempts_still_rejected() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -861,9 +835,7 @@ async fn correct_code_after_max_attempts_still_rejected() {
     );
 }
 
-// ========================================================================
 // 发送失败清理 & unverified incr 失败回滚（防残留可用验证码）
-// ========================================================================
 
 /// 恒失败的 SmsSender：模拟上游短信网关故障。
 struct FailingSmsSender;
@@ -902,8 +874,7 @@ async fn send_failure_cleans_stored_code_and_keeps_original_error() {
     );
 }
 
-/// 仅对 `sms:unverified:` 前缀注入 incr 失败的 DAO：
-/// 验证「未验证计数递增失败 → 回滚限速计数 + 删除已存验证码 + 保留原始错误」。
+/// 仅对 `sms:unverified:` 前缀注入 incr 失败的 DAO：验证「递增失败 → 回滚限速计数 + 删除已存验证码 + 保留原始错误」。
 struct UnverifiedIncrFaultDao {
     inner: MockDao,
 }

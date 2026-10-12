@@ -20,19 +20,15 @@ fn key_id_of(token: &str) -> &str {
         .0
 }
 
-// ========================================================================
 // ApiKeyHandler 构造测试
-// ========================================================================
 
-/// 构造 ApiKeyHandler）。
+/// 构造 ApiKeyHandler。
 #[test]
 fn new_creates_handler() {
     let _handler = make_handler();
 }
 
-// ========================================================================
 // generate 测试
-// ========================================================================
 
 /// 成功生成 API Key，返回 `key_id.key_secret` 双段格式（各 32 hex）。
 #[tokio::test]
@@ -51,7 +47,7 @@ async fn generate_returns_dual_segment_format() {
     assert!(key_secret.chars().all(|c| c.is_ascii_hexdigit()));
 }
 
-/// 复用同一 handler 多次生成不同 key）。
+/// 复用同一 handler 多次生成不同 key。
 #[tokio::test]
 async fn generate_multiple_times_returns_different_keys() {
     let handler = make_handler();
@@ -60,7 +56,7 @@ async fn generate_multiple_times_returns_different_keys() {
     assert_ne!(k1, k2);
 }
 
-/// timeout <= 0 返回错误）。
+/// timeout <= 0 返回错误。
 #[tokio::test]
 async fn generate_zero_timeout_returns_error() {
     let handler = make_handler();
@@ -68,9 +64,9 @@ async fn generate_zero_timeout_returns_error() {
     assert!(result.is_err());
 }
 
-/// key 前缀正确）。
+/// key 前缀正确。
 ///
-/// generate 默认 namespace="default"，存储格式变为
+/// generate 默认 namespace="default"，存储格式为
 /// `garrison:apikey:default:<key>`。
 #[tokio::test]
 async fn generate_uses_correct_key_prefix() {
@@ -90,11 +86,9 @@ async fn generate_uses_correct_key_prefix() {
     assert_eq!(info.namespace, "default");
 }
 
-// ========================================================================
 // verify 测试
-// ========================================================================
 
-/// 成功校验返回 ApiKeyInfo）。
+/// 成功校验返回 ApiKeyInfo。
 #[tokio::test]
 async fn verify_success_returns_info() {
     let handler = make_handler();
@@ -108,7 +102,7 @@ async fn verify_success_returns_info() {
     assert!(!info.revoked);
 }
 
-/// 校验不存在的 key 返回错误）。
+/// 校验不存在的 key 返回错误。
 #[tokio::test]
 async fn verify_nonexistent_returns_error() {
     let handler = make_handler();
@@ -120,7 +114,7 @@ async fn verify_nonexistent_returns_error() {
     }
 }
 
-/// 校验已吊销的 key 返回错误）。
+/// 校验已吊销的 key 返回错误。
 #[tokio::test]
 async fn verify_revoked_returns_error() {
     let handler = make_handler();
@@ -134,7 +128,7 @@ async fn verify_revoked_returns_error() {
     }
 }
 
-/// 校验已过期的 key 返回错误）。
+/// 校验已过期的 key 返回错误。
 #[tokio::test]
 async fn verify_expired_returns_error() {
     let handler = make_handler();
@@ -149,11 +143,9 @@ async fn verify_expired_returns_error() {
     }
 }
 
-// ========================================================================
 // revoke 测试
-// ========================================================================
 
-/// 成功吊销）。
+/// 成功吊销。
 #[tokio::test]
 async fn revoke_success() {
     let handler = make_handler();
@@ -168,7 +160,7 @@ async fn revoke_success() {
     );
 }
 
-/// 吊销不存在的 key 返回错误）。
+/// 吊销不存在的 key 返回错误。
 #[tokio::test]
 async fn revoke_nonexistent_returns_error() {
     let handler = make_handler();
@@ -180,11 +172,9 @@ async fn revoke_nonexistent_returns_error() {
     }
 }
 
-// ========================================================================
 // rotate 测试
-// ========================================================================
 
-/// 成功轮换）。
+/// 成功轮换。
 #[tokio::test]
 async fn rotate_success() {
     let handler = make_handler();
@@ -205,7 +195,7 @@ async fn rotate_success() {
     assert_eq!(info.scopes, vec!["read".to_string()]);
 }
 
-/// 轮换不存在的 key 返回错误）。
+/// 轮换不存在的 key 返回错误。
 #[tokio::test]
 async fn rotate_nonexistent_returns_error() {
     let handler = make_handler();
@@ -213,13 +203,9 @@ async fn rotate_nonexistent_returns_error() {
     assert!(result.is_err());
 }
 
-// ========================================================================
 // MockDao 方法覆盖测试
-// ========================================================================
 
-/// 验证 MockDao::expire 和 delete 方法可正常调用。
-///
-/// 覆盖 MockDao 的 expire 和 delete trait 方法（此前测试未直接调用）。
+/// 验证 MockDao::expire 和 delete 方法可正常调用（覆盖 trait 方法）。
 #[tokio::test]
 async fn mock_dao_expire_and_delete_covered() {
     let dao = MockDao::new();
@@ -260,9 +246,7 @@ async fn rotate_revoked_key_returns_error() {
     assert!(result.is_err());
 }
 
-// ========================================================================
 // LoginId newtype 接入（impl Into<LoginId>）
-// ========================================================================
 
 /// 验证 `ApiKeyHandler::generate` 接受 String 形式 login_id。
 #[tokio::test]
@@ -276,9 +260,7 @@ async fn generate_accepts_login_id_numeric() {
     assert_eq!(info.login_id, "1001");
 }
 
-// ========================================================================
 // API Key Namespace
-// ========================================================================
 
 /// ApiKeyInfo 序列化包含 namespace 字段。
 #[test]
@@ -407,7 +389,7 @@ async fn verify_without_namespace_scans_all_namespaces() {
     assert_eq!(info.namespace, "internal");
 }
 
-/// Constraints: namespace 验证——空字符串、过长、非法字符都应返回 InvalidParam
+/// namespace 校验：空字符串、过长、非法字符与保留 `idx` 均返回 InvalidParam。
 #[tokio::test]
 async fn generate_with_namespace_validates_namespace() {
     let handler = make_handler();
@@ -452,9 +434,7 @@ async fn generate_with_namespace_validates_namespace() {
     assert!(r.is_ok(), "含 _ - 数字 的 namespace 应通过");
 }
 
-// ========================================================================
 // 覆盖率补充：错误分支与边界路径
-// ========================================================================
 
 /// CWE-916：`public_key_ref` 用于事件广播 / 审计日志，绝不得暴露 key_secret。
 ///
@@ -544,15 +524,8 @@ async fn verify_returns_internal_error_when_json_invalid() {
     );
 }
 
-/// 验证 verify 在 value 不是有效 JSON 时返回 Internal 错误（见
-/// `verify_returns_internal_error_when_json_invalid`）。
-///
-/// 注：`secret_hash` 为必填字段，缺失即反序列化失败（fail-closed），
-/// 不存在可校验的空 `secret_hash` 状态。
-///
-/// 验证 revoke 在 value 不是有效 JSON 时返回 Internal 错误。
-///
-/// 覆盖 revoke_at 的反序列化失败分支。
+/// revoke 在存储 value 为非法 JSON 时返回 Internal 错误
+/// （覆盖 revoke_at 的反序列化失败分支）。
 #[tokio::test]
 async fn revoke_returns_internal_error_when_json_invalid() {
     let dao = Arc::new(MockDao::new());
@@ -574,11 +547,9 @@ async fn revoke_returns_internal_error_when_json_invalid() {
     );
 }
 
-// ========================================================================
-// E4 修复验证：API Key 反向索引 O(1) 查询
-// ========================================================================
+// 反向索引 O(1) 查询验证
 
-/// E4: 验证 `idx_key_for` helper 返回正确的索引 key 格式。
+/// `idx_key_for` 返回正确的索引 key 格式。
 #[test]
 fn e4_idx_key_for_returns_correct_format() {
     let key = "abcd1234".repeat(8); // 64 chars
@@ -590,14 +561,9 @@ fn e4_idx_key_for_returns_correct_format() {
     );
 }
 
-/// E4: 验证 handler.rs 源码不再使用 `keys("garrison:apikey:*:<key>")` 全表扫描。
-///
-/// 通过 `include_str!` 读取源文件并检查 `verify` / `revoke` 不再使用
-/// `garrison:apikey:*:` 通配符模式（旧 verify/revoke 的 O(N) 扫描路径）。
-///
-/// `list_by_namespace` 仍合法使用 `keys("garrison:apikey:<namespace>:*")`（用于
-/// 列举指定 namespace 下所有 key，非单点查询），其模式为
-/// `garrison:apikey:<namespace>:*`（通配符在末尾），不在禁用范围。
+/// 源码守卫：handler.rs 不再使用 `"garrison:apikey:*:"` 全表扫描模式（verify/revoke
+/// 旧 O(N) 路径；经 `include_str!` 过滤注释后检查）。`list_by_namespace` 的
+/// `garrison:apikey:<namespace>:*`（通配符在末尾）不在禁用范围。
 #[test]
 fn e4_source_verify_revoke_have_no_keys_scan() {
     let source = include_str!("handler.rs");
@@ -628,10 +594,7 @@ fn e4_source_verify_revoke_have_no_keys_scan() {
     );
 }
 
-/// E4: 验证 `generate_with_namespace` 同步写入反向索引。
-///
-/// 生成 key 后，`garrison:apikey:idx:<key>` 应存在，value 为 dao_key
-/// （`garrison:apikey:<namespace>:<key>`）。
+/// `generate_with_namespace` 同步写入反向索引：idx → dao_key。
 #[tokio::test]
 #[serial_test::serial]
 async fn e4_generate_with_namespace_writes_reverse_index() {
@@ -677,9 +640,7 @@ async fn e4_generate_writes_reverse_index_default_namespace() {
     );
 }
 
-/// E4: 验证 `verify` 通过反向索引找到 key（不再依赖 keys() 扫描）。
-///
-/// 生成 key 后，即使 DAO 中有大量其他 key，verify 也应 O(1) 命中。
+/// verify 经反向索引 O(1) 命中 key（不受 DAO 中大量其他 key 影响）。
 #[tokio::test]
 #[serial_test::serial]
 async fn e4_verify_uses_reverse_index() {
@@ -701,7 +662,7 @@ async fn e4_verify_uses_reverse_index() {
     assert_eq!(info.namespace, "internal");
 }
 
-/// E4: 验证 `revoke` 通过反向索引找到 key。
+/// revoke 经反向索引找到 key。
 #[tokio::test]
 #[serial_test::serial]
 async fn e4_revoke_uses_reverse_index() {
@@ -721,10 +682,7 @@ async fn e4_revoke_uses_reverse_index() {
     );
 }
 
-/// E4: 验证反向索引的 TTL 与主 key 一致。
-///
-/// 使用 `crate::dao::tests::MockDao`（支持 TTL 跟踪）验证索引和主 key 的
-/// 剩余 TTL 接近（均 ≤ timeout 秒）。
+/// 反向索引 TTL 与主 key 一致（用支持 TTL 跟踪的 `crate::dao::tests::MockDao` 验证）。
 #[tokio::test]
 #[serial_test::serial]
 async fn e4_index_has_same_ttl_as_key() {
@@ -769,11 +727,7 @@ async fn e4_index_has_same_ttl_as_key() {
     );
 }
 
-/// E4: 验证 `rotate` 为新 key 写入反向索引。
-///
-/// rotate 后：
-/// - old_key 应被吊销（verify 失败）
-/// - new_key 应有效且反向索引存在
+/// rotate 为新 key 写入反向索引，old_key 被吊销、new_key 有效。
 #[tokio::test]
 #[serial_test::serial]
 async fn e4_rotate_writes_index_for_new_key() {
@@ -798,7 +752,7 @@ async fn e4_rotate_writes_index_for_new_key() {
     assert!(idx_value.is_some(), "E4: rotate 后新 key 的反向索引应存在");
 }
 
-/// E4: 验证多个 namespace 的 key 都有正确的反向索引。
+/// 多个 namespace 的 key 都有正确的反向索引。
 #[tokio::test]
 #[serial_test::serial]
 async fn e4_multiple_namespaces_all_indexed() {
@@ -841,7 +795,7 @@ async fn e4_multiple_namespaces_all_indexed() {
     assert_eq!(handler.verify(&k3).await.unwrap().login_id, "3003");
 }
 
-/// E4: 验证 `verify` 对不存在的 key 返回 InvalidToken（O(1) 路径，无扫描）。
+/// verify 对不存在的 key 返回 InvalidToken（O(1) 路径，无扫描）。
 #[tokio::test]
 async fn e4_verify_nonexistent_key_returns_invalid_token() {
     let handler = make_handler();
@@ -853,7 +807,7 @@ async fn e4_verify_nonexistent_key_returns_invalid_token() {
     );
 }
 
-/// E4: 验证 `revoke` 对不存在的 key 返回 InvalidToken（O(1) 路径，无扫描）。
+/// revoke 对不存在的 key 返回 InvalidToken（O(1) 路径，无扫描）。
 #[tokio::test]
 async fn e4_revoke_nonexistent_key_returns_invalid_token() {
     let handler = make_handler();
@@ -865,10 +819,8 @@ async fn e4_revoke_nonexistent_key_returns_invalid_token() {
     );
 }
 
-/// E4: 验证索引存在但 dao_key 已被删除时，verify 返回 InvalidToken。
-///
-/// 模拟场景：管理员手动 delete 了主 key 但索引残留。verify 经索引取不到
-/// 主记录，fail-closed 返回 InvalidToken。
+/// 索引存在但 dao_key 已被删除（索引残留）：verify 取不到主记录，fail-closed
+/// 返回 InvalidToken。
 #[tokio::test]
 #[serial_test::serial]
 async fn e4_verify_falls_through_when_dao_key_deleted() {
@@ -891,9 +843,7 @@ async fn e4_verify_falls_through_when_dao_key_deleted() {
     );
 }
 
-// ========================================================================
 // CWE-916 哈希存储 + 双段格式 + 归属 + scope 校验 + 密钥管理
-// ========================================================================
 
 /// CWE-916: 存储的 value 不含明文 key_secret，仅含 sha256 哈希。
 #[tokio::test]
@@ -952,7 +902,7 @@ async fn verify_rejects_wrong_secret() {
     );
 }
 
-/// #3: 生成时 owner_id 默认等于 login_id。
+/// 生成时 owner_id 默认等于 login_id。
 #[tokio::test]
 async fn generate_sets_owner_id_to_login_id_by_default() {
     let handler = make_handler();
@@ -961,7 +911,7 @@ async fn generate_sets_owner_id_to_login_id_by_default() {
     assert_eq!(info.owner_id.as_deref(), Some("user-42"));
 }
 
-/// #3: generate_with_options 可显式指定 owner_id。
+/// generate_with_options 可显式指定 owner_id。
 #[tokio::test]
 async fn generate_with_options_sets_explicit_owner_id() {
     let handler = make_handler();
@@ -981,7 +931,7 @@ async fn generate_with_options_sets_explicit_owner_id() {
     assert_eq!(info.rate_limit, Some(100));
 }
 
-/// #6: 启用 allowed_scopes 后，未知 scope 被拒绝。
+/// 启用 allowed_scopes 后，未知 scope 被拒绝。
 #[tokio::test]
 async fn generate_rejects_disallowed_scope() {
     let handler = make_handler().with_allowed_scopes(vec![
@@ -1000,7 +950,7 @@ async fn generate_rejects_disallowed_scope() {
     );
 }
 
-/// #7-b: 启用 last_used 追踪后，verify 成功会记录 last_used_at。
+/// 启用 last_used 追踪后，verify 成功会记录 last_used_at。
 #[tokio::test]
 #[serial_test::serial]
 async fn verify_tracks_last_used_when_enabled() {
@@ -1025,7 +975,7 @@ async fn verify_tracks_last_used_when_enabled() {
     let _ = info0;
 }
 
-/// #7-b: 默认不追踪 last_used（verify 保持只读）。
+/// 默认不追踪 last_used（verify 保持只读）。
 #[tokio::test]
 #[serial_test::serial]
 async fn verify_does_not_track_last_used_by_default() {
@@ -1045,7 +995,7 @@ async fn verify_does_not_track_last_used_by_default() {
     );
 }
 
-/// #7-b: get_keys_older_than 返回从未使用或早于 cutoff 的 key。
+/// get_keys_older_than 返回从未使用或早于 cutoff 的 key。
 #[tokio::test]
 #[serial_test::serial]
 async fn get_keys_older_than_filters_by_last_used() {
@@ -1072,9 +1022,7 @@ async fn get_keys_older_than_filters_by_last_used() {
     assert_eq!(stale[0].login_id, "1001");
 }
 
-// ========================================================================
 // max_age 生命周期策略测试
-// ========================================================================
 
 /// 未设置 max_age 时，verify 正常通过（不检查生命周期）。
 #[tokio::test]
@@ -1141,8 +1089,8 @@ fn apikey_info_requires_created_at_field() {
     );
 }
 
-/// T017：默认构造下无命名空间 verify() 被 fail-closed 拒绝；
-/// verify_with_namespace 不受影响；with_allow_global_verify(true) 放开。
+/// 默认构造下无命名空间 `verify()` 被 fail-closed 拒绝；`verify_with_namespace`
+/// 不受影响；`with_allow_global_verify(true)` 放开。
 #[tokio::test]
 async fn global_verify_disabled_by_default() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());

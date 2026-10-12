@@ -1,22 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! GeoIP 地理位置拦截策略。
+//! GeoIP 地理位置拦截策略：`GeoIPStrategy` 用 `CountryLookup` 查 IP 国家码，对照 `allowed_countries`
+//! （白名单）/ `blocked_countries`（黑名单）做拦截决策，白名单优先。
 //!
-//! `GeoIPStrategy` 实现 [`GarrisonFirewallStrategy`](crate::strategy::firewall::GarrisonFirewallStrategy) trait，
-//! 用 [`CountryLookup`](crate::strategy::firewall::geo::CountryLookup) trait 抽象 IP → 国家码查询，
-//! 对照 `allowed_countries`（白名单）/ `blocked_countries`（黑名单）做拦截决策。
-//!
-//! # 算法（白名单优先）
-//!
-//! 1. `allowed_countries` 非空（白名单模式）：仅允许列表内国家，其他（含无法定位的 IP）拦截
-//! 2. `allowed_countries` 为空且 `blocked_countries` 非空（黑名单模式）：拦截列表内国家，其他放行
-//! 3. 两者均为空：全部放行（默认开放）
-//!
-//! # 与 AnomalousLoginStrategy 的区分
-//!
-//! - `AnomalousLoginStrategy` 用 [`GeoLookup`](crate::strategy::firewall::geo::GeoLookup)（IP → 坐标）算 haversine 距离
-//! - `GeoIPStrategy` 用 [`CountryLookup`](crate::strategy::firewall::geo::CountryLookup)（IP → 国家码）做 allow/block 匹配
+//! 白名单非空时仅允许列表内国家（无法定位的 IP 也拦截）；白名单为空且黑名单非空时拦截列表内国家；
+//! 两者均空全部放行。`AnomalousLoginStrategy` 则用 `GeoLookup` 坐标算 haversine 距离。
 
 use super::geo::CountryLookup;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -24,12 +13,9 @@ use crate::strategy::firewall::{FirewallContext, GarrisonFirewallStrategy};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-/// GeoIP 拦截配置。
+/// GeoIP 拦截配置；不含 `db_path`（属 `GeoMatcherCountryLookup` 构造参数，经 [`CountryLookup`] trait 注入）。
 ///
-/// 不含 `db_path`（db_path 属于 `GeoMatcherCountryLookup` 构造参数，
-/// 通过 [`CountryLookup`] trait 注入到 [`GeoIPStrategy`]）。
-///
-/// 国家码比较大小写不敏感（ISO 3166-1 alpha-2，如 `"CN"` / `"US"`）。
+/// 国家码比较大小写不敏感（ISO 3166-1 alpha-2）。
 #[derive(Debug, Clone, Default)]
 pub struct GeoIPConfig {
     /// 白名单国家（非空时仅允许列表内国家，其他拦截）。
@@ -38,10 +24,7 @@ pub struct GeoIPConfig {
     pub blocked_countries: Vec<String>,
 }
 
-/// GeoIP 地理位置拦截策略。
-///
-/// 持有 [`CountryLookup`] trait 抽象（依赖注入），生产用 `GeoMatcherCountryLookup`，
-/// 测试用 `MockCountryLookup`。
+/// GeoIP 地理位置拦截策略：持有 [`CountryLookup`] trait 抽象（依赖注入，生产用 `GeoMatcherCountryLookup`，测试用 `MockCountryLookup`）。
 ///
 /// # 构造
 ///
@@ -63,10 +46,6 @@ pub struct GeoIPStrategy {
 
 impl GeoIPStrategy {
     /// 创建 GeoIP 拦截策略实例。
-    ///
-    /// # 参数
-    /// - `config`: 配置（白名单 / 黑名单国家列表）。
-    /// - `country_lookup`: IP → 国家码查询抽象（生产用 `GeoMatcherCountryLookup`，测试用 mock）。
     pub fn new(config: GeoIPConfig, country_lookup: Arc<dyn CountryLookup>) -> Self {
         Self {
             config,
@@ -80,12 +59,9 @@ impl GeoIPStrategy {
     }
 }
 
-/// IP 地址脱敏：IPv4 保留前 2 段 + `.*.*`，IPv6 保留前 3 组 + `:*`。
-///
-/// 用于错误消息中避免泄露完整 IP 地址（PII）。
+/// IP 地址脱敏：IPv4 保留前 2 段 + `.*.*`，IPv6 保留前 3 组 + `:*`（错误消息中避免泄露完整 IP）。
 fn mask_ip(ip: &str) -> String {
     if ip.contains(':') {
-        // IPv6：保留前 3 组
         let parts: Vec<&str> = ip.split(':').collect();
         if parts.len() >= 3 {
             format!("{}:{}:{}:*", parts[0], parts[1], parts[2])
@@ -93,7 +69,6 @@ fn mask_ip(ip: &str) -> String {
             "*:*:*".to_string()
         }
     } else {
-        // IPv4：保留前 2 段
         let parts: Vec<&str> = ip.split('.').collect();
         if parts.len() >= 2 {
             format!("{}.{}.*.*", parts[0], parts[1])
@@ -300,11 +275,10 @@ mod tests {
         );
     }
 
-    /// 验证白名单模式拦截无法定位的 IP：allowed=["CN"] 时，IP 无法定位返回 FirewallBlocked
-    ///（白名单模式下不在列表内的都拦截，含 None）。
+    /// 验证白名单模式拦截无法定位的 IP：allowed=["CN"] 且 IP 无记录。
     #[tokio::test]
     async fn geoip_blocks_unknown_ip_in_whitelist_mode() {
-        let lookup: Arc<dyn CountryLookup> = Arc::new(MockCountryLookup::new()); // 无记录
+        let lookup: Arc<dyn CountryLookup> = Arc::new(MockCountryLookup::new());
         let config = GeoIPConfig {
             allowed_countries: vec!["CN".into()],
             blocked_countries: vec![],
@@ -320,11 +294,10 @@ mod tests {
         );
     }
 
-    /// 验证黑名单模式放行无法定位的 IP：blocked=["XX"] 时，IP 无法定位放行
-    ///（黑名单模式下无匹配的都放行）。
+    /// 验证黑名单模式放行无法定位的 IP：blocked=["XX"] 且 IP 无记录。
     #[tokio::test]
     async fn geoip_allows_unknown_ip_in_blacklist_mode() {
-        let lookup: Arc<dyn CountryLookup> = Arc::new(MockCountryLookup::new()); // 无记录
+        let lookup: Arc<dyn CountryLookup> = Arc::new(MockCountryLookup::new());
         let config = GeoIPConfig {
             allowed_countries: vec![],
             blocked_countries: vec!["XX".into()],
@@ -338,14 +311,13 @@ mod tests {
         );
     }
 
-    /// 验证国家码大小写不敏感：allowed=["cn"] 时，IP 解析为 "CN" 放行
-    ///（ISO 3166-1 alpha-2 大小写不敏感比较）。
+    /// 验证国家码大小写不敏感：allowed=["cn"] 应匹配解析结果 "CN"。
     #[tokio::test]
     async fn geoip_country_code_case_insensitive() {
         let lookup: Arc<dyn CountryLookup> =
             Arc::new(MockCountryLookup::new().with("1.2.3.4", "CN"));
         let config = GeoIPConfig {
-            allowed_countries: vec!["cn".into()], // 小写
+            allowed_countries: vec!["cn".into()],
             blocked_countries: vec![],
         };
         let strategy = GeoIPStrategy::new(config, lookup);

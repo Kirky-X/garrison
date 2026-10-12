@@ -5,13 +5,6 @@
 //!
 //! 实现 `GarrisonContext` / `GarrisonRequest` / `GarrisonResponse` / `GarrisonStorage` trait，
 //! 将 Garrison 鉴权逻辑与 warp Web 框架解耦。
-//!
-//! ## 设计
-//!
-//! - `WarpRequest` 持有 `warp::http::HeaderMap` + path + method（克隆数据，owned）
-//! - `WarpResponse` 持有 `HeaderMap + StatusCode`
-//! - `WarpStorage` 用 `HashMap<String, String>`
-//! - `WarpContext` 组合 `WarpRequest + WarpResponse + WarpStorage`
 
 use crate::config::GarrisonConfig;
 use crate::context::token_extract::{extract_token_from_request_parts, parse_cookie_value};
@@ -21,38 +14,23 @@ use std::collections::HashMap;
 use warp::http::header::{HeaderMap, HeaderName, HeaderValue};
 use warp::http::StatusCode;
 
-// ============================================================================
 // WarpRequest：持有 path + method + HeaderMap（owned）
-// ============================================================================
 
-/// warp 请求适配器，持有 path / method / HeaderMap（owned）。
+/// warp 请求适配器，持有 owned 的 path / method / HeaderMap。
 ///
-/// # 设计
-///
-/// 与 `ActixRequest`（持有引用）不同，`WarpRequest` 持有 owned 数据，
-/// 因为 warp 的 Filter 体系通常在中间件层就已提取出 HeaderMap。
+/// 与 `ActixRequest`（持引用）不同：warp 的 Filter 体系通常在中间件层已提取出 HeaderMap。
 pub struct WarpRequest {
     path: String,
     method: String,
     headers: HeaderMap,
-    /// 预读的 body 字节（用于 `is_read_body=true` 时从 JSON 提取 token）。
+    /// 预读的 body 字节（`is_read_body=true` 时从 JSON 提取 token）；默认空 `Vec`，此时 body 分支跳过。
     ///
-    /// body 读取是 async 操作，但 `get_token` 是 sync 方法，故由调用方在
-    /// async 上下文中预读 body 字节后通过 `with_body` 注入。
-    /// 默认空 `Vec`（`new` 构造时），此时 body 读取分支静默跳过。
+    /// body 读取是 async 操作而 `get_token` 是 sync 方法，故由调用方在 async 上下文中预读后经 `with_body` 注入。
     body_bytes: Vec<u8>,
 }
 
 impl WarpRequest {
     /// 创建新的 WarpRequest（body 为空，不读取 body）。
-    ///
-    /// # 参数
-    /// - `path`: 请求路径（如 `/api/users`）。
-    /// - `method`: 请求方法（如 `GET` / `POST`）。
-    /// - `headers`: 请求头 `HeaderMap`。
-    ///
-    /// # 返回
-    /// 持有 owned 数据的 `WarpRequest` 实例（`body_bytes` 为空）。
     pub fn new(path: String, method: String, headers: HeaderMap) -> Self {
         Self {
             path,
@@ -62,16 +40,7 @@ impl WarpRequest {
         }
     }
 
-    /// 创建带预读 body 的 WarpRequest（用于 `is_read_body=true` 场景）。
-    ///
-    /// # 参数
-    /// - `path`: 请求路径。
-    /// - `method`: 请求方法。
-    /// - `headers`: 请求头 `HeaderMap`。
-    /// - `body_bytes`: 预读的 body 字节（调用方在 async 上下文中读取后传入）。
-    ///
-    /// # 返回
-    /// 持有 owned 数据与 body 字节的 `WarpRequest` 实例。
+    /// 创建带预读 body 的 WarpRequest（`is_read_body=true` 场景，body 由调用方在 async 上下文读取）。
     pub fn with_body(
         path: String,
         method: String,
@@ -127,9 +96,7 @@ impl GarrisonRequest for WarpRequest {
     }
 }
 
-// ============================================================================
 // WarpResponse：持有 HeaderMap + StatusCode
-// ============================================================================
 
 /// warp 响应适配器，持有 HeaderMap 与 StatusCode。
 pub struct WarpResponse {
@@ -173,9 +140,7 @@ impl GarrisonResponse for WarpResponse {
     }
 }
 
-// ============================================================================
 // WarpStorage：HashMap<String, String>
-// ============================================================================
 
 /// warp 存储适配器，用 HashMap 实现请求级临时存储。
 pub struct WarpStorage {
@@ -213,23 +178,16 @@ impl GarrisonStorage for WarpStorage {
     }
 }
 
-// ============================================================================
 // WarpContext：组合 Request + Response + Storage
-// ============================================================================
 
-/// warp 上下文适配器，组合 Request + Response + Storage。
-///
-/// # 设计
-///
-/// - 持有 `WarpRequest`（owned）+ `WarpResponse` + `WarpStorage`
-/// - 通过 `raw_response_mut()` 写入 status / headers / cookies
-/// - 通过 `raw_storage_mut()` 写入请求级临时数据
+/// warp 上下文适配器，组合 owned 的 `WarpRequest` + `WarpResponse` + `WarpStorage`：
+/// 经 `raw_response_mut()` 写入 status / headers / cookies，经 `raw_storage_mut()` 写入请求级临时数据。
 ///
 /// # body 单一存储
 ///
-/// `body_bytes` 仅存储在 `request_data: WarpRequest` 内部（单一事实来源），
-/// `WarpContext` 不再另行保存外层副本——`with_body()` 将字节直接注入 `WarpRequest::with_body`，
-/// `request()` 从 `request_data` 读取并传递，消除双存储互不一致的脆弱性。
+/// `body_bytes` 仅存于 `request_data: WarpRequest`（单一事实来源），`WarpContext` 不另存外层副本：
+/// `with_body()` 直接注入 `WarpRequest::with_body`，`request()` 从 `request_data` 读取并传递，
+/// 消除双存储互不一致的脆弱性。
 pub struct WarpContext {
     request_data: WarpRequest,
     response: WarpResponse,
@@ -238,15 +196,6 @@ pub struct WarpContext {
 
 impl WarpContext {
     /// 创建新的 WarpContext（body 为空，不读取 body）。
-    ///
-    /// # 参数
-    /// - `path`: 请求路径。
-    /// - `method`: 请求方法。
-    /// - `headers`: 请求头 `HeaderMap`。
-    ///
-    /// # 返回
-    /// 包含请求数据的 `WarpContext` 实例（内部已初始化空的 `WarpResponse` 与 `WarpStorage`，
-    /// `body_bytes` 为空）。
     pub fn new(path: String, method: String, headers: HeaderMap) -> Self {
         Self {
             request_data: WarpRequest::new(path, method, headers),
@@ -255,17 +204,7 @@ impl WarpContext {
         }
     }
 
-    /// 创建带预读 body 的 WarpContext（用于 `is_read_body=true` 场景）。
-    ///
-    /// # 参数
-    /// - `path`: 请求路径。
-    /// - `method`: 请求方法。
-    /// - `headers`: 请求头 `HeaderMap`。
-    /// - `body_bytes`: 预读的 body 字节（调用方在 async 上下文中读取后传入）。
-    ///
-    /// # 返回
-    /// 包含请求数据与 body 字节的 `WarpContext` 实例（body 存储于 `request_data` 内，
-    /// 单一事实来源）。
+    /// 创建带预读 body 的 WarpContext（`is_read_body=true` 场景）；body 存于 `request_data` 内（单一事实来源）。
     pub fn with_body(
         path: String,
         method: String,
@@ -302,8 +241,7 @@ impl WarpContext {
 
 impl GarrisonContext for WarpContext {
     fn request(&self) -> GarrisonResult<Box<dyn GarrisonRequest>> {
-        // WarpRequest 已 owned，直接克隆数据构造新实例。
-        // body_bytes 从 request_data（单一事实来源）读取并正确传递。
+        // WarpRequest 已 owned：克隆数据构造新实例，body_bytes 从 request_data（单一事实来源）传递
         Ok(Box::new(WarpRequest::with_body(
             self.request_data.path.clone(),
             self.request_data.method.clone(),
@@ -334,10 +272,7 @@ mod tests {
         WarpRequest::new(path.to_string(), method.to_string(), make_headers(headers))
     }
 
-    // ========================================================================
     // WarpRequest 测试
-    // ========================================================================
-
     /// 验证 path() 返回请求路径。
     #[test]
     fn warp_request_path() {
@@ -394,7 +329,7 @@ mod tests {
     /// 验证 header() 在 header name 非法时返回 Context 错误。
     #[test]
     fn warp_request_header_invalid_name_errors() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let req = make_warp_request("/", "GET", &[]);
         let result = req.header("invalid header");
@@ -404,10 +339,7 @@ mod tests {
         assert!(err.to_string().contains("非法 header 名称"));
     }
 
-    // ========================================================================
     // get_token 测试
-    // ========================================================================
-
     /// 验证从 Authorization: Bearer 提取 token。
     #[test]
     fn warp_request_get_token_from_header() {
@@ -488,10 +420,7 @@ mod tests {
         assert_eq!(token, None);
     }
 
-    // ========================================================================
     // WarpResponse 测试
-    // ========================================================================
-
     /// 验证 set_status 设置状态码。
     #[test]
     fn warp_response_set_status() {
@@ -548,8 +477,7 @@ mod tests {
         assert!(set_cookie.contains("SameSite=Strict"));
     }
 
-    /// set_cookie_with_config 在 SameSite=None + 非 Secure 上下文下降级为 Lax
-    /// （None→Lax 不变式：浏览器拒收不带 Secure 的 SameSite=None）。
+    /// set_cookie_with_config 在 SameSite=None + 非 Secure 上下文下降级为 Lax（浏览器拒收不带 Secure 的 None）。
     #[test]
     fn warp_response_set_cookie_none_insecure_downgrades_to_lax() {
         let mut resp = WarpResponse::new();
@@ -578,7 +506,7 @@ mod tests {
     /// 验证 set_status 在状态码非法（> 999）时返回 Context 错误。
     #[test]
     fn warp_response_set_status_invalid_code_errors() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let mut resp = WarpResponse::new();
         let result = resp.set_status(1000);
@@ -591,7 +519,7 @@ mod tests {
     /// 验证 set_header 在 header value 非法时返回 Context 错误。
     #[test]
     fn warp_response_set_header_invalid_value_errors() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let mut resp = WarpResponse::new();
         let result = resp.set_header("X-Test", "bad\0value");
@@ -618,10 +546,7 @@ mod tests {
         assert!(resp.headers.is_empty());
     }
 
-    // ========================================================================
     // WarpStorage 测试
-    // ========================================================================
-
     /// 验证 set/get/delete 存储数据。
     #[test]
     fn warp_storage_set_get_delete() {
@@ -662,10 +587,7 @@ mod tests {
         assert_eq!(storage.get("any").unwrap(), None);
     }
 
-    // ========================================================================
     // WarpContext 测试
-    // ========================================================================
-
     /// 验证 GarrisonContext::request() 返回 Box<dyn GarrisonRequest>。
     #[test]
     fn warp_context_request_returns_box() {
@@ -755,10 +677,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // get_token body 读取测试
-    // ========================================================================
-
     /// 验证 is_read_body=true 时从 JSON body 的 token_name 字段提取 token。
     #[test]
     fn extract_token_from_body_when_is_read_body_true() {
@@ -776,15 +695,8 @@ mod tests {
         assert_eq!(token, Some("body_token_456".to_string()));
     }
 
-    // ========================================================================
     // Context 层 body 读取测试
-    // ========================================================================
-
-    /// 验证 `WarpContext::with_body()` 通过 `request()` 传递 `body_bytes`，
-    /// 使 `GarrisonRequest::get_token()` 能从 JSON body 提取 token。
-    ///
-    /// 回归：原 `WarpContext` 缺失 `body_bytes` 字段与 `with_body` 方法，
-    /// `request()` 用 `WarpRequest::new()` 丢弃 body_bytes，导致 Context 层 body 读取功能不可用。
+    /// 验证 `WarpContext::with_body()` 经 `request()` 传递 `body_bytes`，使 `get_token()` 能从 JSON body 提取 token。
     #[test]
     fn warp_context_with_body_extracts_token_from_body() {
         let ctx = WarpContext::with_body(
@@ -806,15 +718,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // C7: body token 提取方法限制测试（防 body 注入攻击）
-    // ========================================================================
-
-    /// C7: GET 方法 + body 含 token + is_read_body=true 应跳过 body 提取。
-    ///
-    /// GET 方法不应从 body 提取 token，否则攻击者可通过构造恶意链接
-    /// （如 `<img src="https://victim.com/api?token=attacker_token">`）
-    /// 在用户不知情的情况下注入恶意 token（CSRF 变种）。
+    /// C7: GET 方法 + body 含 token 应跳过 body 提取：GET 携带 body token 可被恶意链接
+    /// （如 `<img src="https://victim.com/api?token=attacker_token">`）在用户不知情时注入（CSRF 变种）。
     #[test]
     fn c7_warp_request_get_method_skips_body_token() {
         let req = WarpRequest::with_body(
@@ -834,9 +740,7 @@ mod tests {
         );
     }
 
-    /// C7: POST/PUT/PATCH 方法 + body 含 token + is_read_body=true 应正常提取。
-    ///
-    /// 验证三个允许的方法都能正常从 body 提取 token。
+    /// C7: POST/PUT/PATCH 三个方法均应允许从 body 提取 token。
     #[test]
     fn c7_warp_request_post_put_patch_methods_allow_body_token() {
         for method in &["POST", "PUT", "PATCH"] {
@@ -861,9 +765,7 @@ mod tests {
         }
     }
 
-    /// C7: 通过 WarpContext（Wrapper 路径）的 GET 方法也应跳过 body 提取。
-    ///
-    /// 通过 `WarpContext::with_body` + `request()` 验证 GET 方法在 Wrapper 路径下也被拦截。
+    /// C7: 经 WarpContext（Wrapper 路径）的 GET 方法也应跳过 body 提取。
     #[test]
     fn c7_warp_context_get_method_skips_body_token_via_wrapper() {
         let ctx = WarpContext::with_body(

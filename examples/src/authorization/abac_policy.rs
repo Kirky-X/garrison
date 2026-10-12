@@ -10,9 +10,8 @@
 //! cargo run -p garrison-examples --bin abac_policy --features full
 //! ```
 //!
-//! 注意：`check_abac_with_policy` 是宏入口，需要全局引擎初始化 + 登录上下文。
-//! 本示例直接使用 `AbacEngine::evaluate_with_temp_policy` 演示核心求值逻辑，
-//! 避免引入 GarrisonManager 全局状态依赖。
+//! 注意：`check_abac_with_policy` 是宏入口，需要全局引擎初始化 + 登录上下文；
+//! 本示例直接使用 `AbacEngine::evaluate_with_temp_policy` 演示核心求值逻辑，避免引入 GarrisonManager 全局状态依赖。
 
 use garrison::abac::{AbacEngine, EmptyEntityLoader};
 use garrison::error::GarrisonResult;
@@ -50,14 +49,8 @@ const SCHEMA_JSON: &str = r#"{
     }
 }"#;
 
-/// 运行 ABAC 策略示例。
-///
-/// 演示：
-/// 1. 从 JSON schema 创建 AbacEngine
-/// 2. 使用临时策略求值：条件 `1 == 1` → Allow
-/// 3. 使用临时策略求值：条件 `1 == 2` → Deny
-/// 4. 加载共享 permit 策略后求值 → Allow
-/// 5. 卸载策略后求值 → Deny
+/// 运行 ABAC 策略示例：从 JSON schema 创建 AbacEngine，演示临时策略求值
+/// （`1 == 1` → Allow、`1 == 2` → Deny）与共享策略加载/卸载后的求值。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison ABAC 策略示例 ===\n");
 

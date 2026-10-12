@@ -13,9 +13,7 @@ use super::{AlertListener, SecurityAlertEvent};
 #[cfg(test)]
 use super::AnomalyType;
 
-/// 基于 `tracing` 的告警监听器，将告警事件记录到日志。
-///
-/// 这是默认的告警监听器实现，通过 `tracing::warn!` 记录所有安全告警事件。
+/// 基于 `tracing` 的默认告警监听器，将告警事件经 `tracing::warn!` 记录到日志；
 /// 业务方可实现 `AlertListener` trait 替换为其他处理方式（如写入数据库、发送 web-hook）。
 #[derive(Debug, Default)]
 pub struct TracingAlertListener;
@@ -42,7 +40,8 @@ impl AlertListener for TracingAlertListener {
                     anomaly_type = ?anomaly_type,
                     detail = %detail,
                     trace_id = %trace_id,
-                    "异常登录告警"
+                    "{}",
+                    crate::i18n::translate_detail("logs-alert-anomaly-login", &[])
                 );
             },
             SecurityAlertEvent::NewDeviceLogin {
@@ -54,7 +53,8 @@ impl AlertListener for TracingAlertListener {
                     login_id = %login_id,
                     device_id = %device_id,
                     ip = ?ip,
-                    "新设备登录告警"
+                    "{}",
+                    crate::i18n::translate_detail("logs-alert-new-device-login", &[])
                 );
             },
             SecurityAlertEvent::DisableTriggered {
@@ -66,7 +66,8 @@ impl AlertListener for TracingAlertListener {
                     login_id = %login_id,
                     service = %service,
                     level = level,
-                    "封禁触发告警"
+                    "{}",
+                    crate::i18n::translate_detail("logs-alert-disable-triggered", &[])
                 );
             },
             SecurityAlertEvent::PrivilegeEscalation {
@@ -78,7 +79,8 @@ impl AlertListener for TracingAlertListener {
                     login_id = %login_id,
                     old_roles = ?old_roles,
                     new_roles = ?new_roles,
-                    "权限提升告警"
+                    "{}",
+                    crate::i18n::translate_detail("logs-alert-privilege-escalation", &[])
                 );
             },
             SecurityAlertEvent::SensitiveOperation {
@@ -90,7 +92,8 @@ impl AlertListener for TracingAlertListener {
                     login_id = %login_id,
                     operation = %operation,
                     resource = %resource,
-                    "敏感操作告警"
+                    "{}",
+                    crate::i18n::translate_detail("logs-alert-sensitive-operation", &[])
                 );
             },
         }
@@ -98,18 +101,10 @@ impl AlertListener for TracingAlertListener {
     }
 }
 
-/// 审计日志告警监听器，将告警事件持久化到 DAO。
+/// 审计日志告警监听器，将告警事件序列化为 JSON 持久化到 DAO，key 格式 `audit:alert:{trace_id_or_uuid}`。
 ///
-/// 将 `SecurityAlertEvent` 序列化为 JSON 写入 `GarrisonDao`，
-/// key 格式 `audit:alert:{trace_id_or_uuid}`。
-/// 用于安全告警的持久化审计追踪。
-///
-/// # 错误处理
-///
-/// 与 `TracingAlertListener` 不同，`on_alert` 写入 DAO 失败时返回 `Err`，
-/// 由 [`AlertListenerManager::broadcast_alert`](crate::strategy::alert::AlertListenerManager::broadcast_alert)
-/// 捕获并记录 `tracing::warn!` 日志。审计失败不会中断告警广播，但会在日志中显性记录。
-/// 这确保了审计日志的持久化失败不会被完全静默吞掉，同时不阻断其他监听器的执行。
+/// 与 `TracingAlertListener` 不同，`on_alert` 写入失败时返回 `Err`，由 `AlertListenerManager::broadcast_alert`
+/// 记录 `tracing::warn!`：审计失败显性留痕、不静默吞掉，也不中断其他监听器。
 pub struct AuditAlertListener {
     /// DAO 实例，用于持久化审计日志条目。
     dao: Arc<dyn GarrisonDao>,
@@ -118,10 +113,7 @@ pub struct AuditAlertListener {
 }
 
 impl AuditAlertListener {
-    /// 创建新的 `AuditAlertListener`，TTL 默认 86400 秒（24 小时）。
-    ///
-    /// # 参数
-    /// - `dao`: DAO 实例（`Arc<dyn GarrisonDao>`），用于写入审计日志。
+    /// 创建 `AuditAlertListener`，TTL 默认 86400 秒（24 小时）。
     pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self {
             dao,
@@ -129,11 +121,7 @@ impl AuditAlertListener {
         }
     }
 
-    /// 创建新的 `AuditAlertListener`，指定自定义 TTL。
-    ///
-    /// # 参数
-    /// - `dao`: DAO 实例（`Arc<dyn GarrisonDao>`）。
-    /// - `ttl_seconds`: 审计日志存活秒数（0 表示永久驻留）。
+    /// 创建 `AuditAlertListener`，指定自定义 TTL（0 表示永久驻留）。
     pub fn with_ttl(dao: Arc<dyn GarrisonDao>, ttl_seconds: u64) -> Self {
         Self { dao, ttl_seconds }
     }
@@ -142,8 +130,7 @@ impl AuditAlertListener {
 #[async_trait]
 impl AlertListener for AuditAlertListener {
     async fn on_alert(&self, event: &SecurityAlertEvent) -> GarrisonResult<()> {
-        // AnomalyLogin 变体使用事件自带的 trace_id 作为 identifier，
-        // 其他变体生成新的 UUID 作为 identifier。
+        // AnomalyLogin 用事件自带 trace_id 作 identifier,其他变体生成新 UUID。
         let identifier = match event {
             SecurityAlertEvent::AnomalyLogin { trace_id, .. } => trace_id.clone(),
             _ => uuid::Uuid::new_v4().to_string(),
@@ -159,9 +146,7 @@ impl AlertListener for AuditAlertListener {
 mod tests {
     use super::*;
 
-    // ========================================================================
     // on_alert 各变体返回 Ok 测试（验证 match 分支穷尽性 + 不 panic）
-    // ========================================================================
 
     /// `on_alert` 处理 `AnomalyLogin` 事件返回 `Ok(())`。
     #[tokio::test]
@@ -229,9 +214,7 @@ mod tests {
         assert!(result.is_ok(), "SensitiveOperation 事件应返回 Ok");
     }
 
-    // ========================================================================
     // AuditAlertListener 测试
-    // ========================================================================
 
     /// `new()` 返回 `AuditAlertListener` 实例。
     #[test]
@@ -253,7 +236,6 @@ mod tests {
             trace_id: "trace-007".to_string(),
         };
         listener.on_alert(&event).await.unwrap();
-        // AnomalyLogin 使用 trace_id 作为 key identifier
         let json = dao.get("audit:alert:trace-007").await.unwrap();
         assert!(
             json.is_some(),

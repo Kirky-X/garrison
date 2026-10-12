@@ -72,9 +72,7 @@ fn assert_error_text(err: &GarrisonError, text: &str) {
     assert!(rendered.contains(text), "应含 {text:?}，实际: {rendered}");
 }
 
-// ============================================================================
-// 构造校验与 serde（T003）
-// ============================================================================
+// 构造校验与 serde
 
 /// 空 secret 拒绝构造，错误为 InvalidParam。
 #[tokio::test]
@@ -105,7 +103,6 @@ async fn new_accepts_32_byte_secret() {
     );
 }
 
-/// QrLoginSessionData serde 往返相等。
 #[test]
 fn session_data_serde_roundtrip() {
     let data = QrLoginSessionData {
@@ -139,9 +136,7 @@ fn session_data_tenant_defaults_to_zero() {
     assert_eq!(data.web.created_at_ms, 0);
 }
 
-// ============================================================================
-// create / scan / confirm / poll 状态机（T004-T007）
-// ============================================================================
+// create / scan / confirm / poll 状态机
 
 /// create 返回可验签的 qr_content，会话落盘为 Pending。
 #[tokio::test]
@@ -397,8 +392,7 @@ async fn poll_outcomes_and_post_exchange_confirm() {
     assert_error_text(&err, "confirm token is invalid");
 }
 
-/// confirm：Cancel 后重放同一 confirm_token 返回 confirm-token-invalid
-///（原子消费先于状态检查，fail-closed——回归钉住 T015 收敛缺口）。
+/// confirm：Cancel 后重放同一 confirm_token 失败（原子消费先于状态检查，fail-closed）。
 #[tokio::test]
 async fn confirm_replay_after_cancel_fails_fail_closed() {
     let svc = service();
@@ -461,8 +455,7 @@ async fn poll_bind_token_replay_is_expired() {
     );
 }
 
-/// R-qrlogin-005 复查补证：scan/confirm 传入的 app_context 真实进入广播事件的
-/// request_context（此前零覆盖，converge PASS 无证据——listener feature 下验证）。
+/// scan/confirm 的 app_context 应进入广播事件的 request_context（listener feature 下验证）。
 #[cfg(all(feature = "listener", feature = "protocol-qrlogin"))]
 mod app_context_event_tests {
     use super::*;
@@ -549,9 +542,7 @@ mod app_context_event_tests {
     }
 }
 
-// ========================================================================
 // Debug 脱敏 / 设备标签解析 / poll 防御分支
-// ========================================================================
 
 /// Debug 输出脱敏：secret 与 HMAC 密钥不得进 Debug（CWE-532）。
 #[test]

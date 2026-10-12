@@ -1,23 +1,14 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 契约测试套件的后端实例化矩阵。
-//!
-//! 每条 [`crate::dao_conformance_tests!`] invocation 声明一个后端的能力层清单，
+//! 契约测试套件的后端实例化矩阵：每条 [`crate::dao_conformance_tests!`] invocation 声明一个后端的能力层清单，
 //! 由同一把尺子（`conformance::run_*`）逐一检验；仅 `cfg(test)` 下编译运行。
 //!
-//! 矩阵：
-//! - `in_memory`：`[basic, atomic, concurrent, ttl, keys]`（无 feature 依赖）
-//! - `oxcache_memory`：`[basic, atomic, concurrent, ttl]`（`cache-memory`）
-//!   + `oxcache_memory_keys` 独立块挂 `keys`（`dao-key-index`，由
-//!     `protocol-apikey` / `anomalous-detector-dual` 传递；`full` 自动含，
-//!     `production` 无此 feature 时不编译，`keys()` 的 `NotImplemented` 行为
-//!     由既有 `dao::tests` 的分层断言覆盖）
-//! - `dbnexus_sqlite`：`[basic, atomic, concurrent, ttl]`（`db-sqlite`）——
-//!   KV 委托进程内 `InMemoryDao`，不触 SQL 表故不跑迁移
+//! - `in_memory`：[basic, atomic, concurrent, ttl, keys]（无 feature 依赖）
+//! - `oxcache_memory`：[basic, atomic, concurrent, ttl]（`cache-memory`）；`oxcache_memory_keys` 独立块挂 keys（`dao-key-index`）
+//! - `dbnexus_sqlite`：[basic, atomic, concurrent, ttl]（KV 委托进程内 `InMemoryDao`，不触 SQL 表故不跑迁移）
 //! - `dbnexus_postgres`：同 caps（`#[ignore]` + `DATABASE_URL`，`#[serial]`）
-//! - `alone_cache`：`[basic, atomic]`（`alone-cache`）——装饰器纯委托，
-//!   concurrent/ttl 由内层 InMemoryDao 证明，控制墙钟门禁时长
+//! - `alone_cache`：[basic, atomic]（装饰器纯委托，concurrent/ttl 由内层 InMemoryDao 证明）
 
 crate::dao_conformance_tests! {
     backend: in_memory,
@@ -57,9 +48,7 @@ crate::dao_conformance_tests! {
 crate::dao_conformance_tests! {
     backend: dbnexus_sqlite,
     make: || async {
-        let pool = // cache=shared 命名内存库：池的多个连接共享同一库（`sqlite::memory:` 在
-// Windows 下池开新连接会得到空库，迁移建表后查询报 no such table——
-// 2026-10-08 Windows CI 实证；shared cache 使全部连接看到迁移产物）。
+        let pool = // cache=shared 命名内存库：池内多连接共享同一库（`sqlite::memory:` Windows 下开新连接得到空库，迁移建表后查询报 no such table，2026-10-08 Windows CI 实证）
     crate::dao::init_dbnexus("sqlite:file:garrison_dao_conformance_mem?mode=memory&cache=shared").await?;
         Ok(::std::sync::Arc::new(crate::dao::GarrisonDaoDbnexus::new(
             pool,
@@ -87,18 +76,12 @@ crate::dao_conformance_tests! {
     ignore: "requires DATABASE_URL",
 }
 
-/// refresh token 轮换层契约（dbnexus sqlite 实例）。
-///
-/// RefreshTokenRotation 为 SQL 直连层（非 `GarrisonDao` KV 门面），故不走
-/// `dao_conformance_tests!` 宏，而以独立测试挂同一把尺子
-/// （[`crate::dao::testing::conformance::run_refresh_token_rotation`]）；
-/// 调用方先行迁移，契约组内含失败注入（触发器）与恢复断言。
+/// refresh token 轮换层契约（dbnexus sqlite）：`RefreshTokenRotation` 为 SQL 直连层，不走 `dao_conformance_tests!`，
+/// 以独立测试挂 [`crate::dao::testing::conformance::run_refresh_token_rotation`]（调用方先行迁移，契约组内含失败注入与恢复断言）。
 #[cfg(all(test, feature = "db-sqlite", feature = "protocol-jwt"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn refresh_token_rotation_contract_dbnexus_sqlite() {
-    let pool = // cache=shared 命名内存库：池的多个连接共享同一库（`sqlite::memory:` 在
-// Windows 下池开新连接会得到空库，迁移建表后查询报 no such table——
-// 2026-10-08 Windows CI 实证；shared cache 使全部连接看到迁移产物）。
+    let pool = // cache=shared 命名内存库：池内多连接共享同一库（`sqlite::memory:` Windows 下开新连接得到空库，迁移建表后查询报 no such table，2026-10-08 Windows CI 实证）
     crate::dao::init_dbnexus("sqlite:file:garrison_refresh_rotation_mem?mode=memory&cache=shared")
         .await
         .expect("init_dbnexus 应成功");
@@ -126,17 +109,12 @@ crate::dao_conformance_tests! {
     caps: [basic, atomic],
 }
 
-/// WebAuthn 凭据 repository 契约（dbnexus sqlite 实例）。
-///
-/// 与 refresh_token_rotation 契约同模式：repository 为 SQL 直连层，不走
-/// `dao_conformance_tests!` 宏，以独立测试挂契约组
-/// （[`crate::dao::testing::conformance::run_webauthn_credential_repository`]）。
+/// WebAuthn 凭据 repository 契约（dbnexus sqlite）：repository 为 SQL 直连层，不走 `dao_conformance_tests!`，
+/// 以独立测试挂 [`crate::dao::testing::conformance::run_webauthn_credential_repository`]。
 #[cfg(all(test, feature = "db-sqlite", feature = "protocol-webauthn"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn webauthn_credential_repository_contract_dbnexus_sqlite() {
-    let pool = // cache=shared 命名内存库：池的多个连接共享同一库（`sqlite::memory:` 在
-// Windows 下池开新连接会得到空库，迁移建表后查询报 no such table——
-// 2026-10-08 Windows CI 实证；shared cache 使全部连接看到迁移产物）。
+    let pool = // cache=shared 命名内存库：池内多连接共享同一库（`sqlite::memory:` Windows 下开新连接得到空库，迁移建表后查询报 no such table，2026-10-08 Windows CI 实证）
     crate::dao::init_dbnexus("sqlite:file:garrison_webauthn_mem?mode=memory&cache=shared")
         .await
         .expect("init_dbnexus 应成功");

@@ -3,38 +3,24 @@
 
 //! 敏感数据脱敏子模块。
 //!
-//! 提供 `SensitiveDataMasker` 对手机号 / 身份证 / 邮箱 / 银行卡等敏感字段进行脱敏，
-//! 支持对 `serde_json::Value` 递归脱敏。
-//!
-//! - `MaskType` 枚举定义脱敏类型，`SensitiveDataMasker` 持有 `(MaskType, field_name)` 规则列表
-//! - `mask_value` 对单个字符串值按指定类型脱敏
-//! - `mask_json` 递归遍历 JSON Object，匹配 field 名后调用 `mask_value`
-//! - `Custom(String)` 变体使用 `regex::Regex` 将所有匹配项替换为 `***`
+//! `MaskType` 定义脱敏类型，`SensitiveDataMasker` 持 `(MaskType, field_name)` 规则列表；
+//! `mask_value` 按类型脱敏单值，`mask_json` 递归遍历 JSON Object 匹配字段名脱敏
+//! （`Custom` 变体用 `regex::Regex` 将全部匹配替换为 `***`）。
 
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-/// 正则编译缓存上限（防止动态构造的 pattern 无界增长占满内存）。
-///
-/// pattern 来自配置/代码（非用户输入），正常运行时去重后的 pattern 数远小于此值；
-/// 超过上限后新 pattern 仍可编译（只是不入缓存），不影响正确性。
+/// 正则编译缓存上限（防止动态 pattern 无界增长）；pattern 来自配置/代码，超限后新 pattern 仍即时编译，只是不入缓存。
 const REGEX_CACHE_CAP: usize = 256;
 
-/// 进程级正则编译缓存：pattern → 编译结果（`Regex` 内部为 Arc，clone 廉价）。
-///
-/// `MaskType::Custom` 每次匹配同一 pattern 时复用编译结果，消除
-/// `mask_value`/`mask_json` 热路径上的重复 `Regex::new` 开销（regex 编译代价远高于匹配）。
+/// 进程级正则编译缓存：`Custom` 复用编译结果（`Regex` 内部为 Arc，clone 廉价），消除 `mask_value`/`mask_json` 热路径上的重复 `Regex::new`。
 fn regex_cache() -> &'static Mutex<HashMap<String, regex::Regex>> {
     static CACHE: OnceLock<Mutex<HashMap<String, regex::Regex>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// 脱敏类型枚举。
-///
-/// 定义常见敏感字段的脱敏策略。`Custom` 变体存储正则模式字符串，
-/// 使用 `regex::Regex` 将所有匹配项替换为 `***`；正则编译失败时记录
-/// `tracing::error!` 并返回 `"***"` 作为安全 fallback（fail-closed，避免泄露原值）。
+/// 脱敏类型。`Custom` 存正则模式，编译失败时记录 `tracing::error!` 并返回 `"***"`（fail-closed，避免泄露原值）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MaskType {
     /// 手机号（11 位）：保留前 3 后 4，中间 `*` 填充，如 `138****1234`。
@@ -49,9 +35,7 @@ pub enum MaskType {
     Custom(String),
 }
 
-/// 敏感数据脱敏器。
-///
-/// 持有 `(MaskType, field_name)` 规则列表，对 JSON Object 递归脱敏。
+/// 敏感数据脱敏器：按 `(MaskType, field_name)` 规则列表对 JSON Object 递归脱敏。
 ///
 /// # 示例
 ///
@@ -67,11 +51,7 @@ pub enum MaskType {
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct SensitiveDataMasker {
-    /// 字段名 → 首个匹配规则（`with_rule` 时构建，O(1) 查找，替代原
-    /// `rules.iter().find()` 的 O(n×m) 线性扫描）。
-    ///
-    /// 保留"首个匹配规则生效"语义（与原 `iter().find()` 一致）：
-    /// 同一字段名多次添加规则时，以最先添加的为准。
+    /// 字段名 → 首个匹配规则（`with_rule` 构建，O(1) 查找）；同一字段名多次添加规则时以最先添加者为准。
     index: HashMap<&'static str, MaskType>,
 }
 
@@ -81,28 +61,13 @@ impl SensitiveDataMasker {
         Self::default()
     }
 
-    /// 添加脱敏规则（builder 模式）。
-    ///
-    /// 同一字段名重复添加时，保留首个规则（与 [`mask_field`](Self::mask_field)
-    /// 原"首个匹配生效"语义一致）。
-    ///
-    /// # 参数
-    /// - `mask_type`: 脱敏类型。
-    /// - `field_name`: JSON Object 中需脱敏的字段名（`&'static str`）。
+    /// 添加脱敏规则（builder 模式）；同一字段名重复添加时保留首个规则。
     pub fn with_rule(mut self, mask_type: MaskType, field_name: &'static str) -> Self {
         self.index.entry(field_name).or_insert(mask_type);
         self
     }
 
-    /// 对单个字符串值按指定脱敏类型脱敏。
-    ///
-    /// # 参数
-    /// - `value`: 待脱敏的字符串。
-    /// - `mask_type`: 脱敏类型。
-    ///
-    /// # 返回
-    /// 脱敏后的字符串。`Custom` 类型正则编译失败时返回 `"***"`（安全 fallback，
-    /// 避免泄露原值）并记录 `tracing::error!`；其他类型不满足最小长度要求时返回原值。
+    /// 按类型脱敏单个字符串。`Custom` 正则编译失败返回 `"***"` 并记 `tracing::error!`（安全 fallback）；其他类型不满足最小长度时返回原值。
     pub fn mask_value(&self, value: &str, mask_type: &MaskType) -> String {
         match mask_type {
             MaskType::Phone => mask_phone(value),
@@ -113,23 +78,9 @@ impl SensitiveDataMasker {
         }
     }
 
-    /// 按 field 名匹配规则脱敏单个值。
+    /// 按字段名匹配规则脱敏；无匹配规则返回原值，`Custom` 正则无效返回 `"***"`。
     ///
-    /// 遍历规则列表，找到第一个 field 名匹配的规则，按其 MaskType 脱敏。
-    /// 无匹配规则时返回原值。
-    ///
-    /// # 错误处理
-    ///
-    /// `mask_value` 始终返回 `String`（fail-closed 设计：Custom regex 无效时
-    /// 返回 `"***"` 而非错误）。因此本方法不会失败，保持 `String` 返回类型，
-    /// 不破坏外部调用方（如 `src/listener/audit.rs`）。
-    ///
-    /// # 参数
-    /// - `field`: 字段名。
-    /// - `value`: 待脱敏的字符串。
-    ///
-    /// # 返回
-    /// 脱敏后的字符串。无匹配规则时返回原值；Custom regex 无效时返回 `"***"`。
+    /// 始终返回 `String`（fail-closed 设计，不向调用方报错），保持外部调用方（如 `src/listener/audit.rs`）签名不变。
     pub fn mask_field(&self, field: &str, value: &str) -> String {
         match self.index.get(field) {
             Some(mask_type) => self.mask_value(value, mask_type),
@@ -137,21 +88,7 @@ impl SensitiveDataMasker {
         }
     }
 
-    /// 递归脱敏 JSON Value。
-    ///
-    /// 遍历 Object 字段，匹配规则中的 field 名后调用 `mask_value` 脱敏。
-    /// 嵌套 Object 与数组中的 Object 均递归处理；非 Object 类型返回原值。
-    ///
-    /// # 错误处理
-    ///
-    /// `mask_value` 始终返回 `String`（fail-closed 设计：Custom regex 无效时
-    /// 返回 `"***"` 而非错误），因此本方法不会失败。
-    ///
-    /// # 参数
-    /// - `value`: 待脱敏的 JSON Value。
-    ///
-    /// # 返回
-    /// 脱敏后的 JSON Value（深拷贝）。
+    /// 递归脱敏 JSON Value：Object 字段按规则脱敏，嵌套 Object 与数组内 Object 递归，非 Object 返回原值（深拷贝）。
     pub fn mask_json(&self, value: &Value) -> Value {
         match value {
             Value::Object(map) => {
@@ -176,10 +113,7 @@ impl SensitiveDataMasker {
     }
 }
 
-/// 手机号脱敏：保留前 3 后 4，中间 `*` 填充。少于 7 位返回原值。
-///
-/// 使用 `chars()` 按字符索引切片，避免非 ASCII 字符（如中文、emoji）在字符中间
-/// 切割导致 panic。
+/// 手机号：保留前 3 后 4，中间 `*` 填充，少于 7 位返回原值；按 `chars()` 切分避免非 ASCII 字符（中文、emoji）被切开 panic。
 fn mask_phone(value: &str) -> String {
     let chars: Vec<char> = value.chars().collect();
     if chars.len() < 7 {
@@ -191,9 +125,7 @@ fn mask_phone(value: &str) -> String {
     format!("{prefix}{stars}{suffix}")
 }
 
-/// 身份证号脱敏：保留前 3 后 4，中间 `*` 填充。少于 7 位返回原值。
-///
-/// 使用 `chars()` 按字符索引切片，避免非 ASCII 字符在字符中间切割导致 panic。
+/// 身份证号：保留前 3 后 4，中间 `*` 填充，少于 7 位返回原值。
 fn mask_id_card(value: &str) -> String {
     let chars: Vec<char> = value.chars().collect();
     if chars.len() < 7 {
@@ -220,13 +152,7 @@ fn mask_email(value: &str) -> String {
     }
 }
 
-/// 银行卡号脱敏（PCI-DSS 3.4）：保留前 6 后 4，中间 `*` 填充。少于 10 位返回全 `*`。
-///
-/// PCI-DSS 3.4 要求银行卡号展示时最多显示 first 6 + last 4（共 10 位），
-/// 中间部分必须用 `*` 屏蔽。当输入长度 < 10 时无法安全拆分 first 6 + last 4，
-/// 全部字符以 `*` 屏蔽（长度与输入一致，避免长度泄漏）。
-///
-/// 使用 `chars()` 按字符索引切片，避免非 ASCII 字符在字符中间切割导致 panic。
+/// 银行卡（PCI-DSS 3.4）：保留前 6 后 4，中间 `*` 填充；少于 10 位无法安全拆分时全 `*` 屏蔽（长度与输入一致，避免长度泄漏）。
 fn mask_bank_card(value: &str) -> String {
     const BANK_CARD_PREFIX_LEN: usize = 6;
     const BANK_CARD_SUFFIX_LEN: usize = 4;
@@ -241,21 +167,13 @@ fn mask_bank_card(value: &str) -> String {
     format!("{prefix}{stars}{suffix}")
 }
 
-/// 自定义正则脱敏（编译结果经进程级缓存复用）。
-///
-/// 使用 `regex::Regex` 将 `value` 中所有匹配 `regex_str` 的子串替换为 `"***"`。
-/// 正则按 pattern 缓存（见 [`regex_cache`]），同一 pattern 仅编译一次；
-/// 缓存未命中且编译失败时记录 `tracing::error!`（含 pattern 与错误信息）并返回
-/// `"***"` 作为安全 fallback（fail-closed，避免泄露原值；失败结果不入缓存，
-/// 保持原有的每次失败告警语义）。
+/// 自定义正则脱敏：所有匹配 `regex_str` 的子串替换为 `"***"`，编译结果经 [`regex_cache`] 按 pattern 复用。
 ///
 /// # 安全语义
 ///
-/// - 正则编译成功 + 有匹配 → 返回真实脱敏后的值（匹配项替换为 `***`）
-/// - 正则编译成功 + 无匹配 → 返回原值（用户配置的正则不匹配任何内容，
-///   等价于无脱敏需求，由用户负责正则正确性）
-/// - 正则编译失败 → 返回 `"***"`（无法解析用户意图时保守屏蔽全部内容，
-///   而非返回可能含敏感数据的原值；同时记录 error 日志便于排查）
+/// 编译成功有匹配 → 真实脱敏；成功但无匹配 → 返回原值（正则正确性由用户负责）；
+/// 编译失败 → 返回 `"***"` 并记 error（无法解析用户意图时保守屏蔽全部，而非返回可能含敏感数据的原值；
+/// 失败结果不入缓存，保留每次失败告警）。
 ///
 /// # 示例
 ///
@@ -307,9 +225,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    // ========================================================================
     // mask_value 测试
-    // ========================================================================
 
     /// 手机号 "13812341234" → "138****1234"。
     #[test]
@@ -343,9 +259,7 @@ mod tests {
         assert_eq!(result, "622202******7890");
     }
 
-    /// Custom 类型真实脱敏 — 正则 `\d+` 匹配所有数字组替换为 `***`。
-    /// SSN `123-45-6789` → `***-***-***`（每个数字组替换为 `***`，不论原长度）。
-    /// 原 placeholder 实现静默返回原值（敏感数据泄露）。
+    /// Custom 正则 `\d+` 匹配所有数字组：SSN `123-45-6789` → `***-***-***`。
     #[test]
     fn mask_custom_redacts_matching_digits() {
         let masker = SensitiveDataMasker::new();
@@ -361,8 +275,7 @@ mod tests {
         assert_eq!(result, "no-digits-here");
     }
 
-    /// Custom 类型正则编译失败时返回 `"***"` 作为安全 fallback。
-    /// 无效正则 `[` 不能编译，返回 `"***"`（fail-closed，避免泄露原值）+ error 日志。
+    /// Custom 正则 `[` 编译失败返回 `"***"`（fail-closed，避免泄露原值）+ error 日志。
     #[test]
     fn mask_custom_invalid_regex_returns_safe_fallback() {
         let masker = SensitiveDataMasker::new();
@@ -370,8 +283,7 @@ mod tests {
         assert_eq!(result, "***");
     }
 
-    /// Custom 类型正则匹配 IP 地址（多组数字 + 点号）替换为 `***`。
-    /// 验证复杂正则（多 `\d+\.` 组合）也正确脱敏。
+    /// Custom 复杂正则（多 `\d+\.` 组合）匹配 IP 地址并替换为 `***`。
     #[test]
     fn mask_custom_redacts_ip_pattern() {
         let masker = SensitiveDataMasker::new();
@@ -422,8 +334,7 @@ mod tests {
         assert_eq!(result, "*******");
     }
 
-    /// PCI-DSS 3.4 银行卡脱敏 first 6 + last 4：
-    /// "6225881234567890"（16 位）→ "622588******7890"（前 6 + 中 6 星 + 后 4）。
+    /// PCI-DSS 3.4：16 位卡号 "6225881234567890" → "622588******7890"（前 6 + 中 6 星 + 后 4）。
     #[test]
     fn mask_bank_card_pci_dss_first6_last4() {
         let masker = SensitiveDataMasker::new();
@@ -455,8 +366,7 @@ mod tests {
         assert_eq!(result, "");
     }
 
-    /// 手机号含多字节字符（中文）不应 panic。
-    /// "ab中cdefg" 字节 2..5 为 "中"（3 字节），旧实现 `&value[..3]` 切到字符中间会 panic。
+    /// 手机号含多字节字符（"中" 占 3 字节）不 panic。
     #[test]
     fn mask_phone_handles_multibyte_input() {
         let masker = SensitiveDataMasker::new();
@@ -472,8 +382,7 @@ mod tests {
         assert!(!result.is_empty(), "多字节输入不应 panic 且应返回非空结果");
     }
 
-    /// 银行卡含多字节字符不应 panic。
-    /// "ab中cdefg" 字节 2..5 为 "中"，旧实现 `&value[..4]` 切到字符中间会 panic。
+    /// 银行卡含多字节字符不 panic。
     #[test]
     fn mask_bank_card_handles_multibyte_input() {
         let masker = SensitiveDataMasker::new();
@@ -481,9 +390,7 @@ mod tests {
         assert!(!result.is_empty(), "多字节输入不应 panic 且应返回非空结果");
     }
 
-    // ========================================================================
     // mask_field 测试
-    // ========================================================================
 
     /// mask_field 匹配 Phone 规则脱敏。
     #[test]
@@ -519,9 +426,7 @@ mod tests {
         assert_eq!(result, "13812341234");
     }
 
-    // ========================================================================
     // mask_json 测试
-    // ========================================================================
 
     /// `{"phone":"13812341234"}` → `{"phone":"1381234"}`。
     #[test]
@@ -593,12 +498,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // Custom 正则脱敏测试（regex feature）
-    // ========================================================================
 
-    /// Custom 用 regex 替换 SSN 每个数字为 `***`。
-    /// "123-45-6789" → "*********-******-************"（每个数字替换为 `***`）。
+    /// Custom 每个数字替换为 `***`："123-45-6789" → "*********-******-************"。
     #[test]
     fn mask_custom_regex_replaces_digits_with_star() {
         let masker = SensitiveDataMasker::new();
@@ -606,8 +508,7 @@ mod tests {
         assert_eq!(result, "*********-******-************");
     }
 
-    /// Custom 用 regex 替换 email 本地部分为 `***`。
-    /// `replace_all` 用 `***` 替换整个匹配（`^[^@]+` 匹配 "alice" → "***"）。
+    /// Custom 替换 email 本地部分：`^[^@]+` 匹配 "alice" → "***"。
     #[test]
     fn mask_custom_regex_replaces_email_local_part() {
         let masker = SensitiveDataMasker::new();
@@ -635,9 +536,7 @@ mod tests {
         assert_eq!(result, "");
     }
 
-    /// Custom regex 空 pattern 在每个位置匹配。
-    /// 空 pattern 匹配每个字符间的位置，每个空匹配替换为 `***`。
-    /// "anything" 8 字符 → 9 个空位置 → "***a***n***y***t***h***i***n***g***"。
+    /// 空 pattern 匹配每个字符间位置并逐个替换："anything" 8 字符 → 9 个空位置。
     #[test]
     fn mask_custom_regex_empty_pattern_returns_original() {
         let masker = SensitiveDataMasker::new();
@@ -645,8 +544,7 @@ mod tests {
         assert_eq!(result, "***a***n***y***t***h***i***n***g***");
     }
 
-    /// Custom regex 无效 pattern 返回 `"***"` 作为安全 fallback。
-    /// 无效正则 `[` 不能编译，返回 `"***"`（fail-closed，避免泄露原值）+ error 日志。
+    /// Custom regex 无效 pattern `[` 返回 `"***"`（fail-closed）+ error 日志。
     #[test]
     fn mask_custom_regex_invalid_pattern_returns_safe_fallback() {
         let masker = SensitiveDataMasker::new();
@@ -654,8 +552,7 @@ mod tests {
         assert_eq!(result, "***");
     }
 
-    /// Custom regex 多处匹配全部替换。
-    /// "a1b2c3d4" → "a***b***c***d***"（每个数字替换为 `***`）。
+    /// 多处匹配全部替换："a1b2c3d4" → "a***b***c***d***"。
     #[test]
     fn mask_custom_regex_replaces_all_matches() {
         let masker = SensitiveDataMasker::new();
@@ -663,8 +560,7 @@ mod tests {
         assert_eq!(result, "a***b***c***d***");
     }
 
-    /// Custom regex 银行卡部分脱敏（所有数字替换为 `***`）。
-    /// "6222021234567890" → 16 位数字 → 48 个 `*`（每个数字替换为 `***`）。
+    /// 银行卡 16 位数字逐个替换为 `***` → 48 个 `*`。
     #[test]
     fn mask_custom_regex_bank_card_partial_mask() {
         let masker = SensitiveDataMasker::new();
@@ -672,8 +568,7 @@ mod tests {
         assert_eq!(result, "*".repeat(48));
     }
 
-    /// mask_field Custom regex 错误时返回 `"***"`（fail-closed）。
-    /// 验证 `mask_field` 在 regex 无效时不 panic，不返回原值，返回安全 fallback。
+    /// mask_field 遇无效 regex 返回 `"***"`（fail-closed，不泄露原值）。
     #[test]
     fn mask_field_custom_regex_error_returns_safe_fallback() {
         let masker = SensitiveDataMasker::new().with_rule(MaskType::Custom("[".to_string()), "ssn");
@@ -682,8 +577,7 @@ mod tests {
         assert_eq!(result, "***");
     }
 
-    /// mask_field Custom regex 正常工作时正确脱敏。
-    /// 验证 `mask_field` 在 regex 有效时通过 `mask_value` 脱敏。
+    /// mask_field 在 regex 有效时经 `mask_value` 正确脱敏。
     #[test]
     fn mask_field_custom_regex_valid_masks_correctly() {
         let masker =

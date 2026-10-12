@@ -11,15 +11,11 @@
 [advisories]
 ignore = [
     # rsa 0.9.x RUSTSEC-2023-0071（Marvin Attack 定时侧信道，CVSS 5.9 MEDIUM）：
-    # 官方无 patched 版本（advisory 原文 `patched = []`，截至 2026-09-12 最新稳定版
-    # 0.9.10 仍在受影响列表），无法通过升级/pin 修复。
-    # garrison 使用 rsa 的路径全部为私钥签名/公钥验签（protocol-saml 验签、
-    # social-alipay RSA2 签名、protocol-jwt RS* 签名/验签 + pkcs1/pkcs8 纯 DER
-    # 解析），src/ 无任何 RSA 解密 API 调用；Marvin Attack 针对解密操作的时序
-    # 侧信道，对签名/验签路径不可达。
-    # 完整处置论证：deny.toml [advisories] 注释、SECURITY.md §5「已知安全考量」。
-    # 回归锚定：rsa 发布修复版本后须升级并移除此忽略项；若引入 RSA 解密能力
-    # （如 JWE 解密）须重新评估并补充防护。
+    # 官方无 patched 版本（截至 2026-09-12 最新 0.9.10 仍受影响），无法升级/pin 修复。
+    # garrison 的 rsa 路径全部为签名/验签（protocol-saml 验签、social-alipay RSA2 签名、
+    # protocol-jwt RS* 签名/验签 + pkcs1/pkcs8 纯 DER 解析），src/ 无 RSA 解密调用，
+    # Marvin 针对解密操作，对验签路径不可达。处置论证见 deny.toml [advisories] 注释与
+    # SECURITY.md §5；rsa 出修复版后须升级并移除此项，若引入 RSA 解密能力须重新评估。
     # 参见 https://rustsec.org/advisories/RUSTSEC-2023-0071
     "RUSTSEC-2023-0071",
 ]

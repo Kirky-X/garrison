@@ -4,17 +4,13 @@
 //! `BanStorage` 适配器，用 `GarrisonDao` KV 存储封禁记录。
 //!
 //! # 存储格式
-//! - 封禁记录：`limiteron:ban:{type}:{value}` →
-//!   `expires_at_ts|ban_times|is_manual|duration_secs|reason`
+//! - 封禁记录：`limiteron:ban:{type}:{value}` → `expires_at_ts|ban_times|is_manual|duration_secs|reason`
 //! - 封禁次数：`limiteron:ban:times:{type}:{value}` → `u64`
 //! - 封禁历史：`limiteron:ban:history:{type}:{value}` → `ban_times|last_banned_at_ts`
 //!
 //! # 一致性与 TTL 语义
-//! - `save` 先写主记录（`is_banned` 执行依据），times/history 失败时 best-effort
-//!   回滚已写 key 并返回错误。`GarrisonDao` 无事务接口，回滚本身也可能失败，
-//!   此时以 `tracing::warn` 记录（部分失败语义）。
-//! - `increment_ban_times` 与封禁记录的剩余 TTL 对齐（incr 仅在 key 首次创建时
-//!   生效 TTL），避免 record 过期后 times 键永久残留。
+//! - `save` 先写主记录（`is_banned` 执行依据），times/history 失败时 best-effort 回滚已写 key 并返回错误；`GarrisonDao` 无事务接口，回滚本身也可能失败，此时以 `tracing::warn` 记录（部分失败语义）。
+//! - `increment_ban_times` 与封禁记录的剩余 TTL 对齐（incr 仅在 key 首次创建时生效 TTL），避免 record 过期后 times 键永久残留。
 //! - `is_banned` 在查询时检查过期时间（过期返回 None）。
 
 use crate::dao::GarrisonDao;
@@ -86,15 +82,11 @@ fn serialize_ban_record(record: &BanRecord) -> String {
 
 /// 反序列化 `BanRecord`。
 ///
-/// 存储格式（5 段）：`expires_at_ts|ban_times|is_manual|duration_secs|reason`，
-/// `duration` 从落盘值恢复。
+/// 存储格式（5 段）：`expires_at_ts|ban_times|is_manual|duration_secs|reason`，`duration` 从落盘值恢复。
 ///
-/// # 脏数据处理（fail-open + 可观测）
-///
-/// 段数不对或数字字段解析失败时返回 `None`（视为未封禁），与 `is_banned`
-/// 热路径的 fail-open 语义一致；区别于 `get_ban_times` / `get_history` 的
-/// fail-fast（管理面查询，脏数据显性报错）。fail-open 的静默性通过
-/// `tracing::warn` 补偿，保证「记录存在但已损坏」可被观测。
+/// 脏数据（段数不对或数字字段解析失败）返回 `None`（视为未封禁），与 `is_banned` 热路径的
+/// fail-open 语义一致；区别于 `get_ban_times` / `get_history` 的 fail-fast（管理面查询显性报错）。
+/// fail-open 的静默性通过 `tracing::warn` 补偿，保证「记录存在但已损坏」可被观测。
 fn deserialize_ban_record(target: &BanTarget, val: &str) -> Option<BanRecord> {
     let parts: Vec<&str> = val.splitn(5, '|').collect();
     let target_id = target_to_key_fragment(target);
@@ -103,7 +95,8 @@ fn deserialize_ban_record(target: &BanTarget, val: &str) -> Option<BanRecord> {
             target = %target_id,
             value = %val,
             parts = parts.len(),
-            "limiteron-ban: 封禁记录段数不对，视为未封禁（fail-open）"
+            "{}",
+            crate::i18n::translate_detail("logs-limiteron-ban-record-parts-mismatch", &[])
         );
         return None;
     }
@@ -114,7 +107,8 @@ fn deserialize_ban_record(target: &BanTarget, val: &str) -> Option<BanRecord> {
                 target = %target_id,
                 value = %val,
                 error = %e,
-                "limiteron-ban: 封禁记录 duration 字段解析失败，视为未封禁（fail-open）"
+                "{}",
+                crate::i18n::translate_detail("logs-limiteron-ban-duration-parse-failed", &[])
             );
             return None;
         },
@@ -126,7 +120,11 @@ fn deserialize_ban_record(target: &BanTarget, val: &str) -> Option<BanRecord> {
                 target = %target_id,
                 value = %val,
                 error = %e,
-                "limiteron-ban: 封禁记录 expires_at_ts 解析失败，视为未封禁（fail-open）"
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-limiteron-ban-expires-at-parse-failed",
+                    &[]
+                )
             );
             return None;
         },
@@ -138,7 +136,8 @@ fn deserialize_ban_record(target: &BanTarget, val: &str) -> Option<BanRecord> {
                 target = %target_id,
                 value = %val,
                 error = %e,
-                "limiteron-ban: 封禁记录 ban_times 解析失败，视为未封禁（fail-open）"
+                "{}",
+                crate::i18n::translate_detail("logs-limiteron-ban-times-parse-failed", &[])
             );
             return None;
         },
@@ -150,7 +149,8 @@ fn deserialize_ban_record(target: &BanTarget, val: &str) -> Option<BanRecord> {
             tracing::warn!(
                 target = %target_id,
                 expires_at_ts,
-                "limiteron-ban: 封禁记录时间戳非法，视为未封禁（fail-open）"
+                "{}",
+                crate::i18n::translate_detail("logs-limiteron-ban-timestamp-invalid", &[])
             );
             return None;
         },
@@ -169,27 +169,13 @@ fn deserialize_ban_record(target: &BanTarget, val: &str) -> Option<BanRecord> {
     })
 }
 
-/// `BanStorage` 适配器，用 `GarrisonDao` KV 存储封禁记录。
-///
-/// # 存储格式
-/// - 封禁记录：`limiteron:ban:{type}:{value}` →
-///   `expires_at_ts|ban_times|is_manual|duration_secs|reason`
-/// - 封禁次数：`limiteron:ban:times:{type}:{value}` → `u64`
-/// - 封禁历史：`limiteron:ban:history:{type}:{value}` → `ban_times|last_banned_at_ts`
-///
-/// # 一致性与 TTL 语义
-/// - `save` 先写主记录，times/history 失败时 best-effort 回滚并返回错误；
-/// - `increment_ban_times` 与封禁记录剩余 TTL 对齐，避免 times 键永久残留；
-/// - `is_banned` 在查询时检查过期时间（过期返回 None）。
+/// `BanStorage` 适配器，用 `GarrisonDao` KV 存储封禁记录（存储格式与一致性语义见模块文档）。
 pub struct GarrisonDaoBanStorage {
     pub(super) dao: Arc<dyn GarrisonDao>,
 }
 
 impl GarrisonDaoBanStorage {
     /// 创建适配器实例。
-    ///
-    /// # 参数
-    /// - `dao`: 内部 DAO 实现。
     pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self { dao }
     }
@@ -215,13 +201,10 @@ impl BanStorage for GarrisonDaoBanStorage {
 
     /// 保存封禁记录（record + times + history 三个 key）。
     ///
-    /// # 一致性语义（无事务）
-    ///
-    /// `GarrisonDao` 无事务/批量接口，三个 key 无法原子写入。策略：
-    /// - **先写主记录**（`is_banned` 的执行依据）：失败即止，不产生任何部分状态；
-    /// - times / history 失败时 **best-effort 回滚已写 key** 并返回明确错误，
-    /// 避免「record 存在但 times/history 缺失」的不一致状态；回滚 delete
-    /// 本身失败仅 `tracing::warn`（部分失败语义，不掩盖原始错误）。
+    /// `GarrisonDao` 无事务/批量接口，三个 key 无法原子写入。策略：先写主记录（`is_banned`
+    /// 的执行依据），失败即止不产生部分状态；times / history 失败时 best-effort 回滚已写
+    /// key 并返回明确错误（避免「record 存在但 times/history 缺失」的不一致状态），回滚
+    /// delete 本身失败仅 `tracing::warn`（部分失败语义，不掩盖原始错误）。
     async fn save(&self, record: &BanRecord) -> Result<(), StorageError> {
         let key = ban_record_key(&record.target);
         let val = serialize_ban_record(record);
@@ -242,7 +225,8 @@ impl BanStorage for GarrisonDaoBanStorage {
             tracing::warn!(
                 ban_key = %key,
                 error = %e,
-                "limiteron-ban: 封禁次数 key 写入失败，回滚主记录"
+                "{}",
+                crate::i18n::translate_detail("logs-limiteron-ban-times-key-write-failed", &[])
             );
             let _ = self.dao.delete(&key).await;
             return Err(map_to_storage_err(e));
@@ -254,7 +238,11 @@ impl BanStorage for GarrisonDaoBanStorage {
             tracing::warn!(
                 ban_key = %key,
                 error = %e,
-                "limiteron-ban: 封禁历史 key 写入失败，回滚主记录与次数"
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-limiteron-ban-history-key-write-failed",
+                    &[]
+                )
             );
             let _ = self.dao.delete(&key).await;
             let _ = self.dao.delete(&times_key).await;
@@ -302,12 +290,8 @@ impl BanStorage for GarrisonDaoBanStorage {
 
     async fn increment_ban_times(&self, target: &BanTarget) -> Result<u64, StorageError> {
         let key = ban_times_key(target);
-        // TTL 对齐修复：旧实现 incr TTL=0（永久存储），而 record/history 带到期
-        // TTL——record 过期后 times 键永久残留，get_ban_times 返回历史累计而非
-        // 当前封禁次数。现优先以 record 剩余生存期作为 times key 的 TTL。
-        // 注：GarrisonDao::incr 仅在 key 首次创建时设置 TTL；已存在的 times 键
-        // （如曾被以 TTL=0 写入的永久键）不会被重置 TTL，这类键会在 record 过期后
-        // 仍保留，彻底清理需 DAO 提供 iter/expire 查询能力。
+        // TTL 对齐：优先以 record 剩余生存期作为 times key 的 TTL，避免 record 过期后 times 键永久残留。
+        // 注：GarrisonDao::incr 仅在 key 首次创建时设置 TTL；已存在的永久键（曾以 TTL=0 写入）不会被重置 TTL，彻底清理需 DAO 提供 iter/expire 查询能力。
         let record_key = ban_record_key(target);
         let ttl = match self
             .dao
@@ -342,12 +326,9 @@ impl BanStorage for GarrisonDaoBanStorage {
 
     /// 移除封禁记录（record + times + history 三个 key）。
     ///
-    /// # 一致性语义（无事务）
-    ///
-    /// 三个删除无事务保证。顺序上**先删主记录**：即使后续 times/history 删除
-    /// 失败，封禁也已被解除（安全优先）；残留的 times/history 键带 TTL（随
-    /// record 到期写入）会自动过期，或随下次 `save` 覆盖。中途失败返回错误，
-    /// 错误信息可定位到首个失败的 delete。
+    /// 三个删除无事务保证。顺序上**先删主记录**：即使后续 times/history 删除失败，封禁也已被
+    /// 解除（安全优先）；残留的 times/history 键带 TTL（随 record 到期写入）会自动过期，或随
+    /// 下次 `save` 覆盖。中途失败返回错误，错误信息可定位到首个失败的 delete。
     async fn remove_ban(&self, target: &BanTarget) -> Result<(), StorageError> {
         let record_key = ban_record_key(target);
         let times_key = ban_times_key(target);
@@ -370,8 +351,8 @@ impl BanStorage for GarrisonDaoBanStorage {
         // GarrisonDao 无 iter API，无法扫描过期 key
         // 封禁记录设置 TTL，过期自动删除；is_banned 查询时检查过期时间
         tracing::warn!(
-            "limiteron-ban: cleanup_expired_bans 未实现（GarrisonDao 无 iter API），\
-             返回 0——请勿依赖本方法清理过期封禁（TTL 自动过期 + is_banned 查询时检查兜底）"
+            "{}",
+            crate::i18n::translate_detail("logs-limiteron-ban-cleanup-unimplemented", &[])
         );
         Ok(0)
     }
@@ -384,8 +365,8 @@ impl BanStorage for GarrisonDaoBanStorage {
     ) -> Result<Vec<BanRecord>, StorageError> {
         // GarrisonDao 无 iter API，无法列出所有 key
         tracing::warn!(
-            "limiteron-ban: list_bans 未实现（GarrisonDao 无 iter API），\
-             返回空列表——请勿依赖本方法做封禁审计/枚举（假阴性）"
+            "{}",
+            crate::i18n::translate_detail("logs-limiteron-ban-list-unimplemented", &[])
         );
         Ok(Vec::new())
     }
@@ -467,11 +448,10 @@ mod tests {
         assert_eq!(storage.get_ban_times(&target).await.unwrap(), 2);
     }
 
-    /// increment_ban_times 在存在有效封禁记录时正常递增
-    /// （TTL 与 record 剩余生存期对齐；MockDao 无法直接观测 TTL，验证功能语义）。
+    /// increment_ban_times 在存在有效封禁记录时正常递增（TTL 与 record 剩余生存期对齐；
+    /// MockDao 无法直接观测 TTL，验证功能语义）。
     ///
-    /// 注：save 先以 record.ban_times 播种 times 计数（此处 = 1），
-    /// increment 在其上 +1 → 2。
+    /// 注：save 先以 record.ban_times 播种 times 计数（此处 = 1），increment 在其上 +1 → 2。
     #[tokio::test]
     async fn ban_increment_times_with_active_record() {
         let storage = GarrisonDaoBanStorage::new(make_dao());
@@ -667,7 +647,7 @@ mod tests {
         );
     }
 
-    // --- unwrap_or(0) 静默吞错修复测试 ---
+    // --- 脏数据显性化测试 ---
 
     /// BanStorage::get_ban_times 遇到脏数据时返回错误（非静默用 0）。
     #[tokio::test]

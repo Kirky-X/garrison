@@ -3,27 +3,19 @@
 
 //! 降级策略适配器。
 //!
-//! 包装 limiteron `FallbackStrategy`，为 Garrison `BackendRemote` 提供
-//! 后端故障时的降级行为控制。
-//!
-//! # 降级策略
-//!
-//! - **FailOpen**：后端故障时允许所有请求（适用于可用性优先场景）
-//! - **FailClosed**：后端故障时拒绝所有请求（适用于安全性优先场景）
-//! - **Degraded**：后端故障时使用缓存的降级响应（需配置 L2 缓存）
+//! 包装 limiteron `FallbackStrategy`，为 Garrison `BackendRemote` 提供后端故障时的降级行为控制：
+//! **FailOpen**（故障时允许所有请求，可用性优先）、**FailClosed**（故障时拒绝所有请求，安全性优先）、
+//! **Degraded**（故障时使用缓存的降级响应，需配置 L2 缓存）。
 //!
 //! # 与熔断器的协作
 //!
-//! 熔断器（`CircuitBreakerWrapper`）检测后端故障并打开/关闭电路。
-//! 降级策略（`FallbackPolicy`）决定电路打开时如何处理被拒绝的请求：
-//! - 熔断器打开 + FailOpen → 放行（返回默认允许）
-//! - 熔断器打开 + FailClosed → 拒绝（返回错误）
+//! 熔断器（`CircuitBreakerWrapper`）检测后端故障并打开/关闭电路；降级策略决定电路打开时如何处理
+//! 被拒绝的请求：FailOpen → 放行，FailClosed → 拒绝。
 //!
 //! # 设计
 //!
-//! `FallbackPolicy` 是轻量级适配器，不包含 limiteron `FallbackManager` 的完整功能
-//! （L2 缓存、重试预算等），仅提供策略判断。完整的降级管理可通过直接使用
-//! limiteron `FallbackManager` 实现。
+//! `FallbackPolicy` 是轻量级适配器，仅提供策略判断；不含 limiteron `FallbackManager` 的完整功能
+//! （L2 缓存、重试预算等），完整降级管理可直接使用 limiteron `FallbackManager`。
 
 use limiteron::fallback::FallbackStrategy;
 

@@ -1,15 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! AloneCache 模块：多 Redis 实例隔离装饰器。
-//!
-//! 通过 `AloneCache` 装饰 `GarrisonDao`，为所有 key 自动添加 prefix，
-//! 实现权限缓存与业务缓存的物理隔离（同一 Redis 实例中不同 prefix 互不干扰）。
-//!
-//! `AloneCacheManager` 管理多个 `AloneCache` 实例，每个实例可注入不同的
-//! `GarrisonDao`（支持多 Redis 实例路由）。
-//!
-//! alone-cache 模块。
+//! AloneCache 模块：多 Redis 实例隔离装饰器——为所有 key 自动加 prefix（权限缓存与业务缓存物理隔离）；
+//! `AloneCacheManager` 管理多个实例，支持多 Redis 实例路由。
 
 use crate::dao::GarrisonDao;
 use crate::error::GarrisonResult;
@@ -18,10 +11,7 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// AloneCache 装饰器，为所有 key 自动添加 prefix。
-///
-/// 实现 `GarrisonDao` trait 时，每方法入口先 `format!("{}{}", key_prefix, key)`
-/// 拼接 prefix 后委托内部 dao，确保权限缓存与业务缓存的 key 空间物理隔离。
+/// AloneCache 装饰器：每方法入口先拼 `key_prefix` 再委托内部 dao，确保 key 空间物理隔离。
 ///
 /// # 示例
 /// ```ignore
@@ -37,11 +27,7 @@ pub struct AloneCache {
 }
 
 impl AloneCache {
-    /// 创建 AloneCache 装饰器。
-    ///
-    /// # 参数
-    /// - `dao`: 内部委托的 `GarrisonDao` 实例（通常是 oxcache / dbnexus 后端）。
-    /// - `key_prefix`: 自动拼接的 key 前缀（如 "perm:" / "biz:"）。
+    /// 创建装饰器：`dao` 为内部委托实例，`key_prefix` 自动拼接前缀（如 "perm:" / "biz:"）。
     pub fn new(dao: Arc<dyn GarrisonDao>, key_prefix: &str) -> Self {
         Self {
             inner: dao,
@@ -83,19 +69,13 @@ impl GarrisonDao for AloneCache {
         self.inner.get_and_delete(&self.prefixed_key(key)).await
     }
 
-    /// get_timeout 透明委托内部 dao。
-    ///
-    /// 默认实现返回 `NotImplemented`（fail-closed），AloneCache 必须显式 forward：
-    /// TTL 查询经装饰器应与直接访问内部 dao 一致（如 expire 续期判断、
-    /// 会话剩余窗口读取），否则经 AloneCache 部署的 get_timeout 全部失效。
+    /// 透明委托内部 dao：默认实现的 `NotImplemented`（fail-closed）若不透传，
+    /// 经 AloneCache 部署的 TTL 查询（expire 续期、会话剩余窗口）会全部失效。
     async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<std::time::Duration>> {
         self.inner.get_timeout(&self.prefixed_key(key)).await
     }
 
-    /// get_with_ttl 透明委托内部 dao（性能优化接口，与 `get_timeout` 对称）。
-    ///
-    /// 默认实现拆成 get + get_timeout 两次往返；内部 dao 单次 lookup 的实现
-    /// （如 `InMemoryDao`）经装饰器后应保持复用。
+    /// 透明委托内部 dao（与 `get_timeout` 对称）；内部 dao 单次 lookup 的实现应保持复用。
     async fn get_with_ttl(
         &self,
         key: &str,
@@ -103,7 +83,7 @@ impl GarrisonDao for AloneCache {
         self.inner.get_with_ttl(&self.prefixed_key(key)).await
     }
 
-    /// set_if_absent 委托内部 dao（原子 SETNX 语义， 收严为必需方法）。
+    /// 委托内部 dao（原子 SETNX 语义，必需方法）。
     async fn set_if_absent(
         &self,
         key: &str,
@@ -115,22 +95,19 @@ impl GarrisonDao for AloneCache {
             .await
     }
 
-    /// rename 委托内部 dao（原子重命名 + TTL 保留， 收严为必需方法）。
+    /// 委托内部 dao（原子重命名 + TTL 保留，必需方法）。
     async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
         self.inner
             .rename(&self.prefixed_key(old_key), &self.prefixed_key(new_key))
             .await
     }
 
-    /// incr 委托内部 dao（原子计数， 收严为必需方法）。
+    /// 委托内部 dao（原子计数，必需方法）。
     async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64> {
         self.inner.incr(&self.prefixed_key(key), ttl_seconds).await
     }
 
-    /// 修复：compare_and_update_if_greater 委托内部 dao（消除 TOCTOU 竞态）。
-    ///
-    /// 默认实现已改为返回 `NotImplemented`（fail-closed），AloneCache 必须显式 forward
-    /// 到 inner dao，保证装饰器透明委托语义，使内部 dao 的原子 CAS 实现得以复用。
+    /// 委托内部 dao：默认实现 `NotImplemented`（fail-closed），必须显式 forward 以复用内部原子 CAS。
     async fn compare_and_update_if_greater(
         &self,
         key: &str,
@@ -142,23 +119,13 @@ impl GarrisonDao for AloneCache {
             .await
     }
 
-    /// decr 委托内部 dao（消除 TOCTOU 竞态）。
-    ///
-    /// 与 `compare_and_update_if_greater` 对称：默认实现已改为返回 `NotImplemented`
-    ///（fail-closed），AloneCache 必须显式 forward 到 inner dao，保证装饰器透明委托语义，
-    /// 使内部 dao 的原子 decr 实现得以复用。
-    ///
-    /// 修复前：AloneCache 走默认实现（get → parse → update/delete 三步组合），
-    /// 在并发场景下存在 TOCTOU 竞态，SMS 限速器等通过 AloneCache 部署的场景
-    /// 仍会触发 flaky test。
+    /// 委托内部 dao（与 `compare_and_update_if_greater` 对称）：走默认组合（get → parse → update/delete）
+    /// 会让经 AloneCache 部署的 SMS 限速等场景仍有 TOCTOU flaky。
     async fn decr(&self, key: &str) -> GarrisonResult<u64> {
         self.inner.decr(&self.prefixed_key(key)).await
     }
 
-    /// compare_and_swap 委托内部 dao（消除 TOCTOU 竞态）。
-    ///
-    /// 与 `compare_and_update_if_greater` 对称：AloneCache 必须显式 forward
-    /// 到 inner dao，保证装饰器透明委托语义，使内部 dao 的原子 CAS 实现得以复用。
+    /// 委托内部 dao，保证装饰器透明委托语义并复用内部原子 CAS。
     async fn compare_and_swap(
         &self,
         key: &str,
@@ -172,49 +139,32 @@ impl GarrisonDao for AloneCache {
     }
 }
 
-/// AloneCacheManager 管理多个 AloneCache 实例，支持多 Redis 实例路由。
-///
-/// 通过 `register` 注册命名缓存，`get` 按 name 获取共享 `Arc<AloneCache>`。
-/// 内部用 `parking_lot::RwLock` 保护 HashMap，支持并发读写。
+/// 管理多个 AloneCache：`register` 注册命名缓存、`get` 按 name 取共享 `Arc<AloneCache>`（RwLock 保护，支持并发读写）。
 pub struct AloneCacheManager {
     caches: RwLock<HashMap<String, Arc<AloneCache>>>,
 }
 
 impl AloneCacheManager {
-    /// 创建空的 AloneCacheManager。
+    /// 创建空的缓存管理器。
     pub fn new() -> Self {
         Self {
             caches: RwLock::new(HashMap::new()),
         }
     }
 
-    /// 注册命名缓存。
-    ///
-    /// 若 name 已存在则覆盖。
-    ///
-    /// # 参数
-    /// - `name`: 缓存实例名（如 "permission" / "business"）。
-    /// - `cache`: `AloneCache` 实例（所有权转移，内部包装为 `Arc`）。
+    /// 注册命名缓存（同名覆盖）。
     pub fn register(&self, name: &str, cache: AloneCache) {
         self.caches
             .write()
             .insert(name.to_string(), Arc::new(cache));
     }
 
-    /// 按 name 获取已注册的缓存实例。
-    ///
-    /// # 返回
-    /// - `Some(Arc<AloneCache>)`: name 已注册。
-    /// - `None`: name 未注册。
+    /// 按 name 获取已注册缓存（未注册返回 None）。
     pub fn get(&self, name: &str) -> Option<Arc<AloneCache>> {
         self.caches.read().get(name).cloned()
     }
 
-    /// 注销命名缓存。
-    ///
-    /// # 返回
-    /// - `Some(Arc<AloneCache>)`: name 已注册，返回被移除的实例。
-    /// - `None`: name 未注册。
+    /// 注销命名缓存并返回被移除实例（未注册返回 None）。
     pub fn unregister(&self, name: &str) -> Option<Arc<AloneCache>> {
         self.caches.write().remove(name)
     }
@@ -231,7 +181,7 @@ mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
 
-    /// Scenario: AloneCache::new(dao, "perm:") 后 set("user:1001", ...) 内部 dao 收到 set("perm:user:1001", ...)。
+    /// set 经装饰器后内部 dao 收到加 prefix 的 key（无 prefix 的原 key 不存在）。
     #[tokio::test]
     async fn alone_cache_set_adds_prefix() {
         let mock = Arc::new(MockDao::new());
@@ -239,27 +189,23 @@ mod tests {
         cache.set("user:1001", "value", 3600).await.unwrap();
         let got = mock.get("perm:user:1001").await.unwrap();
         assert_eq!(got, Some("value".to_string()));
-        // 原始无 prefix 的 key 不应存在
         let not_got = mock.get("user:1001").await.unwrap();
         assert!(not_got.is_none(), "无 prefix 的 key 不应存在");
     }
 
-    /// Scenario: AloneCache::new(dao, "perm:") 后 get("user:1001") 内部 dao 收到 get("perm:user:1001")。
+    /// get 经装饰器拼 prefix 后命中内部 dao 的 key；访问已带 prefix 的 key 会双重拼接返回 None。
     #[tokio::test]
     async fn alone_cache_get_adds_prefix() {
         let mock = Arc::new(MockDao::new());
-        // 直接在 mock 上设置带 prefix 的 key
         mock.set("perm:user:1001", "value", 3600).await.unwrap();
         let cache = AloneCache::new(mock.clone(), "perm:");
-        // 通过 cache.get("user:1001") 应能取到（证明 get 加了 prefix）
         let got = cache.get("user:1001").await.unwrap();
         assert_eq!(got, Some("value".to_string()));
-        // 再次经 cache 访问带 prefix 的 key 会拼成 "perm:perm:user:1001"，应返回 None
         let not_got = cache.get("perm:user:1001").await.unwrap();
         assert!(not_got.is_none(), "双重 prefix 的 key 不应存在");
     }
 
-    /// Scenario: AloneCache delete 同样加 prefix。
+    /// delete 经装饰器加 prefix。
     #[tokio::test]
     async fn alone_cache_delete_adds_prefix() {
         let mock = Arc::new(MockDao::new());
@@ -270,7 +216,7 @@ mod tests {
         assert!(got.is_none(), "delete 应删除带 prefix 的 key");
     }
 
-    /// Scenario: AloneCache update 同样加 prefix。
+    /// update 经装饰器加 prefix。
     #[tokio::test]
     async fn alone_cache_update_adds_prefix() {
         let mock = Arc::new(MockDao::new());
@@ -281,13 +227,12 @@ mod tests {
         assert_eq!(got, Some("v2".to_string()));
     }
 
-    /// Scenario: AloneCache expire 同样加 prefix。
+    /// expire 经装饰器加 prefix（若未加 prefix 会因 key 不存在返回 Err）。
     #[tokio::test]
     async fn alone_cache_expire_adds_prefix() {
         let mock = Arc::new(MockDao::new());
         mock.set("perm:k", "v", 1).await.unwrap();
         let cache = AloneCache::new(mock.clone(), "perm:");
-        // （若未加 prefix，mock 上 "k" 不存在，会返回 Err）
         cache.expire("k", 3600).await.unwrap();
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         let got = cache.get("k").await.unwrap();
@@ -298,31 +243,28 @@ mod tests {
         );
     }
 
-    /// Scenario: AloneCache 透明委托返回值与 MockDao 直接调用一致。
+    /// 透明委托：set / get / expire（含错误路径）结果与直接调用内部 dao 一致。
     #[tokio::test]
     async fn alone_cache_transparent_delegation() {
         let mock = Arc::new(MockDao::new());
         let cache = AloneCache::new(mock.clone(), "prefix:");
 
-        // set 返回 Ok（与直接调用 mock.set 一致）
         let r1 = cache.set("k", "v", 100).await;
         let r2 = mock.set("prefix:k", "v2", 100).await;
         assert!(r1.is_ok());
         assert!(r2.is_ok());
 
-        // get 返回值与直接调用 mock 一致
         let via_cache = cache.get("k").await.unwrap();
         let via_mock = mock.get("prefix:k").await.unwrap();
         assert_eq!(via_cache, via_mock);
 
-        // expire 不存在的键返回 Err（一致）
         let r4 = cache.expire("missing", 100).await;
         let r5 = mock.expire("prefix:missing", 100).await;
         assert!(r4.is_err(), "cache.expire 不存在的键应返回 Err");
         assert!(r5.is_err(), "mock.expire 不存在的键应返回 Err");
     }
 
-    /// Scenario: AloneCacheManager::register + get 多实例。
+    /// register + get 多实例。
     #[tokio::test]
     async fn alone_cache_manager_register_and_get() {
         let manager = AloneCacheManager::new();
@@ -341,7 +283,7 @@ mod tests {
         assert!(biz.is_some(), "business 实例应存在");
     }
 
-    /// Scenario: 未注册的缓存名返回 None。
+    /// 未注册的缓存名返回 None。
     #[tokio::test]
     async fn alone_cache_manager_unregistered_returns_none() {
         let manager = AloneCacheManager::new();
@@ -349,7 +291,7 @@ mod tests {
         assert!(got.is_none(), "未注册的 name 应返回 None");
     }
 
-    /// Scenario: 多实例注入不同 dao（多 Redis 实例路由）。
+    /// 多实例注入不同 dao（多 Redis 实例路由）：命名空间互不可见。
     #[tokio::test]
     async fn alone_cache_manager_multiple_different_dao() {
         let redis1 = Arc::new(MockDao::new());
@@ -370,7 +312,6 @@ mod tests {
         assert_eq!(p, Some("p".to_string()));
         assert_eq!(b, Some("b".to_string()));
 
-        // 交叉验证：redis1 没有 biz:，redis2 没有 perm:
         assert!(
             redis1.get("biz:user:1").await.unwrap().is_none(),
             "redis1 不应包含 biz: 命名空间"
@@ -381,7 +322,7 @@ mod tests {
         );
     }
 
-    /// Scenario: unregister 后 get 返回 None。
+    /// unregister 后 get 返回 None。
     #[tokio::test]
     async fn alone_cache_manager_unregister() {
         let manager = AloneCacheManager::new();
@@ -395,23 +336,21 @@ mod tests {
         );
     }
 
-    /// Scenario: 空 prefix 时 key 不变（边界）。
+    /// 空 prefix 时 key 不变（边界）。
     #[tokio::test]
     async fn alone_cache_empty_prefix_passthrough() {
         let mock = Arc::new(MockDao::new());
         let cache = AloneCache::new(mock.clone(), "");
         cache.set("k", "v", 3600).await.unwrap();
-        // 空 prefix 时内部 dao 收到的 key 应为原始 key
         let got = mock.get("k").await.unwrap();
         assert_eq!(got, Some("v".to_string()));
     }
 
-    /// Scenario: delete 不存在的键返回 Ok（idempotent，与 MockDao 行为一致）。
+    /// delete 不存在的键返回 Ok（幂等，与 MockDao 一致）。
     #[tokio::test]
     async fn alone_cache_delete_nonexistent_is_ok() {
         let mock = Arc::new(MockDao::new());
         let cache = AloneCache::new(mock, "perm:");
-        // MockDao::delete 对不存在的键返回 Ok（idempotent）
         let result = cache.delete("never_exists").await;
         assert!(
             result.is_ok(),
@@ -419,16 +358,8 @@ mod tests {
         );
     }
 
-    /// Scenario: AloneCache::decr 透明委托内部 dao（消除 TOCTOU 竞态）。
-    ///
-    /// 此前 AloneCache 走默认实现（get → parse → update/delete 三步组合），
-    /// 在并发场景下存在 TOCTOU 竞态，SMS 限速器等通过 AloneCache 部署的场景
-    /// 仍会触发 flaky test。修复：AloneCache::decr 显式 forward 到 inner dao。
-    ///
-    /// 此测试验证：
-    /// 1. AloneCache::decr 调用经 prefix 拼接后到达 inner dao
-    /// 2. 返回值与直接调用 inner dao 一致（透明委托）
-    /// 3. TTL 保留（递减后值 > 0 时保留原 TTL，与 MockDao::decr 语义一致）
+    /// `AloneCache::decr` 透明委托内部 dao：prefix 拼接、返回值、TTL 保留均与 inner dao 一致。
+    ///（修复：此前走默认 get → parse → update/delete 组合，经 AloneCache 部署的 SMS 限速场景仍有 TOCTOU flaky。）
     #[tokio::test]
     async fn alone_cache_decr_delegates_to_inner_with_prefix() {
         let mock = Arc::new(MockDao::new());
@@ -444,20 +375,18 @@ mod tests {
         let r2 = cache.decr("counter").await.unwrap();
         assert_eq!(r2, 1, "第二次 decr 应返回 1");
 
-        // 第三次 decr：1 → 0，key 应被删除（与 MockDao::decr 语义一致）
         let r3 = cache.decr("counter").await.unwrap();
         assert_eq!(r3, 0, "第三次 decr 应返回 0");
         let v3 = mock.get("perm:counter").await.unwrap();
         assert!(v3.is_none(), "decr 到 0 时 key 应被删除");
 
-        // 第四次 decr：key 不存在，返回 0（不报错，不创建 key）
         let r4 = cache.decr("counter").await.unwrap();
         assert_eq!(r4, 0, "key 不存在时 decr 应返回 0");
         let v4 = mock.get("perm:counter").await.unwrap();
         assert!(v4.is_none(), "key 不存在时 decr 不应创建 key");
     }
 
-    /// Scenario: AloneCache::decr 不存在的 key（无 prefix 时）返回 0（透明委托边界）。
+    /// decr 不存在的 key 返回 0（透明委托边界）。
     #[tokio::test]
     async fn alone_cache_decr_missing_key_returns_zero() {
         let mock = Arc::new(MockDao::new());
@@ -466,29 +395,12 @@ mod tests {
         let r = cache.decr("never").await.unwrap();
         assert_eq!(r, 0, "不存在的 key decr 应返回 0");
 
-        // 验证 inner dao 上对应 prefixed key 也确实不存在
         let v = mock.get("perm:never").await.unwrap();
         assert!(v.is_none(), "inner dao 上 'perm:never' 不应存在");
     }
 
-    /// Scenario: AloneCache::decr 并发原子性验证。
-    ///
-    /// 此测试是上述修复的关键验证：在 multi_thread runtime 下并发 10 个 task
-    /// decr 同一 key（初始值 5），断言恰好 4 个返回非 0 + 6 个返回 0 + key 最终删除。
-    ///
-    /// 返回值分析（decr 返回 new_val = 递减后的值）：
-    /// - decr 1: 5→4, 返回 4 ✓
-    /// - decr 2: 4→3, 返回 3 ✓
-    /// - decr 3: 3→2, 返回 2 ✓
-    /// - decr 4: 2→1, 返回 1 ✓
-    /// - decr 5: 1→0, 返回 0（key 删除）
-    /// - decr 6-10: key 不存在, 返回 0
-    /// → 4 个非 0 + 6 个 0
-    ///
-    /// 修复前：AloneCache 走默认实现（get → parse → update/delete 三步组合），
-    /// 多个 task 可能同时读到同一过时值并各自计算 new_val，导致"跨越式递减"。
-    /// 修复后：AloneCache::decr 委托内部 MockDao（parking_lot::Mutex 保护原子），
-    /// 多个 task 串行进入 MockDao::decr 临界区，每次 decr 都基于最新值。
+    /// `AloneCache::decr` 并发原子性：10 个 task 并发 decr（初始 5），恰好 4 个非 0（4,3,2,1）+ 6 个 0，key 最终删除。
+    ///（修复前走默认组合，多 task 读到同一过时值产生「跨越式递减」；修复后逐 task 串行进入 MockDao 临界区。）
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn alone_cache_decr_concurrent_atomic() {
         let mock = Arc::new(MockDao::new());
@@ -496,7 +408,6 @@ mod tests {
 
         mock.set("perm:counter", "5", 3600).await.unwrap();
 
-        // 并发 10 个 task 同时 decr 同一 key
         let mut handles = Vec::with_capacity(10);
         for _ in 0..10 {
             let c = cache.clone();
@@ -510,7 +421,7 @@ mod tests {
             results.push(h.await.expect("task join failed"));
         }
 
-        // 4 个 task 拿到非 0 值（4, 3, 2, 1），6 个 task 拿到 0（第 5 次 + 6-10 次）
+        // 4 个非 0（4, 3, 2, 1）+ 6 个 0（第 5 次 key 删除 + 后 5 次）
         let nonzero_count = results.iter().filter(|&&v| v > 0).count();
         let zero_count = results.iter().filter(|&&v| v == 0).count();
         assert_eq!(
@@ -524,7 +435,7 @@ mod tests {
             results
         );
 
-        // 验证非 0 值集合恰好为 {4, 3, 2, 1}（无重复、无遗漏、无跨越式递减）
+        // 非 0 值集合恰好为 {4, 3, 2, 1}（无重复、无遗漏、无跨越式递减）
         let mut nonzero_vals: Vec<u64> = results.iter().copied().filter(|&v| v > 0).collect();
         nonzero_vals.sort_unstable();
         assert_eq!(

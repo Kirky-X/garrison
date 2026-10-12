@@ -1,24 +1,10 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 配置模块，提供 GarrisonConfig 全局配置。
+//! 配置模块，提供 GarrisonConfig 全局配置（对应 `SaTokenConfig`）。
 //!
-//! 对应 `SaTokenConfig`，
-//! 定义 Token 名称、超时、持久化等配置项。
-//!
-//! ## 配置源
-//!
-//! 由 [confers](https://docs.rs/confers) 库接管，优先级：环境变量 > toml 文件 > 代码默认值。
-//!
-//! 1. **代码默认值**：通过 `ConfigBuilder::default()` 设置
-//! 2. **toml 文件**：通过 `GarrisonConfig::load(Some(path))` 加载
-//! 3. **环境变量**：`GARRISON_` 前缀自动覆盖
-//!
-//! ## 热更新
-//!
-//! 通过 `tokio::sync::watch` 通道广播配置变更：
-//! - `GarrisonConfig::watch()` 返回 `watch::Receiver<GarrisonConfig>`
-//! - `GarrisonConfig::update(f)` 闭包式修改配置并广播
+//! 配置源由 confers 接管，优先级：环境变量（`GARRISON_` 前缀自动覆盖）> toml 文件（`GarrisonConfig::load`）> 代码默认值（`ConfigBuilder::default()`）。
+//! 热更新通过 `tokio::sync::watch` 广播：`watch()` 返回接收端，`update(f)` 闭包式修改并广播。
 
 #[cfg(feature = "credit-metering")]
 use crate::credit::CreditConfig;
@@ -38,9 +24,7 @@ pub mod impls;
 /// 配置安全规则集（`config-security-rules` feature 门控，见模块文档）。
 #[cfg(feature = "config-security-rules")]
 mod security_rules;
-/// Token 风格枚举（对应 token 风格）。
-///
-/// 配置校验——token_style 必须是以下 4 个合法值之一。
+/// Token 风格合法值（token_style 校验白名单，4 选一）。
 pub const TOKEN_STYLES: &[&str] = &["uuid", "random_64", "simple", "jwt"];
 
 /// Cookie SameSite 合法值。
@@ -52,7 +36,7 @@ pub const DEFAULT_TOKEN_NAME: &str = "garrison_token";
 /// 默认 Token 超时秒数（30 天）。
 pub const DEFAULT_TIMEOUT: i64 = 2_592_000;
 
-/// 默认活动超时检测值（-1 表示不启用，保留 既有语义）。
+/// 默认活动超时检测值（-1 = 不启用）。
 pub const DEFAULT_ACTIVE_TIMEOUT: i64 = -1;
 
 /// 默认 Cookie Secure 标志（生产环境应为 true，dev 环境可设为 false 以支持 HTTP 调试）。
@@ -64,19 +48,12 @@ pub const DEFAULT_COOKIE_SAME_SITE: &str = "Lax";
 /// 默认 JWT 签名算法（HS256，兼容 HS512 可选）。
 pub const DEFAULT_JWT_ALGORITHM: &str = "HS256";
 
-/// JWT 签名算法白名单。
-///
-/// `validate_core` 无论 `token_style` 是否为 `jwt`，都先按本白名单校验
-/// `jwt_algorithm`，防止非法值 / 拼写错误在非 JWT 模式下
-/// 静默通过配置校验、切换 token_style 后才暴露。
+/// JWT 签名算法白名单；`validate_core` 无论 token_style 是否 jwt 都先校验，防非法值在非 JWT 模式静默通过。
 /// 非对称算法（RS256/ES256/EdDSA）需配套对应私钥 PEM 字段。
 pub const JWT_ALGORITHMS: &[&str] = &["HS256", "HS384", "HS512", "RS256", "ES256", "EdDSA"];
 
-/// Argon2id 内存成本下限（KiB，19 MiB）。
-///
-/// OWASP Password Storage Cheat Sheet 现行建议的最低配置档（m=19 MiB, t=2, p=1）。
-/// `validate_core` 强制 `argon2_m_cost ≥ 19456`，低于下限必须显式设置
-/// `password_hasher.allow_weak_argon2_params = true`（风险接受）才允许通过。
+/// Argon2id 内存成本下限（KiB，19 MiB，OWASP 建议档 m=19MiB/t=2/p=1）。
+/// `validate_core` 强制 `argon2_m_cost ≥ 19456`，更低须 `password_hasher.allow_weak_argon2_params = true` 显式风险接受。
 pub const ARGON2_MIN_M_COST: u32 = 19_456;
 
 /// bcrypt cost 允许区间 `[10, 15]`（OWASP 建议 ≥10；>15 单次哈希秒级耗时，拒绝误配）。
@@ -102,16 +79,13 @@ pub const DEFAULT_SIGN_WINDOW_SECONDS: i64 = 300;
 /// 默认 SSO ticket TTL 秒数（60 秒）。
 pub const DEFAULT_SSO_TICKET_TTL_SECONDS: u64 = 60;
 
-/// 默认 JWKS 退役保留时长秒数（7200 = 2× access token TTL 3600）。
-///
-/// Passive 签名钥在轮换后保留验证至超期，期间对 RP 仍发布于 JWKS；
-/// 2× token TTL 保证所有存量 access token 过期前旧钥不退役。
+/// 默认 JWKS 退役保留时长秒数（7200 = 2× access token TTL，保证存量 token 过期前旧钥不退役）。
 pub const DEFAULT_JWKS_RETENTION_SECS: u64 = 7200;
 
 /// 默认 remember-me 超时秒数（90 天，必须 > DEFAULT_TIMEOUT 30 天）。
 pub const REMEMBER_ME_DEFAULT_TIMEOUT: i64 = 7_776_000;
 
-/// 默认会话悬停超时秒数（-1 = 不启用，保留 既有语义）。
+/// 默认会话悬停超时秒数（-1 = 不启用）。
 pub const DEFAULT_SESSION_HOVER_TIMEOUT: i64 = -1;
 
 /// 默认前后端分离模式（false = Cookie 模式，true = Token Header 模式）。
@@ -123,39 +97,23 @@ pub const DEFAULT_IS_READ_BODY: bool = false;
 /// 默认自动续签阈值（-1 = 不启用，0-100 = 剩余 TTL 百分比低于此值时触发续签）。
 pub const DEFAULT_AUTO_RENEWAL_THRESHOLD: i64 = -1;
 
-/// 默认 token map 清理间隔秒数（5 分钟）。
-///
-/// `<= 0` 表示禁用后台清理 task（与 `spawn_cleanup_task` 的 `interval_secs <= 0` 行为一致）。
+/// 默认 token map 清理间隔秒数（5 分钟；`<= 0` 禁用后台清理 task，与 `spawn_cleanup_task` 行为一致）。
 pub const DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL: i64 = 300;
 
-/// 默认 login_token_map 持久化写入间隔秒数（0 = 同步写入）。
-///
-/// 仅当 `login-token-map-persistence` feature 启用时生效。
-/// - `0`：每次变更同步写入 DAO（强一致，性能较低）
-/// - `>0`：后台 task 按此间隔批量写入 DAO（最终一致，性能更高）
+/// 默认 login_token_map 持久化写入间隔秒数（仅 `login-token-map-persistence` feature 生效）。
+/// 0 = 每次变更同步写 DAO（强一致）；>0 = 后台 task 按间隔批量写（最终一致）。
 pub const DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS: u64 = 0;
 
-/// 默认 L1 缓存 TTL 秒数（30 秒）。
-///
-/// 仅当 `three-tier-cache` feature 启用时生效。
-/// L1 为 oxcache 内存层，TTL 较短以保证数据新鲜度。
+/// 默认 L1 缓存 TTL 秒数（30 秒，仅 `three-tier-cache` feature 生效；oxcache 内存层，TTL 短保证新鲜度）。
 pub const DEFAULT_L1_CACHE_TTL_SECS: u64 = 30;
 
-/// 默认 L2 缓存 TTL 秒数（300 秒 = 5 分钟）。
-///
-/// 仅当 `three-tier-cache` feature 启用时生效。
-/// L2 为 DAO 持久化缓存，TTL 较长以减少 L3（interface 回调）压力。
+/// 默认 L2 缓存 TTL 秒数（300 秒 = 5 分钟，仅 `three-tier-cache` feature 生效；DAO 持久化层，TTL 长以减少 L3 回调压力）。
 pub const DEFAULT_L2_CACHE_TTL_SECS: u64 = 300;
 
-/// 默认 L1 缓存容量（10000 条）。
-///
-/// 仅当 `three-tier-cache` feature 启用时生效。
-/// oxcache L1 缓存的最大条目数，超出后按 LRU 淘汰。
+/// 默认 L1 缓存容量（10000 条，仅 `three-tier-cache` feature 生效；超出按 LRU 淘汰）。
 pub const DEFAULT_L1_CACHE_CAPACITY: u64 = 10_000;
 
-/// 默认匿名 Session 超时秒数（1800 = 30 分钟）。
-///
-/// 仅当 `anonymous-session` feature 启用时生效。
+/// 默认匿名 Session 超时秒数（1800 = 30 分钟，仅 `anonymous-session` feature 生效）。
 pub const DEFAULT_ANON_SESSION_TIMEOUT_SECS: u64 = 1800;
 
 /// 默认是否允许并发登录（true = 同一账号可同时在多设备登录）。
@@ -167,12 +125,8 @@ pub const DEFAULT_IS_SHARE: bool = false;
 /// 默认最大登录数量（0 = 不限制，>0 = 超出时踢出最早登录的会话）。
 pub const DEFAULT_MAX_LOGIN_COUNT: u32 = 0;
 
-/// login_id 默认长度上限（字节，255；0 = 不限制）。
-///
-/// 同时作为 HTTP 请求层 `LoginRequest.login_id` 反序列化的硬上限
-/// （wire 层不读运行时配置，始终按本常量封顶，防未认证超大 login_id
-/// 灌入会话存储的内存增长向量）；`login_id_max_len` 配置可在 stp 签发
-/// 源头进一步收紧或放宽（0 = 框架层不限，HTTP wire 层仍按本常量封顶）。
+/// login_id 默认长度上限（字节，255；0 = 框架层不限）。
+/// HTTP wire 层 `LoginRequest` 反序列化始终按本常量封顶（防未认证超大 login_id 灌入会话存储的内存增长），运行时配置只能进一步收紧该上限。
 pub const DEFAULT_LOGIN_ID_MAX_LEN: u32 = 255;
 
 /// 默认设备绑定模式（"disabled" = 不启用设备绑定）。
@@ -196,28 +150,18 @@ pub const DEFAULT_REFRESH_GRACE_PERIOD_SECS: i64 = 0;
 /// 默认 refresh token 宽限窗口内同一旧 token 的最大宽限兑现次数。
 pub const DEFAULT_REFRESH_GRACE_MAX_USES: u32 = 1;
 
-/// 默认异常登录分析器扫描间隔秒数（3600 = 1 小时）。
-///
-/// 仅当 `anomalous-detector-dual` feature 启用时生效。
+/// 默认异常登录分析器扫描间隔秒数（3600 = 1 小时，仅 `anomalous-detector-dual` feature 生效）。
 pub const DEFAULT_ANOMALOUS_ANALYZER_INTERVAL_SECS: u64 = 3600;
 
-/// 默认异常登录 burst 检测阈值（5 次/小时）。
-///
-/// 仅当 `anomalous-detector-dual` feature 启用时生效。
+/// 默认异常登录 burst 检测阈值（5 次/小时，仅 `anomalous-detector-dual` feature 生效）。
 pub const DEFAULT_ANOMALOUS_BURST_THRESHOLD: u32 = 5;
 
 /// 环境变量前缀（GARRISON_）。
 pub const ENV_PREFIX: &str = "GARRISON_";
 
-// ============================================================================
 // 并发登录控制枚举
-// ============================================================================
 
-/// 顶人下线策略（is_concurrent=false 时生效）。
-///
-/// 控制 `is_concurrent=false` 场景下新设备登录时的行为：
-/// - `OldDevice`：踢出旧设备，允许新设备登录（默认，对应 既有语义）
-/// - `NewDevice`：拒绝新设备登录，保留旧设备
+/// 顶人下线策略：`is_concurrent=false` 时新设备登录踢出旧设备放行新设备，或拒绝新设备保留旧设备。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReplacedLoginExitMode {
@@ -228,12 +172,7 @@ pub enum ReplacedLoginExitMode {
     NewDevice,
 }
 
-/// 溢出处理策略（max_login_count 超限时生效）。
-///
-/// 控制 `max_login_count > 0` 场景下登录数量超限时的处理方式：
-/// - `Logout`：登出最旧会话（默认，触发 Logout 事件）
-/// - `Kickout`：踢出最旧会话（触发 Kickout 事件）
-/// - `Replaced`：顶替最旧会话（触发 Replaced 事件）
+/// 溢出处理策略：`max_login_count` 超限时登出/踢出/顶替最旧会话（分别触发 Logout / Kickout / Replaced 事件）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OverflowLogoutMode {
@@ -246,10 +185,7 @@ pub enum OverflowLogoutMode {
     Replaced,
 }
 
-/// 会话劫持检测模式。
-///
-/// 控制 `check_login` 路径中 IP 对比检测到疑似劫持时的行为。
-/// 仅在 `session-hijack-detection` feature 启用时生效。
+/// 会话劫持检测模式：`check_login` 路径 IP 对比疑似劫持时仅告警，或告警并踢出会话（均需 `session-hijack-detection` feature）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionHijackMode {
@@ -262,15 +198,8 @@ pub enum SessionHijackMode {
 
 /// Refresh token 重用处置策略（`recent_reuse_behaviour`）。
 ///
-/// 决定「已消费 token 再次呈现且存在存活后代」（RecentPrev / OrphanedBranch
-/// 两级重用分类）时的处置；无存活血缘的 StaleLineage 恒按盗用处理，不受本
-/// 配置影响。
-///
-/// - `TheftDetected`：按 token 盗用处理——吊销整条 chain 并返回
-///   `TokenRevoked`（OAuth2 线上即 RFC 6819 §5.2.2.1 建议的失效响应，默认）
-/// - `Unauthorised`：仅拒绝本次请求（`InvalidToken`，401），不吊销 chain——
-///   供确知自身客户端存在良性并发刷新（多实例/重试风暴）且接受旧 token
-///   泄露窗口的部署做风险取舍
+/// 决定「已消费 token 再次呈现且存在存活后代」（RecentPrev / OrphanedBranch 分类）的处置；无存活血缘的 StaleLineage 恒按盗用处理，不受本配置影响。
+/// 默认 `TheftDetected` 按盗用吊销整条 chain（OAuth2 线上即 RFC 6819 §5.2.2.1 建议）；`Unauthorised` 仅拒绝本次请求（401）不吊销，供存在良性并发刷新且接受旧 token 泄露窗口的部署做风险取舍。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecentReuseBehaviour {
@@ -281,13 +210,9 @@ pub enum RecentReuseBehaviour {
     Unauthorised,
 }
 
-// ============================================================================
 // 多租户隔离配置
-// ============================================================================
 
-/// 租户解析器类型。
-///
-/// 配置文件中使用小写形式（`"header"` / `"subdomain"` / `"claim"`）。
+/// 租户解析器类型（配置文件中用小写 `"header"` / `"subdomain"` / `"claim"`）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TenantResolverKind {
@@ -299,12 +224,7 @@ pub enum TenantResolverKind {
     Claim,
 }
 
-/// 审计脱敏模式。
-///
-/// 控制 `AuditLogListener::mask_metadata` 的脱敏策略：
-/// - `Full`：所有 `mask_fields` 中的字段值替换为固定 `"***"`（完全屏蔽）
-/// - `Partial`：使用 `SensitiveDataMasker` 进行类型感知脱敏（如手机号 → `138****1234`），
-///   无匹配规则的字段回退为 `"***"`
+/// 审计脱敏模式：`Full` 全量替换为 `"***"`；`Partial` 用 `SensitiveDataMasker` 类型感知脱敏（如手机号 → `138****1234`），无规则字段回退 `"***"`。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuditMaskMode {
@@ -315,12 +235,7 @@ pub enum AuditMaskMode {
     Partial,
 }
 
-/// 多租户隔离配置段。
-///
-/// # 默认值
-///
-/// - `enabled`: `false`（默认不启用）
-/// - `resolver`: `Header`（最常用，从 `X-Tenant-Id` header 解析）
+/// 多租户隔离配置段（默认 `enabled: false`、`resolver: Header` 从 `X-Tenant-Id` header 解析）。
 ///
 /// # 配置示例
 ///
@@ -340,14 +255,8 @@ pub struct TenantIsolationConfig {
 
 /// MFA/step-up 编排配置段（`mfa`）。
 ///
-/// 承载 per-client MFA chain 三态与全局默认链；factor 词汇表校验
-/// （fail-closed）见 [`crate::stp::mfa::validate_mfa_chains`]。
-///
-/// # 三态语义（per_client_chains）
-///
-/// - 键缺失 → 回退 `global_chain`（全局默认）；
-/// - 值为空数组 → 显式禁用（即使全局有默认链也不强制）；
-/// - 值为非空数组 → 强制该集合。
+/// 承载 per-client MFA chain 三态与全局默认链；factor 词汇表校验（fail-closed）见 [`crate::stp::mfa::validate_mfa_chains`]。
+/// `per_client_chains` 三态：键缺失 → 回退 `global_chain`；空数组 → 显式禁用；非空数组 → 强制该集合。
 ///
 /// # 配置示例
 ///
@@ -370,27 +279,9 @@ pub struct MfaConfig {
     pub recovery_misuse_tolerance: u32,
 }
 
-/// 密码哈希配置段（`password_hasher`）。
+/// 密码哈希配置段（`password_hasher`）：驱动 `Argon2Hasher` / `BcryptHasher` 构造（`build_hasher()` 工厂），默认值即 OWASP 建议档（Argon2id m=19456/t=2/p=1，选型见 `docs/adr/0001-argon2id-password-hashing.md`）。
 ///
-/// 驱动 `Argon2Hasher` / `BcryptHasher` 的构造参数（`build_hasher()` 工厂），
-/// 默认值即 OWASP 建议档（Argon2id m=19456/t=2/p=1），选型论证见
-/// `docs/adr/0001-argon2id-password-hashing.md`。
-///
-/// # 校验规则（`validate_core`，fail-closed）
-///
-/// - `algorithm` ∈ `{argon2id, bcrypt}`
-/// - Argon2id：`m_cost ≥ 19456`（低于下限需 `allow_weak_argon2_params = true` 显式
-///   风险接受，通过时输出 warn 日志）；`t_cost ≥ 1`、`p_cost ≥ 1`；
-///   `argon2_pool_size ∈ [1, 256]`
-/// - bcrypt：`10 ≤ bcrypt_cost ≤ 15`
-///
-/// # 默认值
-///
-/// - `algorithm`: `"argon2id"`
-/// - `argon2_m_cost`: `19456`、`argon2_t_cost`: `2`、`argon2_p_cost`: `1`
-/// - `bcrypt_cost`: `12`
-/// - `allow_weak_argon2_params`: `false`
-/// - `argon2_pool_size`: `1`
+/// 校验（`validate_core`，fail-closed）：`algorithm ∈ {argon2id, bcrypt}`；Argon2id `m_cost ≥ 19456`（更低需 `allow_weak_argon2_params = true` 显式风险接受并 warn）、`t_cost/p_cost ≥ 1`、`argon2_pool_size ∈ [1, 256]`；bcrypt `10 ≤ cost ≤ 15`。
 ///
 /// # 配置示例
 ///
@@ -416,44 +307,24 @@ pub struct PasswordHasherConfig {
     pub argon2_p_cost: u32,
     /// bcrypt cost（允许区间 [10, 15]）。
     pub bcrypt_cost: u32,
-    /// Argon2 并发令牌池大小（默认 1，secure-by-default）。
-    ///
-    /// 限制同时执行中的 Argon2 hash/verify 数量：进程 Argon2 内存驻留上界
-    /// ≈ `argon2_pool_size × argon2_m_cost` KiB（单次执行驻留 ≈ m_cost KiB），
-    /// 任何取消时序下不超卖；等待中的调用异步排队（不拒绝）。
-    /// 允许区间 `[1, 256]`：0 = 零 permit 永久饥饿（fail-fast 拒绝）；
-    /// 256 × 19 MiB ≈ 4.8 GiB 为误配上界。
-    /// 环境变量：`GARRISON_PASSWORD_HASHER__ARGON2_POOL_SIZE`。
-    /// bcrypt 不入池（单次执行工作区 KB 级，池化无内存防护收益；CPU DoS 由
-    /// 限流与 cost 区间校验承担）。
+    /// Argon2 并发令牌池大小（默认 1，secure-by-default）：限制同时执行中的 Argon2 hash/verify 数量，进程内存驻留上界 ≈ `argon2_pool_size × argon2_m_cost` KiB，任何取消时序下不超卖、等待调用异步排队（不拒绝）；区间 `[1, 256]`（0 = 零 permit 永久饥饿，fail-fast；256 × 19 MiB ≈ 4.8 GiB 为误配上界）；bcrypt 不入池（KB 级，CPU DoS 由限流与 cost 校验承担）；env `GARRISON_PASSWORD_HASHER__ARGON2_POOL_SIZE`。
     pub argon2_pool_size: u32,
-    /// 显式风险接受：允许 Argon2id `m_cost` 低于 19456 下限（内存受限部署用）。
-    /// 置 true 时 `validate_core` 放行并输出 warn 日志，不静默降级。
+    /// 显式风险接受：允许 Argon2id `m_cost` 低于 19456 下限（内存受限部署）；置 true 时 `validate_core` 放行并输出 warn，不静默降级。
     pub allow_weak_argon2_params: bool,
 }
 
-/// JWT secret 类型别名。
-///
-/// - `protocol-zeroize` feature 启用：`Zeroizing<String>`，Drop 时自动 zeroize buffer，
-///   防止进程内存 dump / swap-to-disk 泄露 jwt_secret。
-/// - 不启用：退化为 `String`。
-///
-/// 调用方适配规则：
-/// - 赋值：`config.jwt_secret = "xxx".to_string().into()`（`String: From<String>` identity，
-///   `Zeroizing<String>: From<String>`）
-/// - 读取：`config.jwt_secret.as_str()` 或 `&*config.jwt_secret`（两种类型都支持）
+/// JWT secret 类型别名：`protocol-zeroize` 启用时为 `Zeroizing<String>`（Drop 时 zeroize，防内存 dump 泄露），否则退化为 `String`。
+/// 赋值用 `.into()`，读取用 `.as_str()` 或 `&*`（两种类型均支持）。
 #[cfg(feature = "protocol-zeroize")]
 pub type JwtSecret = zeroize::Zeroizing<String>;
 
 /// JWT secret 类型别名（不启用 `protocol-zeroize` 时退化为 `String`）。
 ///
-/// 详见上方 `protocol-zeroize` 启用版本的完整文档。
+/// 详见上方 `protocol-zeroize` 启用版本的文档。
 #[cfg(not(feature = "protocol-zeroize"))]
 pub type JwtSecret = String;
 
-/// 全局配置结构体，定义框架运行参数。
-///
-/// 对应 `SaTokenConfig`。
+/// 全局配置结构体，定义框架运行参数（对应 `SaTokenConfig`）。
 ///
 /// # 字段说明
 ///
@@ -469,14 +340,7 @@ pub type JwtSecret = String;
 /// | `token_style` | String | "uuid" | Token 风格（uuid/random_64/simple/jwt） |
 /// | `throw_on_not_login` | bool | true | 未登录时是否抛出异常（false 则返回 false） |
 ///
-/// # 配置校验
-///
-/// - `token_style` 必须是 `TOKEN_STYLES` 中的合法值
-/// - `timeout` 必须 > 0
-///
-/// # 热更新
-///
-/// 通过 `watch()` 订阅变更，通过 `update()` 修改配置：
+/// `token_style` 必须是 `TOKEN_STYLES` 合法值、`timeout` 必须 > 0（其余分组校验见 `validate()`）；热更新经 `watch()` 订阅、`update()` 修改：
 ///
 /// ```ignore
 /// let config = GarrisonConfig::default_config();
@@ -485,8 +349,7 @@ pub type JwtSecret = String;
 /// let new_config = rx.borrow_and_update();
 /// assert_eq!(new_config.timeout, 3600);
 /// ```
-/// `Debug` 为手动实现（见 `impls.rs`）：非 derive——`jwt_secret` 在 `{:?}` 输出中
-/// 脱敏为 `"<redacted>"`，防止密钥经日志/调试打印明文泄露。
+/// `Debug` 为手动实现（见 `impls.rs`）：`jwt_secret` 在 `{:?}` 输出中脱敏为 `"<redacted>"`，防密钥经日志/调试打印明文泄露。
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GarrisonConfig {
@@ -496,7 +359,7 @@ pub struct GarrisonConfig {
     /// Token 超时秒数（必须 > 0）。
     pub timeout: i64,
 
-    /// 活动超时检测（-1 表示不启用，保留 既有语义）。
+    /// 活动超时检测（-1 = 不启用）。
     pub active_timeout: i64,
 
     /// 是否从 Cookie 中读取 Token。
@@ -505,19 +368,13 @@ pub struct GarrisonConfig {
     /// 是否从 Header 中读取 Token。
     pub is_read_header: bool,
 
-    /// 是否从请求体中读取 Token（默认 false）。
-    ///
-    /// 启用后，middleware 会从请求体（如 JSON 字段）中提取 Token。
-    /// 通常与 `is_read_cookie` / `is_read_header` 组合使用。
+    /// 是否从请求体中读取 Token（默认 false；启用后 middleware 从请求体（如 JSON 字段）提取 Token，通常与 cookie/header 方式组合）。
     pub is_read_body: bool,
 
     /// 是否在登录后自动写入 Header。
     pub is_write_header: bool,
 
-    /// 是否在续签后将新 Token 写入 Cookie（默认 false）。
-    ///
-    /// 启用后，middleware 检测到 `CURRENT_RENEWED_TOKEN` 时，
-    /// 将续签 Token 作为 Set-Cookie 写入响应（`HttpOnly; Path=/; SameSite=Lax`）。
+    /// 是否在续签后将新 Token 写入 Cookie（默认 false；启用后 middleware 检测到 `CURRENT_RENEWED_TOKEN` 时写入 `HttpOnly; Path=/; SameSite=Lax`）。
     pub is_write_cookie: bool,
 
     /// Token 风格（uuid / random_64 / simple / jwt）。
@@ -535,31 +392,18 @@ pub struct GarrisonConfig {
     /// JWT 签名算法（"HS256" 默认 / "HS512" 可选）。
     pub jwt_algorithm: String,
 
-    /// JWT 签名密钥（verify_token/refresh_token 委托 JwtHandler 需要 secret）。
-    /// 默认空字符串，业务方使用 JWT 时必须配置非空 secret。
+    /// JWT 签名密钥（verify/refresh 委托 JwtHandler 需要 secret；默认空，使用 JWT 必须配置非空 secret）。
     ///
-    /// `protocol-zeroize` feature 下类型为 `Zeroizing<String>`，
-    /// Drop 时自动 zeroize buffer，防止内存泄露。
-    ///
-    /// # 安全性
-    ///
-    /// `GarrisonConfig` 的 `Debug` 为手动实现，本字段输出 `"<redacted>"`
-    /// （`Zeroizing` 的 Debug 是透明的，derive(Debug) 会打印明文）。
+    /// `protocol-zeroize` 下为 `Zeroizing<String>`（Drop 自动 zeroize 防内存泄露）；`Debug` 手动实现输出 `"<redacted>"`（derive 会打印明文）。
     pub jwt_secret: JwtSecret,
 
-    /// JWT RSA 私钥 PEM（PKCS#8/PKCS#1，`jwt_algorithm="RS256"` 时必填）。
-    ///
-    /// `GarrisonConfig` 的 `Debug` 为手动实现，本字段输出 `"<redacted>"`。
+    /// JWT RSA 私钥 PEM（PKCS#8/PKCS#1，`jwt_algorithm="RS256"` 时必填）；`Debug` 手动实现输出 `"<redacted>"`。
     pub jwt_rsa_private_key_pem: Option<String>,
 
-    /// JWT EC 私钥 PEM（PKCS#8，`jwt_algorithm="ES256"` 时必填，P-256/P-384）。
-    ///
-    /// `GarrisonConfig` 的 `Debug` 为手动实现，本字段输出 `"<redacted>"`。
+    /// JWT EC 私钥 PEM（PKCS#8，`jwt_algorithm="ES256"` 时必填，P-256/P-384）；`Debug` 手动实现输出 `"<redacted>"`。
     pub jwt_ec_private_key_pem: Option<String>,
 
-    /// JWT Ed25519 私钥 PEM（PKCS#8，`jwt_algorithm="EdDSA"` 时必填）。
-    ///
-    /// `GarrisonConfig` 的 `Debug` 为手动实现，本字段输出 `"<redacted>"`。
+    /// JWT Ed25519 私钥 PEM（PKCS#8，`jwt_algorithm="EdDSA"` 时必填）；`Debug` 手动实现输出 `"<redacted>"`。
     pub jwt_ed_private_key_pem: Option<String>,
 
     /// 签名校验时间窗口秒数（默认 300 秒）。
@@ -568,307 +412,153 @@ pub struct GarrisonConfig {
     /// SSO ticket TTL 秒数（默认 60 秒）。
     pub sso_ticket_ttl_seconds: u64,
 
-    /// JWKS 退役保留时长秒数（默认 7200 = 2× access token TTL，必须 > 0）。
-    ///
-    /// 生效前提：由嵌入方桥接——注入 `OAuth2State` 时经
-    /// `with_jwks_retention_secs(config.jwks_retention_secs)` 装配（框架不自动
-    /// 桥接，未装配时 OAuth2State 使用同值默认，行为恰好一致但不随配置联动）。
-    ///
-    /// 多 kid 轮换后 Passive 签名钥的保留验证时长：超期转 Disabled 并移出
-    /// JWKS 发布面（仍持有的旧 token 验证显性失效）。同时决定 JWKS 端点
-    /// `Cache-Control: max-age`（取一半）。
+    /// JWKS 退役保留时长秒数（默认 7200 = 2× access token TTL，必须 > 0；由嵌入方经 `with_jwks_retention_secs` 装配，框架不自动桥接）。
+    /// 多 kid 轮换后 Passive 签名钥保留至此超期（对 RP 仍发布于 JWKS），超期转 Disabled 并移出 JWKS；同时决定 JWKS 端点 `Cache-Control: max-age`（取一半）。
     pub jwks_retention_secs: u64,
 
-    /// 是否启用 remember-me 扩展会话超时（默认 false）。
-    ///
-    /// 启用后，`login` 时 params 含 `remember_me=true` 将使用 `remember_me_timeout` 作为 TTL。
+    /// 是否启用 remember-me 扩展会话超时（默认 false；启用后 `login` params 含 `remember_me=true` 时用 `remember_me_timeout` 作 TTL）。
     pub remember_me_enabled: bool,
 
-    /// remember-me 会话超时秒数（默认 90 天 = 7776000，必须 > `timeout`）。
-    ///
-    /// 仅当 `remember_me_enabled = true` 且 `login` params 含 `remember_me=true` 时生效。
+    /// remember-me 会话超时秒数（默认 90 天 = 7776000，必须 > `timeout`；仅 `remember_me_enabled = true` 且 login params 含 `remember_me=true` 时生效）。
     pub remember_me_timeout: i64,
 
-    /// 登录时是否向会话播种主认证因子（amr=["pwd"] / aal:1 / auth_time）。默认 `true`。
-    ///
-    /// 默认 `true` 保持既有行为（login 即主认证的历史契约）。**安全敏感部署建议
-    /// 显式关闭**（`seed_primary_amr = false`）：凭证委托 / 零凭证 login 路径
-    /// （如参考部署的外网 login）并未发生密码校验，播种 `pwd` 会向 amr_ledger
-    /// 与 amr/auth_time claim 断言一次从未发生的认证，误导下游 step-up 判定
-    /// （`assert_freshness` / `ledger_max_aal`）。关闭后：
-    /// - 会话 `amr_ledger` 为空、`auth_time` 为 `None`；
-    /// - JWT 签发不携带 `amr` / `auth_time` claim（MFA 编排仍可经 step-up 追加）。
+    /// 登录时是否向会话播种主认证因子（amr=["pwd"] / aal:1 / auth_time，默认 `true` 保持 login 即主认证的历史契约）。
+    /// 安全敏感部署建议显式关闭：凭证委托 / 零凭证 login 路径未发生密码校验，播种 `pwd` 会向 amr_ledger 与 claim 断言一次从未发生的认证，误导下游 step-up 判定；关闭后 `amr_ledger` 空、`auth_time=None`，JWT 不带 `amr`/`auth_time`（MFA 编排仍可 step-up 追加）。
     pub seed_primary_amr: bool,
 
-    /// login_id 长度上限（字节）。默认 255；`0` = 框架层不限制。
-    ///
-    /// 在 stp 登录收口（`login` / `login_with_token` / `login_by_token`）强制：
-    /// 超限返回 `InvalidParam`（拒绝签发会话，封住未认证内存增长源头）。
-    /// HTTP 请求层 `LoginRequest` 反序列化另有硬上限
-    /// [`DEFAULT_LOGIN_ID_MAX_LEN`]
-    /// （wire 层不读运行时配置）；本配置只可收紧该上限，设为 0 时框架层不限
-    /// 但 wire 层仍按默认常量封顶。
+    /// login_id 长度上限（字节，默认 255；`0` = 框架层不限，但 wire 层 `LoginRequest` 仍按 `DEFAULT_LOGIN_ID_MAX_LEN` 封顶）；stp 登录收口（`login` / `login_with_token` / `login_by_token`）超限返回 `InvalidParam`，封住未认证内存增长源头。
     pub login_id_max_len: u32,
 
-    /// 会话悬停超时秒数（-1 = 不启用，>0 = 不活跃秒数后踢出）。
-    ///
-    /// 启用后，`check_login` 时检查 `last_active_time`，
-    /// 若 `now - last_active_time > session_hover_timeout` 则踢出会话。
+    /// 会话悬停超时秒数（-1 = 不启用，>0 = 不活跃秒数后踢出；启用后 `check_login` 时检查 `last_active_time`）。
     pub session_hover_timeout: i64,
 
-    /// 是否启用前后端分离模式（默认 false = Cookie 模式）。
-    ///
-    /// 启用后 Token 从 Authorization Header 读取，不设置 Cookie。
-    /// 本批次仅提供配置项与日志提示，Web 框架行为变更留待后续版本。
+    /// 是否启用前后端分离模式（默认 false = Cookie 模式；启用后 Token 从 Authorization Header 读取，不设置 Cookie）。本批次仅提供配置项与日志提示，Web 框架行为变更留待后续版本。
     pub frontend_separation: bool,
 
-    /// 自动续签阈值（-1 = 不启用，0-100 = 剩余 TTL 百分比低于此值时触发续签）。
-    ///
-    /// 启用后，`check_login` 时检查 Token 剩余 TTL，
-    /// 若 `remaining_pct < auto_renewal_threshold` 则自动续签。
+    /// 自动续签阈值（-1 = 不启用，0-100 = 剩余 TTL 百分比低于此值时触发续签；启用后 `check_login` 时检查剩余 TTL）。
     pub auto_renewal_threshold: i64,
 
-    /// token map 清理间隔秒数（默认 300 = 5 分钟）。
-    ///
-    /// `<= 0` 表示禁用后台清理 task（与 `spawn_cleanup_task` 的 `interval_secs <= 0` 行为一致）。
-    /// 由 `GarrisonManager::builder()` 读取后传给 `spawn_cleanup_task`。
+    /// token map 清理间隔秒数（默认 300 = 5 分钟；`<= 0` 禁用后台清理 task；由 `GarrisonManager::builder()` 读取后传给 `spawn_cleanup_task`）。
     pub token_map_cleanup_interval_secs: i64,
 
-    /// L1 缓存（oxcache 内存层）TTL 秒数（默认 30）。
-    ///
-    /// 仅当 `three-tier-cache` feature 启用时生效。
-    /// L1 命中时不查询 L2/L3，TTL 较短以保证数据新鲜度。
+    /// L1 缓存（oxcache 内存层）TTL 秒数（默认 30，仅 `three-tier-cache` feature 生效；L1 命中不查 L2/L3，TTL 短保新鲜度）。
     #[cfg(feature = "three-tier-cache")]
     pub l1_cache_ttl_secs: u64,
 
-    /// L2 缓存（DAO 持久化层）TTL 秒数（默认 300 = 5 分钟）。
-    ///
-    /// 仅当 `three-tier-cache` feature 启用时生效。
-    /// L1 未命中时查询 L2，L2 命中时回填 L1；L2 未命中时走 L3（interface 回调）。
+    /// L2 缓存（DAO 持久化层）TTL 秒数（默认 300 = 5 分钟，仅 `three-tier-cache` feature 生效；L1 miss 查 L2，L2 miss 走 L3 回调）。
     #[cfg(feature = "three-tier-cache")]
     pub l2_cache_ttl_secs: u64,
 
-    /// L1 缓存（oxcache 内存层）最大容量（默认 10000 条）。
-    ///
-    /// 仅当 `three-tier-cache` feature 启用时生效。
-    /// 超出容量后按 LRU 淘汰最久未访问的条目。
+    /// L1 缓存（oxcache 内存层）最大容量（默认 10000 条，仅 `three-tier-cache` feature 生效；超出按 LRU 淘汰）。
     #[cfg(feature = "three-tier-cache")]
     pub l1_cache_capacity: u64,
 
-    /// login_token_map 持久化写入间隔秒数（默认 0 = 同步写入）。
-    ///
-    /// 仅当 `login-token-map-persistence` feature 启用时生效。
-    /// - `0`：每次变更同步写入 DAO（强一致，性能较低）
-    /// - `>0`：后台 task 按此间隔批量写入 DAO（最终一致，性能更高）
+    /// login_token_map 持久化写入间隔秒数（默认 0 = 同步写 DAO，仅 `login-token-map-persistence` feature 生效；0 = 强一致，>0 = 后台批量写最终一致）。
     #[cfg(feature = "session-extra")]
     pub login_token_map_persist_interval_secs: u64,
 
-    /// 匿名 Session 超时秒数（默认 1800 = 30 分钟）。
-    ///
-    /// 仅当 `anonymous-session` feature 启用时生效。
-    /// 匿名 Session 不关联 login_id，超时后自动销毁。
+    /// 匿名 Session 超时秒数（默认 1800 = 30 分钟，仅 `anonymous-session` feature 生效；匿名 Session 不关联 login_id，超时自动销毁）。
     #[cfg(feature = "session-extra")]
     pub anon_session_timeout: u64,
 
-    /// 是否允许并发登录（true = 同一账号可同时在多设备登录）。
-    ///
-    /// 对应 `isConcurrent` 配置。默认 true。
-    /// 设为 false 时，新登录会先踢出该账号的所有现有会话。
+    /// 是否允许并发登录（对应 `isConcurrent`；默认 true = 同一账号可同时在多设备登录，false 时新登录先踢出该账号所有现有会话）。
     pub is_concurrent: bool,
 
-    /// 是否共享 Token（true = 同一账号多登录复用同一 Token）。
-    ///
-    /// 对应 `isShare` 配置。默认 false。
-    /// 设为 true 时，同一账号再次登录返回已有 Token，不创建新会话。
-    /// 要求 `is_concurrent=true`，否则 `validate()` 报错。
+    /// 是否共享 Token（对应 `isShare`；默认 false，true = 同一账号多登录复用同一 Token，要求 `is_concurrent=true` 否则 `validate()` 报错）。
     pub is_share: bool,
 
-    /// 最大登录数量（0 = 不限制，>0 = 超出时踢出最早登录的会话）。
-    ///
-    /// 对应 `maxLoginCount` 配置。默认 0。
-    /// 登录后若该账号的活跃 Token 数超过此值，按 `last_active_time` 升序踢出最早的。
+    /// 最大登录数量（对应 `maxLoginCount`；默认 0 = 不限制，>0 = 登录后活跃 Token 超限时按 `last_active_time` 升序踢出最早的）。
     pub max_login_count: u32,
 
-    /// 设备绑定模式（"strict" / "loose" / "disabled"），默认 "disabled"。
-    ///
-    /// - `strict`：新设备登录触发二次认证（由 `DeviceBindingPolicy::StrictBinding` 处理）
-    /// - `loose`：新设备登录仅告警不阻断（由 `LooseBinding` 处理）
-    /// - `disabled`：不启用设备绑定（默认）
-    ///
-    /// 配置字段始终存在（非 feature-gated），策略注入由 `GarrisonManager::builder()` 根据
-    /// 此字段值决定（属于 集成范畴）。
+    /// 设备绑定模式（默认 "disabled"）：`strict` 新设备登录触发二次认证（`StrictBinding`），`loose` 仅告警不阻断（`LooseBinding`）；字段非 feature-gated，策略注入由 `GarrisonManager::builder()` 按值决定。
     pub device_binding_mode: String,
 
-    /// 顶人下线策略（is_concurrent=false 时生效）。默认 `OldDevice`。
-    ///
-    /// `is_concurrent=false` 时新设备登录的行为：
-    /// - `OldDevice`：踢出旧设备，允许新设备登录（默认）
-    /// - `NewDevice`：拒绝新设备登录，保留旧设备
+    /// 顶人下线策略（is_concurrent=false 时新设备登录踢出旧设备或拒绝新设备，默认 `OldDevice`）。
     pub replaced_login_exit_mode: ReplacedLoginExitMode,
 
-    /// 溢出处理策略（max_login_count 超限时生效）。默认 `Logout`。
-    ///
-    /// `max_login_count > 0` 且登录数量超限时的处理方式：
-    /// - `Logout`：登出最旧会话（默认，触发 Logout 事件）
-    /// - `Kickout`：踢出最旧会话（触发 Kickout 事件）
-    /// - `Replaced`：顶替最旧会话（触发 Replaced 事件）
+    /// 溢出处理策略（max_login_count 超限时登出/踢出/顶替最旧会话，默认 `Logout`）。
     pub overflow_logout_mode: OverflowLogoutMode,
 
-    /// 会话劫持检测模式。默认 `AlertOnly`。
-    ///
-    /// 仅在 `session-hijack-detection` feature 启用时生效。
-    /// - `AlertOnly`：检测到疑似劫持时仅广播告警事件
-    /// - `Kickout`：检测到疑似劫持时广播告警并踢出会话
+    /// 会话劫持检测模式（默认 `AlertOnly` 仅告警，仅 `session-hijack-detection` feature 生效）。
     #[cfg(feature = "session-hijack-detection")]
     pub session_hijack_mode: SessionHijackMode,
 
-    /// 是否启用 JWT 撤销黑名单。默认 `false`。
-    ///
-    /// 启用后，`logout` / `kickout` 时将 JWT 的 `jti` 写入 DAO 黑名单（TTL = 剩余有效期），
-    /// `check_login_stateless` 在 JWT verify 成功后检查黑名单，已撤销的 JWT 返回 `TokenRevoked`。
-    /// 仅在 `protocol-jwt` feature 启用且 `token_style="jwt"` 时有实际效果。
+    /// 是否启用 JWT 撤销黑名单（默认 false；启用后 logout/kickout 将 `jti` 写入 DAO 黑名单，`check_login_stateless` 命中返回 `TokenRevoked`；仅 `protocol-jwt` feature 且 `token_style="jwt"` 有实际效果）。
     pub enable_jwt_revocation: bool,
 
-    /// Refresh token 重用处置策略（RecentPrev / OrphanedBranch 两级）。默认 `TheftDetected`。
-    ///
-    /// 仅影响存在存活后代的重用分类；无存活血缘的 StaleLineage 恒按盗用吊销
-    /// 整条 chain，不受本字段影响。语义见 [`RecentReuseBehaviour`]。
+    /// Refresh token 重用处置策略（默认 `TheftDetected`）：仅影响存在存活后代的重用分类（RecentPrev / OrphanedBranch），无存活血缘的 StaleLineage 恒按盗用吊销整条 chain，语义见 [`RecentReuseBehaviour`]。
     pub recent_reuse_behaviour: RecentReuseBehaviour,
 
-    /// Refresh token 宽限窗口时长秒数（默认 0 = 关闭）。
-    ///
-    /// 窗口内已轮换的旧 token 再次呈现时，返回轮换时签发的既有新 token
-    ///（不重新旋转），容忍 in-flight 并发双刷；窗口外按
-    /// [`recent_reuse_behaviour`](Self::recent_reuse_behaviour) 处置。
-    /// 兑现凭据（新 token 材料）由轮换服务进程内暂存、不落库，多实例部署下
-    /// 仅签发实例可命中兑现，其余实例退化为既有重用处置。
+    /// Refresh token 宽限窗口时长秒数（默认 0 = 关闭）：窗口内已轮换旧 token 再现时返回轮换时签发的既有新 token（不重新旋转），容忍 in-flight 并发双刷；窗口外按 `recent_reuse_behaviour` 处置。
+    /// 兑现凭据由轮换服务进程内暂存不落库，多实例部署下仅签发实例可命中兑现，其余退化为既有重用处置。
     pub refresh_grace_period_secs: i64,
 
-    /// Refresh token 宽限窗口内同一旧 token 的最大宽限兑现次数（默认 1）。
+    /// Refresh token 宽限窗口内同一旧 token 的最大宽限兑现次数（默认 1，仅 `refresh_grace_period_secs > 0` 时生效）。
     ///
-    /// 预算耗尽后的窗口内重放按
-    /// [`recent_reuse_behaviour`](Self::recent_reuse_behaviour) 处置（默认
-    /// `TheftDetected` 吊销整条 chain）；仅并发落败方（未抢到消费权且宽限等待
-    /// 未命中兑现）返回 `InvalidToken` 不吊销 chain。仅当
-    /// [`refresh_grace_period_secs`](Self::refresh_grace_period_secs) > 0 时生效。
+    /// 预算耗尽后的窗口内重放按 `recent_reuse_behaviour` 处置（默认吊销整条 chain）；仅并发落败方（未抢到消费权且宽限未命中）返回 `InvalidToken` 不吊销。
     pub refresh_grace_max_uses: u32,
 
-    /// 显式风险接受：允许 `token_style=jwt` + `jwt_mode=Stateless` + `enable_jwt_revocation=false`
-    /// 的不安全组合（不可吊销的永久 JWT 凭证）。默认 `false`（R-sessiontokenconsistency / 互斥校验）。
-    ///
-    /// 仅当运维明确知悉风险并承担后果时设为 `true`；正常部署应使用 `enable_jwt_revocation=true` 或 `JwtMode::Mixin`。
+    /// 显式风险接受：允许 `token_style=jwt` + `jwt_mode=Stateless` + `enable_jwt_revocation=false` 的不安全组合（不可吊销的永久 JWT 凭证）。默认 `false`，仅运维明确知悉风险时设为 `true`；正常部署应 `enable_jwt_revocation=true` 或 `JwtMode::Mixin`。
     pub allow_stateless_jwt_no_revocation: bool,
 
-    /// 严格收口：Stateless JWT 在租户上下文内必须携带 `tid` 绑定 claim。默认 `false`。
-    ///
-    /// `false`（默认）：无 `tid` 的存量 token（无租户上下文签发 / 本字段引入前的
-    /// 历史签发）在租户上下文内放行（向后兼容，绑定语义随 token 自然轮替逐步收敛）。
-    /// `true`：`check_login_stateless` 在租户上下文存在且 claims 无 `tid` 时显性
-    /// 拒绝（`stp-check-login-tenant-unbound`）——封住存量无绑定 token 不受租户
-    /// 约束的窗口（jti 黑名单跨请求租户命名空间 miss 的吊销逃逸面）。无租户
-    /// 上下文部署不受影响；仅 `token_style="jwt"` + `jwt_mode=Stateless` 有实际效果。
-    /// 开启前应确认存量 token 已轮替（或可接受其显性失效）。
+    /// 严格收口：Stateless JWT 在租户上下文内必须携带 `tid` 绑定 claim（默认 `false`：无 `tid` 存量 token 放行，兼容随轮替收敛）。
+    /// `true` 时 `check_login_stateless` 在租户上下文存在且 claims 无 `tid` 时显性拒绝（`stp-check-login-tenant-unbound`），封住无绑定 token 不受租户约束及 jti 黑名单跨租户 miss 的吊销逃逸面；仅 `token_style="jwt"` + `JwtMode::Stateless` 有效，开启前确认存量 token 已轮替。
     pub require_tenant_bound_jwt: bool,
 
-    /// 严格收口：会话模式在租户上下文内必须持有租户绑定。默认 `false`。
-    ///
-    /// `false`（默认）：无绑定 attr（`SESSION_TENANT_ATTR_KEY`）的存量会话在租户
-    /// 上下文内放行（向后兼容；绑定仅在登录时刻写入，存量会话只能靠 TTL 自然过期
-    /// 收敛——`remember_me` 会话最长 90 天）。
-    /// `true`：`check_login` 在租户上下文存在且会话无绑定时显性拒绝
-    /// （`stp-check-login-session-tenant-unbound`）——封住旧会话不受租户约束的窗口。
-    ///
-    /// 覆盖范围与 [`require_tenant_bound_jwt`](Self::require_tenant_bound_jwt) 互补：
-    /// 本字段作用于 `jwt_mode = Simple` / `Mixin`（读会话绑定 attr）；`Stateless` 无会话
-    /// 存储，由 `require_tenant_bound_jwt` 读 `tid` claim——开启本项**不影响 Stateless
-    /// 部署**（无会话存储不等于无绑定，否则 Stateless 会在租户上下文内全量报错）。两者
-    /// 各覆盖一半，开启其一不代表全部收紧（覆盖矩阵见 docs/CONFIGURATION.md）。无租户
-    /// 上下文部署不受影响；开启前应确认存量无绑定会话已轮替（或可接受其显性失效）。
+    /// 严格收口：会话模式在租户上下文内必须持有租户绑定（读 `SESSION_TENANT_ATTR_KEY`，默认 `false`：无绑定存量会话放行，靠 TTL 自然收敛）。
+    /// `true` 时 `check_login` 对无绑定会话显性拒绝（`stp-check-login-session-tenant-unbound`）；与 `require_tenant_bound_jwt` 互补（本字段作用于 `jwt_mode = Simple`/`Mixin`，Stateless 由前者读 `tid` claim，开启其一不代表全部收紧）；无租户上下文部署不受影响，开启前确认存量无绑定会话已轮替。
     pub require_session_tenant_binding: bool,
 
-    /// 审计日志脱敏模式。默认 `Partial`。
-    ///
-    /// - `Full`：所有 `mask_fields` 字段值替换为 `"***"`（完全屏蔽）
-    /// - `Partial`：使用 `SensitiveDataMasker` 类型感知脱敏（如手机号 → `138****1234`）
+    /// 审计日志脱敏模式（默认 `Partial`：`SensitiveDataMasker` 类型感知脱敏；`Full` 全量替换 `"***"` 完全屏蔽）。
     pub audit_mask_mode: AuditMaskMode,
 
-    /// 多租户隔离配置段。
-    ///
-    /// 默认 `enabled: false`（不启用）。启用后需配合 `tenant-isolation` Cargo feature
-    /// + `tenant_resolution_middleware` 才能生效。
+    /// 多租户隔离配置段（默认不启用；启用需 `tenant-isolation` feature + `tenant_resolution_middleware`）。
     pub tenant_isolation: TenantIsolationConfig,
 
-    /// 密码哈希配置段。
-    ///
-    /// 默认 Argon2id m=19456/t=2/p=1（OWASP 建议档）。业务方经
-    /// `config.password_hasher.build_hasher()` 构造 hasher 后注入
-    /// `with_password_hasher`（verify 路径按哈希前缀自动识别算法，不受本节影响）。
+    /// 密码哈希配置段（默认 Argon2id OWASP 建议档；经 `config.password_hasher.build_hasher()` 构造 hasher 后注入 `with_password_hasher`，verify 按哈希前缀自动识别算法）。
     pub password_hasher: PasswordHasherConfig,
 
     /// MFA/step-up 编排配置段（per-client chain 三态 + 全局默认链）。
     pub mfa: MfaConfig,
 
-    /// CORS 跨域资源共享配置段。
-    ///
-    /// 默认 `allowed_origins` 为空（不注入 CORS 头）。
-    /// 启用后需配合 `web-cors` Cargo feature + `garrison_cors_middleware` 才能生效。
+    /// CORS 跨域资源共享配置段（默认 `allowed_origins` 为空；启用需 `web-cors` feature + `garrison_cors_middleware`）。
     #[cfg(feature = "web-cors")]
     pub cors_config: CorsConfig,
 
-    /// CSRF 跨站请求伪造防护配置段。
-    ///
-    /// 默认 `enabled: true`（secure-by-default）。启用后需配合 `web-csrf` Cargo feature
-    /// + `garrison_csrf_middleware` 才能生效。
+    /// CSRF 跨站请求伪造防护配置段（默认 `enabled: true` secure-by-default；启用需 `web-csrf` feature + `garrison_csrf_middleware`）。
     #[cfg(feature = "web-csrf")]
     pub csrf_config: CsrfConfig,
 
-    /// 限流后端配置段。
-    ///
-    /// 默认 `Memory`。启用 `rate-limit-redis` Cargo feature 后可选 `Redis`。
+    /// 限流后端配置段（默认 `Memory`，启用 `rate-limit-redis` feature 后可选 `Redis`）。
     #[cfg(feature = "rate-limit-redis")]
     pub rate_limit_backend: RateLimitBackend,
 
-    /// WAF 启用的 Hook 名称列表（firewall-waf feature）。
-    ///
-    /// 空列表表示不启用任何 Hook（WAF 链为空，全部放行）。
-    /// 合法值：white_path / black_path / danger_char / banned_char / dir_traversal /
-    /// host / http_method / header / parameter。
+    /// WAF 启用的 Hook 名称列表（firewall-waf feature；空 = WAF 链空全部放行）。
+    /// 合法值：white_path / black_path / danger_char / banned_char / dir_traversal / host / http_method / header / parameter。
     #[cfg(feature = "firewall-waf")]
     pub waf_enabled_hooks: Vec<String>,
 
-    /// WAF 白名单路径前缀列表（firewall-waf feature）。
-    ///
-    /// 匹配白名单的路径不被 WAF 拦截（但仍继续执行后续 Hook）。
+    /// WAF 白名单路径前缀列表（firewall-waf feature；匹配的路径不被 WAF 拦截，但仍继续执行后续 Hook）。
     #[cfg(feature = "firewall-waf")]
     pub waf_white_paths: Vec<String>,
 
-    /// WAF 黑名单路径前缀列表（firewall-waf feature）。
-    ///
-    /// 匹配黑名单的路径被 WAF 拦截（返回 403）。
+    /// WAF 黑名单路径前缀列表（firewall-waf feature；匹配的路径被 WAF 拦截返回 403）。
     #[cfg(feature = "firewall-waf")]
     pub waf_black_paths: Vec<String>,
 
-    /// WAF 允许的 Host 列表（firewall-waf feature）。
-    ///
-    /// 空列表表示不校验 Host。非空时请求的 Host 头必须在列表中。
+    /// WAF 允许的 Host 列表（firewall-waf feature；空 = 不校验，非空时请求 Host 头必须在列表中）。
     #[cfg(feature = "firewall-waf")]
     pub waf_allowed_hosts: Vec<String>,
 
-    /// WAF 允许的 HTTP 方法列表（firewall-waf feature）。
-    ///
-    /// 空列表表示不校验方法。非空时方法必须为大写且在列表中。
+    /// WAF 允许的 HTTP 方法列表（firewall-waf feature；空 = 不校验，非空时方法必须为大写且在列表中）。
     #[cfg(feature = "firewall-waf")]
     pub waf_allowed_methods: Vec<String>,
 
-    /// WAF 禁止的 Header 名称列表（firewall-waf feature）。
-    ///
-    /// 请求头中含此列表中的 header 时被拦截。
+    /// WAF 禁止的 Header 名称列表（firewall-waf feature；请求头含列表中 header 时被拦截）。
     #[cfg(feature = "firewall-waf")]
     pub waf_banned_headers: Vec<String>,
 
-    /// WAF 禁止的参数名称列表（firewall-waf feature）。
-    ///
-    /// 请求参数中含此列表中的参数时被拦截。
+    /// WAF 禁止的参数名称列表（firewall-waf feature；请求参数含列表中参数时被拦截）。
     #[cfg(feature = "firewall-waf")]
     pub waf_banned_params: Vec<String>,
 
@@ -908,21 +598,16 @@ pub struct GarrisonConfig {
     #[cfg(feature = "email-verification")]
     pub email_code_ttl: u64,
 
-    /// 异常登录分析器扫描间隔秒数（默认 3600 = 1 小时）。
-    ///
-    /// 仅当 `anomalous-detector-dual` feature 启用时生效。
+    /// 异常登录分析器扫描间隔秒数（默认 3600，仅 `anomalous-detector-dual` feature 生效）。
     #[cfg(feature = "anomalous-detector-dual")]
     pub anomalous_analyzer_interval_secs: u64,
 
-    /// 异常登录 burst 检测阈值（默认 5，1 小时窗口内登录次数 > 此值则告警）。
-    ///
-    /// 仅当 `anomalous-detector-dual` feature 启用时生效。
+    /// 异常登录 burst 检测阈值（默认 5，1 小时窗口内登录次数 > 此值则告警；仅 `anomalous-detector-dual` feature 生效）。
     #[cfg(feature = "anomalous-detector-dual")]
     pub anomalous_analyzer_burst_threshold: u32,
 
-    /// Credit 计量配置段（`None` = 不启用 credit 计量）。
+    /// Credit 计量配置段（`None` = 不启用 credit 计量，仅 `credit-metering` feature 生效）。
     ///
-    /// 仅当 `credit-metering` feature 启用时生效。
     /// 配置示例：
     /// ```toml
     /// [credit]

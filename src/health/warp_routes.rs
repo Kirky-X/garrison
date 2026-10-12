@@ -1,10 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! warp 框架的健康检查路由集成。
-//!
-//! 从 `mod.rs` 迁移而出（mod.rs 接口隔离）。
-//! 提供 `/health/live` 与 `/health/ready` filters。
+//! warp 框架的健康检查路由集成：提供 `/health/live` 与 `/health/ready` filters。
 
 use super::{HealthRegistry, HealthStatus};
 use std::sync::Arc;
@@ -24,9 +21,9 @@ pub fn live_filter() -> impl Filter<Extract = (impl Reply,), Error = warp::Rejec
 
 /// Readiness 探针 filter。
 ///
-/// 单项检查的超时护栏（默认 5 秒）由 [`HealthRegistry::check_all`]
-/// 内部强制执行（`HealthRegistry::with_check_timeout` 可配置），挂起/panic 的检查按
-/// `Unhealthy` 聚合，不会阻塞 warp worker。
+/// 单项检查超时护栏（默认 5 秒，[`HealthRegistry::with_check_timeout`] 可配置）由
+/// [`HealthRegistry::check_all`] 内部强制执行：挂起/panic 的检查按 `Unhealthy` 聚合，
+/// 不会阻塞 warp worker。
 pub fn ready_filter(
     registry: Arc<HealthRegistry>,
 ) -> impl Filter<Extract = (impl Reply,), Error = warp::Rejection> + Clone {

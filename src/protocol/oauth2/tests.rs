@@ -9,11 +9,8 @@ use crate::GarrisonResult;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-// ========================================================================
 // OAuth2Client 构造测试
-// ========================================================================
 
-/// 构造 OAuth2Client，字段正确填充）。
 #[test]
 fn new_populates_fields() {
     let client = OAuth2Client::new(
@@ -29,7 +26,6 @@ fn new_populates_fields() {
     assert_eq!(client.user_info_url(), None);
 }
 
-/// client_id 为空返回 Config 错误）。
 #[test]
 fn new_empty_client_id_returns_config_error() {
     let result = OAuth2Client::new("", "secret", "redirect", "auth", "token");
@@ -40,7 +36,6 @@ fn new_empty_client_id_returns_config_error() {
     }
 }
 
-/// with_user_info_url 设置用户信息端点）。
 #[test]
 fn with_user_info_url_sets_url() {
     let client = OAuth2Client::new(
@@ -55,10 +50,7 @@ fn with_user_info_url_sets_url() {
     assert_eq!(client.user_info_url(), Some("https://example.com/userinfo"));
 }
 
-/// redirect_uri 非 https 且非 localhost 应返回 InvalidParam 错误）。
-///
-/// 仅允许 https:// 或 http://localhost / http://127.0.0.1（开发环境例外）。
-/// http://evil.com 等明文 HTTP 回调应被拒绝，避免授权码被中间人截获。
+/// redirect_uri 仅允许 https:// 或 http://localhost / http://127.0.0.1（开发例外）；明文 HTTP 回调可被中间人截获授权码。
 #[test]
 fn redirect_uri_rejects_http_in_production() {
     // http://evil.com 应拒绝（明文 HTTP 回调到公网域名）
@@ -118,11 +110,8 @@ fn redirect_uri_rejects_http_in_production() {
     );
 }
 
-// ========================================================================
 // TokenResponse 解析测试
-// ========================================================================
 
-/// 完整 JSON 解析）。
 #[test]
 fn token_response_full_json_parse() {
     let json = r#"{"access_token":"abc","token_type":"Bearer","expires_in":3600,"refresh_token":"r1","scope":"read"}"#;
@@ -134,7 +123,6 @@ fn token_response_full_json_parse() {
     assert_eq!(tr.scope, Some("read".to_string()));
 }
 
-/// 省略可选字段解析）。
 #[test]
 fn token_response_omit_optional_fields() {
     let json = r#"{"access_token":"abc","token_type":"Bearer"}"#;
@@ -145,7 +133,6 @@ fn token_response_omit_optional_fields() {
     assert_eq!(tr.scope, None);
 }
 
-/// 缺少必填字段返回反序列化错误）。
 #[test]
 fn token_response_missing_required_field_errors() {
     let json = r#"{"token_type":"Bearer"}"#;
@@ -153,11 +140,8 @@ fn token_response_missing_required_field_errors() {
     assert!(result.is_err());
 }
 
-// ========================================================================
 // get_client_credentials_token 集成测试
-// ========================================================================
 
-/// 成功获取 client credentials token）。
 #[tokio::test]
 async fn client_credentials_with_scope_success() {
     let server = MockServer::start().await;
@@ -181,7 +165,6 @@ async fn client_credentials_with_scope_success() {
     assert_eq!(token.scope, Some("read write".to_string()));
 }
 
-/// 不带 scope 成功获取 token）。
 #[tokio::test]
 async fn client_credentials_without_scope_success() {
     let server = MockServer::start().await;
@@ -200,7 +183,6 @@ async fn client_credentials_without_scope_success() {
     assert_eq!(token.scope, None);
 }
 
-/// client_secret 错误返回 OAuth2 错误）。
 #[tokio::test]
 async fn client_credentials_wrong_secret_returns_oauth2_error() {
     let server = MockServer::start().await;
@@ -221,11 +203,8 @@ async fn client_credentials_wrong_secret_returns_oauth2_error() {
     }
 }
 
-// ========================================================================
 // get_password_token 集成测试
-// ========================================================================
 
-/// 成功获取 password token）。
 #[tokio::test]
 async fn password_token_success() {
     let server = MockServer::start().await;
@@ -248,7 +227,6 @@ async fn password_token_success() {
     assert_eq!(token.access_token, "pwd-token");
 }
 
-/// 凭据错误返回 OAuth2 错误）。
 #[tokio::test]
 async fn password_token_wrong_credentials_returns_oauth2_error() {
     let server = MockServer::start().await;
@@ -269,7 +247,6 @@ async fn password_token_wrong_credentials_returns_oauth2_error() {
     }
 }
 
-/// 用户名为空返回 InvalidParam 错误）。
 #[tokio::test]
 async fn password_token_empty_username_returns_invalid_param() {
     let server = MockServer::start().await;
@@ -282,11 +259,8 @@ async fn password_token_empty_username_returns_invalid_param() {
     }
 }
 
-// ========================================================================
 // refresh_access_token 集成测试
-// ========================================================================
 
-/// 成功使用 refresh_token 换取新 access_token（refresh_access_token 成功）。
 #[tokio::test]
 async fn refresh_access_token_success() {
     let server = MockServer::start().await;
@@ -314,7 +288,6 @@ async fn refresh_access_token_success() {
     assert_eq!(token.scope, Some("openid profile".to_string()));
 }
 
-/// 带 scope 参数成功换取新 token（refresh_access_token 成功）。
 #[tokio::test]
 async fn refresh_access_token_with_scope_success() {
     let server = MockServer::start().await;
@@ -338,7 +311,6 @@ async fn refresh_access_token_with_scope_success() {
     assert_eq!(token.scope, Some("admin".to_string()));
 }
 
-/// token_endpoint 返回 HTTP 400 错误响应（refresh_access_token 错误响应）。
 #[tokio::test]
 async fn refresh_access_token_error_response() {
     let server = MockServer::start().await;
@@ -364,7 +336,6 @@ async fn refresh_access_token_error_response() {
     }
 }
 
-/// refresh_token 为空返回 InvalidParam 错误（refresh_access_token 参数校验）。
 #[tokio::test]
 async fn refresh_access_token_empty_token_returns_invalid_param() {
     let server = MockServer::start().await;
@@ -377,15 +348,9 @@ async fn refresh_access_token_empty_token_returns_invalid_param() {
     }
 }
 
-// ========================================================================
 // PKCE (RFC 7636 / OAuth 2.1) 测试
-// ========================================================================
-// 注：URL 编码单元测试已迁移至 `client.rs` 的 `tests` 模块，与 `url_encode` 实现并置。
 
 /// RFC 7636 Appendix B 测试向量：验证 S256 code_challenge 计算正确（硬性要求）。
-///
-/// code_verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk" (43 字符)
-/// code_challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
 #[test]
 fn pkce_challenge_rfc_7636_test_vector() {
     let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
@@ -395,7 +360,6 @@ fn pkce_challenge_rfc_7636_test_vector() {
     assert_eq!(challenge, expected);
 }
 
-/// code_verifier < 43 字符返回 InvalidParam 错误）。
 #[test]
 fn pkce_challenge_short_verifier_returns_error() {
     let verifier = "a".repeat(42);
@@ -407,7 +371,6 @@ fn pkce_challenge_short_verifier_returns_error() {
     }
 }
 
-/// code_verifier > 128 字符返回 InvalidParam 错误）。
 #[test]
 fn pkce_challenge_long_verifier_returns_error() {
     let verifier = "a".repeat(129);
@@ -419,9 +382,7 @@ fn pkce_challenge_long_verifier_returns_error() {
     }
 }
 
-/// code_verifier 含非法字符返回 InvalidParam 错误）。
-///
-/// 合法字符集：[A-Z]/[a-z]/[0-9]/-/./_/~。空格、!、@、# 均为非法。
+/// 合法字符集 [A-Za-z0-9-._~]（RFC 7636 §4.1）；空格、!、@、# 均为非法。
 #[test]
 fn pkce_challenge_invalid_chars_returns_error() {
     let test_cases = [
@@ -444,9 +405,7 @@ fn pkce_challenge_invalid_chars_returns_error() {
     }
 }
 
-/// 43-128 字符的合法 verifier 返回 43 字符的 challenge）。
-///
-/// S256: SHA-256 输出 32 字节 → base64url 无填充编码 = 43 字符。
+/// S256 输出 32 字节 → base64url 无填充 = 43 字符（与 verifier 长度无关）。
 #[test]
 fn pkce_challenge_valid_verifier_returns_correct_length() {
     for &len in &[43usize, 64, 128] {
@@ -462,7 +421,6 @@ fn pkce_challenge_valid_verifier_returns_correct_length() {
     }
 }
 
-/// get_auth_url_with_pkce 返回的 URL 包含 code_challenge 和 code_challenge_method=S256）。
 #[test]
 fn get_auth_url_with_pkce_returns_url_and_challenge() {
     let client = OAuth2Client::new(
@@ -488,7 +446,6 @@ fn get_auth_url_with_pkce_returns_url_and_challenge() {
     assert!(url.contains(&format!("code_challenge={}", challenge)));
 }
 
-/// exchange_code_with_pkce 请求体包含 code_verifier 字段）。
 #[tokio::test]
 async fn exchange_code_with_pkce_includes_code_verifier_in_body() {
     let server = MockServer::start().await;
@@ -519,7 +476,6 @@ async fn exchange_code_with_pkce_includes_code_verifier_in_body() {
     );
 }
 
-/// exchange_code_with_pkce 在 state 不匹配时返回 OAuth2 错误（CSRF 防护）。
 #[tokio::test]
 async fn exchange_code_with_pkce_state_mismatch_returns_error() {
     let server = MockServer::start().await;
@@ -554,9 +510,7 @@ async fn exchange_code_with_pkce_state_mismatch_returns_error() {
     assert_eq!(received.len(), 0, "state 不匹配时不应发送 HTTP 请求");
 }
 
-// ========================================================================
 // OAuth2Client + ScopeRegistry 集成测试
-// ========================================================================
 
 /// 测试用 ScopeHandler：根据 allowed 字段返回结果。
 #[cfg(feature = "oauth2-scope-handler")]
@@ -571,9 +525,7 @@ impl scope::ScopeHandler for StubScopeHandler {
     }
 }
 
-/// 未注入 ScopeRegistry 时跳过校验（未注入跳过）。
-/// 既有 client_credentials_without_scope_success 等测试已覆盖此场景（未调用 with_scope_registry）。
-/// 这里追加验证：注入 registry 但 scope 为 None 时也跳过校验。
+/// 注入 registry 但 scope 为 None 时跳过校验（未注入场景由 client_credentials_without_scope_success 覆盖）。
 #[tokio::test]
 #[cfg(feature = "oauth2-scope-handler")]
 async fn scope_registry_injected_but_none_scope_skips_validation() {
@@ -597,13 +549,11 @@ async fn scope_registry_injected_but_none_scope_skips_validation() {
     assert_eq!(token.access_token, "tok");
 }
 
-/// 注入 ScopeRegistry 后校验失败返回 OAuth2 错误，不发送 HTTP 请求）。
 #[tokio::test]
 #[cfg(feature = "oauth2-scope-handler")]
 async fn scope_registry_rejects_scope_returns_oauth2_error() {
     let server = MockServer::start().await;
-    // 不挂载任何 mock → 若发送 HTTP 请求会因无匹配 mock 返回 404（但被 reqwest 接收为 response）
-    // 我们断言根本不会执行到 HTTP 调用阶段：validate_scope 失败时立即返回
+    // 不挂 mock：validate_scope 失败应立即返回、不进 HTTP；wiremock 无匹配 mock 会返回 404 响应而非报错
 
     let registry = std::sync::Arc::new(scope::ScopeRegistry::new());
     registry.register(
@@ -624,7 +574,6 @@ async fn scope_registry_rejects_scope_returns_oauth2_error() {
     }
 }
 
-/// 注入 ScopeRegistry 后校验通过发送 HTTP 请求（反向验证）。
 #[tokio::test]
 #[cfg(feature = "oauth2-scope-handler")]
 async fn scope_registry_allows_scope_proceeds_to_http() {
@@ -677,7 +626,6 @@ async fn scope_handler_error_propagates_without_http() {
     }
 }
 
-/// 未注册的 scope 返回 OAuth2 错误，不发送 HTTP 请求。
 #[tokio::test]
 #[cfg(feature = "oauth2-scope-handler")]
 async fn unregistered_scope_returns_oauth2_error_without_http() {
@@ -698,11 +646,8 @@ async fn unregistered_scope_returns_oauth2_error_without_http() {
     }
 }
 
-// ========================================================================
 // Token Introspection (RFC 7662) 测试
-// ========================================================================
 
-/// 完整 introspection 响应解析：active=true 时所有字段正确解析）。
 #[tokio::test]
 async fn introspect_active_token_returns_full_response() {
     let server = MockServer::start().await;
@@ -744,7 +689,6 @@ async fn introspect_active_token_returns_full_response() {
     assert_eq!(resp.jti.as_deref(), Some("token-jti-001"));
 }
 
-/// 无效 token 返回 active=false，其他字段为 None）。
 #[tokio::test]
 async fn introspect_inactive_token_returns_active_false() {
     let server = MockServer::start().await;
@@ -775,7 +719,6 @@ async fn introspect_inactive_token_returns_active_false() {
     assert_eq!(resp.jti, None);
 }
 
-/// 服务器返回 HTTP 500 时返回 OAuth2 错误（错误处理）。
 #[tokio::test]
 async fn introspect_token_server_error_returns_oauth2_error() {
     let server = MockServer::start().await;
@@ -796,11 +739,8 @@ async fn introspect_token_server_error_returns_oauth2_error() {
     }
 }
 
-/// 授权服务器不可达返回 Network 错误）。
-///
-/// 不可达端点用 RFC 2606 保留 TLD `.invalid`（保证 NXDOMAIN）——DNS 解析失败
-/// 走 reqwest 请求错误的 Network 分支。勿用「未监听端口号」模拟：Docker Desktop
-/// 的 WSL 回环代理会对未绑定端口返回 503，使连接拒绝语义在本机开发环境不可靠。
+/// 不可达端点用 RFC 2606 保留 TLD `.invalid` 保证 NXDOMAIN（走 Network 分支）；勿用「未监听端口」模拟——
+/// Docker Desktop 的 WSL 回环代理对未绑定端口返回 503，连接拒绝语义不可靠。
 #[tokio::test]
 async fn introspect_token_network_error_returns_network_error() {
     let client = OAuth2Client::new(
@@ -821,7 +761,6 @@ async fn introspect_token_network_error_returns_network_error() {
     }
 }
 
-/// 请求体包含 token + client_id + client_secret 字段，Content-Type 为 form-urlencoded）。
 #[tokio::test]
 async fn introspect_token_sends_token_and_client_credentials_in_body() {
     let server = MockServer::start().await;
@@ -866,7 +805,6 @@ async fn introspect_token_sends_token_and_client_credentials_in_body() {
     );
 }
 
-/// with_introspect_url 覆盖默认 URL，请求发到自定义端点）。
 #[tokio::test]
 async fn introspect_token_custom_url_uses_provided_endpoint() {
     let server = MockServer::start().await;
@@ -884,12 +822,10 @@ async fn introspect_token_custom_url_uses_provided_endpoint() {
     assert!(resp.active);
 }
 
-/// 默认 introspect URL 从 token_url 推导（token_url 末尾为 /token 时替换为 /introspect））。
 #[tokio::test]
 async fn introspect_token_default_url_derived_from_token_url() {
     let server = MockServer::start().await;
-    // 仅挂载 /introspect 路径，验证默认推导逻辑
-    // make_client 创建的 token_url = `{base}/token`，默认 introspect_url 应推导为 `{base}/introspect`
+    // 仅挂 /introspect：make_client 的 token_url={base}/token，默认推导 introspect_url={base}/introspect
     Mock::given(method("POST"))
         .and(path("/introspect"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"active": true})))
@@ -901,7 +837,6 @@ async fn introspect_token_default_url_derived_from_token_url() {
     assert!(resp.active);
 }
 
-/// TokenIntrospectionResponse 派生 Debug/Clone/Serialize/Deserialize。
 #[test]
 fn token_introspection_response_derives_debug_clone_serde() {
     let resp = TokenIntrospectionResponse {
@@ -919,7 +854,6 @@ fn token_introspection_response_derives_debug_clone_serde() {
         jti: Some("jti-1".to_string()),
     };
 
-    // Debug
     let _debug_str = format!("{:?}", resp);
     let cloned = resp.clone();
     assert_eq!(cloned.active, resp.active);
@@ -931,16 +865,9 @@ fn token_introspection_response_derives_debug_clone_serde() {
     assert_eq!(parsed.scope, resp.scope);
 }
 
-// ========================================================================
 // 安全加固：错误处理不泄露 client_secret / code_verifier
-// ========================================================================
 
-/// post_token_request 错误处理不泄露 client_secret / code_verifier。
-///
-/// 模拟恶意/配置错误的 token 端点在 401 响应体中回显请求参数（含 client_secret / code_verifier）。
-/// 修复前，错误消息 `format!("HTTP {}: {}", status, body)` 会原样包含响应体，
-/// 若服务器回显请求参数则 secret 泄露到日志/上层调用方。
-/// 修复后，错误消息只包含 HTTP status + token_url，不包含响应体或请求参数。
+/// 错误消息只含 HTTP status + token_url，不回显响应体（防恶意 token 端点回显 client_secret / code_verifier）。
 #[tokio::test]
 async fn post_token_request_error_does_not_leak_secret() {
     let server = MockServer::start().await;
@@ -989,11 +916,7 @@ async fn post_token_request_error_does_not_leak_secret() {
     );
 }
 
-/// introspect_token 错误处理不泄露响应体（同类漏洞修复）。
-///
-/// 与 post_token_request 同类问题：修复前 `format!("HTTP {}: {}", status, body)`
-/// 会原样包含响应体。模拟恶意 introspect 端点在 500 响应体中回显请求参数
-/// （含 client_secret），断言错误消息不包含敏感值。
+/// 错误消息只含 HTTP status + token_url，不回显响应体（防 introspect 端点回显 client_secret）。
 #[tokio::test]
 async fn introspect_token_error_does_not_leak_response_body() {
     let server = MockServer::start().await;
@@ -1033,14 +956,9 @@ async fn introspect_token_error_does_not_leak_response_body() {
     );
 }
 
-// ========================================================================
-// 验收层下沉场景（2026-09：验收层禁止 mock 后，响应解析/请求体构造边界
-// 回收至单元层；真实服务器可观测语义由 tests/acceptance/protocol_oauth2.rs 覆盖）
-// ========================================================================
+// 验收层下沉的响应解析 / 请求体边界（真实服务器语义见 tests/acceptance/protocol_oauth2.rs）
 
-/// `expires_in=0` 解析为 `Some(0)`——协议层只解析不判定过期（判定权在
-/// 业务方），业务方应据 `expires_in <= 0` 视为立即过期。
-/// （迁自验收 acc_oauth2_015 的原 wiremock 边界，见 tests/acceptance/protocol_oauth2.rs）
+/// `expires_in=0` 解析为 `Some(0)`——协议层只解析不判定过期，判定权在业务方（`expires_in <= 0` 视为立即过期）。
 #[tokio::test]
 async fn expires_in_zero_parsed_as_immediate_expiry() {
     let server = MockServer::start().await;
@@ -1071,10 +989,7 @@ async fn expires_in_zero_parsed_as_immediate_expiry() {
     );
 }
 
-/// `scope=Some("")` 与 `scope=None` 产生不同的请求体——空串携带 `scope=`
-/// 参数、None 不携带；两个互斥 mock 分别命中并返回不同 token，证明行为
-/// 差异真实发生在请求体层面（而非客户端内部状态）。
-/// （迁自验收 acc_oauth2_014 的原 wiremock 边界）
+/// `scope=Some("")` 携带 `scope=` 参数、`scope=None` 不携带：两个互斥 mock 分别命中，证明差异在请求体层面。
 #[tokio::test]
 async fn scope_empty_string_vs_none_body_differs() {
     use wiremock::matchers::body_string_contains;

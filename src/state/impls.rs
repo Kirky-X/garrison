@@ -6,25 +6,7 @@
 use super::*;
 
 impl TokenState {
-    /// 判断从当前状态到 `target` 的转换是否合法。
-    ///
-    /// # 合法转换路径（6 条）
-    ///
-    /// - `Issued → Active`（客户端首次携带使用时）
-    /// - `Active → Active`（续期 / 每次访问 +30min TTL）
-    /// - `Active → Expired`（TTL 到达 / exp 字段过期）
-    /// - `Active → Revoked`（logout / kickout / 账号封禁）
-    /// - `Active → Refreshed`（refresh_token 调用 / 签发新 Token）
-    /// - `Refreshed → Revoked`（旧 Token 立即作废，写入黑名单）
-    ///
-    /// # 非法转换路径（返回 false）
-    ///
-    /// - `Issued → Expired` / `Issued → Revoked` / `Issued → Refreshed`
-    ///   （状态机不允许，必须先经过 Active）
-    /// - `Expired → *`（终态，不可转换）
-    /// - `Revoked → *`（终态，不可转换）
-    /// - `Refreshed → Active` / `Refreshed → Expired` / `Refreshed → Refreshed`
-    ///   （状态机不允许，旧 Token 立即作废）
+    /// 判断到 `target` 的转换是否合法：合法 6 条（`Issued → Active`、`Active → Active/Expired/Revoked/Refreshed`、`Refreshed → Revoked`（旧 Token 立即作废，写入黑名单）），其余（含终态转出、跳步）均返回 false。
     pub fn can_transition_to(self, target: TokenState) -> bool {
         use TokenState::*;
         matches!(
@@ -38,14 +20,7 @@ impl TokenState {
         )
     }
 
-    /// 执行状态转换，合法时返回 `Ok(target)`，非法时返回 `Err(InvalidStateTransition)`。
-    ///
-    /// # 参数
-    /// - `target`: 目标状态。
-    ///
-    /// # 返回
-    /// - `Ok(target)`: 转换合法。
-    /// - `Err(GarrisonError::InvalidStateTransition { from, to })`: 转换非法。
+    /// 执行状态转换；非法时返回 `Err(GarrisonError::InvalidStateTransition { from, to })`。
     ///
     /// # 示例
     ///
@@ -85,27 +60,7 @@ impl std::fmt::Display for TokenState {
 }
 
 impl UserStatus {
-    /// 判断从当前状态到 `target` 的转换是否合法。
-    ///
-    /// # 合法转换路径（9 条）
-    ///
-    /// - `Pending → Active`（审核通过 / 邮箱验证）
-    /// - `Pending → Suspended`（审核拒绝 / 风控拦截）
-    /// - `Active → Suspended`（违规 / 管理员冻结）
-    /// - `Active → Inactive`（长期未登录 / 90天）
-    /// - `Active → Deleted`（用户注销）
-    /// - `Suspended → Active`（管理员解封）
-    /// - `Suspended → Deleted`（注销）
-    /// - `Inactive → Active`（重新登录）
-    /// - `Inactive → Deleted`（超期自动清理 / 180天）
-    ///
-    /// # 非法转换路径（返回 false）
-    ///
-    /// - `Pending → Inactive` / `Pending → Deleted`（必须先经 Active 或 Suspended）
-    /// - `Active → Pending`（不可逆）
-    /// - `Suspended → Pending` / `Suspended → Inactive`（必须先经 Active）
-    /// - `Inactive → Suspended` / `Inactive → Pending`（必须先经 Active）
-    /// - `Deleted → *`（终态）
+    /// 判断到 `target` 的转换是否合法：合法 9 条（`Pending → Active/Suspended`、`Active → Suspended/Inactive/Deleted`、`Suspended/Inactive → Active/Deleted`），其余（含终态转出、回退）均返回 false。
     pub fn can_transition_to(self, target: UserStatus) -> bool {
         use UserStatus::*;
         matches!(
@@ -122,14 +77,7 @@ impl UserStatus {
         )
     }
 
-    /// 执行状态转换，合法时返回 `Ok(target)`，非法时返回 `Err(InvalidStateTransition)`。
-    ///
-    /// # 参数
-    /// - `target`: 目标状态。
-    ///
-    /// # 返回
-    /// - `Ok(target)`: 转换合法。
-    /// - `Err(GarrisonError::InvalidStateTransition { from, to })`: 转换非法。
+    /// 执行状态转换；非法时返回 `Err(GarrisonError::InvalidStateTransition { from, to })`。
     ///
     /// # 示例
     ///

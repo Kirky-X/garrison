@@ -5,65 +5,17 @@
 use crate::error::GarrisonResult;
 use async_trait::async_trait;
 
-/// 接口 trait，定义获取权限 / 角色数据的回调。
-///
-/// 对应 `StpInterface`，由业务方实现以提供权限数据。
-///
-/// # 数据来源
-///
-/// 业务方可自由选择数据来源（数据库 / YAML / 内存 / 外部服务等），
-/// 框架不假定具体来源。`GarrisonPermissionStrategyDefault` 通过此回调获取数据后做字符串匹配。
+/// 权限/角色数据回调接口（对应 `StpInterface`，由业务方实现，数据来源不限：数据库 / YAML / 内存 / 外部服务）。
 #[async_trait]
 pub trait GarrisonInterface: Send + Sync {
-    /// 获取指定主体的权限列表。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    ///
-    /// # 返回
-    /// 权限标识字符串列表（如 `["user:read", "user:write"]`）。
-    ///
-    /// # 错误
-    /// - 数据源访问失败：由业务方实现决定具体 `GarrisonError`。
+    /// 获取指定主体的权限列表；数据源访问失败由实现方决定具体 `GarrisonError`。
     async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>>;
 
-    /// 获取指定主体的角色列表。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    ///
-    /// # 返回
-    /// 角色标识字符串列表（如 `["admin", "user"]`）。
-    ///
-    /// # 错误
-    /// - 数据源访问失败：由业务方实现决定具体 `GarrisonError`。
+    /// 获取指定主体的角色列表；数据源访问失败由实现方决定具体 `GarrisonError`。
     async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>>;
 
-    /// 获取指定主体在特定 `login_type` 下的权限列表。
-    ///
-    /// 多账号体系下，不同 `login_type`（如 "admin"/"user"/"merchant"）的权限相互隔离。
-    /// 业务方可 override 此方法以接入按 `login_type` 隔离的权限数据源。
-    ///
-    /// # 生产接线
-    ///
-    /// `GarrisonPermissionStrategyDefault::get_permission_list` 现已改调本方法，
-    /// 传入策略配置的 `login_type`（`with_login_type` builder 设置，默认 `"default"`）——
-    /// 此前本方法仅测试调用（死 API），默认策略静默忽略 `login_type`。
-    ///
-    /// # 默认实现
-    ///
-    /// 默认实现委托 [`get_permission_list`](Self::get_permission_list)（忽略 `login_type` 参数），
-    /// 数据源未按 `login_type` 隔离的实现者无需覆写。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `login_type`: 登录类型字符串（业务方自定义，如 "admin"/"user"/"merchant"）。
-    ///
-    /// # 返回
-    /// 权限标识字符串列表。
-    ///
-    /// # 错误
-    /// - 数据源访问失败：由业务方实现决定具体 `GarrisonError`。
+    /// 获取指定主体在特定 `login_type` 下的权限列表（不同 `login_type` 相互隔离）。
+    /// 默认委托 [`get_permission_list`](Self::get_permission_list) 忽略 `login_type`，数据源未按 `login_type` 隔离者无需覆写；`GarrisonPermissionStrategyDefault` 经本方法取数。
     async fn get_permission_list_with_type(
         &self,
         login_id: &str,
@@ -72,31 +24,8 @@ pub trait GarrisonInterface: Send + Sync {
         self.get_permission_list(login_id).await
     }
 
-    /// 获取指定主体在特定 `login_type` 下的角色列表。
-    ///
-    /// 多账号体系下，不同 `login_type`（如 "admin"/"user"/"merchant"）的角色相互隔离。
-    /// 业务方可 override 此方法以接入按 `login_type` 隔离的角色数据源。
-    ///
-    /// # 生产接线
-    ///
-    /// `GarrisonPermissionStrategyDefault::get_role_list` 现已改调本方法
-    /// （`check_role` / `check_role_any` / `check_role_all` 均经此路径），
-    /// 传入策略配置的 `login_type`——此前本方法仅测试调用（死 API）。
-    ///
-    /// # 默认实现
-    ///
-    /// 默认实现委托 [`get_role_list`](Self::get_role_list)（忽略 `login_type` 参数），
-    /// 数据源未按 `login_type` 隔离的实现者无需覆写。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `login_type`: 登录类型字符串（业务方自定义，如 "admin"/"user"/"merchant"）。
-    ///
-    /// # 返回
-    /// 角色标识字符串列表。
-    ///
-    /// # 错误
-    /// - 数据源访问失败：由业务方实现决定具体 `GarrisonError`。
+    /// 获取指定主体在特定 `login_type` 下的角色列表（不同 `login_type` 相互隔离）。
+    /// 默认委托 [`get_role_list`](Self::get_role_list) 忽略 `login_type`，数据源未按 `login_type` 隔离者无需覆写；`check_role` / `check_role_any` / `check_role_all` 均经此路径。
     async fn get_role_list_with_type(
         &self,
         login_id: &str,
@@ -105,28 +34,8 @@ pub trait GarrisonInterface: Send + Sync {
         self.get_role_list(login_id).await
     }
 
-    /// 获取指定主体在指定租户下的权限列表（租户感知数据源）。
-    ///
-    /// # 生产接线（渗透-RBAC-租户维度-1 修复）
-    ///
-    /// `GarrisonPermissionStrategyDefault::check_permission_in_tenant` /
-    /// stp 层 firewall 回退路径在请求级租户存在时**优先调用本方法**：
-    /// 覆写了本方法的业务方获得真实租户作用域的权限数据，
-    /// 跨租户重名 `login_id` 不再互染。
-    ///
-    /// # 默认实现
-    ///
-    /// 默认实现委托 [`get_permission_list`](Self::get_permission_list)（忽略 `tenant_id`），
-    /// 数据源未按租户隔离的既有实现者**无需覆写、行为不变**。
-    /// 多租户部署（`login_id` 跨租户可能重名）**必须覆写**本方法按租户过滤，
-    /// 否则判定退化为全局共享（方法名契约不成立，跨租户互染风险由业务方承担）。
-    ///
-    /// # 参数
-    /// - `tenant_id`: 请求级租户 ID。
-    /// - `login_id`: 登录主体标识（**租户内**标识，同名主体不同租户互不相同）。
-    ///
-    /// # 错误
-    /// - 数据源访问失败：由业务方实现决定具体 `GarrisonError`。
+    /// 获取指定主体在指定租户下的权限列表（租户感知数据源）：请求级租户存在时**优先调用本方法**，覆写者获得真实租户作用域数据，跨租户重名 `login_id`（**租户内**标识）不再互染。
+    /// 默认委托 [`get_permission_list`](Self::get_permission_list) 忽略 `tenant_id`，既有实现者行为不变；多租户部署**必须覆写**按租户过滤，否则判定退化为全局共享。
     async fn get_permission_list_in_tenant(
         &self,
         _tenant_id: i64,
@@ -135,27 +44,8 @@ pub trait GarrisonInterface: Send + Sync {
         self.get_permission_list(login_id).await
     }
 
-    /// 获取指定主体在指定租户下的角色列表（租户感知数据源）。
-    ///
-    /// # 生产接线（渗透-RBAC-租户维度-1 修复）
-    ///
-    /// `GarrisonPermissionStrategyDefault::check_role_in_tenant` 改为本方法驱动：
-    /// 覆写了本方法的业务方获得真实租户作用域的角色数据，
-    /// 跨租户重名 `login_id` 的角色不再互染。
-    ///
-    /// # 默认实现
-    ///
-    /// 默认实现委托 [`get_role_list`](Self::get_role_list)（忽略 `tenant_id`），
-    /// 数据源未按租户隔离的既有实现者**无需覆写、行为不变**。
-    /// 多租户部署（`login_id` 跨租户可能重名）**必须覆写**本方法按租户过滤，
-    /// 否则判定退化为全局共享（方法名契约不成立，跨租户互染风险由业务方承担）。
-    ///
-    /// # 参数
-    /// - `tenant_id`: 请求级租户 ID。
-    /// - `login_id`: 登录主体标识（**租户内**标识，同名主体不同租户互不相同）。
-    ///
-    /// # 错误
-    /// - 数据源访问失败：由业务方实现决定具体 `GarrisonError`。
+    /// 获取指定主体在指定租户下的角色列表（租户感知数据源）：`GarrisonPermissionStrategyDefault::check_role_in_tenant` 由本方法驱动，跨租户重名 `login_id`（**租户内**标识）不再互染。
+    /// 默认委托 [`get_role_list`](Self::get_role_list) 忽略 `tenant_id`，既有实现者行为不变；多租户部署**必须覆写**按租户过滤，否则判定退化为全局共享。
     async fn get_role_list_in_tenant(
         &self,
         _tenant_id: i64,

@@ -112,8 +112,7 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
         offset: i64,
         limit: i64,
     ) -> GarrisonResult<Vec<RolePermissionRow>> {
-        // 负 limit 校验：SQLite/PG/MySQL 中负 LIMIT 语义为「无上限」，
-        // 传入负值会静默返回该租户全部行（数据泄漏 / DoS 风险），必须显式拒绝
+        // 负 limit 校验：SQLite/PG/MySQL 中负 LIMIT 语义为「无上限」，传入会静默返回该租户全部行（数据泄漏 / DoS 风险），必须显式拒绝
         if limit < 0 {
             return Err(GarrisonError::InvalidParam(format!(
                 "dao-role-permission-list-invalid-limit::{}",

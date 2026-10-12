@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! constant_time_eq 示例测试（secure-ct-eq feature）。
-//!
-//! 验证 run() 完整执行（内部已包含相等/不等/长度不等/空切片断言）。
+//! constant_time_eq 示例测试（secure-ct-eq feature）：验证 run() 完整执行（内部已包含相等/不等/长度不等/空切片断言）。
 
 #![cfg(feature = "secure-ct-eq")]
 

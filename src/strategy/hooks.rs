@@ -3,23 +3,11 @@
 
 //! 防火墙安全钩子模块，提供登录流程的可插拔安全检查。
 //!
-//! 防火墙策略设计。
+//! `GarrisonFirewallCheckHook` trait 定义 5 个 async hook 方法（默认 impl 全 pass）；`LoginContext` 为登录上下文
+//! （login_id + 可选 IP / 设备指纹 / 地理位置）；`GarrisonFirewallCheckHookDefault` 是基于 limiteron 计数器的默认实现。
 //!
-//! ## 设计
-//!
-//! - `GarrisonFirewallCheckHook` trait：5 个 async hook 方法 + default impl 全 pass
-//! - `LoginContext`：登录上下文（login_id + 可选 IP / 设备指纹 / 地理位置）
-//! - `GarrisonFirewallCheckHookDefault`：基于内存计数器 + 时间窗口的默认实现
-//!
-//! ## 5 个检查项
-//!
-//! | 检查项 | 触发条件 | 处置 |
-//! |:---|:---|:---|
-//! | 登录频率 | 同 IP 1h 内 ≥ 10 次失败 | 阻断登录 |
-//! | 暴力破解 | 同账号 1h 内 ≥ 5 次失败 | 阻断登录 |
-//! | 异地登录 | 短时间跨城市登录 | 阻断登录（0.3.0 简化：需 geo 数据，无数据则 pass） |
-//! | Token 复用 | 已登出 Token 再次使用 | 阻断登录 |
-//! | 设备异常 | 未知设备指纹登录 | 阻断登录（0.3.0 简化：需设备库，无数据则 pass） |
+//! 检查项：登录频率（同 IP 1h ≥ 10 次失败）、暴力破解（同账号 1h ≥ 5 次失败）、Token 复用（黑名单存在）阻断登录；
+//! 异地登录（需 geo 数据）与设备异常（需设备库）无数据时 pass。
 
 use crate::constants::DaoKeyPrefix;
 use crate::dao::{GarrisonDao, InMemoryDao};
@@ -34,8 +22,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// 登录上下文，传递给防火墙钩子。
-///
-/// 0.3.0 简化设计：仅包含 `login_id` 与可选 `ip`，后续版本可扩展。
 #[derive(Debug, Clone, Default)]
 pub struct LoginContext {
     /// 登录主体标识。
@@ -78,68 +64,41 @@ impl LoginContext {
     }
 }
 
-// ============================================================================
 // GarrisonFirewallCheckHook trait：5 个 async hook + default impl 全 pass
-// ============================================================================
 
 /// 防火墙安全钩子 trait，定义登录流程的 5 个可插拔安全检查。
 ///
-/// 所有方法提供默认 `Ok(())` 实现，业务方按需 override 特定检查项。
-/// 任一 hook 返回 `Err` 将阻断登录流程。
-///
-/// # 调用顺序
-///
-/// 1. `check_login_frequency` — 登录频率检测
-/// 2. `check_brute_force` — 暴力破解检测
-/// 3. `check_geo_anomaly` — 异地登录检测
-/// 4. `check_token_reuse` — Token 复用检测
-/// 5. `check_device_anomaly` — 设备异常检测
+/// 所有方法提供默认 `Ok(())` 实现，业务方按需 override；任一 hook 返回 `Err` 将阻断登录流程。
+/// 调用顺序：登录频率 → 暴力破解 → 异地登录 → Token 复用 → 设备异常。
 #[async_trait]
 pub trait GarrisonFirewallCheckHook: Send + Sync {
     /// 登录频率检测：同 IP 1h 内 ≥ 10 次失败则阻断。
-    ///
-    /// # 默认实现
-    /// 直接返回 `Ok(())`（无检测）。
     async fn check_login_frequency(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
         Ok(())
     }
 
     /// 暴力破解检测：同账号 1h 内 ≥ 5 次失败则锁定。
-    ///
-    /// # 默认实现
-    /// 直接返回 `Ok(())`（无检测）。
     async fn check_brute_force(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
         Ok(())
     }
 
     /// 异地登录检测：短时间跨城市登录触发二次认证。
-    ///
-    /// # 默认实现
-    /// 直接返回 `Ok(())`（无 geo 数据时 pass）。
     async fn check_geo_anomaly(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
         Ok(())
     }
 
     /// Token 复用检测：已登出 Token 再次使用则拒绝。
-    ///
-    /// # 默认实现
-    /// 直接返回 `Ok(())`（无黑名单数据时 pass）。
     async fn check_token_reuse(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
         Ok(())
     }
 
     /// 设备异常检测：未知设备指纹登录触发验证。
-    ///
-    /// # 默认实现
-    /// 直接返回 `Ok(())`（无设备库时 pass）。
     async fn check_device_anomaly(&self, _ctx: &LoginContext) -> GarrisonResult<()> {
         Ok(())
     }
 }
 
-// ============================================================================
 // GarrisonFirewallCheckHookDefault：基于 limiteron 的统一计数器实现
-// ============================================================================
 
 /// 登录频率检测阈值：同 IP 1h 内 ≥ 10 次失败。
 pub const LOGIN_FREQUENCY_THRESHOLD: u32 = 10;
@@ -156,47 +115,18 @@ const FW_IP_KEY_PREFIX: &str = "fw:ip:";
 /// 账号维度失败计数器 key 前缀。
 const FW_ACCT_KEY_PREFIX: &str = "fw:acct:";
 
-/// `GarrisonFirewallCheckHook` 的默认实现，统一基于 `GarrisonDaoDistributedLimiter` 计数器。
+/// `GarrisonFirewallCheckHook` 的默认实现，统一基于 `GarrisonDaoDistributedLimiter` 计数器
+/// （limiteron 适配器，原子计数 + TTL，禁止手写限流实现）。
 ///
-/// # 设计
-///
-/// - **统一计数器抽象**：通过 `GarrisonDaoDistributedLimiter`（limiteron 适配器）实现原子计数 + TTL，
-///   不再手写 `Mutex<HashMap>` + 时间窗口算法（禁止手写限流实现）
-/// - **内存模式**（`new()`）：内部创建 `MockDao` 作为 limiteron 后端，
-///   进程内原子计数（开发/CI 场景，与原内存模式语义一致）
-/// - **分布式模式**（`with_dao(dao)`）：用注入的 `GarrisonDao`（oxcache/redis）作为 limiteron 后端，
-///   实现跨实例计数（生产场景，满足分布式存储要求）
-/// - **TTL 自动重置**：窗口过期由 `MockDao` / oxcache 的 TTL 语义保证
-///   （首次 `incr` 后过期会重新初始化），无需手动时间窗口判断
-///
-/// # 5 项检测
-///
-/// - 同 IP 1h 内 ≥ 10 次失败 → 阻断（`GarrisonError::Session`）
-/// - 同账号 1h 内 ≥ 5 次失败 → 阻断（`GarrisonError::Session`）
-/// - 异地登录：与上次记录的 geo 不符 → 阻断（读 `fw:geo:{login_id}`）
-/// - Token 复用：`token:blacklist:{login_id}` 存在 → 阻断
-/// - 设备异常：`ctx.device_fingerprint` 不在已知设备列表 → 阻断（读 `fw:device:{login_id}`）
-///
-/// 后 3 项检测读取 DAO 中的 KV 数据（非计数器操作），
-/// 无 geo/device 数据时通过（首次登录）。
-///
-/// # Key 格式
-///
-/// - IP 计数器：`fw:ip:{ip}`（TTL = `LOGIN_FREQUENCY_WINDOW`）
-/// - 账号计数器：`fw:acct:{login_id}`（TTL = `BRUTE_FORCE_WINDOW`）
-/// - geo 记录：`fw:geo:{login_id}`
-/// - 设备列表：`fw:device:{login_id}`
-///
-/// # 线程安全
-///
-/// `GarrisonDaoDistributedLimiter` 与底层 `GarrisonDao` 实现均线程安全（`Send + Sync`），
-/// 通过 `Arc` 共享。
+/// 内存模式（`new()`）内部创建 `InMemoryDao` 作后端（开发/CI 场景）；分布式模式（`with_dao(dao)`）用注入的
+/// `GarrisonDao`（oxcache/redis）实现跨实例计数。检测项与 key：IP 计数器 `fw:ip:{ip}`、账号计数器
+/// `fw:acct:{login_id}` 超阈值阻断；geo 记录 `fw:geo:{login_id}`、设备列表 `fw:device:{login_id}`、token 黑名单
+/// `token:blacklist:{login_id}` 读 DAO KV 判定（无数据时通过）。计数器窗口由后端 TTL 语义自动重置，无需手动
+/// 时间窗口判断；实现均线程安全（`Send + Sync`），经 `Arc` 共享。
 pub struct GarrisonFirewallCheckHookDefault {
-    /// 限流器（基于 `GarrisonDaoDistributedLimiter`，原子计数 + TTL）。
-    /// 内部 dao 为 `MockDao`（`new()` 模式）或外部注入的 dao（`with_dao` 模式）。
+    /// 限流器（基于 `GarrisonDaoDistributedLimiter`，原子计数 + TTL）；内部 dao 为 `InMemoryDao`（`new()` 模式）或注入的 dao（`with_dao` 模式）。
     limiter: GarrisonDaoDistributedLimiter,
-    /// 保留 DAO 引用以支持 geo/token/device anomaly 检查（KV 读取，非计数器操作）。
-    /// 与 `limiter` 内部 dao 共享同一 `Arc<dyn GarrisonDao>`，确保数据一致。
+    /// 保留 DAO 引用以支持 geo/token/device anomaly 检查（KV 读取）；与 `limiter` 内部 dao 共享同一 `Arc<dyn GarrisonDao>`，确保数据一致。
     dao: Arc<dyn GarrisonDao>,
     /// 可选监听器管理器，注入后 check_brute_force 阻断时广播 AccountLocked 事件。
     #[cfg(feature = "listener")]
@@ -204,8 +134,7 @@ pub struct GarrisonFirewallCheckHookDefault {
 }
 
 impl GarrisonFirewallCheckHookDefault {
-    /// 创建内存模式默认实例（`#[doc(hidden)]`：仅测试/单实例部署；生产请用
-    /// `with_dao` 注入分布式后端或显式 `with_memory_default`）。
+    /// 创建内存模式默认实例（`#[doc(hidden)]`：仅测试/单实例部署；生产用 `with_dao` 注入分布式后端或显式 `with_memory_default`）。
     #[doc(hidden)]
     pub fn new() -> Self {
         Self::with_memory_default()
@@ -223,37 +152,24 @@ impl GarrisonFirewallCheckHookDefault {
         }
     }
 
-    /// 注入 DAO，切换到分布式计数模式（builder 方法）。
-    ///
-    /// 启用后 `record_failure` / 各 `check_*` 方法将走 DAO 路径（oxcache/redis），
+    /// 注入 DAO，切换到分布式计数模式（builder 方法）：`record_failure` / 各 `check_*` 方法走 DAO 路径（oxcache/redis），
     /// 内部 `limiter` 与 `dao` 字段均替换为注入的 DAO，确保计数器与 KV 检查共享同一后端。
-    /// 满足分布式存储要求。
     pub fn with_dao(mut self, dao: Arc<dyn GarrisonDao>) -> Self {
         self.limiter = GarrisonDaoDistributedLimiter::new(dao.clone());
         self.dao = dao;
         self
     }
 
-    /// 注入 `GarrisonListenerManager`，启用 AccountLocked 事件广播。
-    ///
-    /// 注入后 `check_brute_force` 阻断时广播 `GarrisonEvent::AccountLocked`。
-    /// 未注入时为 no-op（不广播）。需启用 `listener` feature。
+    /// 注入 `GarrisonListenerManager`，启用 AccountLocked 事件广播：`check_brute_force` 阻断时广播
+    /// `GarrisonEvent::AccountLocked`，未注入时为 no-op。需启用 `listener` feature。
     #[cfg(feature = "listener")]
     pub fn with_listener_manager(mut self, lm: Arc<GarrisonListenerManager>) -> Self {
         self.listener_manager = Some(lm);
         self
     }
 
-    /// 记录一次登录失败（业务方在登录失败时调用）。
-    ///
-    /// 同时递增 IP 与账号维度的失败计数器，通过 `limiteron::incr_with_ttl` 原子递增。
-    ///
-    /// - 首次失败：设置 count=1 + TTL=`LOGIN_FREQUENCY_WINDOW` / `BRUTE_FORCE_WINDOW`
-    /// - 后续失败：仅递增 count，不重置 TTL（保持窗口起点）
-    /// - 窗口过期：由 `MockDao` / oxcache 的 TTL 语义自动重置
-    ///
-    /// # 错误
-    /// 任一 `limiteron` 操作失败均向上传播（Fail Loud，不静默吞错）。
+    /// 记录一次登录失败（业务方在登录失败时调用）：同时递增 IP 与账号维度计数器（`limiteron::incr_with_ttl` 原子递增），
+    /// 首次失败设置 count=1 + TTL，后续仅递增不重置 TTL（保持窗口起点），窗口过期由后端 TTL 语义自动重置；任一操作失败均向上传播（Fail Loud）。
     pub async fn record_failure(&self, ctx: &LoginContext) -> GarrisonResult<()> {
         if let Some(ip) = &ctx.ip {
             let key = format!("{}{}", FW_IP_KEY_PREFIX, ip);
@@ -270,10 +186,7 @@ impl GarrisonFirewallCheckHookDefault {
         Ok(())
     }
 
-    /// 清空所有 IP / 账号计数器（测试辅助方法）。
-    ///
-    /// 通过 `dao.keys("fw:ip:*")` 与 `dao.keys("fw:acct:*")` 扫描所有计数器 key，
-    /// 逐个 `dao.delete`。生产环境慎用（大规模 key 扫描可能影响 DAO 性能）。
+    /// 清空所有 IP / 账号计数器（测试辅助方法）：扫描 `fw:ip:*` 与 `fw:acct:*` 并逐个删除；生产环境慎用（大规模 key 扫描可能影响 DAO 性能）。
     pub async fn reset(&self) -> GarrisonResult<()> {
         let ip_keys = self.dao.keys(&format!("{}*", FW_IP_KEY_PREFIX)).await?;
         let acct_keys = self.dao.keys(&format!("{}*", FW_ACCT_KEY_PREFIX)).await?;
@@ -283,10 +196,7 @@ impl GarrisonFirewallCheckHookDefault {
         Ok(())
     }
 
-    /// 获取 IP 维度当前失败次数（测试辅助方法）。
-    ///
-    /// 通过 `limiteron::get_count` 查询，出错时记录 `tracing::warn` 并返回 0
-    /// （与原"内存模式返回本地计数"语义一致）。
+    /// 获取 IP 维度当前失败次数（测试辅助方法）；`get_count` 出错时记录 `tracing::warn` 并返回 0。
     pub async fn ip_failure_count(&self, ip: &str) -> u32 {
         let key = format!("{}{}", FW_IP_KEY_PREFIX, ip);
         match self.limiter.get_count(&key).await {
@@ -298,10 +208,7 @@ impl GarrisonFirewallCheckHookDefault {
         }
     }
 
-    /// 获取账号维度当前失败次数（测试辅助方法）。
-    ///
-    /// 通过 `limiteron::get_count` 查询，出错时记录 `tracing::warn` 并返回 0
-    /// （与原"内存模式返回本地计数"语义一致）。
+    /// 获取账号维度当前失败次数（测试辅助方法）；`get_count` 出错时记录 `tracing::warn` 并返回 0。
     pub async fn account_failure_count(&self, login_id: &str) -> u32 {
         let key = format!("{}{}", FW_ACCT_KEY_PREFIX, login_id);
         match self.limiter.get_count(&key).await {
@@ -314,10 +221,7 @@ impl GarrisonFirewallCheckHookDefault {
     }
 }
 
-/// 将 `LimiteronError` 映射为 `GarrisonError`。
-///
-/// limiteron 适配器返回的错误统一包装为 `GarrisonError::Dao`，
-/// 表示底层 DAO 操作失败。
+/// 将 `LimiteronError` 映射为 `GarrisonError::Dao`，表示底层 DAO 操作失败。
 fn map_limiteron_err(e: limiteron::error::LimiteronError) -> GarrisonError {
     GarrisonError::Dao(format!("strategy-limiteron-op::{}", e))
 }
@@ -332,9 +236,7 @@ impl Default for GarrisonFirewallCheckHookDefault {
 impl GarrisonFirewallCheckHook for GarrisonFirewallCheckHookDefault {
     /// 登录频率检测：同 IP 1h 内 ≥ 10 次失败则阻断。
     ///
-    /// 通过 `limiteron::get_count` 查询 `fw:ip:{ip}` 计数器，
-    /// ≥ `LOGIN_FREQUENCY_THRESHOLD` 则阻断（Fail Loud：limiteron 错误向上传播）。
-    /// 无 IP 信息时直接返回 Ok。
+    /// 经 `limiteron::get_count` 查询 `fw:ip:{ip}` 计数器（Fail Loud：limiteron 错误向上传播），无 IP 信息时直接返回 Ok。
     async fn check_login_frequency(&self, ctx: &LoginContext) -> GarrisonResult<()> {
         let Some(ip) = &ctx.ip else {
             return Ok(()); // 无 IP 信息时不检测
@@ -356,10 +258,7 @@ impl GarrisonFirewallCheckHook for GarrisonFirewallCheckHookDefault {
 
     /// 暴力破解检测：同账号 1h 内 ≥ 5 次失败则锁定。
     ///
-    /// 通过 `limiteron::get_count` 查询 `fw:acct:{login_id}` 计数器，
-    /// ≥ `BRUTE_FORCE_THRESHOLD` 则阻断（Fail Loud：limiteron 错误向上传播）。
-    ///
-    /// 阻断时若注入了 `listener_manager`，广播 `GarrisonEvent::AccountLocked`。
+    /// 经 `limiteron::get_count` 查询 `fw:acct:{login_id}` 计数器（Fail Loud）；阻断时若注入了 `listener_manager`，广播 `GarrisonEvent::AccountLocked`。
     async fn check_brute_force(&self, ctx: &LoginContext) -> GarrisonResult<()> {
         let key = format!("{}{}", FW_ACCT_KEY_PREFIX, ctx.login_id);
         let count = self
@@ -388,8 +287,7 @@ impl GarrisonFirewallCheckHook for GarrisonFirewallCheckHookDefault {
 
     /// 异地登录检测：短时间跨城市登录触发阻断。
     ///
-    /// 通过 `dao.get("fw:geo:{login_id}")` 读取上次记录的地理位置，与 `ctx.geo` 对比，
-    /// 不同则阻断（Fail Loud：DAO 错误向上传播）。
+    /// 经 `dao.get("fw:geo:{login_id}")` 读取上次记录的地理位置与 `ctx.geo` 对比，不同则阻断（Fail Loud）；
     /// 无 geo 记录（首次登录）或 `ctx.geo` 为 None 时通过。
     async fn check_geo_anomaly(&self, ctx: &LoginContext) -> GarrisonResult<()> {
         let Some(ctx_geo) = &ctx.geo else {
@@ -405,23 +303,14 @@ impl GarrisonFirewallCheckHook for GarrisonFirewallCheckHookDefault {
         }
     }
 
-    /// Token 复用检测：已登出 Token 再次使用则拒绝。
-    ///
-    /// 通过 `dao.get("{Token}:blacklist:{login_id}")` 检查 token 黑名单是否存在，
-    /// 存在则阻断（Fail Loud：DAO 错误向上传播）。
+    /// Token 复用检测：已登出 Token 再次使用则拒绝（Fail Loud：DAO 错误向上传播）。
     ///
     /// # 黑名单粒度语义（账号级锁定，显式声明）
     ///
-    /// 黑名单 key 为 `token:blacklist:{login_id}`（**账号级**，由业务方在检测到
-    /// token 泄露/复用后写入，本 crate 内无写入方），而非 `...:{login_id}:{token}`
-    /// 的 token 级 key：**单个 token 被撤销即阻断该账号的全部后续登录**，
-    /// 直至业务方删除该 key（无自动过期时为永久）。这是有意设计——触发条件
-    /// 是"检测到 token 复用"（凭据已泄露的强信号），账号级锁定可阻断攻击者
-    /// 用任意新 token 登录；代价是正常用户也被锁定，需业务方介入解锁。
-    /// token 级检查当前不可实现：`LoginContext` 不携带请求所呈现的 token，
-    /// 扩展 trait 签名属破坏性变更（波及全部实现方与 stp 调用方），超出范围。
-    /// 需要单 token 撤销的业务方应改用 session 层 `logout(token)` /
-    /// `jwt:blacklist:{jti}`（stp 层）等 token 粒度机制。
+    /// 黑名单 key 为账号级 `token:blacklist:{login_id}`（业务方检测到 token 泄露/复用后写入，本 crate 内无写入方）：
+    /// 单个 token 被撤销即阻断该账号全部后续登录，直至删除该 key（无自动过期时为永久）——有意设计，凭据泄露是强信号，
+    /// 代价是正常用户也需业务方介入解锁。token 级检查当前不可实现（`LoginContext` 不携带请求所呈现的 token，扩展 trait
+    /// 签名属破坏性变更）；需要单 token 撤销的业务方应改用 session 层 `logout(token)` / `jwt:blacklist:{jti}`（stp 层）。
     async fn check_token_reuse(&self, ctx: &LoginContext) -> GarrisonResult<()> {
         let key = format!("{}blacklist:{}", DaoKeyPrefix::Token, ctx.login_id);
         if self.dao.get(&key).await?.is_some() {
@@ -435,9 +324,8 @@ impl GarrisonFirewallCheckHook for GarrisonFirewallCheckHookDefault {
 
     /// 设备异常检测：未知设备指纹登录触发阻断。
     ///
-    /// 通过 `dao.get("fw:device:{login_id}")` 读取已知设备列表（逗号分隔），
-    /// `ctx.device_fingerprint` 不在列表中则阻断（Fail Loud：DAO 错误向上传播）。
-    /// 无设备记录（首次登录）或 `ctx.device_fingerprint` 为 None 时通过。
+    /// 经 `dao.get("fw:device:{login_id}")` 读取已知设备列表（逗号分隔），指纹不在列表中则阻断（Fail Loud）；
+    /// 无设备记录（首次登录）或无指纹时通过。
     async fn check_device_anomaly(&self, ctx: &LoginContext) -> GarrisonResult<()> {
         let Some(fp) = &ctx.device_fingerprint else {
             return Ok(()); // 上下文无设备指纹，无法对比
@@ -463,9 +351,7 @@ impl GarrisonFirewallCheckHook for GarrisonFirewallCheckHookDefault {
 mod tests {
     use super::*;
 
-    // ========================================================================
     // LoginContext 测试
-    // ========================================================================
 
     /// LoginContext::new 仅含 login_id。
     #[test]
@@ -490,9 +376,7 @@ mod tests {
         assert_eq!(ctx.geo.as_deref(), Some("Beijing"));
     }
 
-    // ========================================================================
     // GarrisonFirewallCheckHook trait default impl 测试
-    // ========================================================================
 
     /// 默认 trait impl 所有 hook 返回 Ok。
     #[tokio::test]
@@ -509,9 +393,7 @@ mod tests {
         assert!(hook.check_device_anomaly(&ctx).await.is_ok());
     }
 
-    // ========================================================================
     // GarrisonFirewallCheckHookDefault 测试
-    // ========================================================================
 
     /// 无 IP 时 check_login_frequency 返回 Ok。
     #[tokio::test]
@@ -644,9 +526,7 @@ mod tests {
         // 仅验证可创建，内部状态相同（均为空计数器）
     }
 
-    // ========================================================================
     // DAO 模式测试（分布式计数器）
-    // ========================================================================
 
     use crate::dao::tests::MockDao;
     use crate::dao::GarrisonDao;
@@ -659,12 +539,7 @@ mod tests {
         (hook, dao)
     }
 
-    /// with_dao 注入 DAO 后进入分布式模式。
-    ///
-    /// 计数器基于 DAO（oxcache/redis）而非内存 Mutex。
-    ///
-    /// 内存模式与 DAO 模式统一使用 `GarrisonDaoDistributedLimiter`，
-    /// `with_dao` 仅替换后端 DAO（从 `MockDao` 切换为注入的 DAO），
+    /// with_dao 注入 DAO 后进入分布式模式：计数器基于注入 DAO（oxcache/redis）而非内存 Mutex，
     /// `ip_failure_count` / `account_failure_count` 始终从当前后端读取。
     #[tokio::test]
     async fn with_dao_creates_distributed_mode() {
@@ -684,9 +559,7 @@ mod tests {
         assert_eq!(dao.get("fw:acct:1001").await.unwrap().as_deref(), Some("1"));
     }
 
-    /// DAO 模式下 record_failure 递增 DAO 计数。
-    ///
-    /// fw:ip:{ip} / fw:acct:{login_id} 计数器持久化到 DAO。
+    /// DAO 模式下 record_failure 递增 DAO 计数（`fw:ip:{ip}` / `fw:acct:{login_id}` 持久化到 DAO）。
     #[tokio::test]
     async fn record_failure_dao_mode_increments_counter() {
         let (hook, dao) = make_dao_hook();
@@ -700,9 +573,7 @@ mod tests {
         assert_eq!(acct_count.as_deref(), Some("3"));
     }
 
-    /// DAO 模式下登录频率超阈值（≥10）阻断。
-    ///
-    /// check_login_frequency 走 DAO 路径。
+    /// DAO 模式下登录频率超阈值（≥10）阻断（check_login_frequency 走 DAO 路径）。
     #[tokio::test]
     async fn check_login_frequency_dao_mode_blocks_at_threshold() {
         let (hook, _dao) = make_dao_hook();
@@ -716,9 +587,7 @@ mod tests {
         assert!(matches!(result.unwrap_err(), GarrisonError::Session(_)));
     }
 
-    /// DAO 模式下暴力破解超阈值（≥5）阻断。
-    ///
-    /// check_brute_force 走 DAO 路径。
+    /// DAO 模式下暴力破解超阈值（≥5）阻断（check_brute_force 走 DAO 路径）。
     #[tokio::test]
     async fn check_brute_force_dao_mode_blocks_at_threshold() {
         let (hook, _dao) = make_dao_hook();
@@ -731,9 +600,7 @@ mod tests {
         assert!(matches!(result.unwrap_err(), GarrisonError::Session(_)));
     }
 
-    /// DAO 模式下 token 黑名单存在则阻断。
-    ///
-    /// check_token_reuse 实现（DAO 模式）。
+    /// DAO 模式下 token 黑名单存在则阻断（check_token_reuse 走 DAO 路径）。
     #[tokio::test]
     async fn check_token_reuse_dao_mode_blocks_blacklisted() {
         let (hook, dao) = make_dao_hook();
@@ -746,9 +613,7 @@ mod tests {
         assert!(matches!(result.unwrap_err(), GarrisonError::Session(_)));
     }
 
-    /// DAO 模式下无黑名单时 check_token_reuse 通过。
-    ///
-    /// check_token_reuse 实现（无黑名单数据时 pass）。
+    /// DAO 模式下无黑名单时 check_token_reuse 通过（无黑名单数据时 pass）。
     #[tokio::test]
     async fn check_token_reuse_passes_without_blacklist() {
         let (hook, _dao) = make_dao_hook();
@@ -759,9 +624,7 @@ mod tests {
         );
     }
 
-    /// DAO 模式下异地登录（与上次 geo 不符）阻断。
-    ///
-    /// check_geo_anomaly 实现（DAO 模式）。
+    /// DAO 模式下异地登录（与上次 geo 不符）阻断（check_geo_anomaly 走 DAO 路径）。
     #[tokio::test]
     async fn check_geo_anomaly_dao_mode_blocks_different_geo() {
         let (hook, dao) = make_dao_hook();
@@ -773,9 +636,7 @@ mod tests {
         assert!(matches!(result.unwrap_err(), GarrisonError::Session(_)));
     }
 
-    /// DAO 模式下无 geo 记录时 check_geo_anomaly 通过（首次登录）。
-    ///
-    /// check_geo_anomaly 实现（无 geo 数据时 pass）。
+    /// DAO 模式下无 geo 记录时 check_geo_anomaly 通过（首次登录，无 geo 数据时 pass）。
     #[tokio::test]
     async fn check_geo_anomaly_passes_without_geo_data() {
         let (hook, _dao) = make_dao_hook();
@@ -786,9 +647,7 @@ mod tests {
         );
     }
 
-    /// DAO 模式下未知设备指纹阻断。
-    ///
-    /// check_device_anomaly 实现（DAO 模式）。
+    /// DAO 模式下未知设备指纹阻断（check_device_anomaly 走 DAO 路径）。
     #[tokio::test]
     async fn check_device_anomaly_dao_mode_blocks_unknown_device() {
         let (hook, dao) = make_dao_hook();
@@ -803,9 +662,7 @@ mod tests {
         assert!(matches!(result.unwrap_err(), GarrisonError::Session(_)));
     }
 
-    /// DAO 模式下无设备记录时 check_device_anomaly 通过（首次登录）。
-    ///
-    /// check_device_anomaly 实现（无设备数据时 pass）。
+    /// DAO 模式下无设备记录时 check_device_anomaly 通过（首次登录，无设备数据时 pass）。
     #[tokio::test]
     async fn check_device_anomaly_passes_without_device_data() {
         let (hook, _dao) = make_dao_hook();
@@ -816,13 +673,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // 覆盖率补充：listener_manager 注入、窗口重置、DAO 解析失败等
-    // ========================================================================
 
-    /// `with_listener_manager` 注入后 listener_manager 字段为 Some。
-    ///
-    /// 覆盖行 222-224（builder 方法体）。
+    /// `with_listener_manager` 注入后 listener_manager 字段为 Some（builder 方法体覆盖）。
     #[cfg(feature = "listener")]
     #[test]
     fn with_listener_manager_sets_field() {
@@ -835,11 +688,7 @@ mod tests {
         );
     }
 
-    /// 内存模式 IP 失败窗口重置：第二次失败在窗口外，count 重置为 1。
-    ///
-    /// 窗口过期由 `MockDao` 的 TTL 语义保证（key 过期后 `incr` 重新初始化）。
-    /// 此测试通过 `hook.dao.delete(key)` 模拟 TTL 过期（等价于 key 已过期被自动清理），
-    /// 避免真实等待 `LOGIN_FREQUENCY_WINDOW`（1 小时）。
+    /// 内存模式 IP 失败窗口重置：删除计数器 key 模拟 TTL 过期后，第二次失败 count 重置为 1（避免真实等待 1 小时窗口）。
     #[tokio::test]
     async fn record_failure_resets_ip_count_when_window_expired() {
         let hook = GarrisonFirewallCheckHookDefault::new();
@@ -858,10 +707,7 @@ mod tests {
         );
     }
 
-    /// 内存模式账号失败窗口重置：第二次失败在窗口外，count 重置为 1。
-    ///
-    /// 窗口过期由 `MockDao` 的 TTL 语义保证。
-    /// 此测试通过 `hook.dao.delete(key)` 模拟 TTL 过期。
+    /// 内存模式账号失败窗口重置：删除计数器 key 模拟 TTL 过期后，第二次失败 count 重置为 1。
     #[tokio::test]
     async fn record_failure_resets_account_count_when_window_expired() {
         let hook = GarrisonFirewallCheckHookDefault::new();
@@ -880,11 +726,8 @@ mod tests {
         );
     }
 
-    /// DAO 模式下脏计数器数据导致 `check_brute_force` 返回 Err（Fail Loud）。
-    ///
-    /// limiteron `get_count` 在 parse 失败时返回 `Err`（fail-fast），
-    /// `check_brute_force` 将其映射为 `GarrisonError::Dao` 向上传播，
-    /// 不再静默用 0（避免脏数据导致阈值检测失效）。
+    /// DAO 模式下脏计数器数据导致 `check_brute_force` 返回 `GarrisonError::Dao`（Fail Loud）：
+    /// limiteron `get_count` parse 失败返回 Err 向上传播，不再静默用 0（避免脏数据导致阈值检测失效）。
     #[tokio::test]
     async fn check_brute_force_returns_err_on_dirty_count() {
         let dao = Arc::new(InMemoryDao::new());
@@ -907,8 +750,6 @@ mod tests {
     }
 
     /// DAO 模式 `check_login_frequency` 未超阈值返回 Ok。
-    ///
-    /// 覆盖行 364（DAO 模式 count < threshold 返回 Ok）。
     #[tokio::test]
     async fn check_login_frequency_dao_mode_passes_below_threshold() {
         let dao = Arc::new(InMemoryDao::new());
@@ -920,9 +761,7 @@ mod tests {
         assert!(result.is_ok(), "9 次失败 < 阈值 10，应通过");
     }
 
-    /// DAO 模式 `check_brute_force` 未超阈值返回 Ok。
-    ///
-    /// 覆盖行 407（DAO 模式 count < threshold 返回 Ok）。
+    /// DAO 模式 `check_brute_force` 未超阈值（4 < 5）返回 Ok。
     #[tokio::test]
     async fn check_brute_force_dao_mode_passes_below_threshold() {
         let dao = Arc::new(InMemoryDao::new());
@@ -935,14 +774,10 @@ mod tests {
     }
 
     /// DAO 模式 `check_brute_force` 超阈值时广播 AccountLocked 事件。
-    ///
-    /// 覆盖行 397-399（DAO 模式广播 AccountLocked）。
     #[cfg(feature = "listener")]
     #[tokio::test]
     async fn check_brute_force_dao_mode_broadcasts_account_locked() {
-        // inventory 注册需要在静态上下文中
-        // 由于 inventory::submit! 在编译期注册，这里用已有的 listener_manager
-        // 直接验证：超阈值时返回 Err 即可（broadcast 是副作用）
+        // broadcast 是副作用，此处只验证超阈值返回 Err（inventory 注册需静态上下文，故用已有 listener_manager）
         let dao = Arc::new(InMemoryDao::new());
         dao.set("fw:acct:1001", "5", 3600).await.unwrap();
         let lm = Arc::new(GarrisonListenerManager::new());
@@ -957,8 +792,6 @@ mod tests {
     }
 
     /// 内存模式 `check_brute_force` 超阈值时广播 AccountLocked 事件。
-    ///
-    /// 覆盖行 420-422（内存模式广播 AccountLocked）。
     #[cfg(feature = "listener")]
     #[tokio::test]
     async fn check_brute_force_in_memory_mode_broadcasts_account_locked() {
@@ -975,8 +808,6 @@ mod tests {
     }
 
     /// 内存模式 `check_geo_anomaly` 无 ctx.geo 时返回 Ok。
-    ///
-    /// 覆盖行 444（无 ctx_geo 早期返回 Ok）。
     #[tokio::test]
     async fn check_geo_anomaly_in_memory_mode_passes_without_ctx_geo() {
         let hook = GarrisonFirewallCheckHookDefault::new();
@@ -987,8 +818,6 @@ mod tests {
     }
 
     /// 内存模式 `check_device_anomaly` 无 device_fingerprint 时返回 Ok。
-    ///
-    /// 覆盖行 488（无 device_fingerprint 早期返回 Ok）。
     #[tokio::test]
     async fn check_device_anomaly_in_memory_mode_passes_without_fingerprint() {
         let hook = GarrisonFirewallCheckHookDefault::new();
@@ -999,8 +828,6 @@ mod tests {
     }
 
     /// DAO 模式 `check_device_anomaly` 设备指纹在已知列表中时返回 Ok。
-    ///
-    /// 覆盖行 500（已知设备列表包含 fp 时返回 Ok）。
     #[tokio::test]
     async fn check_device_anomaly_dao_mode_passes_with_known_device() {
         let (hook, dao) = make_dao_hook();

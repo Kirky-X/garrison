@@ -3,63 +3,36 @@
 
 //! 事件派发事务绑定（OnCommit 语义）——`GarrisonEventTx` RAII 事务 guard。
 //!
-//! 解决的问题：garrison 既有 DAO 全部经 `Session::connection()` 走 auto-commit
-//! 路径，业务「写库 + 广播事件」是两个独立动作——写库成功后若事件丢失（或反向），
-//! 业务表与事件审计链不一致。`GarrisonEventTx` 将两者绑进同一数据库事务：
-//! 事件先缓冲在 guard 中，事务 commit 成功后才派发（OnCommit 档）；
+//! 解决「写库 + 广播事件」不一致的问题：事件缓冲在 guard 中，事务 commit 成功后才派发；
 //! rollback 或未 commit 丢弃 guard 时缓冲事件随之丢弃。
 //!
 //! # 事务路由边界
 //!
-//! - 经 guard `execute`（内部 `Session::execute_raw`）执行的 SQL **加入本事务**
-//!   （`execute_raw` 在事务存在时走 `tx.execute_unprepared` in-tx 路由）。
-//! - 既有 DAO / Repository 经 `session.connection()` 的 SQL **不加入本事务**
-//!   （auto-commit），混用时由调用方自行保证顺序。
-//! - DDL 不可经 `execute` 执行（`execute_raw` 拒绝 DDL）。
-//! - `execute` 为 admin 特权直通通道：dbnexus 对 admin 角色跳过全部表级权限
-//!   检查，且 SQL 解析失败同样放行——`sql` 内容即权限边界，禁止拼接不可信
-//!   输入，详见 [`GarrisonEventTx::execute`] 的 `# Security` 段。
+//! - 经 guard `execute`（内部 `Session::execute_raw`）的 SQL **加入本事务**（in-tx 路由）。
+//! - 既有 DAO / Repository 经 `session.connection()` 的 SQL **不加入本事务**（auto-commit），混用由调用方保证顺序。
+//! - DDL 不可经 `execute` 执行；`execute` 为 admin 特权直通通道（dbnexus 对 admin 跳过全部表级权限检查，且 SQL 解析
+//!   失败同样放行）——`sql` 内容即权限边界，禁止拼接不可信输入，详见 [`GarrisonEventTx::execute`] 的 `# Security` 段。
 //!
 //! # 生命周期（状态机在类型层面表达「提交后不可再用」）
 //!
 //! ```text
 //! begin ──→ on_commit / execute（可重复） ──→ commit(mut self)   → 派发缓冲事件
 //!                                        └─→ rollback(mut self) → 丢弃缓冲事件
-//! 未 commit / rollback 即 drop ──→ 缓冲丢弃 + tracing::warn（uncommitted 原因）
-//!                                  + 依赖 dbnexus 级联回滚（Session Drop 归还连接）
-//! commit 失败 ──→ 返回 Err + 缓冲丢弃 + tracing::warn（commit-failed 原因）
-//! commit 成功后派发中途被取消 ──→ 剩余丢弃 + tracing::warn（dispatch-cancelled
-//!                                  原因，携带已派发/总数）
+//! 未 commit / rollback 即 drop ──→ 缓冲丢弃 + tracing::warn（uncommitted）+ dbnexus 级联回滚
+//! commit 失败 ──→ Err + 缓冲丢弃 + warn（commit-failed）
+//! commit 成功后派发中途被取消 ──→ 剩余丢弃 + warn（dispatch-cancelled，携带已派发/总数）
 //! ```
 //!
 //! # 并发 guard 的锁等待语义（生产后端）
 //!
-//! 并发 guard 各持独立 Session = 独立事务。postgres / mysql 下触碰同一行将
-//! 持行锁直至 `commit`（锁窗口 = begin→commit，显著长于 auto-commit 路径）；
-//! sqlite 文件库并发写事务会 `SQLITE_BUSY`。不要把 guard 当免费长事务使用：
-//! begin 到 commit 之间只应包含与该事务强相关的写与业务逻辑。
-//!
-//! `commit` / `rollback` 消耗 `self`：提交/回滚后 guard 不复存在，编译期杜绝
-//! 「提交后再缓冲 / 提交后再执行」。commit 失败（含 dbnexus `Arc::try_unwrap`
-//! 并发冲突）返回 `Err`，缓冲事件不派发、随 guard 丢弃，`Drop` 以
-//! commit-failed 原因 warn（与未 commit 即 drop 的 uncommitted 原因区分），
-//! 丢弃均携带条数与事件类型摘要。
+//! 并发 guard 各持独立 Session = 独立事务：postgres / mysql 下触碰同一行将持行锁直至 `commit`
+//!（锁窗口显著长于 auto-commit）；sqlite 文件库并发写会 `SQLITE_BUSY`。begin→commit 之间只放该事务强相关的写与逻辑。
 //!
 //! # async 取消窗口（已知边界）
 //!
-//! commit 成功后的派发按「逐事件推进游标」执行：派发中途 future 被取消
-//! （tokio 超时 / 任务中止）时，`Drop` 检测「已 commit 但游标未走完」，
-//! 以 dispatch-cancelled 原因 warn 已派发/总数与剩余事件摘要。该告警网存在
-//! 两个无法精确归因的残余窗口：
-//!
-//! - 取消点恰在 `session.commit().await` 期间：DB 是否已提交不可知，只能按
-//!   commit-failed 原因 warn；
-//! - 取消点恰在最后一个事件的派发 await 期间：游标未推进，但该事件可能已
-//!   到达部分 listener——warn 的「已派发」按游标计数，在途事件是否到达
-//!   listener 不可知。
-//!
-//! 取消窗口的 at-most-once / at-least-once 歧义是 async 取消的 inherent
-//! 语义：`Drop` 告警网保证丢弃可见，不保证精确归因。
+//! 派发游标逐事件推进：中途取消时 `Drop` 以 dispatch-cancelled 原因 warn，但两个残余窗口无法精确归因——
+//! 取消点恰在 `session.commit().await` 期间（DB 是否已提交不可知，按 commit-failed warn）；取消点恰在最后一个
+//! 事件的派发 await 期间（在途事件是否到达 listener 不可知）。`Drop` 告警网保证丢弃可见，不保证精确归因。
 //!
 //! # 典型用法
 //!
@@ -97,10 +70,7 @@ pub struct GarrisonEventTx {
 }
 
 impl GarrisonEventTx {
-    /// 从连接池获取独立 Session 并开启事务。
-    ///
-    /// 角色沿用 `GarrisonDaoDbnexus` 的 `"admin"` 约定（进程内框架自有通道，
-    /// 非用户输入，绕过表级权限检查）。begin 失败返回 `Err`，不产生 guard。
+    /// 从池获取独立 Session 并开启事务（固定 `"admin"` 角色：进程内框架通道，非用户输入，绕过表级权限检查）；begin 失败返回 `Err` 不产生 guard。
     pub async fn begin(pool: &DbPool, lm: Arc<GarrisonListenerManager>) -> GarrisonResult<Self> {
         let session = pool
             .get_session("admin")
@@ -124,24 +94,14 @@ impl GarrisonEventTx {
         self.buffer.push(event);
     }
 
-    /// 在本事务内执行写 SQL（INSERT / UPDATE / DELETE）。
-    ///
-    /// 内部走 `Session::execute_raw`：事务存在时 SQL 经 in-tx 路由
-    /// （`tx.execute_unprepared`）加入本事务。返回受影响行数。
-    ///
-    /// 注意：既有 DAO / Repository 经 `session.connection()` 的 SQL 不加入
-    /// 本事务（auto-commit 路径），本方法仅绑定经 guard 执行的写。
+    /// 在本事务内执行写 SQL（INSERT / UPDATE / DELETE），返回受影响行数；仅经 guard 的写加入本事务
+    ///（DAO / Repository 经 `session.connection()` 的 SQL 为 auto-commit，不加入）。
     ///
     /// # Security（特权直通通道）
     ///
-    /// `begin` 以固定 `"admin"` 角色建 Session，dbnexus `execute_raw` 对 admin
-    /// 角色**跳过全部表级权限检查，且 SQL 解析失败同样放行**——本通道不受
-    /// garrison 权限模型约束，`sql` 内容本身即权限边界。因此：
-    ///
-    /// - 严禁将不可信输入（用户输入、外部请求参数、第三方数据）拼接进 `sql`；
-    /// - 本方法签名不支持占位符参数绑定（继承自 `Session::execute_raw`），
-    ///   含动态值的写应改用支持参数绑定的 DAO / Repository 通道；确需本通道
-    ///   时仅限框架内部以字面量/常量组装的受控 SQL（含值字面量）。
+    /// `begin` 以固定 `"admin"` 角色建 Session，dbnexus 对 admin **跳过全部表级权限检查，且 SQL 解析失败同样放行**——
+    /// `sql` 内容即权限边界：严禁拼接不可信输入；签名不支持占位符绑定（继承 `Session::execute_raw`），
+    /// 含动态值的写应改用支持参数绑定的 DAO / Repository 通道，确需本通道时仅限框架内部受控 SQL。
     pub async fn execute(&self, sql: &str) -> GarrisonResult<u64> {
         let session = self
             .session
@@ -154,17 +114,11 @@ impl GarrisonEventTx {
         Ok(result.rows_affected())
     }
 
-    /// 提交事务，成功后按 FIFO 顺序派发全部缓冲事件。
+    /// 提交事务（消耗 `self`，提交后不可再用——编译期保证）并按 FIFO 派发全部缓冲事件。
     ///
-    /// 消耗 `self`（提交后 guard 不可再用，编译期保证）。
-    /// commit 失败（含 dbnexus `Arc::try_unwrap` 并发冲突）返回 `Err`，
-    /// 缓冲事件不派发、随 guard 丢弃（`Drop` 以 commit-failed 原因 warn 显性化）。
-    /// 单个 listener `Err`/panic 不影响派发流程，计入返回的
-    /// [`DispatchOutcome::failed`]（审计链缺口显性化）。
-    ///
-    /// 派发逐事件推进游标：本 future 在派发中途被取消（tokio 超时 / 任务中止）
-    /// 时已派发前缀已生效，无返回值，`Drop` 以 dispatch-cancelled 原因 warn
-    /// 已派发/总数——参阅模块文档「async 取消窗口」。
+    /// commit 失败（含 dbnexus `Arc::try_unwrap` 并发冲突）返回 `Err`，缓冲不派发、随 guard 丢弃并由 `Drop` warn；
+    /// 单个 listener `Err`/panic 不中断派发，计入 [`DispatchOutcome::failed`]（审计链缺口显性化）。
+    /// 派发中途 future 被取消时无返回值，`Drop` 以 dispatch-cancelled 原因 warn 已派发/总数。
     pub async fn commit(mut self) -> GarrisonResult<DispatchOutcome> {
         let session = self
             .session
@@ -174,10 +128,9 @@ impl GarrisonEventTx {
             .commit()
             .await
             .map_err(|e| GarrisonError::Dao(format!("event-tx-commit::{}", e)))?;
-        // 提交完成后立即归还池连接：dbnexus 仅在 Session Drop 时归还槽位，
-        // 若持有跨派发阶段，同步审计 listener（audit.rs 直连同一池取连接）
-        // 在并发 in-flight commit ≥ 池上限时会等满 acquire_timeout 后计入
-        // failed，放大本特性要消除的审计链缺口。
+        // 提交后立即归还池连接：dbnexus 仅在 Session Drop 时归还槽位，持有跨派发阶段会让
+        // 同步审计 listener（audit.rs 直连同一池取连接）在并发 in-flight commit ≥ 池上限时
+        // 等满 acquire_timeout 并计入 failed，放大本特性要消除的审计链缺口。
         drop(session);
         self.committed = true;
         let mut outcome = DispatchOutcome::default();
@@ -193,10 +146,7 @@ impl GarrisonEventTx {
         Ok(outcome)
     }
 
-    /// 回滚事务并丢弃全部缓冲事件（不派发）。
-    ///
-    /// 消耗 `self`。缓冲事件在回滚调用前即丢弃：事件与未提交写同生共死，
-    /// 回滚结果不影响「事件不派发」的语义。
+    /// 回滚事务（消耗 `self`）并丢弃全部缓冲事件——事件与未提交写同生共死，回滚结果不影响「事件不派发」语义。
     pub async fn rollback(mut self) -> GarrisonResult<()> {
         let session = self
             .session
@@ -214,14 +164,9 @@ impl GarrisonEventTx {
 impl Drop for GarrisonEventTx {
     fn drop(&mut self) {
         // 兜底安全网：缓冲事件未派发即丢弃的三条路径都在此显性化——
-        // (1) 未 commit/rollback 即 drop：session 仍持有，打开事务随 SessionState
-        //     drop 级联到 DatabaseTransaction drop 回滚（sqlx 语义），归还连接
-        //     只是入池；Drop 无 async 上下文，不做异步回滚、不 panic；
-        // (2) commit() 失败返回 Err 后 guard 被消耗：session 已被 commit take 而
-        //     缓冲事件滞留（session 终结 + buffer 非空 + 未 committed）；
-        // (3) commit 成功后派发中途 future 被取消：派发游标停在中途，剩余事件
-        //     静默丢弃，warn 已派发/总数让审计链缺口可见（在途事件是否到达
-        //     listener 不可知，参阅模块文档「async 取消窗口」）。
+        // (1) 未 commit/rollback 即 drop：打开事务随 SessionState drop 级联回滚（sqlx 语义），连接入池；
+        // (2) commit() 失败后 guard 被消耗：session 已 take、buffer 非空且未 committed；
+        // (3) commit 成功后派发中途被取消：游标停在中途，warn 已派发/总数让审计链缺口可见。
         let open_tx = self.session.take().is_some();
         if open_tx {
             tracing::warn!(
@@ -251,11 +196,8 @@ impl Drop for GarrisonEventTx {
     }
 }
 
-/// 事件丢弃 warn 的事件类型摘要：按变体名聚合计数（如 `Login=1, PermissionCheck=2`）。
-///
-/// 变体名为穷尽 match（无 `_` 兜底），新增变体在此编译报错提醒补充摘要，
-/// 与 `AuditLogListener::to_audit_entry` 的穷尽策略一致。仅取变体名而非完整
-/// `{:?}`（后者虽已经手动 Debug 脱敏但体积大），控制兜底日志体积。
+/// 事件丢弃 warn 的事件摘要：按变体名聚合计数（如 `Login=1, PermissionCheck=2`）。
+/// `event_kind` 为穷尽 match（无 `_` 兜底），新增变体在此编译报错提醒；仅取变体名控制兜底日志体积。
 fn event_summary(events: &[GarrisonEvent]) -> String {
     let mut counts: Vec<(&'static str, usize)> = Vec::new();
     for event in events {
@@ -312,27 +254,8 @@ fn event_kind(event: &GarrisonEvent) -> &'static str {
     }
 }
 
-// ============================================================================
-// 单元测试（事件派发事务绑定）
-// ============================================================================
-//
-// 覆盖事件派发事务绑定的 10 条主线：
-// 1. commit 后才派发 + 写与事件同事务（DB 行存在）
-// 2. rollback 丢弃缓冲事件 + 事务写回滚
-// 3. 未 commit 即 drop 安全（RAII 兜底）
-// 4. 派发顺序 FIFO
-// 5. listener 失败计数显性化且隔离不中断（manager 侧测试）
-// 6. Immediately 档回归（manager 侧测试）
-// 7. 并发 guard 无串扰
-// 8. GarrisonEventTx Send + Sync 编译期检查
-// 9. commit 失败路径显性化（真实 dbnexus 失败：Err + 不派发 + commit-failed warn）
-// 10. 未 commit 即 drop 的 uncommitted warn 携带事件类型摘要（捕获层）
-// 11. commit 成功后派发中途被取消：dispatch-cancelled warn 携带已派发/总数（捕获层）
-//
-// 测试 listener 以运行时 `register` 注入专用 mock（listener::mock 的
-// inventory mock 会污染 manager 单例计数，此处绕开 inventory）。
-// 注意：cfg(test) 构建下 manager 仍含 inventory 注册的 Ok/Err listener，
-// DispatchOutcome 断言只依赖运行时注册的恒 Err listener，与之解耦。
+// 单元测试（事件派发事务绑定；覆盖 commit/rollback/drop 三路径、FIFO、并发、
+// commit 失败与派发取消的 warn 捕获；listener 以运行时 register 注入 mock，绕开 inventory 污染）
 
 #[cfg(all(test, feature = "db-sqlite", feature = "listener"))]
 mod tests {
@@ -415,9 +338,8 @@ mod tests {
         }
     }
 
-    /// 进入 `on_event` 即永久挂起的 listener：先经 oneshot 通知测试已到达
-    /// 派发 await 点，再 `pending()` 永不返回，使 commit future 停在派发期间
-    /// 直至被取消。
+    /// 进入 `on_event` 即永久挂起的 listener：先经 oneshot 通知测试已到达派发 await 点，再 `pending()` 永不返回，
+    /// 使 commit future 停在派发期间直至被取消。
     struct BlockingListener {
         entered: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     }
@@ -462,10 +384,7 @@ mod tests {
         }
     }
 
-    /// Scenario: 提交后才派发 + 写与事件同事务。
-    /// WHEN begin → on_commit（listener 未收到）→ execute(INSERT) → commit
-    /// THEN listener 收到事件，且新 Session 查到事务内写入的行（属性：
-    /// 派发严格发生在 DB commit 之后；guard 写与缓冲事件同生共死）。
+    /// commit 后才派发 + 写与事件同事务（listener 在 commit 前未收到、commit 后收到，且 DB 行存在）。
     #[tokio::test(flavor = "multi_thread")]
     async fn commit_dispatches_after_db_commit() {
         let pool = setup_pool().await;
@@ -501,9 +420,7 @@ mod tests {
         );
     }
 
-    /// Scenario: 回滚丢弃缓冲事件与事务写。
-    /// WHEN begin → on_commit → execute(INSERT) → rollback
-    /// THEN listener 未收到事件，且新 Session 查 count == 0。
+    /// rollback 丢弃缓冲事件与事务写（listener 未收到，新 Session 查 count == 0）。
     #[tokio::test(flavor = "multi_thread")]
     async fn rollback_discards_events_and_writes() {
         let pool = setup_pool().await;
@@ -532,10 +449,7 @@ mod tests {
         );
     }
 
-    /// Scenario: 未 commit/rollback 即 drop 的 RAII 安全网。
-    /// WHEN begin → on_commit → execute(INSERT) → drop(guard)
-    /// THEN listener 未收到事件，事务写经 dbnexus 级联回滚不可见（Drop 仅
-    /// warn 丢弃计数，不 panic、不 spawn 异步回滚）。
+    /// 未 commit/rollback 即 drop 的 RAII 安全网：listener 未收到、事务写经 dbnexus 级联回滚不可见（Drop 仅 warn 不 panic）。
     #[tokio::test(flavor = "multi_thread")]
     async fn drop_without_commit_is_safe() {
         let pool = setup_pool().await;
@@ -563,9 +477,7 @@ mod tests {
         );
     }
 
-    /// Scenario: OnCommit 档派发顺序为 FIFO。
-    /// WHEN begin → 依序 on_commit 3 个事件 → commit
-    /// THEN listener 到达顺序 == 缓冲顺序。
+    /// OnCommit 派发顺序为 FIFO（listener 到达顺序 == 缓冲顺序）。
     #[tokio::test(flavor = "multi_thread")]
     async fn dispatch_order_is_fifo() {
         let pool = setup_pool().await;
@@ -591,11 +503,7 @@ mod tests {
         );
     }
 
-    /// Scenario: 并发 guard 无串扰。
-    /// WHEN 两个独立 pool/guard/listener 经 tokio::join! 并发
-    /// begin → on_commit → execute → commit
-    /// THEN 各自 listener 恰好收到各自事件（总数精确，无跨 guard 泄漏），
-    /// 各自事务写各自可见。
+    /// 并发 guard 无串扰：各自 listener 恰好收到各自事件，各自事务写各自可见。
     #[tokio::test(flavor = "multi_thread")]
     async fn concurrent_txs_no_crosstalk() {
         let pool_a = setup_pool().await;
@@ -703,15 +611,11 @@ mod tests {
         guard
     }
 
-    /// Scenario: commit 失败路径显性化（真实 dbnexus 失败）。
-    /// WHEN begin → on_commit → session 层直接 commit 消费底层事务 → guard.commit()
-    /// THEN guard.commit() 返回 Err，缓冲事件不派发，且产生 commit-failed 原因的
-    ///      丢弃 warn（含事件类型摘要）。
+    /// commit 失败路径显性化：以 session 层预提交消费事务驱动 dbnexus 真实 commit 错误——
+    /// guard.commit() 返回 Err、缓冲不派发、产生 commit-failed 丢弃 warn（含事件类型摘要）。
     ///
-    /// Arc::try_unwrap 并发冲突变体无法经公共 API 稳定构造：`commit(mut self)`
-    /// 的 move 语义禁止同一 guard 并发查询与提交（正是类型层设计目标）。此处以
-    /// dbnexus 真实 commit 错误（事务已被 session 层预提交消费）驱动同一
-    /// guard 侧失败路径（Err → 丢弃 → warn）。
+    /// `Arc::try_unwrap` 并发冲突变体无法经公共 API 稳定构造（`commit(mut self)` 的 move 语义
+    /// 禁止同一 guard 并发查询与提交，正是类型层设计目标），故不覆盖。
     #[tokio::test(flavor = "multi_thread")]
     #[serial_test::serial]
     async fn commit_failure_discards_events_with_warn() {
@@ -763,9 +667,7 @@ mod tests {
         );
     }
 
-    /// Scenario: 未 commit 即 drop 的 uncommitted 丢弃 warn。
-    /// WHEN begin → on_commit → drop(guard)（捕获层生效）
-    /// THEN 产生 uncommitted 原因的丢弃 warn，携带条数与事件类型摘要。
+    /// 未 commit 即 drop 的 uncommitted 丢弃 warn（捕获层）：携带条数与事件类型摘要。
     #[tokio::test(flavor = "multi_thread")]
     #[serial_test::serial]
     async fn drop_without_commit_warns_with_event_summary() {
@@ -805,16 +707,11 @@ mod tests {
         );
     }
 
-    /// Scenario: commit 成功后派发中途被取消（async 取消窗口）。
-    /// WHEN begin → on_commit → commit，listener 进入 on_event 即永久挂起，
-    ///      超时取消 commit future（取消点在派发 await 期间，游标停在 0）
-    /// THEN commit 无结果返回（Elapsed），且产生 dispatch-cancelled 原因的
-    ///      丢弃 warn，携带已派发/总数（0 of 1）与剩余事件类型摘要。
+    /// commit 成功后派发中途被取消：超时取消 commit future（取消点落在派发 await、游标停在 0），
+    /// 产生 dispatch-cancelled 丢弃 warn（已派发/总数 + 剩余事件摘要）。
     ///
-    /// 取消点确定性：commit future 只在 await 点可被取消——阻塞 listener 先
-    /// 发送 entered 信号再挂起，故取消发生时游标必然未推进；若取消点落在
-    /// `session.commit()` await（判定 committed 之前），entered 断言与 warn
-    /// 断言会失败而非误报。
+    /// 取消点确定性：阻塞 listener 先发 entered 信号再挂起，取消时游标必然未推进；
+    /// 若取消点落在 `session.commit()` await（判定 committed 之前），entered 与 warn 断言会失败而非误报。
     #[tokio::test(flavor = "multi_thread")]
     #[serial_test::serial]
     async fn cancel_mid_dispatch_warns_with_dispatched_count() {

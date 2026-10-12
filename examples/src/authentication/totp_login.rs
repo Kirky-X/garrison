@@ -8,20 +8,14 @@
 //! cargo run -p garrison-examples --bin totp_login --features secure-totp
 //! ```
 //!
-//! 本示例演示二步验证流程：
-//! 1. 用户已通过密码登录（第一步）
-//! 2. 系统要求输入 TOTP 验证码（第二步）
-//! 3. `TotpHandler::validate` 校验通过则完成 2FA
+//! 本示例演示二步验证流程：密码登录（第一步）→ `TotpHandler::validate` 校验（第二步，通过则完成 2FA）。
 //!
 //! RFC 6238 默认 SHA1 算法，兼容 Google Authenticator / Microsoft Authenticator 等。
 
 use garrison::error::GarrisonResult;
 use garrison::secure::totp::TotpHandler;
 
-/// 运行 TOTP 二次验证示例。
-///
-/// 演示 TotpHandler 的 generate 生成验证码、validate 校验、
-/// ±1 时间窗口偏差容忍、错误验证码被拒、Base32 密钥解码。
+/// 运行 TOTP 二次验证示例：演示 generate 生成验证码、validate 校验、±1 时间窗口偏差容忍、错误验证码被拒与 Base32 密钥解码。
 pub fn run() -> GarrisonResult<()> {
     println!("=== Garrison TOTP 二次验证示例 ===\n");
 
@@ -36,7 +30,6 @@ pub fn run() -> GarrisonResult<()> {
     let now: i64 = 1700000000;
 
     // 4. 生成当前验证码（用户从 Authenticator App 看到的数字）
-    // generate 校验 now 合法性，返回 GarrisonResult<String>
     let code = handler.generate(now)?;
     println!("[生成] 当前时间的 TOTP 验证码：{}", code);
     assert_eq!(code.len(), 6, "6 位验证码");

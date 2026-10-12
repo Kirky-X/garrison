@@ -3,12 +3,10 @@
 
 //! 旧集成测试树迁移模块。
 //!
-//! 迁移方式：**逐字移植**（内部 `#![cfg(...)]` 属性转挂到本文件各 `mod` 声明，
-//! 测试体与断言语义零改动——迁移规则「可强化不可弱化」，保底总覆盖）。
-//! 覆盖：router 注解矩阵 / 注解宏全矩阵（strict+loose、and/or、access/client/temp
-//! token、MFA、ABAC）/ 密码登录（hasher 矩阵 + 缺装配失败路径）/ 插件与监听器
-//! 事件 / 策略注册表外部实现与热替换 / JWT 四种模式 / keycloak RP 全流程 /
-//! 租户隔离 E2E（audit + 决策溯源）。
+//! 逐字移植保留各域集成测试（注解矩阵 / 注解宏全矩阵 / axum middleware / JWT 模式 /
+//! keycloak RP 全流程 / 密码登录 / 插件监听器 / 策略注册表 / refresh token / 租户隔离），
+//! 测试体与断言语义零改动（可强化不可弱化），原各文件的内部 `#![cfg(...)]` 转挂到本
+//! 文件各 `mod` 声明。
 
 #[cfg(feature = "web-axum")]
 pub mod annotation;

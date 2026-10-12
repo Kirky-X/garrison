@@ -29,9 +29,7 @@ pub struct UserInfo {
     user_name: String,
 }
 
-/// 运行 JSON 模板与序列化示例。
-///
-/// 演示 GarrisonJsonTemplate 占位符渲染与 GarrisonSerializerDefault 类型化序列化往返。
+/// 运行 JSON 模板与序列化示例：GarrisonJsonTemplate 占位符渲染 + GarrisonSerializerDefault 序列化/反序列化往返。
 pub fn run() -> GarrisonResult<()> {
     println!("=== Garrison JSON 模板与序列化示例 ===\n");
 

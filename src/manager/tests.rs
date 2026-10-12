@@ -1,11 +1,10 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 管理器层集成测试模块。
+//! 管理器层集成测试模块（`cfg(test)`）。
 //!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod tests;` 声明），
-//! 覆盖 `GarrisonManager` 的初始化、端到端流程、Strategy 注册表、
-//! DisableRepository 集成、cleanup task 生命周期等场景。
+//! 覆盖 `GarrisonManager` 的初始化、端到端流程、Strategy 注册表、DisableRepository
+//! 集成、cleanup task 生命周期等场景。
 
 use super::mock::MockInterface;
 use super::*;
@@ -40,7 +39,7 @@ async fn with_token<R>(token: String, f: impl std::future::Future<Output = R>) -
 }
 
 // ------------------------------------------------------------------------
-// 未初始化场景测试（spec Scenario: 未初始化抛错）
+// 未初始化场景测试
 // ------------------------------------------------------------------------
 
 /// 验证未初始化时 `GarrisonManager::logic()` 返回 Session 错误。
@@ -65,7 +64,7 @@ fn is_initialized_returns_false_when_not_initialized() {
 }
 
 // ------------------------------------------------------------------------
-// 初始化场景测试（spec Scenario: init 后即可用）
+// 初始化场景测试
 // ------------------------------------------------------------------------
 
 /// 验证 init 后 `is_initialized()` 返回 true。
@@ -132,7 +131,7 @@ async fn init_handles_negative_active_timeout() {
 }
 
 // ------------------------------------------------------------------------
-// 端到端流程测试（spec Scenario: login → check_login → check_permission → logout）
+// 端到端流程测试（login → check_login → check_permission → logout）
 // ------------------------------------------------------------------------
 
 /// 验证完整端到端流程：init → login → check_login → logout → check_login 失败。
@@ -312,12 +311,7 @@ async fn init_overwrites_existing() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 inventory 已注册 default factory。
-///
-/// 处理器编译期注册（inventory::submit!）+ 运行时单例枚举。
-/// 注：原设计以 `AnnotationHandler` trait 表述，实现中该语义由
-/// `GarrisonLogicFactoryEntry` inventory 注册承载（设计演进，
-/// 见 specs/module-structure）。
+// 验证 inventory 已注册 default factory（编译期 `inventory::submit!` + 运行时单例枚举）。
 #[serial]
 #[test]
 fn default_factory_registered_via_inventory() {
@@ -374,10 +368,7 @@ async fn default_factory_builds_working_logic() {
 // init 配置分支补充测试
 // ------------------------------------------------------------------------
 
-/// 验证 builder 处理 active_timeout > 0 的非负值。
-///
-/// 覆盖 `build_logic` 中 `else { u64::try_from(active_timeout)... }` 分支：
-/// 当 active_timeout >= 0 时，直接转换为 u64，不使用 timeout 兜底。
+// 验证 builder 处理 active_timeout > 0 的非负值（覆盖 `build_logic` 中 else 分支，不走 timeout 兜底）。
 #[tokio::test]
 #[serial]
 async fn init_with_positive_active_timeout() {
@@ -408,9 +399,7 @@ async fn init_with_positive_active_timeout() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 builder 处理 active_timeout = 0 的边界值。
-///
-/// 覆盖 `build_logic` 中 `else` 分支的边界值 0。
+// 验证 builder 处理 active_timeout = 0 的边界值（覆盖 `build_logic` 中 else 分支）。
 #[tokio::test]
 #[serial]
 async fn init_with_zero_active_timeout() {
@@ -434,10 +423,8 @@ async fn init_with_zero_active_timeout() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 builder 校验配置：非法 token_style 抛 Config 错误。
-///
-/// 覆盖 `build_logic` 中 `config.validate()?` 的错误分支
-/// （非法 token_style，区别于 timeout 非法）。
+// 验证 builder 校验配置：非法 token_style 抛 Config 错误（覆盖 `build_logic` 中
+// `config.validate()?` 的错误分支）。
 #[tokio::test]
 #[serial]
 async fn init_rejects_invalid_token_style() {
@@ -468,11 +455,7 @@ async fn init_rejects_invalid_token_style() {
 // builder 兜底路径测试
 // ------------------------------------------------------------------------
 
-/// 验证 builder 构建成功且后续 login 可正常工作。
-///
-/// 兜底路径（无 factory 注册时通过 builder 链直接构造 GarrisonLogicDefault）由
-/// builder.rs 中的 `build_logic_via_builder_chain` 单测覆盖，此处验证
-/// 通过公开 builder API 构建后的端到端可用性。
+// 验证 builder 构建成功且后续 login 可正常工作（兜底路径由 `build_logic_via_builder_chain` 单测覆盖）。
 #[tokio::test]
 #[serial]
 async fn builder_build_succeeds_and_login_works() {
@@ -504,9 +487,7 @@ async fn builder_build_succeeds_and_login_works() {
 // MockDao 方法覆盖测试
 // ------------------------------------------------------------------------
 
-/// 验证 MockDao::expire 和 delete 方法可正常调用。
-///
-/// 覆盖 MockDao 的 expire 和 delete trait 方法（此前测试未直接调用）。
+// 验证 MockDao::expire 和 delete 方法可正常调用（补充此前未直接调用的 trait 方法覆盖）。
 #[tokio::test]
 async fn mock_dao_expire_and_delete_work() {
     let dao = MockDao::new();
@@ -566,8 +547,7 @@ async fn strategy_available_after_init() {
     GarrisonManager::reset_for_test();
 }
 
-/// 语义守卫：`logic()` / `strategy()` 多次调用返回同一 Arc 实例，
-/// 且 `with_strategy()` 替换后 `strategy()` 返回新实例（PERF-01 重构锚点）。
+// 语义守卫：`logic()` / `strategy()` 多次调用返回同一 Arc 实例，`with_strategy()` 替换后返回新实例。
 #[tokio::test]
 #[serial]
 async fn singleton_arc_identity_preserved() {
@@ -691,12 +671,7 @@ async fn runtime_strategy_replacement_takes_effect_immediately() {
 // GarrisonManager 注册 DisableRepository 集成测试
 // ------------------------------------------------------------------------
 
-/// 验证 init 后 `GarrisonManager::disable_repository()` 返回 Some，
-/// 未注册时返回 None。
-///
-/// 覆盖场景：
-/// - reset_for_test 后（未注册）返回 None
-/// - init 后（已注册）返回 Some
+// 验证 init 后 `disable_repository()` 返回 Some，未注册时返回 None。
 #[tokio::test]
 #[serial]
 async fn test_manager_registers_disable_repository() {
@@ -826,10 +801,7 @@ async fn test_manager_disable_repository_persists() {
 // spawn_cleanup_task 集成到 GarrisonManager::builder()
 // ------------------------------------------------------------------------
 
-/// 验证 interval > 0 时 init 后 cleanup task 启动。
-///
-/// 覆盖场景：`config.token_map_cleanup_interval_secs = 1`（> 0），
-/// init 后 `GARRISON_MANAGER.cleanup_task_handle` 应为 `Some`。
+// 验证 interval > 0 时 init 后 cleanup task 启动（`cleanup_task_handle` 为 Some）。
 #[tokio::test]
 #[serial]
 async fn manager_init_positive_interval_starts_cleanup_task() {
@@ -856,10 +828,7 @@ async fn manager_init_positive_interval_starts_cleanup_task() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 interval = -1 时 init 不启动 cleanup task。
-///
-/// 覆盖场景：`config.token_map_cleanup_interval_secs = -1`（< 0，禁用），
-/// init 后 `GARRISON_MANAGER.cleanup_task_handle` 应为 `None`。
+// 验证 interval = -1 时 init 不启动 cleanup task（`cleanup_task_handle` 为 None）。
 #[tokio::test]
 #[serial]
 async fn manager_init_negative_interval_no_cleanup_task() {
@@ -886,10 +855,8 @@ async fn manager_init_negative_interval_no_cleanup_task() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 init 后 cleanup task 实际运行（token 被清理）。
-///
-/// 策略：init with timeout=1（TTL=1 秒）+ interval=1（每秒清理），
-/// login 创建 token 后等待 3 秒，验证 token 已从 `login_token_map` 移除。
+// 验证 init 后 cleanup task 实际运行（timeout=1 TTL + interval=1 每秒清理，login
+// 创建 token 后轮询等待其从 `login_token_map` 移除）。
 #[tokio::test]
 #[serial]
 async fn manager_init_cleanup_task_runs_after_init() {
@@ -938,10 +905,7 @@ async fn manager_init_cleanup_task_runs_after_init() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 manager drop 时 cleanup task 被取消。
-///
-/// 策略：创建局部 `GarrisonManager` 实例，存入 cleanup task handle，
-/// drop 后验证 task 停止运行（计数器不再显著增长）。
+// 验证 manager drop 时 cleanup task 被取消（局部实例存入 handle，drop 后计数器不再显著增长）。
 #[tokio::test]
 async fn manager_drop_cancels_cleanup_task() {
     use std::sync::atomic::{AtomicUsize, Ordering};

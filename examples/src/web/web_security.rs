@@ -26,14 +26,8 @@ use tower::ServiceExt;
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison Web 安全中间件完整流程 ===\n");
 
-    // ================================================================
-    // 场景一：CORS 跨域资源共享
-    // ================================================================
     demo_cors().await?;
 
-    // ================================================================
-    // 场景二：CSRF 跨站请求伪造防护
-    // ================================================================
     demo_csrf().await?;
 
     println!("\n=== Web 安全中间件流程演示完成 ===");
@@ -51,12 +45,7 @@ fn test_router() -> Router {
         .route("/api/submit", post(|| async { "submitted" }))
 }
 
-/// 场景一：CORS 跨域资源共享。
-///
-/// 业务流程：
-/// 1. 允许来源的跨域请求正确设置 CORS 头
-/// 2. 不允许来源的请求被拒绝
-/// 3. OPTIONS 预检请求返回允许的方法和头部
+/// 场景一：CORS 跨域资源共享：允许来源回显 CORS 头、不允许来源拒绝、OPTIONS 预检返回允许的方法和头部。
 async fn demo_cors() -> GarrisonResult<()> {
     println!("--- 场景二：CORS 跨域资源共享 ---");
 
@@ -153,12 +142,7 @@ async fn demo_cors() -> GarrisonResult<()> {
     Ok(())
 }
 
-/// 场景二：CSRF 防护（Double-Submit Cookie 模式）。
-///
-/// 业务流程：
-/// 1. GET 请求自动设置 CSRF Cookie
-/// 2. POST 请求需携带匹配的 CSRF Header + Cookie
-/// 3. 缺少 CSRF token 的 POST 被拒绝
+/// 场景二：CSRF 防护（Double-Submit Cookie 模式）：GET 自动设置 CSRF Cookie、缺少 token 的 POST 被拒、排除路径跳过校验。
 async fn demo_csrf() -> GarrisonResult<()> {
     println!("--- 场景二：CSRF 跨站请求伪造防护 ---");
 

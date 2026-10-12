@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! apikey_management 示例测试（protocol-apikey feature）。
-//!
-//! 验证 run() 完整执行（内部已包含 generate/verify/revoke/rotate 断言）。
+//! apikey_management 示例测试（protocol-apikey feature）：验证 run() 完整执行（内部已包含 generate/verify/revoke/rotate 断言）。
 
 #![cfg(feature = "protocol-apikey")]
 

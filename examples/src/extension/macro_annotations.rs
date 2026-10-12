@@ -10,16 +10,8 @@
 //! cargo run -p garrison-examples --bin macro_annotations --features "annotation-macros cache-memory web-axum"
 //! ```
 //!
-//! 宏会将原 async fn 重命名为 `__garrison_inner_<name>`，生成同名 wrapper：
-//! - `#[check_login]` → `GarrisonUtil::check_login().await`，未登录返回 401
-//! - `#[check_permission("a", "b")]` → 依次校验 a + b（AND 语义），任一失败返回 403
-//! - `#[check_role("admin")]` → 校验角色，无角色返回 403
-//!
-//! **限制**：
-//! - 仅支持 async fn
-//! - 原 fn 返回类型需实现 `axum::response::IntoResponse`
-//! - 依赖 `GarrisonManager` 全局单例（需先 `GarrisonManager::builder()`）
-//! - task_local token 上下文由 `with_current_token` 或 axum middleware 设置
+//! 宏将原 async fn 重命名为 `__garrison_inner_<name>` 并生成同名 wrapper：check_login 未登录返回 401；check_permission / check_role 依次校验（AND 语义），失败返回 403。
+//! 限制：仅 async fn；返回类型需实现 `axum::response::IntoResponse`；依赖 `GarrisonManager` 单例与 task_local token 上下文。
 
 use async_trait::async_trait;
 use axum::http::StatusCode;
@@ -244,8 +236,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    用户 1001 角色: [admin]\n");
 
     // 2. 用户 1001 登录获取 token
-    // 登录与后续 handler 校验在 TENANT(42) scope 内执行：tenant-isolation
-    // feature 启用时 check_permission/check_role 强制要求租户上下文（fail-closed）。
+    // TENANT(42) scope 内执行登录与 handler 校验：tenant-isolation 启用时强制要求租户上下文（fail-closed）。
     let tenant_ctx = TenantContext {
         tenant_id: 42,
         resolved_from: TenantSource::Header,

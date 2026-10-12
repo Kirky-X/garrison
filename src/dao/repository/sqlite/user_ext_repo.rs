@@ -72,10 +72,8 @@ impl UserExtRepository for DbnexusUserExtRepository {
         field_type: &str,
     ) -> GarrisonResult<()> {
         dao_session!(self.pool, "dao-app-user-ext-upsert", session, conn);
-        // UPSERT，依赖 UK(user_id, field_key)。
-        // 插入时生成新 UUID；冲突时更新 field_value/field_type/updated_at（保留原 id/created_at）。
-        // SQLite/Postgres 使用 ON CONFLICT ... DO UPDATE SET ... = excluded.field；
-        // MySQL 使用 ON DUPLICATE KEY UPDATE ... = VALUES(field)（MySQL 不支持 ON CONFLICT 语法）。
+        // UPSERT，依赖 UK(user_id, field_key)：插入生成新 UUID，冲突更新 field_value/field_type/updated_at（保留原 id/created_at）；
+        // SQLite/Postgres 用 ON CONFLICT ... DO UPDATE SET ... = excluded.field，MySQL 用 ON DUPLICATE KEY UPDATE ... = VALUES(field)。
         let new_id = uuid::Uuid::new_v4().to_string();
         let sql = if conn.get_database_backend() == dbnexus::sea_orm::DbBackend::MySql {
             "INSERT INTO app_user_ext (id, user_id, field_key, field_value, field_type, tenant_id) \

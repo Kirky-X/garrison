@@ -1,13 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! `strategy` 模块的 inline tests。
+//! `strategy` 模块的 inline tests：覆盖权限校验、角色层级、权限缓存、插件钩子、防火墙安全钩子等场景。
 //!
-//! 从 `mod.rs` 迁移而出（mod.rs 接口隔离）。
-//! 覆盖权限校验、角色层级、权限缓存、插件钩子、防火墙安全钩子等场景。
-//!
-//! 注意：引用 `GarrisonFirewallCheckHook` / `LoginContext` 的测试需 cfg 门控
-//! （依赖 limiteron / firewall-* / oauth2-server feature）。
+//! 注意：引用 `GarrisonFirewallCheckHook` / `LoginContext` 的测试需 cfg 门控（依赖 limiteron / firewall-* / oauth2-server feature）。
 
 use super::mock::MockCacheDao;
 use super::*;
@@ -25,9 +21,7 @@ use crate::strategy::hooks::{
 };
 use std::collections::HashMap;
 
-// ------------------------------------------------------------------------
 // MockInterface：模拟业务方实现 GarrisonInterface 回调
-// ------------------------------------------------------------------------
 
 /// 测试用 GarrisonInterface mock，基于 HashMap 存储 login_id → 权限/角色列表。
 struct MockInterface {
@@ -76,9 +70,7 @@ fn make_firewall(interface: MockInterface) -> GarrisonPermissionStrategyDefault 
     GarrisonPermissionStrategyDefault::new(Arc::new(interface))
 }
 
-// ------------------------------------------------------------------------
 // 持有权限返回 true / 未持有返回 false
-// ------------------------------------------------------------------------
 
 /// 验证主体持有指定权限时 check_permission 返回 true。
 #[tokio::test]
@@ -131,9 +123,7 @@ async fn check_permission_no_record_returns_false() {
     );
 }
 
-// ------------------------------------------------------------------------
 // 持有角色返回 true / 未持有返回 false
-// ------------------------------------------------------------------------
 
 /// 验证主体持有指定角色时 check_role 返回 true。
 #[tokio::test]
@@ -161,10 +151,7 @@ async fn check_role_not_held_returns_false() {
     );
 }
 
-/// 验证空角色字符串返回 Err。
-///
-/// 与 `check_permission_empty_string_errors` 对称：
-/// 空角色字符串应抛 `InvalidParam` 错误。
+/// 验证空角色字符串返回 Err（与 `check_permission_empty_string_errors` 对称，抛 `InvalidParam`）。
 #[tokio::test]
 async fn check_role_empty_string_errors() {
     let iface = MockInterface::new();
@@ -177,9 +164,7 @@ async fn check_role_empty_string_errors() {
     );
 }
 
-// ------------------------------------------------------------------------
 // 多角色任一匹配 / 全部匹配
-// ------------------------------------------------------------------------
 
 /// 验证 check_role_any：主体持有 roles 中任意一个即返回 true。
 #[tokio::test]
@@ -250,9 +235,7 @@ async fn check_role_all_empty_roles_returns_true() {
     );
 }
 
-// ------------------------------------------------------------------------
 // get_permission_list / get_role_list 回调委托验证
-// ------------------------------------------------------------------------
 
 /// 验证 get_permission_list 委托 GarrisonInterface 回调。
 #[tokio::test]
@@ -286,9 +269,7 @@ async fn get_permission_list_unknown_login_id_returns_empty() {
     assert!(perms.is_empty(), "未配置权限的 login_id 应返回空列表");
 }
 
-// ------------------------------------------------------------------------
 // PermissionChecker 集成测试
-// ------------------------------------------------------------------------
 
 /// 可配置的 MockPermissionChecker，返回预设的权限/角色校验结果。
 struct MockPermissionChecker {
@@ -357,9 +338,7 @@ async fn check_permission_without_checker_falls_back_to_interface() {
     );
 }
 
-// ------------------------------------------------------------------------
 // 层级角色测试
-// ------------------------------------------------------------------------
 
 /// 辅助函数：创建带角色层级的 firewall。
 fn make_firewall_with_hierarchy(
@@ -444,9 +423,7 @@ async fn check_role_any_all_with_hierarchy() {
     );
 }
 
-// ------------------------------------------------------------------------
 // 插件钩子测试
-// ------------------------------------------------------------------------
 
 /// 验证注入 PluginManager 后 check_permission 触发插件钩子。
 #[tokio::test]
@@ -464,9 +441,7 @@ async fn check_permission_triggers_plugin_hook() {
     );
 }
 
-/// 验证插件失败不中断 check_permission 主流程。
-///
-/// 注意：当前实现为 Err → warn 不中断，不实现 spec 的 Override 机制。
+/// 验证插件失败不中断 check_permission 主流程（当前实现为 Err → warn 不中断，不实现 spec 的 Override 机制）。
 #[tokio::test]
 async fn check_permission_plugin_failure_does_not_interrupt() {
     let mut iface = MockInterface::new();
@@ -482,9 +457,7 @@ async fn check_permission_plugin_failure_does_not_interrupt() {
     );
 }
 
-// ------------------------------------------------------------------------
 // 权限缓存测试
-// ------------------------------------------------------------------------
 
 /// 验证 cache_permission 写入 DAO，后续 get_cached_permission 返回缓存值。
 #[tokio::test]
@@ -500,9 +473,8 @@ async fn cache_permission_writes_and_reads_back() {
     let cached = fw.get_cached_permission("1001", "user:read").await.unwrap();
     assert_eq!(cached, Some(true), "缓存应命中并返回 true");
 
-    // 验证 key 格式：`garrison:perm:cache:v{version}:{tenant}:{enc(login)}:{enc(perm)}`。
-    // tenant_id 未设置时使用占位符 `_`；login/permission 经歧义消除编码
-    // （`:` → `%3A`，见 `encode_key_component` 契约），版本未失效时为 v0。
+    // 验证 key 格式：`garrison:perm:cache:v{version}:{tenant}:{enc(login)}:{enc(perm)}`——tenant 未设置时用占位符 `_`，
+    // login/permission 经歧义消除编码（`:` → `%3A`），版本未失效时为 v0。
     let key = "garrison:perm:cache:v0:_:1001:user%3Aread";
     assert_eq!(
         dao.get(key).await.unwrap(),
@@ -620,8 +592,7 @@ async fn invalidate_permission_cache_reflects_revocation_immediately() {
     );
 }
 
-/// T018：trait 方法 invalidate_login_cache（logout/kickout 联动入口）同样
-/// 使权限回收立即生效——钉住登出联动失效路径，防 trait 默认 no-op 回归。
+/// trait 方法 invalidate_login_cache（logout/kickout 联动入口）同样使权限回收立即生效——钉住登出联动失效路径，防 trait 默认 no-op 回归。
 #[tokio::test]
 async fn invalidate_login_cache_reflects_revocation_immediately() {
     let dao = Arc::new(MockCacheDao::new());
@@ -668,15 +639,11 @@ async fn check_permission_uses_cache_short_circuit() {
     );
 }
 
-// ------------------------------------------------------------------------
-// 权限缓存键歧义消除（渗透-租户隔离-缓存键歧义-1）与跨租户失效
-// （渗透-租户隔离-缓存失效-1）回归
-// ------------------------------------------------------------------------
+// 权限缓存键歧义消除与跨租户失效回归（渗透-租户隔离-缓存键歧义-1 / 渗透-租户隔离-缓存失效-1）
 
 /// 键碰撞回归：不同 (login_id, permission) 组合编码后必不同键。
 ///
-/// 旧版裸冒号拼接下 (login="a:b", perm="c") 与 (login="a", perm="b:c")
-/// 同得 `garrison:perm:cache:_:a:b:c`（缓存投毒）。编码后两组键必须互不命中。
+/// 旧版裸冒号拼接下 (login="a:b", perm="c") 与 (login="a", perm="b:c") 同得 `garrison:perm:cache:_:a:b:c`（缓存投毒），编码后两组键必须互不命中。
 #[tokio::test]
 async fn perm_cache_key_components_do_not_collide_after_encoding() {
     let dao = Arc::new(MockCacheDao::new());
@@ -706,11 +673,8 @@ async fn perm_cache_key_components_do_not_collide_after_encoding() {
     );
 }
 
-/// 编码后与旧版裸拼接键不冲突：旧键残留不作为新键命中。
-///
-/// 旧版本（升级前）写入的 `garrison:perm:cache:<t>:<login>:<perm>` 键
-/// 与新键 `garrison:perm:cache:v{ver}:<t>:<enc(login)>:<enc(perm)>` 键空间
-/// 不相交（新键第 4 段恒为 `v<数字>`，旧键该段为租户，纯数字或 `_`）——
+/// 编码后与旧版裸拼接键不冲突：旧版本写入的 `garrison:perm:cache:<t>:<login>:<perm>` 与新键
+/// `garrison:perm:cache:v{ver}:<t>:<enc(login)>:<enc(perm)>` 键空间不相交（新键第 4 段恒为 `v<数字>`，旧键该段为租户，纯数字或 `_`），
 /// 旧键残留既不会被读到（防投毒），也不与新键碰撞。
 #[tokio::test]
 async fn perm_cache_key_encoded_format_never_hits_legacy_key() {
@@ -738,9 +702,8 @@ async fn perm_cache_key_encoded_format_never_hits_legacy_key() {
     );
 }
 
-/// 跨租户失效回归（渗透-租户隔离-缓存失效-1 场景 A）：
-/// 多租户装配（builder 不设租户）下，请求级租户段写入的 Allow
-/// 经 invalidate_login_cache（logout/kickout 联动）必须立即清除。
+/// 跨租户失效回归（渗透-租户隔离-缓存失效-1 场景 A）：多租户装配（builder 不设租户）下，
+/// 请求级租户段写入的 Allow 经 invalidate_login_cache（logout/kickout 联动）必须立即清除。
 #[tokio::test]
 async fn invalidate_login_cache_clears_request_tenant_segments() {
     let dao = Arc::new(MockCacheDao::new());
@@ -778,8 +741,7 @@ async fn invalidate_login_cache_clears_request_tenant_segments() {
     );
 }
 
-/// 跨租户失效回归（渗透-租户隔离-缓存失效-1 场景 C）：
-/// builder 配置租户（1）与请求级租户（7）错位时，失效端仍须清掉 7 段。
+/// 跨租户失效回归（渗透-租户隔离-缓存失效-1 场景 C）：builder 配置租户（1）与请求级租户（7）错位时，失效端仍须清掉 7 段。
 #[tokio::test]
 async fn invalidate_permission_cache_clears_all_tenant_segments() {
     let dao = Arc::new(MockCacheDao::new());
@@ -846,10 +808,9 @@ async fn invalidate_permission_cache_scopes_to_target_login_id() {
     );
 }
 
-/// 失效纪元唯一性（架构审查 H2 回归）：每次失效写入全新随机 UUID 标签。
+/// 失效纪元唯一性回归：每次失效写入全新随机 UUID 标签。
 ///
-/// 计数器方案在纪元键过期后计数重走，与上一纪元同值的旧 Allow 键仍存活时
-/// 可被再次命中（复活窗口）；随机标签使新旧纪元标签结构性不相等，
+/// 计数器方案在纪元键过期后计数重走，与上一纪元同值的旧 Allow 键仍存活时可被再次命中（复活窗口）；随机标签使新旧纪元标签结构性不相等，
 /// 本测试钉死「标签为非计数 UUID 且逐次互异 + 旧键物理在场亦不可达」。
 #[tokio::test]
 async fn invalidation_epoch_is_fresh_uuid_per_call_and_old_keys_unreachable() {
@@ -902,12 +863,9 @@ async fn invalidation_epoch_is_fresh_uuid_per_call_and_old_keys_unreachable() {
     );
 }
 
-// ------------------------------------------------------------------------
 // 租户感知数据源（渗透-RBAC-租户维度-1）回归
-// ------------------------------------------------------------------------
 
-/// 租户感知 interface mock：按 (tenant_id, login_id) 返回角色/权限，
-/// 覆写 `get_*_list_in_tenant` 模拟业务方租户隔离数据源。
+/// 租户感知 interface mock：按 (tenant_id, login_id) 返回角色/权限，覆写 `get_*_list_in_tenant` 模拟业务方租户隔离数据源。
 struct TenantAwareMockInterface {
     roles: HashMap<(i64, String), Vec<String>>,
     permissions: HashMap<(i64, String), Vec<String>>,
@@ -949,8 +907,7 @@ impl GarrisonInterface for TenantAwareMockInterface {
     }
 }
 
-/// check_role_in_tenant 必须消费租户参数（租户感知数据源已实现时）：
-/// 跨租户重名 login_id 的角色不得互染（渗透-RBAC-租户维度-1 回归）。
+/// check_role_in_tenant 必须消费租户参数（租户感知数据源已实现时）：跨租户重名 login_id 的角色不得互染（渗透-RBAC-租户维度-1 回归）。
 #[tokio::test]
 async fn check_role_in_tenant_queries_tenant_scoped_data_source() {
     let mut iface = TenantAwareMockInterface {
@@ -1006,8 +963,7 @@ async fn check_permission_in_tenant_queries_tenant_scoped_data_source() {
     );
 }
 
-/// GarrisonInterface 租户感知默认方法委托全局方法（无行为破坏契约）：
-/// 未覆写 `get_role_list_in_tenant` 的既有实现，in_tenant 路径数据与全局一致。
+/// GarrisonInterface 租户感知默认方法委托全局方法（无行为破坏契约）：未覆写 `get_role_list_in_tenant` 的既有实现，in_tenant 路径数据与全局一致。
 #[tokio::test]
 async fn interface_tenant_aware_defaults_delegate_to_global() {
     let mut iface = MockInterface::new();
@@ -1031,9 +987,7 @@ async fn interface_tenant_aware_defaults_delegate_to_global() {
     );
 }
 
-// ------------------------------------------------------------------------
 // 防火墙安全钩子集成测试
-// ------------------------------------------------------------------------
 
 /// 验证未注入 firewall_hook 时 check_login_hooks 为 no-op（无防火墙检查直接放行）。
 #[cfg(any(
@@ -1163,9 +1117,7 @@ async fn with_firewall_hook_injects_hook() {
     assert!(result.is_err(), "注入 hook 后应能检测到频率超限并阻断");
 }
 
-/// 验证 check_login_hooks 按 5 个 hook 顺序调用（login_frequency 先于 brute_force）。
-///
-/// 当 IP 维度先达阈值时，应优先返回 login_frequency 错误。
+/// 验证 check_login_hooks 按 5 个 hook 顺序调用（login_frequency 先于 brute_force）；IP 维度先达阈值时应优先返回 login_frequency 错误。
 #[cfg(any(
     feature = "sms-rate-limit",
     feature = "firewall-ratelimit",
@@ -1281,13 +1233,9 @@ async fn check_login_hooks_short_circuits_on_err() {
     );
 }
 
-// ========================================================================
 // 覆盖率补充：with_listener_manager、缓存写入失败、多 hook 失败
-// ========================================================================
 
 /// `with_listener_manager` 注入后 listener_manager 字段为 Some。
-///
-/// 覆盖行 275-277（builder 方法体）。
 #[cfg(feature = "listener")]
 #[test]
 fn with_listener_manager_sets_field() {
@@ -1301,11 +1249,7 @@ fn with_listener_manager_sets_field() {
     );
 }
 
-/// `check_permission` 缓存写入失败时仅 warn 不中断，仍返回正确结果。
-///
-/// 覆盖行 394-396, 398（缓存写入失败 warn 分支）。
-///
-/// 使用 FailingDao（set 方法返回 Err）触发缓存写入失败。
+/// `check_permission` 缓存写入失败时仅 warn 不中断，仍返回正确结果（用 FailingDao（set 返回 Err）触发缓存写入失败）。
 #[tokio::test]
 async fn check_permission_cache_write_failure_warns_but_returns_result() {
     /// 所有写操作都失败的 DAO
@@ -1375,11 +1319,7 @@ async fn check_permission_cache_write_failure_warns_but_returns_result() {
 
 /// `check_login_hooks` 第 3 个 hook（check_geo_anomaly）失败时广播 FirewallBlock 并阻断。
 ///
-/// 覆盖行 467-468（第 3 个 hook 失败）+ 490, 492（broadcast_firewall_block）。
-///
-/// 注意：此测试同时引用 `GarrisonFirewallCheckHook` / `LoginContext`（依赖 firewall/oauth2
-/// feature）和 `GarrisonListenerManager`（依赖 listener feature），需双重 cfg 门控。
-/// 之前仅 `#[cfg(feature = "listener")]` 导致 listener + 无 firewall 时编译失败。
+/// 需 listener + firewall/oauth2 双重 cfg 门控（仅 listener 门控在 listener + 无 firewall 时会编译失败）。
 #[cfg(all(
     feature = "listener",
     any(
@@ -1423,11 +1363,7 @@ async fn check_login_hooks_geo_anomaly_failure_broadcasts_firewall_block() {
     );
 }
 
-/// `check_login_hooks` 第 4 个 hook（check_token_reuse）失败时广播并阻断。
-///
-/// 覆盖行 471-472（第 4 个 hook 失败）。
-///
-/// 注意：双重 cfg 门控同上（listener + firewall/oauth2）。
+/// `check_login_hooks` 第 4 个 hook（check_token_reuse）失败时广播并阻断（双重 cfg 门控同上）。
 #[cfg(all(
     feature = "listener",
     any(
@@ -1470,11 +1406,7 @@ async fn check_login_hooks_token_reuse_failure_broadcasts() {
     assert!(result.is_err(), "token_reuse 失败应阻断");
 }
 
-/// `check_login_hooks` 第 5 个 hook（check_device_anomaly）失败时广播并阻断。
-///
-/// 覆盖行 475-476（第 5 个 hook 失败）。
-///
-/// 注意：双重 cfg 门控同上（listener + firewall/oauth2）。
+/// `check_login_hooks` 第 5 个 hook（check_device_anomaly）失败时广播并阻断（双重 cfg 门控同上）。
 #[cfg(all(
     feature = "listener",
     any(
@@ -1520,8 +1452,7 @@ async fn check_login_hooks_device_anomaly_failure_broadcasts() {
     assert!(result.is_err(), "device_anomaly 失败应阻断");
 }
 
-/// 调用 `get_permission_list_with_type` / `get_role_list_with_type` 默认委托方法，
-/// 覆盖 async_trait 生成的 wrapper 函数。
+/// 调用 `get_permission_list_with_type` / `get_role_list_with_type` 默认委托方法，覆盖 async_trait 生成的 wrapper 函数。
 #[tokio::test]
 async fn mock_interface_default_methods_with_type_coverage() {
     let mut iface = MockInterface::new();

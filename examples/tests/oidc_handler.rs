@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! oidc_handler 示例测试（protocol-oidc feature）。
-//!
-//! 验证 run() 完整执行（内部已包含 sign/verify/discovery/nonce 校验断言）。
+//! oidc_handler 示例测试（protocol-oidc feature）：验证 run() 完整执行（内部已包含 sign/verify/discovery/nonce 校验断言）。
 
 #![cfg(feature = "protocol-oidc")]
 

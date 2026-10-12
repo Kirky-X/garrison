@@ -1,21 +1,10 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! actix-web Extractor 适配器。
-//!
-//! 集中提供 actix-web `FromRequest` extractor 实现：
-//! - `GarrisonPrincipal`：从 `Authorization: Bearer <token>` header 解析当前登录用户 ID，
-//!   携带 `login_id` 字段供 handler 直接读取。
-//! - `CheckLogin` / `CheckRole` / `CheckPermission`：per-handler 鉴权 extractor，
-//!   仅执行鉴权（返回 unit-like struct），struct 声明位于 `mod.rs`。
-//! - `TenantContext`（feature gate `tenant-isolation`）：从 `X-Tenant-Id` header 解析租户 ID。
-//!
-//! ## 设计
-//!
-//! - `GarrisonPrincipal` 与 `CheckLogin`/`CheckRole`/`CheckPermission` 互补：
-//!   前者携带身份信息，后者仅做鉴权校验。
-//! - 与 `GarrisonContext` trait（请求/响应/存储上下文抽象层）解耦：trait 名字保持不变，
-//!   extractor 使用不同名称 `GarrisonPrincipal` 避免命名冲突。
+//! actix-web Extractor 适配器：`GarrisonPrincipal`（Bearer token → `login_id`）、
+//! `CheckLogin`/`CheckRole`/`CheckPermission`（per-handler 鉴权，struct 声明在 `mod.rs`）、
+//! `TenantContext`（`tenant-isolation`，从 `X-Tenant-Id` 解析租户）。
+//! 前者携带身份信息、后者仅鉴权校验；命名与 `GarrisonContext` trait 区分以免冲突。
 //!
 //! ## 使用示例
 //!
@@ -27,36 +16,25 @@
 //! }
 //! ```
 
-// ============================================================================
 // GarrisonPrincipal：携带 login_id 的 extractor
-// ============================================================================
 
 use crate::context::token_extract::extract_token_from_headers;
 
-/// `GarrisonConfig` 未注册为 actix app_data 时的一次性告警（防日志刷屏）。
-///
-/// 此场景下各 extractor 回退 `GarrisonConfig::default_config()`——安全相关参数
-/// （token 提取配置、timeout 等）可能与预期不一致，至少产生一条 warn 信号
-/// （选择回退为默认配置而非 fail-fast，由 warn 信号提示）。
+/// `GarrisonConfig` 未注册为 actix app_data 时的一次性告警：各 extractor 回退 `default_config`，
+/// 安全参数可能不一致；选择回退而非 fail-fast，但以 warn 显性提示。
 fn warn_missing_config_once() {
     static WARN: std::sync::Once = std::sync::Once::new();
     WARN.call_once(|| {
         tracing::warn!(
-            "GarrisonConfig 未注册为 actix app_data（web::Data<Arc<GarrisonConfig>>），\
-             auth extractor 回退 default_config；安全参数可能不一致，\
-             请通过 App::app_data(web::Data::new(Arc::new(config))) 显式注册"
+            "{}",
+            crate::i18n::translate_detail("logs-actix-config-not-registered", &[])
         );
     });
 }
 
 pub use crate::context::GarrisonPrincipal;
 
-/// 实现 `FromRequest`：从 `Authorization: Bearer <token>` header 提取 token，
-/// 调用 `GarrisonUtil::get_login_id_by_token` 解析关联的 `login_id`。
-///
-/// # 错误
-///
-/// - `GarrisonError::NotLogin`: 未提供 token 或 token 无效。
+/// 从 `Authorization: Bearer <token>` 提取 token 并解析关联 `login_id`；无 token 或无效返回 `NotLogin`。
 impl actix_web::FromRequest for GarrisonPrincipal {
     type Error = crate::error::GarrisonError;
     type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
@@ -87,15 +65,7 @@ impl actix_web::FromRequest for GarrisonPrincipal {
     }
 }
 
-// ============================================================================
-// CheckLogin / CheckRole / CheckPermission extractors（per-handler 鉴权）
-// ============================================================================
-//
-// 这三个 extractor 与上方 `GarrisonPrincipal` 互补：
-// - `GarrisonPrincipal` 携带 login_id 供 handler 读取
-// - `CheckLogin` / `CheckRole` / `CheckPermission` 仅执行鉴权，返回 unit-like struct
-//
-// struct 声明位于 `mod.rs`，此处仅提供 `FromRequest` 实现。
+// CheckLogin / CheckRole / CheckPermission extractors：per-handler 鉴权，struct 声明在 mod.rs，此处仅 FromRequest 实现。
 
 /// CheckLogin extractor：验证用户已登录。
 ///
@@ -141,10 +111,8 @@ impl actix_web::FromRequest for super::CheckLogin {
 
 /// CheckRole extractor：验证用户持有指定角色。
 ///
-/// # 安全设计
-///
-/// 角色名**必须**通过 `web::Data<RequiredRole>` 在路由注册时服务端配置，
-/// **禁止**从客户端可控的 header / query param 读取（攻击者可通过 `?role=admin` 绕过鉴权）。
+/// 角色名必须经 `web::Data<RequiredRole>` 服务端配置，禁止从客户端可控的 header/query 读取
+/// （否则 `?role=admin` 可绕过鉴权）。
 ///
 /// # 使用
 ///
@@ -170,8 +138,7 @@ impl actix_web::FromRequest for super::CheckRole {
                 std::sync::Arc::new(crate::config::GarrisonConfig::default_config())
             });
 
-        // 角色必须通过 web::Data<RequiredRole> 服务端配置，
-        // 禁止从客户端可控的 header/query param 读取（防 `?role=admin` 绕过）。
+        // 角色仅取服务端配置，禁止客户端可控来源（防 `?role=admin` 绕过）
         let role = req
             .app_data::<actix_web::web::Data<super::RequiredRole>>()
             .map(|d| d.0.clone())
@@ -195,10 +162,8 @@ impl actix_web::FromRequest for super::CheckRole {
 
 /// CheckPermission extractor：验证用户持有指定权限。
 ///
-/// # 安全设计
-///
-/// 权限名**必须**通过 `web::Data<RequiredPermission>` 在路由注册时服务端配置，
-/// **禁止**从客户端可控的 header / query param 读取（攻击者可通过 `?permission=user:read` 绕过鉴权）。
+/// 权限名必须经 `web::Data<RequiredPermission>` 服务端配置，禁止从客户端可控的 header/query 读取
+/// （否则 `?permission=user:read` 可绕过鉴权）。
 ///
 /// # 使用
 ///
@@ -224,8 +189,7 @@ impl actix_web::FromRequest for super::CheckPermission {
                 std::sync::Arc::new(crate::config::GarrisonConfig::default_config())
             });
 
-        // 权限必须通过 web::Data<RequiredPermission> 服务端配置，
-        // 禁止从客户端可控的 header/query param 读取（防 `?permission=xxx` 绕过）。
+        // 权限仅取服务端配置，禁止客户端可控来源（防 `?permission=xxx` 绕过）
         let permission = req
             .app_data::<actix_web::web::Data<super::RequiredPermission>>()
             .map(|d| d.0.clone())
@@ -247,9 +211,7 @@ impl actix_web::FromRequest for super::CheckPermission {
     }
 }
 
-// ============================================================================
 // TenantContext extractor（feature gate tenant-isolation）
-// ============================================================================
 
 /// `X-Tenant-Id` header 信任模型一次性告警（防日志刷屏）。
 #[cfg(feature = "tenant-isolation")]
@@ -257,30 +219,17 @@ fn warn_header_tenant_unverified_once() {
     static WARN: std::sync::Once = std::sync::Once::new();
     WARN.call_once(|| {
         tracing::warn!(
-            "TenantContext 从客户端可控的 X-Tenant-Id header 提取租户且未与认证主体比对：\
-             任何调用方可声明任意租户 ID。本 extractor 仅做格式校验（数字解析），\
-             不做「主体→租户」归属授权。租户隔离请勿依赖该 header 值——\
-             应使用 ClaimTenantResolver（token claim）等服务端可信来源，\
-             或在业务层校验 principal 与租户的归属关系"
+            "{}",
+            crate::i18n::translate_detail("logs-actix-tenant-header-unverified", &[])
         );
     });
 }
 
-/// 从 `X-Tenant-Id` header 解析 `TenantContext`。
-///
-/// # 信任模型与安全边界（重要）
-///
-/// 本 extractor **仅做格式校验**（非空 + i64 解析），提取的 `tenant_id`：
-/// - **未**与认证主体（login_id）做归属授权比对——框架的 `SessionData`
-///   不携带主体→租户映射，无注册表可比对；
-/// - **未**对租户注册表/白名单做存在性校验。
-///
-/// 因此 `X-Tenant-Id` 是**客户端可控**输入：调用方可声明任意租户 ID。
-/// 若下游代码直接信任该值做租户隔离（缓存前缀、数据过滤），存在跨租户
-/// 越权风险。租户隔离的正确做法：
-/// 1. 使用 `ClaimTenantResolver`（从 token claim 解析，服务端可信）；
-/// 2. 或在业务层显式校验 `GarrisonPrincipal`（主体）与租户的归属关系；
-/// 3. 或将本 extractor 仅用于路由/审计标注，不作为隔离边界。
+/// 从 `X-Tenant-Id` header 解析 `TenantContext`，仅做格式校验（非空 + i64 解析）：
+/// **不与认证主体做归属授权比对**（框架 `SessionData` 无主体→租户映射），也不校验租户注册表，
+/// 该值客户端可控——任何调用方可声明任意租户 ID。直接信任做隔离（缓存前缀、数据过滤）存在跨租户越权风险。
+/// 正确做法：用 `ClaimTenantResolver`（token claim）等服务端可信来源，或业务层校验主体与租户归属，
+/// 或仅用于路由/审计标注而不作为隔离边界。
 #[cfg(feature = "tenant-isolation")]
 impl actix_web::FromRequest for crate::context::tenant::TenantContext {
     type Error = crate::error::GarrisonError;
@@ -343,12 +292,9 @@ mod tests {
             .unwrap();
     }
 
-    // ----------------------------------------------------------------
     // GarrisonPrincipal extractor 测试
-    // ----------------------------------------------------------------
 
-    /// 验证 `GarrisonPrincipal::from_request` 从 `Authorization: Bearer <token>`
-    /// header 解析出 `login_id`。
+    /// 从 `Authorization: Bearer <token>` header 解析出 `login_id`。
     #[tokio::test]
     #[serial]
     async fn garrison_principal_extracted_from_actix_request() {
@@ -371,7 +317,7 @@ mod tests {
         GarrisonManager::reset_for_test();
     }
 
-    /// 验证 `GarrisonPrincipal::from_request` 在无 token 时返回 `NotLogin` 错误。
+    /// `GarrisonPrincipal::from_request` 无 token 时返回 `NotLogin` 错误。
     #[tokio::test]
     #[serial]
     async fn garrison_principal_returns_err_without_token() {
@@ -390,7 +336,7 @@ mod tests {
         GarrisonManager::reset_for_test();
     }
 
-    /// 验证 `GarrisonPrincipal::from_request` 在无效 token 时返回错误。
+    /// `GarrisonPrincipal::from_request` 无效 token 时返回错误。
     #[tokio::test]
     #[serial]
     async fn garrison_principal_returns_err_with_invalid_token() {
@@ -413,9 +359,7 @@ mod tests {
     }
 }
 
-// ============================================================================
 // TenantContext extractor 测试（feature gate tenant-isolation）
-// ============================================================================
 
 #[cfg(all(test, feature = "tenant-isolation"))]
 mod tenant_tests {
@@ -424,7 +368,7 @@ mod tenant_tests {
     use actix_web::FromRequest;
     use serial_test::serial;
 
-    /// 验证 `TenantContext::from_request` 从 `X-Tenant-Id` header 解析出 `tenant_id`。
+    /// `X-Tenant-Id` header 解析出 `tenant_id`。
     #[tokio::test]
     #[serial]
     async fn tenant_context_extracted_from_actix_request_when_tenant_isolation_enabled() {
@@ -442,8 +386,7 @@ mod tenant_tests {
         assert_eq!(ctx.resolved_from, TenantSource::Header);
     }
 
-    /// 验证 `TenantContext::from_request` 在无 `X-Tenant-Id` header 时返回错误。
-    /// 缺失 header 时显式失败（不默认 0）。
+    /// 无 `X-Tenant-Id` header 时返回错误（显式失败，不默认 0）。
     #[tokio::test]
     #[serial]
     async fn tenant_context_returns_err_without_x_tenant_id_header() {
@@ -458,8 +401,7 @@ mod tenant_tests {
         );
     }
 
-    /// 验证 `TenantContext::from_request` 在 `X-Tenant-Id` 非数字时返回错误。
-    /// 非法 tenant_id 显式失败。
+    /// `X-Tenant-Id` 非数字时返回错误（显式失败）。
     #[tokio::test]
     #[serial]
     async fn tenant_context_returns_err_with_non_numeric_x_tenant_id() {

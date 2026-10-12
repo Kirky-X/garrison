@@ -14,11 +14,7 @@ use garrison::config::GarrisonConfig;
 use garrison::error::{GarrisonError, GarrisonResult};
 use std::io::Write as _;
 
-/// 运行配置加载示例。
-///
-/// 演示默认配置、TOML 文件加载、环境变量覆盖、热更新订阅与配置校验。
-///
-/// 注意：本示例使用 `std::env::set_var` 设置环境变量，在多线程环境下需串行执行。
+/// 运行配置加载示例：默认配置、TOML 文件加载、环境变量覆盖、热更新订阅与配置校验（本示例用 `set_var`，多线程下需串行执行）。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 配置加载示例 ===\n");
 

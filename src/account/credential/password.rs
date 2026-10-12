@@ -1,28 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 密码哈希子模块。
-//! 提供 `PasswordHasher` trait + `Argon2Hasher` / `BcryptHasher` 实现 + `PasswordVerifier` 自动识别。
+//! 密码哈希子模块：`PasswordHasher` trait（`hash` / `verify` / `verify_and_rehash`，后者默认 =
+//! verify + None，`Argon2Hasher` 覆写为登录期惰性升级）+ `Argon2Hasher`（Argon2id, m=19456, t=2, p=1）
+//! + `BcryptHasher`（默认 cost=12）+ `PasswordVerifier`（按 hash 前缀自动识别算法）。
 //!
-//! ## 设计
-//!
-//! - `PasswordHasher` trait 定义 `hash` / `verify` / `verify_and_rehash` 抽象
-//!   （后者默认 = verify + None，Argon2Hasher 覆写为登录期惰性升级）
-//! - `Argon2Hasher` 使用 argon2 crate（Argon2id, m=19456, t=2, p=1）
-//! - `BcryptHasher` 使用 bcrypt crate（默认 cost=12）
-//! - `PasswordVerifier` 根据 hash 前缀自动选择算法校验
-//!
-//! ## 迁移说明
-//!
-//! 本模块从 `secure/password/mod.rs` 迁移到 `account/credential/password.rs`。
-//! - `secure-password` feature → `account-credential` feature
-//! - `secure-password-zeroize` feature → `account-credential-zeroize` feature
-//! - `use crate::secure::password::*` → `use crate::account::credential::password::*`
-//!
-//! ## 不引入的算法
-//!
-//! - MD5/SHA1 密码哈希（已废弃，仅 Digest 认证保留）
-//! - PBKDF2/SCrypt（按需）
+//! 不引入 MD5/SHA1 密码哈希（已废弃，仅 Digest 认证保留）与 PBKDF2/SCrypt（按需）。
 
 use super::{Credential, CredentialModel, CredentialType};
 use crate::error::{GarrisonError, GarrisonResult};
@@ -36,54 +19,30 @@ use argon2::{
     Algorithm, Argon2, Params, Version,
 };
 
-// ============================================================================
-// Trait 定义
-// ============================================================================
-
-/// 密码哈希器 trait。
-///
-/// 提供 `hash`（密码 → 哈希字符串）与 `verify`（密码 + 哈希 → 是否匹配）方法。
+/// 密码哈希器 trait：`hash`（密码 → 哈希字符串）与 `verify`（密码 + 哈希 → 是否匹配）方法；
 /// 实现必须为 `Send + Sync`（可在多线程环境共享）。
 pub trait PasswordHasher: Send + Sync {
-    /// 将明文密码哈希为字符串。
-    ///
-    /// # 参数
-    /// - `password`: 明文密码。
-    ///
-    /// # 返回
-    /// - `Ok(hash)`: 哈希字符串（含算法标识、盐、参数）。
+    /// 将明文密码哈希为字符串（含算法标识、盐、参数）。
     fn hash(&self, password: &str) -> GarrisonResult<String>;
 
-    /// 校验明文密码与哈希是否匹配。
-    ///
-    /// # 参数
-    /// - `password`: 明文密码。
-    /// - `hash`: 哈希字符串（由 `hash` 方法生成）。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 密码匹配。
-    /// - `Ok(false)`: 密码不匹配。
-    /// - `Err`: 哈希格式无效或校验失败。
+    /// 校验明文密码与哈希是否匹配；`Err` 为哈希格式无效或校验失败。
     fn verify(&self, password: &str, hash: &str) -> GarrisonResult<bool>;
 
     /// 并发闸门探针：返回哈希执行的并发许可池（Argon2 内存 DoS 防护扩展点）。
     ///
-    /// 默认 `None`（不限并发，向后兼容——自定义实现零改动）。返回 `Some` 的
-    /// hasher 由 `verify_pooled` 统一封装「async 取 permit →
-    /// spawn_blocking → permit 移入闭包」：permit 存活期 == 哈希执行期，调用方
-    /// future 被取消时孤儿 blocking 任务继续持有 permit 直至完成，内存上界在
-    /// 任何取消时序下恒等于 permits × m_cost（Argon2id 单次执行驻留 ≈ m_cost KiB），
-    /// 不超卖；等待中的调用异步排队（不拒绝）。
+    /// 默认 `None`（不限并发，向后兼容，自定义实现零改动）。返回 `Some` 的 hasher 由
+    /// `verify_pooled` 统一封装「async 取 permit → spawn_blocking → permit 移入闭包」：permit 存活期
+    /// == 哈希执行期，调用方 future 被取消时孤儿 blocking 任务继续持 permit 直至完成，内存上界在任何
+    /// 取消时序下恒等于 permits × m_cost（不超卖）；等待中的调用异步排队（不拒绝）。
     fn concurrency_gate(&self) -> Option<&Arc<Semaphore>> {
         None
     }
 
     /// 校验密码并按需产出升级哈希（登录期惰性迁移扩展点）。
     ///
-    /// 默认实现 = [`verify`](Self::verify) + `None`（不迁移），自定义实现零改动。
-    /// 返回 `(verify 结果, Option<升级后新 hash>)`：仅当 verify 通过且实现方
-    /// 检测到存量哈希档位低于当前配置档位时返回 `Some`，且新 hash 必可通过
-    /// 本实现 verify；verify 失败恒为 `(false, None)`。
+    /// 默认实现 = [`verify`](Self::verify) + `None`（不迁移，自定义实现零改动）；返回
+    /// `(verify 结果, Option<升级后新 hash>)`：仅 verify 通过且实现方检测到存量哈希档位低于当前配置档位
+    /// 时返回 `Some`（新 hash 必可通过本实现 verify）；verify 失败恒为 `(false, None)`。
     fn verify_and_rehash(
         &self,
         password: &str,
@@ -94,15 +53,9 @@ pub trait PasswordHasher: Send + Sync {
     }
 }
 
-// ============================================================================
-// Argon2Hasher 实现
-// ============================================================================
-
-/// Argon2id 密码哈希器。
+/// Argon2id 密码哈希器（argon2 crate，默认 m=19456 KiB, t=2, p=1）。
 ///
-/// 使用 argon2 crate，默认参数：Argon2id, m=19456 KiB, t=2, p=1。
-/// 可通过 `with_params` 自定义参数、`with_pool` 装配并发令牌池
-/// （内存 DoS 防护，经 `verify_pooled` 生效）。
+/// 可经 `with_params` 自定义参数、`with_pool` 装配并发令牌池（内存 DoS 防护，经 `verify_pooled` 生效）。
 pub struct Argon2Hasher {
     /// 内存成本（KiB），默认 19456（19 MiB）。
     m_cost: u32,
@@ -110,8 +63,7 @@ pub struct Argon2Hasher {
     t_cost: u32,
     /// 并行度，默认 1。
     p_cost: u32,
-    /// 并发令牌池（None = 不限并发）。permit 存活期 == 哈希执行期（移入
-    /// spawn_blocking 闭包），任何取消时序下内存上界 = permits × m_cost。
+    /// 并发令牌池（None = 不限并发）；permit 存活期 == 哈希执行期，任何取消时序下内存上界 = permits × m_cost。
     pool: Option<Arc<Semaphore>>,
 }
 
@@ -132,12 +84,7 @@ impl Argon2Hasher {
         Self::default()
     }
 
-    /// 自定义 Argon2 参数。
-    ///
-    /// # 参数
-    /// - `m_cost`: 内存成本（KiB）。
-    /// - `t_cost`: 时间成本（迭代次数）。
-    /// - `p_cost`: 并行度。
+    /// 自定义 Argon2 参数（`m_cost` 内存 KiB / `t_cost` 迭代次数 / `p_cost` 并行度）。
     pub fn with_params(m_cost: u32, t_cost: u32, p_cost: u32) -> Self {
         Self {
             m_cost,
@@ -147,12 +94,8 @@ impl Argon2Hasher {
         }
     }
 
-    /// 装配并发令牌池（池大小 0 钳制为 1，fail-safe，对齐 [`BcryptHasher::with_cost`]
-    /// 的 clamp 先例；配置层已 fail-fast 拒绝区间外值，此处为直接构造调用的兜底）。
-    ///
-    /// # 参数
-    /// - `pool_size`: 同时执行中的 Argon2 hash/verify 上界；进程内存驻留上界
-    ///   ≈ `pool_size × m_cost` KiB。
+    /// 装配并发令牌池（`pool_size` 为同时执行中的 Argon2 hash/verify 上界，进程内存驻留上界 ≈
+    /// `pool_size × m_cost` KiB；0 钳制为 1，fail-safe，对齐 [`BcryptHasher::with_cost`] 的 clamp 先例）。
     pub fn with_pool(mut self, pool_size: usize) -> Self {
         self.pool = Some(Arc::new(Semaphore::new(pool_size.max(1))));
         self
@@ -165,9 +108,8 @@ impl PasswordHasher for Argon2Hasher {
     }
 
     fn hash(&self, password: &str) -> GarrisonResult<String> {
-        // P2.1: account-credential-zeroize feature 启用时，将 password 字节拷贝到
-        // Zeroizing<Vec<u8>> wrapper；函数返回时 wrapper Drop 清零内部字节。
-        // &str 是不可变借用，无法清零调用方持有的 String，故内部拷贝后清零。
+        // credential-zeroize 启用时将 password 字节拷贝到 Zeroizing<Vec<u8>>，函数返回时 Drop 清零；
+        // &str 是不可变借用，无法清零调用方持有的 String，故内部拷贝后清零
         #[cfg(feature = "credential-zeroize")]
         let password_bytes = zeroize::Zeroizing::new(password.as_bytes().to_vec());
         #[cfg(feature = "credential-zeroize")]
@@ -184,11 +126,10 @@ impl PasswordHasher for Argon2Hasher {
             .map_err(|e| GarrisonError::Internal(format!("account-argon2-hash::{}", e)))?
             .to_string();
         Ok(hash)
-        // password_bytes drops here (if zeroize on); Zeroizing<Vec<u8>>::drop zeroes bytes
     }
 
     fn verify(&self, password: &str, hash: &str) -> GarrisonResult<bool> {
-        // P2.1: 同 hash，verify 后清零内部 password 字节副本
+        // 同 hash：verify 后清零内部 password 字节副本
         #[cfg(feature = "credential-zeroize")]
         let password_bytes = zeroize::Zeroizing::new(password.as_bytes().to_vec());
         #[cfg(feature = "credential-zeroize")]
@@ -203,16 +144,14 @@ impl PasswordHasher for Argon2Hasher {
         match argon2.verify_password(password_ref, &parsed) {
             Ok(()) => Ok(true),
             Err(argon2::password_hash::Error::PasswordInvalid) => Ok(false),
-            // verify 期其余错误均为「关于哈希值本身」的数据类错误（算法未知、
-            // 参数越界、salt/hash 段无效），统一映射 InvalidParam——stp 层将其
-            // 并入 T019 统一防枚举分支。基础设施错误（join/池关闭）由
-            // verify_pooled 层映射 Internal，不经此处。
+            // verify 期其余错误均为「关于哈希值本身」的数据类错误（算法未知、参数越界、salt/hash
+            // 段无效），统一映射 InvalidParam 供 stp 层并入统一防枚举分支；基础设施错误
+            // （join/池关闭）由 verify_pooled 层映射 Internal，不经此处
             Err(e) => Err(GarrisonError::InvalidParam(format!(
                 "account-argon2-verify::{}",
                 e
             ))),
         }
-        // password_bytes drops here (if zeroize on); Zeroizing<Vec<u8>>::drop zeroes bytes
     }
 
     fn verify_and_rehash(
@@ -224,9 +163,8 @@ impl PasswordHasher for Argon2Hasher {
         if !matched {
             return Ok((false, None));
         }
-        // verify 通过后解析存量 PHC 自描述参数，与当前配置档位做字典序比较：
-        // 仅当存量 (m, t, p) 整体低于配置时升级——任一维度高于配置即视为档位
-        // 不低于配置（重哈希不得造成安全降级）；全维度相等亦不重哈希。
+        // verify 通过后解析存量 PHC 自描述参数，与当前配置档位做字典序比较：仅当存量 (m, t, p) 整体
+        // 低于配置时升级——任一维度高于配置即视为档位不低于配置（重哈希不得造成安全降级）；全维度相等亦不重哈希
         let parsed = PasswordHash::new(hash)
             .map_err(|e| GarrisonError::InvalidParam(format!("account-argon2-format::{}", e)))?;
         let stored = Params::try_from(&parsed.params)
@@ -241,13 +179,7 @@ impl PasswordHasher for Argon2Hasher {
     }
 }
 
-// ============================================================================
-// BcryptHasher 实现
-// ============================================================================
-
-/// Bcrypt 密码哈希器。
-///
-/// 使用 bcrypt crate，默认 cost=12。
+/// Bcrypt 密码哈希器（bcrypt crate，默认 cost=12）。
 pub struct BcryptHasher {
     /// cost 参数（4-31），默认 12。
     cost: u32,
@@ -265,12 +197,8 @@ impl BcryptHasher {
         Self::default()
     }
 
-    /// 自定义 cost 参数。
-    ///
-    /// # 参数
-    /// - `cost`: cost 参数（4-31，建议 10-14）。超出范围自动钳制到 4。
+    /// 自定义 cost 参数（bcrypt 规范 4-31，建议 10-14）；超出范围钳制到 [4, 31]。
     pub fn with_cost(cost: u32) -> Self {
-        // 验证 bcrypt cost 范围（bcrypt 规范要求 4-31）
         let cost = cost.clamp(4, 31);
         Self { cost }
     }
@@ -278,9 +206,8 @@ impl BcryptHasher {
 
 impl PasswordHasher for BcryptHasher {
     fn hash(&self, password: &str) -> GarrisonResult<String> {
-        // P2.1: 与 Argon2Hasher 对称——credential-zeroize
-        // feature 启用时，将密码字节拷贝到 Zeroizing<String>，函数返回时 wrapper
-        // Drop 清零内部字节（bcrypt crate 直接消费 &str，无法清零调用方的 String）。
+        // 与 Argon2Hasher 对称：zeroize 启用时将密码拷贝到 Zeroizing<String>，函数返回时 Drop 清零
+        // （bcrypt 直接消费 &str，无法清零调用方的 String）
         #[cfg(feature = "credential-zeroize")]
         let password_bytes = zeroize::Zeroizing::new(password.to_string());
         #[cfg(feature = "credential-zeroize")]
@@ -290,11 +217,10 @@ impl PasswordHasher for BcryptHasher {
 
         bcrypt::hash(password_ref, self.cost)
             .map_err(|e| GarrisonError::Internal(format!("account-bcrypt-hash::{}", e)))
-        // password_bytes drops here (if zeroize on); Zeroizing<String>::drop zeroes bytes
     }
 
     fn verify(&self, password: &str, hash: &str) -> GarrisonResult<bool> {
-        // P2.1: 同 hash，verify 后清零内部密码字节副本
+        // 同 hash：verify 后清零内部密码字节副本
         #[cfg(feature = "credential-zeroize")]
         let password_bytes = zeroize::Zeroizing::new(password.to_string());
         #[cfg(feature = "credential-zeroize")]
@@ -304,13 +230,8 @@ impl PasswordHasher for BcryptHasher {
 
         bcrypt::verify(password_ref, hash)
             .map_err(|e| GarrisonError::InvalidParam(format!("account-bcrypt-format::{}", e)))
-        // password_bytes drops here (if zeroize on); Zeroizing<String>::drop zeroes bytes
     }
 }
-
-// ============================================================================
-// 并发令牌池封装（async 取 permit → spawn_blocking → permit 移入闭包）
-// ============================================================================
 
 /// 取并发 permit（gate None 直通；信号量已关闭显性报错，不静默）。
 async fn acquire_permit(
@@ -327,10 +248,9 @@ async fn acquire_permit(
     }
 }
 
-/// 信号量闸门下的异步 verify（[`PasswordHasher::concurrency_gate`] 语义统一出口）。
-///
-/// 无池 hasher 行为与直接 spawn_blocking 等价（直通）；有池时先取 permit 再执行，
-/// permit 移入闭包——存活期 == 哈希执行期，调用方取消不超卖（见 trait 文档）。
+/// 信号量闸门下的异步 verify（[`PasswordHasher::concurrency_gate`] 语义统一出口）：无池 hasher 与直接
+/// spawn_blocking 等价（直通）；有池时先取 permit 再执行，permit 移入闭包（存活期 == 哈希执行期，
+/// 调用方取消不超卖，见 trait 文档）。
 pub(crate) async fn verify_pooled(
     hasher: &Arc<dyn PasswordHasher>,
     password: &str,
@@ -348,15 +268,11 @@ pub(crate) async fn verify_pooled(
     .map_err(|e| GarrisonError::Internal(format!("credential-verify-blocking::{}", e)))?
 }
 
-/// 信号量闸门下的异步 verify + 惰性重哈希（[`PasswordHasher::verify_and_rehash`]
-/// 的统一并发出口，permit 占槽语义与 [`verify_pooled`] 同款）。
+/// 信号量闸门下的异步 verify + 惰性重哈希（permit 占槽语义与 [`verify_pooled`] 同款）：verify 与重哈希
+/// 在同一 permit 内顺序执行，并发上界恒等于 permit 数，内存上界 = permits × m_cost（旧哈希 verify 与新
+/// 哈希生成不重叠驻留）。
 ///
-/// verify 与重哈希在同一 permit 内顺序执行：并发上界恒等于 permit 数，
-/// 内存上界 = permits × m_cost（旧哈希 verify 与新哈希生成不重叠驻留）。
-/// 门控：唯一调用方 `stp::password::login_with_password` 要求
-/// `account-credential + db-sqlite`；其余组合（如 production 的
-/// account-password-reset 链拉入 account-credential 但无 db-sqlite）下
-/// 该函数为死代码。
+/// 唯一调用方 `stp::password::login_with_password` 要求 `account-credential + db-sqlite`；其余组合下为死代码。
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 pub(crate) async fn verify_and_rehash_pooled(
     hasher: &Arc<dyn PasswordHasher>,
@@ -375,28 +291,12 @@ pub(crate) async fn verify_and_rehash_pooled(
     .map_err(|e| GarrisonError::Internal(format!("credential-verify-blocking::{}", e)))?
 }
 
-// ============================================================================
-// PasswordVerifier 自动识别
-// ============================================================================
-
-/// 密码校验器，根据 hash 前缀自动选择算法校验。
-///
-/// - `$argon2id$` 前缀 → 委托 `Argon2Hasher`
-/// - `$2b$` / `$2a$` / `$2y$` 前缀 → 委托 `BcryptHasher`
-/// - 其他前缀 → 返回 `GarrisonError::InvalidParam`
+/// 密码校验器：按 hash 前缀选算法——`$argon2id$` → `Argon2Hasher`，`$2b$` / `$2a$` / `$2y$` →
+/// `BcryptHasher`，其余前缀返回 `GarrisonError::InvalidParam`。
 pub struct PasswordVerifier;
 
 impl PasswordVerifier {
-    /// 校验密码，根据 hash 前缀自动选择算法。
-    ///
-    /// # 参数
-    /// - `password`: 明文密码。
-    /// - `hash`: 哈希字符串。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 密码匹配。
-    /// - `Ok(false)`: 密码不匹配。
-    /// - `Err(GarrisonError::InvalidParam)`: 不支持的 hash 格式。
+    /// 校验密码（返回匹配结果；不支持的 hash 格式返回 `InvalidParam`）。
     pub fn verify(password: &str, hash: &str) -> GarrisonResult<bool> {
         if hash.starts_with("$argon2") {
             Argon2Hasher::default().verify(password, hash)
@@ -411,14 +311,8 @@ impl PasswordVerifier {
     }
 }
 
-// ============================================================================
-// PasswordCredential（Credential trait 实现）
-// ============================================================================
-
-/// 密码凭证（实现 [`Credential`] trait，委托 [`PasswordHasher`] 校验）。
-///
-/// 持有 `CredentialModel`（存储模型）+ `Arc<dyn PasswordHasher>`（哈希器），
-/// `verify()` 委托 `PasswordHasher::verify(input, &model.secret_data)`（spawn_blocking 执行）。
+/// 密码凭证（实现 [`Credential`] trait）：`verify()` 委托
+/// `PasswordHasher::verify(input, &model.secret_data)`（经 spawn_blocking 执行）。
 ///
 /// # 示例
 ///
@@ -445,19 +339,13 @@ impl PasswordVerifier {
 pub struct PasswordCredential {
     /// 凭证存储模型。
     model: CredentialModel,
-    /// 密码哈希器（Argon2 / Bcrypt / 自定义）。
-    ///
-    /// 现使用 `Arc`（原 `Box`）：`verify()` 需将哈希器移入
-    /// `spawn_blocking` 闭包把慢哈希移出 async worker，要求可克隆共享。
+    /// 密码哈希器（Argon2 / Bcrypt / 自定义）；用 `Arc` 以便 `verify()` 将哈希器移入
+    /// `spawn_blocking` 闭包（慢哈希移出 async worker）。
     hasher: Arc<dyn PasswordHasher>,
 }
 
-/// 启用 `account-credential-zeroize` feature 时，drop 时清零 `model` 的敏感字段
-/// （`secret_data` 含密码哈希）。
-///
-/// `hasher` 不含敏感数据（仅算法标识与参数），无需 zeroize。
-/// 因 `dyn PasswordHasher` 未实现 `Zeroize`，无法派生 `ZeroizeOnDrop`，
-/// 改为手动实现 `Drop` 调用 `model.zeroize()`。
+/// 启用 `credential-zeroize` 时 drop 清零 `model`（`secret_data` 含密码哈希）；`hasher` 无敏感数据，
+/// 且 `dyn PasswordHasher` 未实现 `Zeroize`、无法派生 `ZeroizeOnDrop`，故手动实现 `Drop`。
 #[cfg(feature = "credential-zeroize")]
 impl Drop for PasswordCredential {
     fn drop(&mut self) {
@@ -467,12 +355,7 @@ impl Drop for PasswordCredential {
 }
 
 impl PasswordCredential {
-    /// 创建密码凭证。
-    ///
-    /// # 参数
-    /// - `model`: 凭证存储模型（`secret_data` 字段应包含已哈希的密码）
-    /// - `hasher`: 密码哈希器（用于 `verify` 时校验）。
-    ///   接受 `Arc`（原 `Box`），以支持 `verify` 内部的 `spawn_blocking`。
+    /// 创建密码凭证（`model.secret_data` 应含已哈希密码；`hasher` 用于 `verify`）。
     pub fn new(model: CredentialModel, hasher: Arc<dyn PasswordHasher>) -> Self {
         Self { model, hasher }
     }
@@ -489,8 +372,8 @@ impl Credential for PasswordCredential {
     }
 
     async fn verify(&self, input: &str) -> GarrisonResult<bool> {
-        // 统一经并发令牌池封装：慢哈希下沉 spawn_blocking + 有池时受 permit
-        // 约束（内存上界 = permits × m_cost），无池行为与原实现等价。
+        // 统一经并发令牌池封装：慢哈希下沉 spawn_blocking + 有池时受 permit 约束
+        // （内存上界 = permits × m_cost），无池行为与原实现等价
         verify_pooled(&self.hasher, input, &self.model.secret_data).await
     }
 }
@@ -498,10 +381,6 @@ impl Credential for PasswordCredential {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ========================================================================
-    // PasswordHasher trait 契约测试
-    // ========================================================================
 
     /// PasswordHasher trait 为 Send + Sync（编译期检查）。
     #[test]
@@ -511,10 +390,6 @@ mod tests {
         assert_send_sync::<BcryptHasher>();
         assert_send_sync::<PasswordVerifier>();
     }
-
-    // ========================================================================
-    // Argon2Hasher 测试
-    // ========================================================================
 
     /// Argon2Hasher::default().hash("password") 返回 $argon2id$ 前缀字符串。
     #[test]
@@ -567,10 +442,9 @@ mod tests {
         assert!(hasher.verify("test", &hash).unwrap());
     }
 
-    /// verify 期数据类错误——存量哈希算法未知（PHC 结构合法、`PasswordHash::new`
-    /// 可解析，Argon2 校验期拒绝）→ `InvalidParam` 而非 `Internal`：stp 层仅将
-    /// `InvalidParam` 并入 T019 统一防枚举分支，`Internal` 显性传播会对降级
-    /// 账户产生差分响应（防枚举回归防护）。
+    /// verify 期数据类错误——存量哈希算法未知（PHC 结构合法但算法不识别）→ `InvalidParam` 而非
+    /// `Internal`：stp 层仅将 `InvalidParam` 并入统一防枚举分支，`Internal` 显性传播会对降级账户
+    /// 产生差分响应（防枚举回归防护）。
     #[test]
     fn argon2_verify_unknown_algorithm_returns_invalid_param() {
         let hasher = Argon2Hasher::default();
@@ -585,8 +459,8 @@ mod tests {
         );
     }
 
-    /// verify 期数据类错误——argon2 变体名未知但参数段合法（覆盖
-    /// `Algorithm::try_from` 失败路径）→ `InvalidParam`。
+    /// verify 期数据类错误——argon2 变体名未知但参数段合法（覆盖 `Algorithm::try_from` 失败路径）
+    /// → `InvalidParam`。
     #[test]
     fn argon2_verify_unknown_algorithm_variant_returns_invalid_param() {
         let hasher = Argon2Hasher::default();
@@ -616,10 +490,6 @@ mod tests {
             result
         );
     }
-
-    // ========================================================================
-    // BcryptHasher 测试
-    // ========================================================================
 
     /// BcryptHasher::default().hash("password") 返回 $2b$ 前缀字符串。
     #[test]
@@ -682,10 +552,6 @@ mod tests {
         assert!(hasher.verify("test", &hash).unwrap());
     }
 
-    // ========================================================================
-    // PasswordVerifier 自动识别测试
-    // ========================================================================
-
     /// PasswordVerifier::verify 委托 Argon2Hasher（$argon2id$ 前缀）。
     #[test]
     fn password_verifier_delegates_to_argon2() {
@@ -729,18 +595,11 @@ mod tests {
         assert!(result, "PasswordVerifier 应识别 $2a$ 格式");
     }
 
-    // ========================================================================
-    // Argon2 输出长度契约测试
-    // ========================================================================
-
     /// Argon2Hasher::hash 输出长度为 32 字节（预分配缓冲区）。
     ///
-    /// PHC 格式：`$argon2id$v=19$m=...,t=...,p=...$<salt>$<hash>`
-    /// 末段为 hash 的 base64 编码（无 padding），解码后应为 32 字节。
-    ///
-    /// 注意：此测试依赖 `base64` crate 解码 PHC 末段，需启用含 `dep:base64` 的 feature
-    /// （如 `protocol-oauth2` / `secure-httpbasic` / `web-csrf` / `full`）。仅启用 `account-credential`
-    /// 时此测试不编译（生产代码不依赖 base64）。
+    /// PHC 末段为 hash 的 base64 编码（无 padding），解码后应为 32 字节。此测试依赖 `base64` crate，
+    /// 需启用含 `dep:base64` 的 feature（如 `protocol-oauth2` / `secure-httpbasic` / `web-csrf` / `full`）；
+    /// 仅启用 `account-credential` 时不编译（生产代码不依赖 base64）。
     #[cfg(any(
         feature = "protocol-oauth2",
         feature = "protocol-sso",
@@ -779,20 +638,10 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // P2.1 zeroize 测试
-    // ========================================================================
-
-    /// P2.1: account-credential-zeroize feature 启用时，hash/verify 仍正确工作，
-    /// 且内部 password 字节副本在 hash 返回后被 zeroize 清零。
-    ///
-    /// 注意：hash/verify 接受 `&str`（不可变借用），无法清零调用方持有的 String。
-    /// 内部实现将 password 字节拷贝到 `Zeroizing<Vec<u8>>`，函数返回时该 wrapper
-    /// 的 Drop 实现清零内部字节。此处验证：
-    /// 1. hash/verify 在 zeroize feature 启用时仍正确工作（无回归）
-    /// 2. Zeroizing<Vec<u8>> 包装的 password 字节在 .zeroize() 后被清零
-    ///    （这是 hash 内部使用的清零机制）
-    /// 3. Zeroizing<String> wrapper 可与 hash 配合使用（通过 Deref<Target=str>）
+    /// `credential-zeroize` feature 启用时 hash/verify 仍正确工作，且内部 password 字节副本在
+    /// hash 返回后被清零：hash/verify 接受 `&str`（不可变借用）无法清零调用方 String，内部拷贝到
+    /// `Zeroizing<Vec<u8>>`，函数返回时 Drop 清零。此处验证正确性无回归、zeroize 语义、以及
+    /// `Zeroizing<String>` 可与 hash 配合（Deref<Target=str>）。
     #[cfg(feature = "credential-zeroize")]
     #[test]
     fn password_param_zeroed_after_hash() {
@@ -801,7 +650,7 @@ mod tests {
         let hasher = Argon2Hasher::default();
         let password = "my-secret-password";
 
-        // 1. hash/verify 在 account-credential-zeroize feature 启用时仍正确工作
+        // hash/verify 在 zeroize feature 启用时仍正确工作（无回归）
         let hash = hasher.hash(password).expect("hash 应成功");
         assert!(
             hash.starts_with("$argon2id$"),
@@ -821,14 +670,13 @@ mod tests {
             "错误密码应校验失败"
         );
 
-        // 2. 验证 hash 内部使用的 zeroize 机制：
+        // hash 内部使用的 zeroize 机制：
         // a) Vec<u8>::zeroize() 先零填充字节再 clear（length=0，capacity 保留）
         let mut local_copy: Vec<u8> = password.as_bytes().to_vec();
         local_copy.zeroize();
         assert_eq!(local_copy.len(), 0, "Vec::zeroize 后 length 应为 0 (clear)");
 
         // b) [u8; N]::zeroize() 仅零填充字节（数组长度固定，不 clear）
-        // 证明 zeroize 的字节清零语义
         let mut arr: [u8; 18] = [0; 18];
         arr.copy_from_slice(password.as_bytes());
         arr.zeroize();
@@ -838,8 +686,8 @@ mod tests {
             arr
         );
 
-        // 3. Zeroizing<String> wrapper 可与 hash 配合（通过 Deref<Target=String> → str）
-        // 调用方可用此 wrapper 持有 password，wrapper Drop 时清零底层字节
+        // Zeroizing<String> 可与 hash 配合（Deref<Target=str>）；调用方可用它持有 password，
+        // wrapper 离作用域时 Drop 清零底层字节（由 zeroize crate 保证）
         let wrapped = Zeroizing::new(password.to_string());
         let hash2 = hasher.hash(wrapped.as_str()).expect("hash 应成功");
         assert!(
@@ -848,13 +696,7 @@ mod tests {
                 .expect("verify 应成功"),
             "wrapped password 校验应通过"
         );
-        // wrapped 在此处仍未 drop；当 wrapped 离开作用域时，Zeroizing<String>::drop
-        // 会调用 String::zeroize() 清零底层字节（由 zeroize crate 保证）
     }
-
-    // ========================================================================
-    // PasswordCredential 测试
-    // ========================================================================
 
     /// 辅助函数：构造测试用 PasswordCredential + 原始密码。
     fn make_password_cred(id: &str, user: &str, password: &str) -> (PasswordCredential, String) {
@@ -997,14 +839,8 @@ mod tests {
         assert!(!wrong, "zeroize feature 启用时错误密码应校验失败");
     }
 
-    // ========================================================================
-    // Argon2 并发令牌池（concurrency_gate / with_pool / verify_pooled）
-    // ========================================================================
-
-    /// 可控节奏哈希器：verify 进入时发握手信号，阻塞等待放行后才返回。
-    ///
-    /// 用 oneshot/unbounded 握手控制执行节奏（不用真实 sleep），并以原子计数
-    /// 记录在飞峰值，供并发上界断言。
+    /// 可控节奏哈希器：verify 进入时发握手信号，阻塞等待放行后才返回；以原子计数记录在飞峰值，
+    /// 供并发上界断言（用 oneshot/unbounded 握手控制节奏，不用真实 sleep）。
     struct GatedHasher {
         pool: Option<Arc<tokio::sync::Semaphore>>,
         entered_tx: tokio::sync::mpsc::UnboundedSender<()>,
@@ -1244,13 +1080,8 @@ mod tests {
         assert!(!miss, "密码不匹配应返回 false");
     }
 
-    // ========================================================================
-    // 登录期惰性重哈希（verify_and_rehash）
-    // ========================================================================
-
-    /// trait 默认实现 = verify + None：未覆写 `verify_and_rehash` 的自定义实现
-    /// （PassthroughHasher 零改动）行为与 `verify` 完全一致——返回 verify 结果
-    /// 且永不产出新 hash。
+    /// trait 默认实现 = verify + None：未覆写 `verify_and_rehash` 的自定义实现（PassthroughHasher 零改动）
+    /// 行为与 `verify` 完全一致——返回 verify 结果且永不产出新 hash。
     #[test]
     fn verify_and_rehash_default_impl_returns_verify_result_and_none() {
         let hasher: Arc<dyn PasswordHasher> = Arc::new(PassthroughHasher);
@@ -1327,9 +1158,8 @@ mod tests {
         assert!(rehash.is_none(), "verify 失败不得产出新 hash");
     }
 
-    /// 池化出口 verify_and_rehash_pooled：低档位存量经池升级（permit 占槽与
-    /// verify_pooled 同款），完成后 permit 归还无泄漏。
-    /// （函数本体随唯一调用方 stp::password 门控在 db-sqlite 组合，本测试同门控）
+    /// 池化出口 verify_and_rehash_pooled：低档位存量经池升级（permit 占槽与 verify_pooled 同款），
+    /// 完成后 permit 归还无泄漏（函数本体随唯一调用方 stp::password 门控 db-sqlite，本测试同门控）。
     #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     #[tokio::test]
     async fn verify_and_rehash_pooled_upgrades_and_returns_permit() {

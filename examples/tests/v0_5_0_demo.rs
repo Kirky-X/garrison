@@ -1,9 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! v0_5_0_demo 示例测试（tenant-isolation + audit-log + core-advanced + keycloak-oidc + social-wechat + db-sqlite + cache-memory feature）。
-//!
-//! 验证 run() 完整执行（内存 SQLite + oxcache 内存 DAO，无需外部依赖）。
+//! v0_5_0_demo 示例测试（tenant-isolation + audit-log + core-advanced + keycloak-oidc + social-wechat
+//! + db-sqlite + cache-memory feature）：验证 run() 完整执行（内存 SQLite + oxcache 内存 DAO，无需外部依赖）。
 
 #![cfg(all(
     feature = "tenant-isolation",

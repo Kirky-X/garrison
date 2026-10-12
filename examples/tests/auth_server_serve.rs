@@ -1,14 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! auth_server_serve 示例测试（auth-server + backend-embedded feature）。
-//!
-//! 验证 serve() 的前置步骤 setup_garrison_manager() 可用。
-//!
-//! 不直接调用 serve() —— serve() 会绑定双端口并永远阻塞监听，
-//! 不适合在自动化测试中调用（同 axum_integration 只测 setup() 不测 run()）。
-//!
-//! 注意：setup_garrison_manager() 注入全局单例，必须用 #[serial] 串行执行。
+//! auth_server_serve 示例测试（auth-server + backend-embedded feature）：验证 serve() 的前置步骤
+//! setup_garrison_manager() 可用；不直接调用 serve()（会绑定双端口并永远阻塞监听，不适合自动化测试，
+//! 同 axum_integration 只测 setup() 不测 run()）；setup_garrison_manager() 注入全局单例，必须 #[serial] 串行执行。
 
 #![cfg(all(feature = "auth-server", feature = "backend-embedded"))]
 

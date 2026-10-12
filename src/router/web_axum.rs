@@ -1,11 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! `GarrisonRouter`：axum Web 框架适配的路由器，包装 `axum::Router` 并管理鉴权路由规则。
-//!
-//! 通过 `route_protected` 注册路由 + 注解，`build` 时应用 `garrison_middleware`：
-//! 提取 token → `with_current_token` 设置 task_local → 调用 `interceptor.pre_handle`
-//! → 执行 handler。
+//! `GarrisonRouter`：axum Web 框架适配的路由器，包装 `axum::Router` 并管理鉴权路由规则
+//! （`route_protected` 注册路由 + 注解，`build` 应用 `garrison_middleware`）。
 
 use super::{DefaultGarrisonInterceptor, GarrisonInterceptor};
 use crate::annotation::Annotation;
@@ -30,7 +27,6 @@ use axum::response::{IntoResponse, Response};
 use axum::Router;
 use std::sync::Arc;
 
-/// 路由规则：路径 + 注解。
 #[derive(Clone)]
 struct RouteRule {
     path: String,
@@ -46,8 +42,6 @@ struct MiddlewareState {
 }
 
 /// 路由器，包装 `axum::Router` 并管理鉴权路由规则。
-///
-/// 对应 路由拦截器配置。
 ///
 /// # 使用
 ///
@@ -73,10 +67,7 @@ pub struct GarrisonRouter {
 }
 
 impl GarrisonRouter {
-    /// 创建新的路由器实例，使用 `DefaultGarrisonInterceptor`。
-    ///
-    /// # 参数
-    /// - `config`: 全局配置（用于 middleware 提取 token）。
+    /// 创建路由器（使用 `DefaultGarrisonInterceptor`）；`config` 供 middleware 提取 token。
     pub fn new(config: Arc<GarrisonConfig>) -> Self {
         Self {
             inner: Router::new(),
@@ -92,13 +83,7 @@ impl GarrisonRouter {
         self
     }
 
-    /// 添加受保护路由：注册 axum 路由（GET）+ 记录鉴权规则。
-    ///
-    /// # 参数
-    /// - `path`: 请求路径模式（精确匹配 / `:param`、`{param}` 参数段 / `{*wildcard}` 通配段，
-    ///   语义见 `route_matches`）。
-    /// - `handler`: axum handler（GET 方法）。
-    /// - `annotation`: 鉴权注解。
+    /// 添加受保护路由：注册 axum GET 路由 + 记录鉴权规则（路径匹配语义见 `route_matches`）。
     pub fn route_protected<H, T>(mut self, path: &str, handler: H, annotation: Annotation) -> Self
     where
         H: Handler<T, ()> + Clone + Send + Sync + 'static,
@@ -112,16 +97,10 @@ impl GarrisonRouter {
         self
     }
 
-    /// 路由分组：通过闭包注册一组带公共前缀和公共注解的路由。
+    /// 路由分组：为子 router 注册一组带公共前缀与组级注解的路由。
     ///
-    /// # 参数
-    /// - `prefix`: 路由前缀（如 `/api/v1`），必须非空，以 `/` 开头。
-    ///   尾部 `/` 自动 trim（`/api/v1/` → `/api/v1`）。
-    /// - `annotation`: 组级公共注解。`Annotation::Ignore` 时组内所有路由跳过注解校验。
-    /// - `f`: 闭包，接收子 `GarrisonRouter`，返回注册完路由后的 `GarrisonRouter`。
-    ///
-    /// # Panics
-    /// `prefix` 为空字符串时 panic。
+    /// `prefix` 必须非空且以 `/` 开头，尾部 `/` 自动 trim（为空时 panic）；`annotation` 为 `Ignore`
+    /// 时组内所有路由跳过注解校验。
     ///
     /// # 示例
     /// ```ignore
@@ -138,7 +117,6 @@ impl GarrisonRouter {
         // 尾部 / 自动 trim
         let trimmed = prefix.trim_end_matches('/');
 
-        // 创建子 router，继承父 router 的 interceptor 和 config
         let child = GarrisonRouter {
             inner: Router::new(),
             rules: Vec::new(),
@@ -175,10 +153,7 @@ impl GarrisonRouter {
         parent
     }
 
-    /// 构建最终的 axum Router，应用 GarrisonLayer middleware。
-    ///
-    /// middleware 流程：提取 token → `with_current_token` 设置 task_local →
-    /// 调用 `interceptor.pre_handle(path, annotation)` → 执行 handler。
+    /// 构建最终 axum Router，应用 `garrison_middleware`（流程见该函数）。
     pub fn build(self) -> Router {
         let state = MiddlewareState {
             rules: Arc::new(self.rules),
@@ -190,32 +165,22 @@ impl GarrisonRouter {
     }
 }
 
-/// 路由模式匹配：支持精确匹配、参数段与尾部通配。
-///
-/// `pattern` 为注册时的路径模式，`path` 为实际请求路径。
-/// 每段按 `/` 分割后比对：
-/// - 静态段：精确相等
-/// - `:param`（旧语法）与 `{param}`（axum 语法）：匹配任意非空单段
-/// - `{*wildcard}`（axum 通配）：匹配剩余所有段（含零段，前缀保护语义，
-///   如 `/api/{*rest}` 覆盖 `/api` 与 `/api/a/b`）
-/// - 段数不一致（除尾部通配外）不匹配——未命中规则时 middleware 跳过
-///   `pre_handle`（fail-closed 由注册侧保证：需要保护的路径必须注册；
-///   通配段可显式声明前缀保护）。
+/// 路由模式匹配（按 `/` 分段）：静态段精确相等，`:param`/`{param}` 匹配任意非空单段，
+/// `{*wildcard}` 匹配剩余所有段（含零段，如 `/api/{*rest}` 覆盖 `/api` 与 `/api/a/b`）；未命中规则时
+/// middleware 跳过 `pre_handle`（fail-closed 由注册侧保证：需保护的路径必须注册，通配段可显式声明前缀保护）。
 fn route_matches(pattern: &str, path: &str) -> bool {
     let mut pi = pattern.split('/');
     let mut ri = path.split('/');
     loop {
         match (pi.next(), ri.next()) {
             (None, None) => return true,
-            // pattern 段数多于 path：仅尾部通配（吞剩余段，含零段）可命中
+            // pattern 段数多于 path：仅尾部通配可命中
             (Some(seg), None) => return is_wildcard_segment(seg),
             (Some(seg), Some(part)) => {
                 if is_wildcard_segment(seg) {
-                    // 尾部通配：吞掉剩余所有段（含零段）
                     return true;
                 }
                 if is_param_segment(seg) {
-                    // 参数段：匹配任意非空值
                     if part.is_empty() {
                         return false;
                     }
@@ -239,28 +204,23 @@ fn is_wildcard_segment(seg: &str) -> bool {
     seg.len() > 3 && seg.starts_with("{*") && seg.ends_with('}')
 }
 
-/// 实现 `Default`：使用 `GarrisonConfig::default_config()` 创建路由器，拦截器为 `DefaultGarrisonInterceptor`。
+/// 默认使用 `GarrisonConfig::default_config()` 与 `DefaultGarrisonInterceptor`。
 impl Default for GarrisonRouter {
     fn default() -> Self {
         Self::new(Arc::new(GarrisonConfig::default_config()))
     }
 }
 
-/// Garrison middleware：提取 token → 设置 task_local → 调用 interceptor.pre_handle → 执行 handler。
+/// Garrison middleware：提取 token → 设置 task_local → 调用 `interceptor.pre_handle` → 执行 handler。
 ///
-/// 对未匹配任何规则的路径，跳过 `pre_handle` 直接放行（仍设置 task_local 以便 handler 调用 GarrisonUtil）。
-///
-/// 请求结束后，若 `CURRENT_RENEWED_TOKEN` 有值（check_login 自动续签触发），
-/// 根据 `is_write_header` / `is_write_cookie` 配置将续签 Token 写入响应。
+/// 未匹配规则的路径跳过 `pre_handle` 直接放行（仍设置 task_local 供 handler 调用 `GarrisonUtil`）；
+/// 请求结束后若有续签 Token，按 `is_write_header`/`is_write_cookie` 配置写入响应。
 async fn garrison_middleware(
     State(state): State<MiddlewareState>,
     req: Request<Body>,
     next: Next,
 ) -> Response {
     let path = req.uri().path().to_string();
-    // 路由规则匹配：支持精确匹配与参数化路由（`:param` / `{param}` 段匹配任意值，
-    // `{*wildcard}` 匹配剩余段）。修复前使用 `r.path == path` 精确匹配，
-    // 参数化路由完全跳过鉴权。
     let rule = state
         .rules
         .iter()
@@ -286,7 +246,7 @@ async fn garrison_middleware(
 
     with_renewed_token_scope(async {
         let result = match token {
-            // 登录身份缓存作用域——覆盖 middleware 鉴权 + handler 整个处理期，
+            // 登录身份缓存作用域覆盖 middleware 鉴权 + handler 处理期：
             // check_login 写入 (token, login_id) 后，handler 内 get_login_id 免 DAO 读取
             Some(t) => with_login_id_scope(with_current_token(t, handle)).await,
             None => handle.await,
@@ -297,11 +257,10 @@ async fn garrison_middleware(
             Err(e) => e.into_response(),
         };
 
-        // 检查是否有续签 Token，写入响应
+        // 有续签 Token 时按配置写入 header / cookie
         if let Some(renewed_token) = get_renewed_token() {
             if config.is_write_header {
-                // header 构造失败不再静默丢弃——记 debug 日志
-                // （生产排查续签 token 丢失的关键线索）
+                // header 构造失败记 debug 日志（排查续签 token 丢失的线索）
                 match (
                     HeaderName::from_bytes(config.token_name.as_bytes()),
                     HeaderValue::from_str(&renewed_token),
@@ -313,21 +272,28 @@ async fn garrison_middleware(
                         tracing::debug!(
                             error = %e,
                             token_name = %config.token_name,
-                            "续签 token 写入响应 header 失败：token_name 非法，已跳过"
+                            "{}",
+                            crate::i18n::translate_detail(
+                                "logs-renewed-token-header-name-invalid",
+                                &[]
+                            )
                         );
                     },
                     (_, Err(e)) => {
                         tracing::debug!(
                             error = %e,
-                            "续签 token 写入响应 header 失败：token 含非法字符，已跳过"
+                            "{}",
+                            crate::i18n::translate_detail(
+                                "logs-renewed-token-header-value-invalid",
+                                &[]
+                            )
                         );
                     },
                 }
             }
             if config.is_write_cookie {
-                // 单一构建点：注入校验（续签 token 含 `;` 等注入字符时拒绝写入）、
-                // same_site 白名单 fail-fast 与 None→Lax 降级，失败显性 warn 日志
-                // （静默丢 cookie = 用户掉线，对齐 csrf 写点的 warn 级别）
+                // 单一构建点：注入校验（续签 token 含 `;` 等注入字符时拒绝写入）、same_site
+                // 白名单 fail-fast 与 None→Lax 降级，失败显性 warn（静默丢 cookie = 用户掉线）。
                 match CookieType::token(&config)
                     .and_then(|c| build_set_cookie_value(&c, &renewed_token, config.cookie_secure))
                 {
@@ -338,14 +304,22 @@ async fn garrison_middleware(
                         Err(e) => {
                             tracing::warn!(
                                 error = %e,
-                                "续签 token 写入 Set-Cookie 失败：cookie 串含非法字符，已跳过"
+                                "{}",
+                                crate::i18n::translate_detail(
+                                    "logs-renewed-token-cookie-value-invalid",
+                                    &[]
+                                )
                             );
                         },
                     },
                     Err(e) => {
                         tracing::warn!(
                             error = %e,
-                            "续签 token 写入 Set-Cookie 失败：构建点校验拒绝，已跳过"
+                            "{}",
+                            crate::i18n::translate_detail(
+                                "logs-renewed-token-cookie-build-rejected",
+                                &[]
+                            )
                         );
                     },
                 }
@@ -358,24 +332,11 @@ async fn garrison_middleware(
     .await
 }
 
-// ----------------------------------------------------------------
 // tenant_resolution_middleware
-// ----------------------------------------------------------------
 
-/// 租户解析 middleware：从请求 headers 解析 `TenantContext`，在 `TENANT` task_local
-/// scope 内执行下游 handler。
-///
-/// 解析失败时返回 `400 Bad Request`（不默认租户 0，失败显性化——
-/// 静默回退默认租户会让跨租户数据泄露被掩盖）。
-///
-/// # 参数
-/// - `State(resolver)`: `Arc<dyn TenantResolver>` 状态，由 `from_fn_with_state` 注入
-/// - `req`: axum 请求
-/// - `next`: 下一个 middleware / handler
-///
-/// # 返回
-/// - `Ok(response)`: 租户解析成功，handler 已在 `TENANT` scope 内执行
-/// - `Err(StatusCode::BAD_REQUEST)`: 租户解析失败（如 `X-Tenant-Id` header 缺失/格式错误）
+/// 租户解析 middleware：从请求 headers 解析 `TenantContext`，在 `TENANT` task_local scope 内
+/// 执行下游 handler；解析失败返回 `400 Bad Request`（不默认租户 0——静默回退默认租户会让
+/// 跨租户数据泄露被掩盖）。
 ///
 /// # 使用
 ///

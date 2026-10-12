@@ -54,7 +54,6 @@ run_stage() {
         return 0
     fi
     record_fail "${id}"
-    # 阶段失败时把日志尾部直接打到终端，省一次翻文件
     echo "--- ${id} 日志尾部（最后 40 行） ---"
     tail -n 40 "${LOG_DIR}/${id}.log"
     return 1
@@ -80,7 +79,7 @@ else
             sleep 2
         done
         if ${REDIS_OK} && ${PG_OK} && ${KC_OK}; then
-            # Keycloak realm 供给（幂等；2026-09 起协议验收打真实 IdP）
+                # Keycloak realm 供给（幂等；协议验收打真实 IdP）
             if python3 scripts/keycloak_provision.py                 --base-url http://127.0.0.1:18090 >>"${LOG_DIR}/S0.log" 2>&1; then
                 # 地址覆盖：验收测试经 GARRISON_TEST_* 读取（默认值不变，向后兼容）
                 export GARRISON_TEST_REDIS_ADDR="127.0.0.1:16379"
@@ -140,8 +139,7 @@ if ${S2_OK}; then record_pass "S2"; else record_fail "S2"; fi
 if [ "${ENV_READY}" = "true" ]; then
     run_stage "S3" "integration + acceptance tests (full, real Redis/Postgres/MySQL)" \
         bash -c 'cargo test --features "full" --tests --no-fail-fast --locked'
-    # db 后端专用验收：dbnexus 禁止 embedded(sqlite)×server-side(postgres/mysql)
-    # 共存 → full 面下 ACC-ENV-005..008 被 cfg 剥离，需按单 db 特性面单独执行
+    # db 后端专用验收：dbnexus 禁止 embedded(sqlite)×server-side 共存，full 面下 ACC-ENV-005..008 被 cfg 剥离，需按单 db 特性面单独执行
     run_stage "S3pg" "acceptance_db_postgres (real PostgreSQL via compose :15432)" \
         bash -c 'GARRISON_TEST_POSTGRES_ADDR=127.0.0.1:15432 GARRISON_TEST_POSTGRES_URL=postgres://garrison:garrison@localhost:15432/garrison_test cargo test --test acceptance_db_postgres --no-default-features --features "db-postgres" --locked -- --test-threads=1'
     run_stage "S3my" "acceptance_db_mysql (MySQL via testcontainers)" \
@@ -163,15 +161,10 @@ run_stage "S4" "examples tests (all features)" \
 # ==========================================================================
 # S5 特性组合矩阵
 # ==========================================================================
-# 组合语义说明：
-#   - dbnexus 硬约束「embedded(sqlite) 与 server-side(postgres/mysql) 互斥」，
-#     故 web×db 网格每次只挂一个 db 后端（多 web 框架共存合法）；
-#   - 每个组合同时验证「库编译」与「测试代码编译」（--lib --no-run），
-#     后者是 2026-09 实录的测试代码 feature 门控漂移防线（ci.yml guard job）。
+# 组合语义：dbnexus 硬约束「embedded(sqlite) 与 server-side(postgres/mysql) 互斥」，故 web×db 网格每次只挂一个 db 后端（多 web 框架共存合法）；每组合同时验证库编译与测试代码编译（--lib --no-run），后者是测试代码 feature 门控漂移防线（ci.yml guard job）。
 MATRIX_OK=true
 
-# 注：本函数在 `{...} | tee` 管道的子 shell 中执行，父 shell 变量（MATRIX_OK）
-# 修改不可回传——失败经标记文件 S5.failed 回传，管道结束后由父 shell 判定。
+# 注：本函数在 `{...} | tee` 管道的子 shell 中执行，父 shell 变量（MATRIX_OK）修改不可回传——失败经标记文件 S5.failed 回传，管道结束后由父 shell 判定。
 S5_FAILED_MARK="${LOG_DIR}/S5.failed"
 matrix_combo() {
     local label="$1" features="$2"
@@ -231,14 +224,10 @@ fi
 
 if [ "${FULL_MATRIX}" = "true" ]; then
     echo "=== [STAGE S5x] each-feature 全量扫描（cargo-hack，耗时数小时） ==="
-    # 注意：① 不可加 --locked——--no-dev-deps 会临时改写 manifest（剥离 dev-deps），
-    # lockfile 随之需要更新，--locked 必然拒绝（与 CI feature-matrix.yml 一致）；
-    # ② 必须排除 --all-features 基线——dbnexus 禁止 embedded×server-side 共存，
-    # all-features 同时启用 db-sqlite+db-postgres 必然 compile_error（预期约束）。
+    # 注意：① 不可加 --locked——--no-dev-deps 临时改写 manifest（剥离 dev-deps），lockfile 随之需更新，--locked 必然拒绝（与 feature-matrix.yml 一致）；② 排除 --all-features 基线——dbnexus 禁止 embedded×server-side 共存，all-features 同时启用 db-sqlite+db-postgres 必然 compile_error（预期约束）。
     if run_stage "S5x" "cargo hack check --each-feature" \
         bash -c 'cargo hack check --each-feature --no-dev-deps --keep-going --exclude-all-features'; then
-        # 单 feature 测试编译兜底（排除聚合特性，与 feature-matrix.yml 同清单逻辑；
-        # 此处未改写 manifest，--locked 合法）
+        # 单 feature 测试编译兜底（排除聚合特性，与 feature-matrix.yml 同清单逻辑；此处未改写 manifest，--locked 合法）
         FEATURES=$(cargo metadata --no-deps --format-version 1 --locked \
             | python3 -c "import json,sys; md=json.load(sys.stdin); [print(f) for p in md['packages'] if p['name']=='garrison' for f in sorted(p['features']) if f not in ('default','full','production','development')]")
         LOOP_OK=true
@@ -266,10 +255,7 @@ if [ "${SKIP_BENCH}" = "true" ]; then
     record_skip "S6" "--skip-bench"
 else
     log_stage "S6" "性能基准（criterion --quick，基线 e2e）"
-    # --bench 限定 criterion 目标：裸 `cargo bench` 会连带以 bench profile 跑
-    # lib unittest（不认识 criterion 参数 → "Unrecognized option: 'quick'"）
-    # 首跑保存基线；后续跑 criterion 自动输出相对基线的 change，
-    # 出现 "Regressed" 判定即失败（噪声阈值由 criterion 统计置信区间决定）
+    # --bench 限定 criterion 目标：裸 `cargo bench` 会连带以 bench profile 跑 lib unittest（不认识 criterion 参数报错）；首跑保存基线，后续跑 criterion 自动输出相对基线 change，"Regressed" 即失败（噪声阈值由统计置信区间决定）
     if cargo bench --bench garrison_benchmark --features full --locked -- \
         --quick --save-baseline e2e >"${LOG_DIR}/S6.log" 2>&1; then
         if grep -qi "regressed" "${LOG_DIR}/S6.log"; then

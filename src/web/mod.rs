@@ -1,16 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Web 安全中间件模块，提供 CORS / CSRF 等请求内容校验能力。
-//!
-//! 各子模块独立 feature-gated：
-//! - `web-cors`：CORS 跨域资源共享中间件
-//! - `web-csrf`：CSRF 跨站请求伪造防护（Double-Submit Cookie 模式）
-//!
-//! WAF 请求内容校验统一通过 `firewall-waf` feature 的 `WafHook`/`WafHookChain` 体系执行。
-//!
-//! 此外，本模块提供前后端分离模式（`frontend_separation`）的 CORS 头部应用函数，
-//! 供 Web 框架适配器在响应阶段调用。
+//! Web 安全中间件模块：CORS / CSRF 等请求内容校验，各子模块独立 feature 门控（`web-cors`、`web-csrf`、
+//! `web-security-headers`、`web-axum`、`firewall-waf`）；另提供前后端分离模式的 CORS 头部应用函数，
+//! 供框架适配器在响应阶段调用。
 
 use crate::context::GarrisonResponse;
 use crate::error::GarrisonResult;
@@ -24,11 +17,10 @@ pub const CORS_ALLOW_HEADERS: &str = "Access-Control-Allow-Headers";
 /// 前后端分离模式 CORS `Allow-Methods` 头部名。
 pub const CORS_ALLOW_METHODS: &str = "Access-Control-Allow-Methods";
 
-/// 前后端分离模式 CORS `Allow-Origin` 回退默认值。
+/// 前后端分离模式 CORS `Allow-Origin` 回退默认值（`*`），仅在请求无 `Origin` 时使用。
 ///
-/// 仅在请求无 `Origin` header 时作为回退值使用。
-/// 正常 CORS 请求应通过 [`apply_frontend_separation_cors_with_origin`] 动态回显请求 Origin，
-/// 因为 wildcard `*` + `Authorization` header 会被浏览器拒绝（CORS credentials 限制）。
+/// 正常请求应经 [`apply_frontend_separation_cors_with_origin`] 动态回显 Origin——wildcard `*` +
+/// `Authorization` 会被浏览器拒绝（CORS credentials 限制）。
 pub const DEFAULT_CORS_ALLOW_ORIGIN: &str = "*";
 
 /// 前后端分离模式 CORS `Allow-Headers` 默认值（含 Authorization 与 Content-Type）。
@@ -63,8 +55,8 @@ fn warn_missing_allowlist_once() {
     static WARN: std::sync::Once = std::sync::Once::new();
     WARN.call_once(|| {
         tracing::warn!(
-            "frontend_separation CORS 未配置 cors_config.allowed_origins，\
-             任意 Origin 均被回显；建议配置允许列表以收紧信任边界"
+            "{}",
+            crate::i18n::translate_detail("logs-cors-allowlist-not-configured", &[])
         );
     });
 }
@@ -75,31 +67,18 @@ fn warn_no_cors_feature_once() {
     static WARN: std::sync::Once = std::sync::Once::new();
     WARN.call_once(|| {
         tracing::warn!(
-            "frontend_separation CORS 回显任意 Origin（web-cors feature 未启用，\
-             无法按 cors_config.allowed_origins 过滤）；建议启用 web-cors 并配置允许列表"
+            "{}",
+            crate::i18n::translate_detail("logs-cors-feature-disabled", &[])
         );
     });
 }
 
-/// 应用前后端分离模式的 CORS 头部（动态回显请求 Origin）。
+/// 应用前后端分离模式的 CORS 头部（动态回显请求 Origin；`frontend_separation=false` 时不设任何头部）。
 ///
-/// `frontend_separation=true` 时设置 `Access-Control-Allow-Origin/Headers/Methods` 头部。
-/// 根据 `request_origin` 参数决定 `Allow-Origin` 值：
-///
-/// - `Some(origin)`：回显请求的 `Origin`（推荐，兼容 credentials）。
-/// - **允许列表防御边界**：`web-cors` feature 启用时，若
-///   `config.cors_config.allowed_origins` 非空，仅回显命中允许列表的 Origin，
-///   未命中时不设置 `Allow-Origin`（fail-closed）；允许列表为空时保持旧行为
-///   （回显任意 Origin，由调用方自行过滤）并 warn 提示配置允许列表。
-/// - `None`：不设置 `Allow-Origin` header（安全默认，避免 wildcard + credentials 冲突）。
-///
-/// `frontend_separation=false` 时不设置任何头部。
-///
-/// # 参数
-///
-/// - `response`: 响应对象，需实现 [`GarrisonResponse`] trait。
-/// - `config`: 全局配置，读取 `frontend_separation` 字段。
-/// - `request_origin`: 请求的 `Origin` header 值（从请求上下文提取）。
+/// `Some(origin)`：回显请求 Origin（推荐，兼容 credentials）；`web-cors` 启用且
+/// `cors_config.allowed_origins` 非空时仅回显命中允许列表的 Origin，未命中不设 `Allow-Origin`
+/// （fail-closed）；允许列表为空时保持回显任意 Origin 的旧行为并 warn。
+/// `None`：不设 `Allow-Origin`（安全默认，避免 wildcard + credentials 冲突）。
 ///
 /// # 使用
 ///
@@ -114,18 +93,20 @@ pub fn apply_frontend_separation_cors_with_origin<R: GarrisonResponse>(
     request_origin: Option<&str>,
 ) -> GarrisonResult<()> {
     if config.frontend_separation {
-        // 动态回显请求 Origin（替代 wildcard `*`），兼容 credentials 场景。
-        // 无 Origin 时不设置 Allow-Origin（安全默认，非 CORS 请求无需此 header）。
+        // 动态回显请求 Origin（替代 wildcard `*`，兼容 credentials）；无 Origin 时不设 Allow-Origin。
         if let Some(origin) = request_origin {
-            // 允许列表防御边界——cors_config.allowed_origins 非空时
-            // 仅回显命中的 Origin（web-cors feature 下 GarrisonConfig 才有 cors_config 字段）
+            // 允许列表非空时仅回显命中 Origin（fail-closed；cors_config 字段仅 web-cors 下存在）
             #[cfg(feature = "web-cors")]
             {
                 let allowed = &config.cors_config.allowed_origins;
                 if allowed.is_empty() {
                     warn_missing_allowlist_once();
                 } else if !crate::web::cors::origin_matches(origin, allowed) {
-                    tracing::debug!(origin = %origin, "Origin 未命中 CORS 允许列表，跳过 Allow-Origin 回显");
+                    tracing::debug!(
+                        origin = %origin,
+                        "{}",
+                        crate::i18n::translate_detail("logs-cors-origin-not-allowed", &[])
+                    );
                     response.set_header(CORS_ALLOW_HEADERS, DEFAULT_CORS_ALLOW_HEADERS)?;
                     response.set_header(CORS_ALLOW_METHODS, DEFAULT_CORS_ALLOW_METHODS)?;
                     response.set_header("Vary", "Origin")?;
@@ -156,8 +137,7 @@ pub fn apply_frontend_separation_cors<R: GarrisonResponse>(
     response: &mut R,
     config: &crate::config::GarrisonConfig,
 ) -> GarrisonResult<()> {
-    // 无请求 Origin 上下文，仅设置 Allow-Headers/Methods 和 Vary。
-    // Allow-Origin 需调用方通过 apply_frontend_separation_cors_with_origin 设置。
+    // 无 Origin 上下文：仅设 Allow-Headers/Methods/Vary，Allow-Origin 由调用方用 _with_origin 设置。
     if config.frontend_separation {
         response.set_header(CORS_ALLOW_HEADERS, DEFAULT_CORS_ALLOW_HEADERS)?;
         response.set_header(CORS_ALLOW_METHODS, DEFAULT_CORS_ALLOW_METHODS)?;
@@ -297,9 +277,7 @@ mod tests {
         assert!(resp.headers.is_empty());
     }
 
-    /// frontend_separation=true 时应设置 `Vary: Origin` header。
-    ///
-    /// 确保缓存层按 Origin 区分响应，避免不同 Origin 的响应被缓存混用。
+    /// frontend_separation=true 时设置 `Vary: Origin`，确保缓存层按 Origin 区分响应。
     #[test]
     fn cors_sets_vary_origin_header() {
         let mut resp = WebMockResponse::new();

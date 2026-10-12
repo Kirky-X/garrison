@@ -12,7 +12,7 @@ use dbnexus::sea_orm::ConnectionTrait;
 use dbnexus::DbPool;
 
 impl DbnexusPasswordHistoryRepository {
-    /// 创建实例。
+    /// 创建仓库实例。
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }

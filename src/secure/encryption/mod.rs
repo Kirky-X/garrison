@@ -16,11 +16,9 @@
 //!
 //! # 密钥注入（生产路径）
 //!
-//! [`FieldCipher::from_key_entries`](crate::secure::encryption::FieldCipher::from_key_entries)：从 (key_id, hex32) 配置表目装配
-//! ——生产注入面（如 auth_server `GARRISON_FIELD_ENCRYPTION_KEYS`）。
-//! `config-encryption` feature 下另有 confers `KeyRegistry` 适配器
-//! `ConfersFieldKeyProvider`（version 即 key_id）。
-//! 启用 `field-encryption` 未配密钥 → 装配期 fail-closed Err（启动失败）。
+//! 生产经 [`FieldCipher::from_key_entries`](crate::secure::encryption::FieldCipher::from_key_entries) 注入 (key_id, hex32) 配置表目
+//! （如 auth_server `GARRISON_FIELD_ENCRYPTION_KEYS`）；`config-encryption` feature 下另有 confers `KeyRegistry` 适配器
+//! `ConfersFieldKeyProvider`（version 即 key_id）。启用 `field-encryption` 未配密钥 → 装配期 fail-closed Err（启动失败）。
 //!
 //! # 装配（透明接线）
 //!
@@ -40,9 +38,6 @@ pub use crypto_value::{AadBinding, CryptoValue, KEY_LEN, NONCE_LEN};
 pub use dao::{is_digest_form, FieldEncryptionDao, DIGEST_TABLES, SENSITIVE_TABLES};
 pub use rekey::{ChangeKeyReport, CheckKeyReport};
 
-/// config-encryption 既有密钥设施（confers KeyRegistry）适配器。
-///
-/// 仅在 `config-encryption` feature 启用时存在（`production` 组合不含该
-/// feature；生产注入路径为 [`FieldCipher::from_key_entries`] 配置面）。
+/// config-encryption 既有密钥设施（confers KeyRegistry）适配器（仅该 feature 下存在；生产注入路径为 [`FieldCipher::from_key_entries`] 配置面）。
 #[cfg(feature = "config-encryption")]
 pub use cipher::ConfersFieldKeyProvider;

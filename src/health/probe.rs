@@ -1,28 +1,19 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 容器/CLI 共用的 liveness 探针逻辑（纯 std，零外部依赖）。
-//!
-//! `garrison-healthcheck` 探针 bin 与 `garrison-cli healthcheck` 子命令共用
-//! 本模块的同一组函数，保证两个入口对同一存活/停服目标行为一致。
-//! 探针只读 OS socket API（`TcpStream`），不引入任何外部 crate，
-//! 探针 bin 的零依赖性质不变。
-//!
-//! 探测 `GET http://127.0.0.1:{port}/healthz`。该路由是 sdforge 的 liveness
-//! 探针（`server-health-check` feature 下挂载，进程存活即恒 200，绕过限流/
-//! 审计中间件），**不是**库消费者的 `/health/live`（readiness 语义由业务方在
-//! 自己的端口上自行暴露）。
-//!
-//! 判定：HTTP/1.1 状态行 2xx → 存活；连接失败/超时/非 2xx/畸形响应 → 失败，
+//! 容器/CLI 共用的 liveness 探针逻辑（纯 std，零外部依赖）：`garrison-healthcheck` 探针 bin
+//! 与 `garrison-cli healthcheck` 共用本模块函数；探测 `GET http://127.0.0.1:{port}/healthz`
+//! （sdforge 的 liveness 路由，`server-health-check` feature 下挂载，进程存活即恒 200，绕过
+//! 限流/审计中间件，**不是**库消费者的 `/health/live`，readiness 语义由业务方在自己的端口
+//! 上自行暴露）；判定：HTTP/1.1 状态行 2xx → 存活，连接失败/超时/非 2xx/畸形响应 → 失败，
 //! 原因以单行字符串返回（供 `docker inspect` / 编排平台定位）。
 
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::time::Duration;
 
-/// 连接超时：内层超时为平台兜底，连接 + 读写（2s+2s）须整体落在镜像
-/// HEALTHCHECK 的 `--timeout=5s` 预算内——保证探针先于平台超时判定快速失败，
-/// 避免 HEALTHCHECK 堆积。
+/// 连接超时：连接 + 读写（2s+2s）须整体落在镜像 HEALTHCHECK 的 `--timeout=5s` 预算内，
+/// 保证探针先于平台超时判定快速失败，避免 HEALTHCHECK 堆积。
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 /// 读/写超时：与连接超时同级，覆盖服务端挂起不回包的场景（预算对齐见上）。
 pub const IO_TIMEOUT: Duration = Duration::from_secs(2);
@@ -31,8 +22,7 @@ pub const DEFAULT_EXTERNAL_PORT: u16 = 8080;
 /// 状态行读取上限：正常探针响应远小于此值，超限视为服务端行为异常。
 pub const RESPONSE_CAP: usize = 8 * 1024;
 
-/// 解析 HTTP 状态行中的状态码（如 `HTTP/1.1 200 OK` → `Some(200)`）。
-/// 畸形行（缺协议头 / 状态码非数字）返回 `None`。
+/// 解析 HTTP 状态行中的状态码（如 `HTTP/1.1 200 OK` → `Some(200)`），畸形行（缺协议头 / 状态码非数字）返回 `None`。
 pub fn parse_status_code(line: &str) -> Option<u16> {
     let mut parts = line.split_whitespace();
     let version = parts.next()?;
@@ -52,10 +42,9 @@ pub fn build_request(port: u16) -> String {
     format!("GET /healthz HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n")
 }
 
-/// 对 127.0.0.1:{port} 执行一次探测：成功返回状态码，失败返回单行原因。
-///
-/// 失败路径全覆盖：连接拒绝/超时、写超时、服务端无回包即断开、响应超限无状态行、
-/// 状态行畸形。只读首个 `\r\n` 前的字节，不解析 headers/body。
+/// 对 127.0.0.1:{port} 执行一次探测：成功返回状态码，失败返回单行原因（连接拒绝/超时、
+/// 写超时、服务端无回包即断开、响应超限无状态行、状态行畸形）；只读首个 `\r\n` 前的字节，
+/// 不解析 headers/body。
 pub fn probe(port: u16) -> Result<u16, String> {
     // 127.0.0.1 直接构造 SocketAddr，无 DNS 参与，行为确定
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));

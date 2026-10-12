@@ -3,10 +3,7 @@
 
 //! `GarrisonManager` 的实现块（含 `Drop` impl）。
 //!
-//! 本文件从 `mod.rs` 迁移而来，遵循 mod.rs 接口隔离约定：
-//! `mod.rs` 仅保留 trait 定义、pub struct/enum、pub type alias、pub use、mod 声明。
-//!
-//! 初始化职责已迁移至 [`crate::manager::builder`]（`GarrisonManager::builder()`），
+//! 初始化职责在 [`crate::manager::builder`]（经 `GarrisonManager::builder()`），
 //! 本文件仅保留单例状态读取与测试重置相关方法。
 
 use crate::account::disable::DisableRepository;
@@ -33,13 +30,7 @@ impl GarrisonManager {
         }
     }
 
-    /// 获取全局 `GarrisonLogicDefault` 引用。
-    ///
-    /// # 返回
-    /// 已初始化时返回 `Arc<GarrisonLogicDefault>`。
-    ///
-    /// # 错误
-    /// - 若未初始化，返回 `GarrisonError::Session("GarrisonManager 未初始化")`。
+    /// 获取全局 `GarrisonLogicDefault` 引用；未初始化返回 `GarrisonError::Session`。
     pub fn logic() -> GarrisonResult<Arc<GarrisonLogicDefault>> {
         GARRISON_MANAGER
             .logic
@@ -47,16 +38,10 @@ impl GarrisonManager {
             .ok_or_else(|| GarrisonError::Session("manager-not-init".to_string()))
     }
 
-    /// 获取全局 `Strategy` 注册表引用。
+    /// 获取全局 `Strategy` 注册表引用（未初始化返回 `GarrisonError::Session`）。
     ///
     /// 返回 `Arc<RwLock<Strategy>>`，业务方可通过 `strategy.write().register_*()`
     /// 运行时替换策略，替换后立即生效（下次调用使用新策略）。
-    ///
-    /// # 返回
-    /// 已初始化时返回 `Arc<RwLock<Strategy>>`。
-    ///
-    /// # 错误
-    /// - 若未初始化，返回 `GarrisonError::Session("GarrisonManager 未初始化")`。
     pub fn strategy() -> GarrisonResult<Arc<RwLock<Strategy>>> {
         GARRISON_MANAGER
             .strategy
@@ -64,15 +49,11 @@ impl GarrisonManager {
             .ok_or_else(|| GarrisonError::Session("manager-not-init".to_string()))
     }
 
-    /// 获取全局 `DisableRepository` 引用。
+    /// 获取全局 `DisableRepository` 引用（未初始化返回 `None`）。
     ///
     /// `builder().build()` 时自动创建 `DefaultDisableRepository` 并注入到 `GarrisonLogicDefault`，
     /// 此方法从 logic 中读取封禁库实例，供业务方调用 `disable` / `untie_disable` /
     /// `is_disable` / `get_disable_time` / `get_disable_level`。
-    ///
-    /// # 返回
-    /// - `Some(Arc<dyn DisableRepository>)`: manager 已初始化。
-    /// - `None`: manager 未初始化。
     ///
     /// # 示例
     /// ```ignore
@@ -92,30 +73,19 @@ impl GarrisonManager {
     ///
     /// 用于运行时或测试时整体替换 Strategy 实例（如注入预配置的自定义策略集合）。
     /// 替换后立即生效，旧 Strategy 被 drop。
-    ///
-    /// # 参数
-    /// - `strategy`: 新的 `Arc<RwLock<Strategy>>` 实例。
-    ///
-    /// # 返回
-    /// 成功返回 `Ok(())`。
     pub fn with_strategy(strategy: Arc<RwLock<Strategy>>) -> GarrisonResult<()> {
         GARRISON_MANAGER.strategy.store(Some(strategy));
         Ok(())
     }
 
-    /// 检查管理器是否已初始化。
-    ///
-    /// # 返回
-    /// - `true`: 已通过 `builder().build()` 初始化且全局单例持有 `GarrisonLogicDefault`。
-    /// - `false`: 未初始化或已 `reset_for_test`。
+    /// 检查管理器是否已初始化（已 `builder().build()` 且单例持有 logic 与 strategy；
+    /// 未初始化或已 `reset_for_test` 返回 false）。
     pub fn is_initialized() -> bool {
         GARRISON_MANAGER.logic.load().is_some() && GARRISON_MANAGER.strategy.load().is_some()
     }
 
-    /// 重置管理器（仅供测试用，业务代码不应调用）。
-    ///
-    /// 清空全局 `GarrisonLogicDefault` 与 `Strategy` 引用，
-    /// 使后续 `GarrisonUtil::login(id)` 等返回未初始化错误。
+    /// 重置管理器（仅供测试用，业务代码不应调用）：清空全局 `GarrisonLogicDefault` 与
+    /// `Strategy` 引用，使后续 `GarrisonUtil::login(id)` 等返回未初始化错误。
     #[cfg(any(test, feature = "testing"))]
     pub fn reset_for_test() {
         // abort cleanup task 避免测试间残留后台线程

@@ -3,23 +3,15 @@
 
 //! Strategy 注册表集成测试。
 //!
-//! 验证外部用户视角下：
-//! 1. 6 个策略 trait（`LoginHandler` / `LogoutHandler` / `PermissionHandler` /
-//!    `TokenGenerator` / `SessionCreator` / `FirewallStrategy`）可被业务方实现
-//! 2. `Strategy::new(logic)` 构造后 6 个 getter 返回默认实现
-//! 3. `register_*` / `getter` / `remove_*` 三组方法可运行时替换/查询/恢复
-//! 4. 替换一个策略不影响其他策略（独立可插拔）
-//! 5. `GarrisonManager::strategy()` 全局访问 + `with_strategy()` 整体替换
-//! 6. 运行时通过 `strategy().write().register_*()` 替换立即生效
+//! 验证外部用户视角下 6 个策略 trait（`LoginHandler` / `LogoutHandler` / `PermissionHandler` /
+//! `TokenGenerator` / `SessionCreator` / `FirewallStrategy`）可被业务方实现、`Strategy::new`
+//! getter 返回默认实现、`register_*` / getter / `remove_*` 可运行时替换/查询/恢复、替换
+//! 一个策略不影响其他策略、`GarrisonManager::strategy()` 全局访问 + `with_strategy()`
+//! 整体替换、运行时替换立即生效。
 //!
 //! 运行：`cargo test --features "cache-memory" --test strategy_registry_integration`
 //!
-//! # production-mock-purge
-//!
-//! NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化
-//! （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
-//! 本文件 `MockInterface` 替身仅满足 `GarrisonPermissionStrategyDefault::new` 构造，
-//! 不参与任何权限断言）。
+//! 库层无产品 `GarrisonInterface` 实现，本文件 `MockInterface` 替身仅满足策略构造，不参与断言。
 
 use async_trait::async_trait;
 use garrison::config::GarrisonConfig;
@@ -607,7 +599,7 @@ async fn runtime_register_then_remove_restores_default() {
 
     let strategy = GarrisonManager::strategy().unwrap();
 
-    // 1. 默认策略生成 token
+    // 默认策略生成 token
     let default_handler = strategy.read().login_handler().clone();
     let default_token = default_handler.handle_login("42").await.unwrap();
     assert!(!default_token.is_empty());
@@ -627,7 +619,7 @@ async fn runtime_register_then_remove_restores_default() {
     let custom_token = custom_handler.handle_login("42").await.unwrap();
     assert_eq!(custom_token, "lifecycle-42");
 
-    // 3. remove 恢复默认
+    // remove 恢复默认
     strategy.write().remove_login_handler();
 
     let restored_handler = strategy.read().login_handler().clone();

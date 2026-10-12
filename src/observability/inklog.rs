@@ -1,11 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! inklog 结构化日志初始化实现（spec R-L7-003）。
-//!
-//! 包含：
-//! - [`InklogInit`] 的 impl 块（构造方法 + guard 访问）
-//! - [`init_inklog_logging`] / [`init_inklog_logging_with_fallback`] 顶层函数
+//! inklog 结构化日志初始化实现：`InklogInit` 的 impl 块与两个顶层 init 函数。
 
 #[cfg(feature = "audit-inklog")]
 use super::InklogInit;
@@ -23,25 +19,15 @@ impl InklogInit {
     }
 }
 
-/// 使用 inklog 初始化 tracing subscriber。
+/// 使用 inklog 初始化 tracing subscriber（`audit-inklog` feature）。
 ///
-/// 启用 `audit-inklog` feature 时可用。inklog 提供多输出（console/file）、
-/// 日志轮转、压缩、脱敏等企业级功能，替代手写 `tracing_subscriber::fmt().json()` 配置。
+/// inklog 是 subscriber 配置层（多输出、轮转、压缩、脱敏），`tracing::warn!` /
+/// `tracing::error!` 宏不变；读取 `RUST_LOG`（默认 `info`），启用 console 输出与
+/// secret 扫描门（与审计层 `mask_metadata` 双层防御）。
 ///
-/// `tracing::warn!` / `tracing::error!` 宏不变 — inklog 是 subscriber 配置层。
+/// 显式关闭内置 file 通道：上游 file masker 无 secret-scan 门，未扫描文本落盘与脱敏语义相悖。
 ///
-/// # 行为
-/// - 读取 `RUST_LOG` 环境变量（默认 `info`）
-/// - 启用 console 输出，并启用 secret 扫描门（高熵密钥/secret 形态出站掩码）——
-///   与 garrison 审计层的 `mask_metadata` 双层防御：前者守经 console sink 写出的
-///   日志文本，后者守审计事件 metadata
-/// - **显式关闭内置 file 通道**：inklog 默认启用 `logs/app.log` 落盘，但其 file
-///   masker 无 secret-scan 门（上游仅 console sink 组装扫描门），未扫描文本落盘
-///   与本函数的脱敏语义相悖；上游 file 通道支持扫描门后再评估启用
-/// - 返回 `LoggerManager` guard，调用方须保持存活以维持日志输出
-///
-/// # 错误
-/// - inklog 初始化失败（如配置错误）
+/// 返回的 `LoggerManager` guard 须由调用方保持存活以维持日志输出；初始化失败返回 `InklogError`。
 #[cfg(feature = "audit-inklog")]
 pub async fn init_inklog_logging() -> Result<::inklog::LoggerManager, ::inklog::InklogError> {
     let level = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
@@ -56,15 +42,9 @@ pub async fn init_inklog_logging() -> Result<::inklog::LoggerManager, ::inklog::
 
 /// 使用 inklog 初始化 tracing subscriber，失败时降级到 tracing-subscriber 默认配置。
 ///
-/// 降级机制：inklog 初始化失败时回退到内联 `tracing_subscriber::fmt().json()`
-/// 配置，确保日志不丢失。调用方可通过 [`InklogInit::is_degraded`] 判断是否降级。
-///
-/// # 行为
-/// 1. 尝试 inklog::LoggerManager::builder().level().console().build()
-/// 2. 成功 → 返回 `InklogInit { guard: Some(mgr), degraded: false }`
-/// 3. 失败 → 降级路径（当 `metrics-prometheus` 或 `tracing-log` 启用时用 tracing-subscriber
-///    JSON；无 observability feature 时用 `eprintln!` 警告）；再 tracing::warn! 记录降级原因，
-///    返回 `InklogInit { guard: None, degraded: true }`
+/// 降级不丢日志：inklog 失败时，`metrics-prometheus` / `tracing-log` 启用走
+/// tracing-subscriber JSON，无 observability feature 时仅 `eprintln!` 警告；
+/// 调用方经 [`InklogInit::is_degraded`] 判断是否降级。
 #[cfg(feature = "audit-inklog")]
 pub async fn init_inklog_logging_with_fallback() -> InklogInit {
     match init_inklog_logging().await {
@@ -86,8 +66,7 @@ pub async fn init_inklog_logging_with_fallback() -> InklogInit {
                     .with_span_list(false)
                     .try_init();
                 if let Err(init_err) = result {
-                    // 如实区分「已初始化」（可安全跳过）与其他初始化失败
-                    // （降级路径实际不可用，必须以 warn 暴露，不得静默吞掉）
+                    // 区分「已初始化」（可安全跳过）与其他失败（降级不可用，须 warn 暴露，不得静默吞掉）
                     let msg = init_err.to_string();
                     if msg.contains("already") {
                         tracing::debug!(

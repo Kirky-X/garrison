@@ -4,8 +4,7 @@
 //! GarrisonUtil 静态方法入口 + JwtMode 校验模式枚举 + AuthBackend 全局桥接。
 use crate::config::GarrisonConfig;
 use crate::error::GarrisonResult;
-// loc! 使用点分别被 listener（session kickout 提示）与 backend-*（NotSafe 提示）门控，
-// 导入需覆盖三者的并集，否则任一单独组合下要么缺宏、要么 unused import（-D warnings）。
+// loc! 使用点由 listener（session kickout 提示）与 backend-*（NotSafe 提示）两处门控，导入需覆盖并集，否则缺宏或 unused import（-D warnings）。
 #[cfg(any(
     feature = "backend-embedded",
     feature = "backend-remote",
@@ -25,47 +24,21 @@ use tokio::runtime::Handle;
 use tokio::task;
 use tokio::task::JoinHandle;
 
-// ============================================================================
 // AuthBackend 全局桥接
-// ============================================================================
-//
-// 设计决策说明：
-//
-// 显式初始化 panic 方案（`CURRENT_BACKEND.get().expect("Backend not initialized")`）
-// 属 breaking change；而 backend-embedded 模式必须与既有行为完全一致（zero-break）。
-//
-// 因此采取 fallback 策略，优先满足 zero-break 约束。
-// - 启用 backend feature 且已 `init_backend()`：委托 `AuthBackend` trait
-// - 启用 `backend-embedded` 但未 `init_backend()`：fallback 到 `GarrisonManager`
-// - 仅启用 `backend-remote` 但未 `init_backend()`：返回 `GarrisonError::Config`
-// - 未启用任何 backend feature：直接走 `GarrisonManager` 路径
-//
-// 实现说明：使用 `ArcSwapOption` 而非 `Mutex<Option<...>>`——
-// `get_backend` 是每请求热路径（check_login / check_permission 各一次），
-// Mutex 会让全部 tokio worker 在同一把全局锁上串行排队；ArcSwap 读路径
-// 无锁（wait-free）。保留「测试可重置」能力（reset_backend_for_test）。
+// 取 fallback 而非显式初始化 panic（后者属 breaking change，backend-embedded 需 zero-break）：已 init_backend() 时委托 AuthBackend，backend-embedded 未初始化回退 GarrisonManager，仅 backend-remote 未初始化返回 Config，无 backend feature 直接走 GarrisonManager。
+// 用 ArcSwapOption 而非 Mutex：get_backend 是每请求热路径（check_login / check_permission 各一次），ArcSwap 读路径无锁（wait-free），并保留测试可重置能力。
 
-/// 全局认证后端实例的 Sized 包装。
-///
-/// arc-swap 的 `RefCnt` 要求元素 Sized（`impl<T> RefCnt for Arc<T>` 隐含
-/// `T: Sized`），无法直接存放 `Arc<dyn AuthBackend>`，故以单字段结构包装。
+/// 全局认证后端实例的 Sized 包装：arc-swap 的 `RefCnt` 要求元素 Sized，无法直接存 `Arc<dyn AuthBackend>`。
 #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
 #[derive(Clone)]
 struct BackendHandle(Arc<dyn crate::backend::AuthBackend>);
 
-/// 全局认证后端实例。
-///
-/// 通过 [`init_backend`] 初始化。未初始化时根据 feature flag 决定 fallback 行为。
+/// 全局认证后端实例；经 [`init_backend`] 初始化，未初始化时按 feature flag 决定 fallback 行为。
 #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
 static CURRENT_BACKEND: arc_swap::ArcSwapOption<BackendHandle> =
     arc_swap::ArcSwapOption::const_empty();
 
-/// 初始化全局认证后端。
-///
-/// 必须在使用 `GarrisonUtil` 之前调用一次。重复调用返回 `GarrisonError::Config`。
-///
-/// # 参数
-/// - `backend`: `Arc<dyn AuthBackend>` 实例（`BackendEmbedded` 或 `BackendRemote`）
+/// 初始化全局认证后端：必须在使用 `GarrisonUtil` 前调用一次，重复调用返回 `Config`。
 ///
 /// # 示例
 ///
@@ -85,10 +58,7 @@ pub fn init_backend(backend: Arc<dyn crate::backend::AuthBackend>) -> GarrisonRe
     try_init_backend(&CURRENT_BACKEND, backend)
 }
 
-/// CAS 初始化核心（与全局 static 分离，便于在局部 store 上做并发测试）。
-///
-/// compare_and_swap 契约：仅当前值为 `None` 时写入；返回 Guard 持有写入前的
-/// 值——非 `None` 即 CAS 失败（已有其他线程先完成初始化）。
+/// CAS 初始化核心（与全局 static 分离，便于在局部 store 做并发测试）：仅当前值为 `None` 时写入，返回写入前的值，非 `None` 即 CAS 失败（已被其他线程初始化）。
 #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
 fn try_init_backend(
     store: &arc_swap::ArcSwapOption<BackendHandle>,
@@ -104,12 +74,7 @@ fn try_init_backend(
     Ok(())
 }
 
-/// 获取已初始化的认证后端。
-///
-/// # 返回
-/// - `Ok(Some(backend))`: 已通过 [`init_backend`] 初始化
-/// - `Ok(None)`: 未初始化，且 `backend-embedded` feature 启用（调用方应 fallback 到 GarrisonManager）
-/// - `Err(_)`: 未初始化，且 `backend-embedded` feature 未启用
+/// 获取已初始化的认证后端：`Ok(Some)` 已初始化；`Ok(None)` 未初始化且启用 backend-embedded（调用方应 fallback 到 GarrisonManager）；`Err` 未初始化且未启用 backend-embedded。
 #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
 fn get_backend() -> GarrisonResult<Option<Arc<dyn crate::backend::AuthBackend>>> {
     let guard = CURRENT_BACKEND.load();
@@ -128,26 +93,19 @@ fn get_backend() -> GarrisonResult<Option<Arc<dyn crate::backend::AuthBackend>>>
     }
 }
 
-/// 重置全局认证后端（仅测试用）。
-///
-/// 用于单元测试中重置 `CURRENT_BACKEND`，以便测试不同的 backend 配置。
-/// 生产代码中严禁调用此函数。
+/// 重置全局认证后端（仅测试用，生产代码严禁调用）。
 #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
 #[cfg(test)]
 pub(crate) fn reset_backend_for_test() {
     CURRENT_BACKEND.store(None);
 }
 
-// 测试桩使用 BackendEmbedded（仅 backend-embedded 下存在），故模块门控收窄到
-// backend-embedded 单腿；backend-remote 单独启用时 try_init_backend 生产路径
-// 仍编译（上方函数门控不变），仅此测试不参与。
+// 测试桩仅 backend-embedded 下存在，故模块门控收窄到单腿；backend-remote 单独启用时本测试不参与。
 #[cfg(all(test, feature = "backend-embedded"))]
 mod backend_bridge_tests {
     use super::*;
 
-    /// 并发 init_backend（CAS）下恰好一个成功、其余返回
-    /// Config("stp-backend-already-init")，且成功后 store 可读到该后端。
-    /// 在局部 store 上测试，避免污染全局 CURRENT_BACKEND 影响并行测试。
+    /// 并发 init_backend（CAS）恰好一个成功、其余返回 Config，且成功后 store 可读到后端；在局部 store 上测试，避免污染全局 CURRENT_BACKEND。
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_init_exactly_one_wins() {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -193,29 +151,10 @@ mod backend_bridge_tests {
     }
 }
 
-// ============================================================================
 // JwtMode：JWT 校验模式
-// ============================================================================
 
-/// JWT 校验模式。
-///
-/// 控制 `check_login` 在 JWT verify 与 oxcache session 查询之间的组合策略。
-/// 不依赖 `jsonwebtoken` crate，作为配置选项总是编译（即使未启用 `protocol-jwt`）。
-///
-/// # 变体
-///
-/// - `Stateless`：仅 JWT verify，不查询 oxcache session。适用于高可用场景
-///   （DAO 故障时仍可校验），要求启用 `protocol-jwt` feature 且 `token_style=jwt`。
-/// - `Mixin`（默认）：JWT verify + session 二级校验。推荐的平衡模式——
-///   JWT 提供无状态校验，session 提供主动注销能力。
-/// - `Simple`：仅 session 校验，JWT 仅作为 token 字符串载体（不验证签名）。
-///   适用于 token 已由网关层校验过的场景。
-///
-/// # feature 依赖
-///
-/// `jwt_mode` 字段本身不 feature gate，但 `Stateless`/`Mixin` 中的 JWT verify
-/// 调用需 `protocol-jwt` feature。未启用时 `Stateless` 返回 `Config` 错误，
-/// `Mixin` 退化为仅查 session。
+/// JWT 校验模式：控制 `check_login` 在 JWT verify 与 session 查询之间的组合策略；不依赖 jsonwebtoken，总是编译（即使未启用 protocol-jwt）。
+/// Stateless 仅 JWT verify（需 protocol-jwt + token_style=jwt）；Mixin（默认）verify + session 二级校验；Simple 仅 session，JWT 只作 token 载体。未启用 protocol-jwt 时 Stateless 返回 Config、Mixin 退化为仅查 session。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum JwtMode {
     /// 仅 JWT verify，不查询 oxcache session（高可用场景）。
@@ -227,33 +166,14 @@ pub enum JwtMode {
     Simple,
 }
 
-// ============================================================================
 // GarrisonUtil：静态方法入口（委托全局 GarrisonManager 单例）
-// ============================================================================
 
-/// 工具结构体，提供静态方法入口。
-///
-/// 对应 `StpUtil`，是面向使用者的便捷入口。
-/// 内部委托给 `GarrisonManager::logic()` 全局单例。
-///
-/// # 使用前提
-///
-/// 调用前必须先执行 `GarrisonManager::builder().dao(dao).config(config).interface(interface).build().await`，
-/// 否则返回 `GarrisonError::Session("GarrisonManager 未初始化")`。
+/// 工具结构体（对应 `StpUtil`）：面向使用者的静态方法入口，内部委托 `GarrisonManager::logic()` 全局单例。
+/// 使用前提：须先执行 `GarrisonManager::builder().dao(dao).config(config).interface(interface).build().await`，否则返回 `Session("GarrisonManager 未初始化")`。
 pub struct GarrisonUtil;
 
 impl GarrisonUtil {
-    /// 执行登录：生成 token + 创建会话。
-    ///
-    /// # 参数
-    /// - `id`: 登录主体标识（支持 `String`、`&str` 等 `Into<String>` 类型）。
-    ///
-    /// # 返回
-    /// 生成的 token 字符串。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - token 生成或会话创建失败：透传 `GarrisonError`。
+    /// 执行登录：生成 token + 创建会话；未初始化返回 `Session`，生成/创建失败透传 `GarrisonError`。
     pub async fn login(id: impl Into<String>, params: &LoginParams) -> GarrisonResult<String> {
         let id: String = id.into();
         #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
@@ -267,21 +187,12 @@ impl GarrisonUtil {
             .await
     }
 
-    /// 便捷登录：使用默认 `LoginParams`（无设备/IP/UA/remember_me）。
-    ///
-    /// 等价于 `login(id, &LoginParams::default())` 的便捷封装。
+    /// 便捷登录：等价于 `login(id, &LoginParams::default())`（无设备/IP/UA）。
     pub async fn login_simple(id: impl Into<String>) -> GarrisonResult<String> {
         Self::login(id, &LoginParams::default()).await
     }
 
-    /// 执行登出：从 task_local 获取当前 token 并销毁。
-    ///
-    /// # 返回
-    /// 成功返回 `Ok(())`；未设置 token 时幂等返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 会话销毁失败：透传 `GarrisonError`。
+    /// 执行登出：从 task_local 取当前 token 并销毁；未设置 token 时幂等返回 `Ok(())`。
     pub async fn logout() -> GarrisonResult<()> {
         #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
         {
@@ -293,17 +204,7 @@ impl GarrisonUtil {
         crate::manager::GarrisonManager::logic()?.logout().await
     }
 
-    /// 按账号登出：销毁指定 login_id 的所有会话。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识（支持 `String`、`&str` 等 `Into<String>` 类型）。
-    ///
-    /// # 返回
-    /// 成功返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 会话销毁失败：透传 `GarrisonError`。
+    /// 按账号登出：销毁指定 login_id 的所有会话；backend 模式委托 backend.kickout（login_id 维度销毁，语义等价）。
     pub async fn logout_by_login_id(login_id: impl Into<String>) -> GarrisonResult<()> {
         let login_id: String = login_id.into();
         // 与同族 login/kickout 对齐补 backend 分发——
@@ -320,17 +221,7 @@ impl GarrisonUtil {
             .await
     }
 
-    /// 踢出用户：按账号踢出（语义等同 logout_by_login_id）。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识（支持 `String`、`&str` 等 `Into<String>` 类型）。
-    ///
-    /// # 返回
-    /// 成功返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 会话销毁失败：透传 `GarrisonError`。
+    /// 踢出用户：按账号踢出，语义等同 [`logout_by_login_id`](Self::logout_by_login_id)。
     pub async fn kickout(login_id: impl Into<String>) -> GarrisonResult<()> {
         let login_id: String = login_id.into();
         #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
@@ -344,17 +235,7 @@ impl GarrisonUtil {
             .await
     }
 
-    /// 踢出会话：按 token 踢出。
-    ///
-    /// # 参数
-    /// - `token`: 待踢出的 token 字符串。
-    ///
-    /// # 返回
-    /// 成功返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 会话销毁失败：透传 `GarrisonError`。
+    /// 踢出会话：按 token 踢出；backend 模式委托 backend.logout（token 维度销毁，语义一致）。
     pub async fn kickout_by_token(token: &str) -> GarrisonResult<()> {
         // 与同族 kickout 对齐补 backend 分发。
         // backend.logout 为 token 维度销毁，与 kickout_by_token 语义一致。
@@ -369,23 +250,7 @@ impl GarrisonUtil {
             .await
     }
 
-    /// 密码修改后失效用户所有会话。
-    ///
-    /// 清除指定 `login_id` 的所有 Token-Session 和 Account-Session，
-    /// 并广播 `GarrisonEvent::Kickout` 事件（reason: "password-changed"）。
-    ///
-    /// 应用层在密码修改成功后应调用此方法，确保已签发的会话立即失效，
-    /// 缩小凭证泄露后的攻击窗口。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识（支持 `String`、`&str` 等 `Into<String>` 类型）。
-    ///
-    /// # 返回
-    /// 成功返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 会话销毁失败：透传 `GarrisonError`。
+    /// 密码修改后失效用户所有会话：清除全部 Token-Session / Account-Session 并广播 `Kickout`（reason: "password-changed"），缩小凭证泄露攻击窗口。
     ///
     /// # 示例
     ///
@@ -413,21 +278,7 @@ impl GarrisonUtil {
         Ok(())
     }
 
-    /// 主动吊销 token：销毁指定 token 的会话。
-    ///
-    /// 与 [`kickout_by_token`](Self::kickout_by_token) 的区别：
-    /// - `revoke_token` 广播 `RevokeToken` 事件（仅携带 token，语义为"token 失效"）
-    /// - `kickout_by_token` 不广播事件（语义为"管理员强制下线"，无对应 listener 事件）
-    ///
-    /// # 参数
-    /// - `token`: 待吊销的 token 字符串。
-    ///
-    /// # 返回
-    /// 成功返回 `Ok(())`；token 不存在时幂等返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 会话销毁失败：透传 `GarrisonError`。
+    /// 主动吊销 token：销毁会话并广播 `RevokeToken`（仅携 token，语义为"token 失效"）；[`kickout_by_token`](Self::kickout_by_token) 不广播事件（管理员强制下线语义）。token 不存在时幂等返回 `Ok(())`。
     pub async fn revoke_token(token: &str) -> GarrisonResult<()> {
         // 与同族 logout 对齐补 backend 分发。
         // backend.logout 为 token 维度销毁，与 revoke_token 语义一致。
@@ -442,15 +293,7 @@ impl GarrisonUtil {
             .await
     }
 
-    /// 检查登录状态。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 当前已登录且 token 有效。
-    /// - `Ok(false)`: 未登录或 token 无效（`throw_on_not_login=false`）。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 未登录且 `throw_on_not_login=true`：`GarrisonError::Session`。
+    /// 检查登录状态：`Ok(true)` 已登录且 token 有效；`Ok(false)` 未登录或无效（`throw_on_not_login=false`）；未登录且开关为 true 返回 `Session`。
     pub async fn check_login() -> GarrisonResult<bool> {
         #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
         {
@@ -464,37 +307,14 @@ impl GarrisonUtil {
             .await
     }
 
-    /// 获取当前登录 ID。
-    ///
-    /// # 返回
-    /// - `Some(login_id)`: 已登录，返回关联的 login_id。
-    /// - `None`: 未登录或 token 无效。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - DAO 读取失败：透传 `GarrisonError`。
+    /// 获取当前登录 ID：已登录返回 `Some(login_id)`，未登录或无效返回 `None`。
     pub async fn get_login_id() -> GarrisonResult<Option<String>> {
         crate::manager::GarrisonManager::logic()?
             .get_login_id()
             .await
     }
 
-    /// 通过指定 token 获取关联的登录 ID。
-    ///
-    /// 与 [`get_login_id`] 的区别：本方法显式接收 token 参数，内部通过
-    /// [`with_current_token`] 将 token 设置到 task_local 上下文后再查询，
-    /// 适用于 web extractor 场景（从请求 header 提取 token 后解析 login_id）。
-    ///
-    /// # 参数
-    /// - `token`: 待解析的 token 字符串。
-    ///
-    /// # 返回
-    /// - `Some(login_id)`: token 有效，返回关联的 login_id。
-    /// - `None`: token 无效或会话不存在。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - DAO 读取失败：透传 `GarrisonError`。
+    /// 通过指定 token 获取关联 login_id（适配 web extractor）：内部经 [`with_current_token`] 将 token 置入 task_local 后查询；与 [`get_login_id`] 的区别是显式接收 token 参数。
     ///
     /// [`get_login_id`]: Self::get_login_id
     /// [`with_current_token`]: crate::stp::with_current_token
@@ -502,18 +322,7 @@ impl GarrisonUtil {
         super::with_current_token(token.to_string(), async { Self::get_login_id().await }).await
     }
 
-    /// 校验权限。
-    ///
-    /// # 参数
-    /// - `permission`: 权限标识字符串。
-    ///
-    /// # 返回
-    /// 成功（持有权限）返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 未登录：`GarrisonError::NotLogin` 或降级为 `GarrisonError::NotPermission`。
-    /// - 未持有权限：`GarrisonError::NotPermission`。
+    /// 校验权限：持有返回 `Ok(())`，未持有返回 `NotPermission`，未登录返回 `NotLogin` 或降级 `NotPermission`。
     pub async fn check_permission(permission: &str) -> GarrisonResult<()> {
         #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
         {
@@ -527,18 +336,7 @@ impl GarrisonUtil {
             .await
     }
 
-    /// 校验角色。
-    ///
-    /// # 参数
-    /// - `role`: 角色标识字符串。
-    ///
-    /// # 返回
-    /// 成功（持有角色）返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 未登录：`GarrisonError::NotLogin` 或降级为 `GarrisonError::NotRole`。
-    /// - 未持有角色：`GarrisonError::NotRole`。
+    /// 校验角色：持有返回 `Ok(())`，未持有返回 `NotRole`，未登录返回 `NotLogin` 或降级 `NotRole`。
     pub async fn check_role(role: &str) -> GarrisonResult<()> {
         #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
         {
@@ -552,22 +350,7 @@ impl GarrisonUtil {
             .await
     }
 
-    /// 检查当前会话是否持有指定权限。
-    ///
-    /// 与 [`check_permission`](Self::check_permission) 的区别：本方法返回布尔值而非抛出异常。
-    /// 未登录或未持有权限均返回 `Ok(false)`，适用于条件分支场景（如 UI 元素显隐控制）。
-    ///
-    /// # 参数
-    /// - `permission`: 权限标识字符串。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 当前会话持有该权限。
-    /// - `Ok(false)`: 当前会话未持有该权限或未登录。
-    ///
-    /// # 错误
-    /// - `permission` 为空字符串：`GarrisonError::InvalidParam`。
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - DAO 层错误等非权限性错误：透传 `GarrisonError`。
+    /// 检查当前会话是否持有权限（返回布尔而非抛异常，未登录或未持有均 `Ok(false)`）；`permission` 为空返回 `InvalidParam`。
     pub async fn has_permission(permission: &str) -> GarrisonResult<bool> {
         if permission.is_empty() {
             return Err(crate::error::GarrisonError::InvalidParam(
@@ -579,22 +362,7 @@ impl GarrisonUtil {
             .await
     }
 
-    /// 检查当前会话是否持有指定角色。
-    ///
-    /// 与 [`check_role`](Self::check_role) 的区别：本方法返回布尔值而非抛出异常。
-    /// 未登录或未持有角色均返回 `Ok(false)`，适用于条件分支场景。
-    ///
-    /// # 参数
-    /// - `role`: 角色标识字符串。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 当前会话持有该角色。
-    /// - `Ok(false)`: 当前会话未持有该角色或未登录。
-    ///
-    /// # 错误
-    /// - `role` 为空字符串：`GarrisonError::InvalidParam`。
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - DAO 层错误等非角色性错误：透传 `GarrisonError`。
+    /// 检查当前会话是否持有角色（返回布尔而非抛异常，未登录或未持有均 `Ok(false)`）；`role` 为空返回 `InvalidParam`。
     pub async fn has_role(role: &str) -> GarrisonResult<bool> {
         if role.is_empty() {
             return Err(crate::error::GarrisonError::InvalidParam(
@@ -606,101 +374,42 @@ impl GarrisonUtil {
             .await
     }
 
-    /// 获取当前登录主体的权限列表。
-    ///
-    /// 从当前会话上下文获取 login_id 后委托 `GarrisonPermissionStrategy` 查询权限数据。
-    /// 未登录时返回 `Ok(vec![])`（非抛出异常）。
-    ///
-    /// # 返回
-    /// - `Ok(permissions)`: 权限标识字符串列表（如 `["user:read", "user:write"]`），可为空。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 数据源访问失败：透传 `GarrisonError`。
+    /// 获取当前登录主体的权限列表（委托 `GarrisonPermissionStrategy`，未登录返回 `Ok(vec![])`）。
     pub async fn get_permission_list() -> GarrisonResult<Vec<String>> {
         crate::manager::GarrisonManager::logic()?
             .get_permission_list()
             .await
     }
 
-    /// 获取当前登录主体的角色列表。
-    ///
-    /// 从当前会话上下文获取 login_id 后委托 `GarrisonPermissionStrategy` 查询角色数据。
-    /// 未登录时返回 `Ok(vec![])`。
-    ///
-    /// # 返回
-    /// - `Ok(roles)`: 角色标识字符串列表（如 `["admin", "user"]`），可为空。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 数据源访问失败：透传 `GarrisonError`。
+    /// 获取当前登录主体的角色列表（委托 `GarrisonPermissionStrategy`，未登录返回 `Ok(vec![])`）。
     pub async fn get_role_list() -> GarrisonResult<Vec<String>> {
         crate::manager::GarrisonManager::logic()?
             .get_role_list()
             .await
     }
 
-    /// 校验 access_token 类型会话。
-    ///
-    /// 委托 `TokenLogic::check_access_token()`，默认实现委托 `check_login`。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 当前会话 token 有效（已登录）。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 未登录：`GarrisonError::NotLogin`。
+    /// 校验 access_token 类型会话（委托 `TokenLogic::check_access_token`，默认委托 check_login；未登录返回 `NotLogin`）。
     pub async fn check_access_token() -> GarrisonResult<()> {
         crate::manager::GarrisonManager::logic()?
             .check_access_token()
             .await
     }
 
-    /// 校验 client_token 类型会话。
-    ///
-    /// 委托 `TokenLogic::check_client_token()`，默认实现委托 `check_login`。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 当前会话 token 有效（已登录）。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 未登录：`GarrisonError::NotLogin`。
+    /// 校验 client_token 类型会话（委托 `TokenLogic::check_client_token`，默认委托 check_login；未登录返回 `NotLogin`）。
     pub async fn check_client_token() -> GarrisonResult<()> {
         crate::manager::GarrisonManager::logic()?
             .check_client_token()
             .await
     }
 
-    /// 校验 temp_token 类型会话。
-    ///
-    /// 委托 `TokenLogic::check_temp_token()`，默认实现委托 `check_login`。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 当前会话 token 有效（已登录）。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 未登录：`GarrisonError::NotLogin`。
+    /// 校验 temp_token 类型会话（委托 `TokenLogic::check_temp_token`，默认委托 check_login；未登录返回 `NotLogin`）。
     pub async fn check_temp_token() -> GarrisonResult<()> {
         crate::manager::GarrisonManager::logic()?
             .check_temp_token()
             .await
     }
 
-    /// 检查二级认证（MFA）状态。
-    ///
-    /// 委托 `MfaLogic::check_safe()`：先验会话（无效/已撤销 token →
-    /// `Err(GarrisonError::Session)`，与 check-login 的 SESSION_ERROR 语义对齐），
-    /// 后判 safe——有效会话未启用 MFA 时返回 `Ok(())`。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 会话有效且已通过二级认证（或未启用 MFA）。
-    /// - `Err(GarrisonError::Session)`: 会话无效（token 不存在/已过期/被踢）。
-    /// - `Err(GarrisonError::NotSafe)`: 未通过二级认证。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
+    /// 检查二级认证（MFA）状态：先验会话（无效/已撤销返回 `Session`），有效会话未启用 MFA 返回 `Ok(())`，未通过返回 `NotSafe`。
     pub async fn check_safe() -> GarrisonResult<()> {
         #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
         {
@@ -718,18 +427,7 @@ impl GarrisonUtil {
         crate::manager::GarrisonManager::logic()?.check_safe().await
     }
 
-    /// 检查账号是否被禁用。
-    ///
-    /// 委托 `MfaLogic::check_disable()`：先验会话（无效/已撤销 token →
-    /// `Err(GarrisonError::Session)`，「token 无效」不与「未封禁」合并），后判封禁。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 会话有效且账号未禁用。
-    /// - `Err(GarrisonError::Session)`: 会话无效（token 不存在/已过期/被踢）。
-    /// - `Err(GarrisonError::DisableService)`: 账号已禁用。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
+    /// 检查账号是否被禁用：先验会话（无效返回 `Session`，"token 无效"不与"未封禁"合并），账号已禁用返回 `DisableService`。
     pub async fn check_disable() -> GarrisonResult<()> {
         #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
         {
@@ -750,23 +448,7 @@ impl GarrisonUtil {
             .await
     }
 
-    /// 校验 API Key。
-    ///
-    /// 从当前请求上下文（task_local `CURRENT_TOKEN`）获取 API Key，
-    /// 委托 `GarrisonLogicDefault::check_api_key(namespace)` 校验。
-    ///
-    /// # 参数
-    /// - `namespace`: 命名空间标识，用于隔离不同业务的 API Key。
-    ///
-    /// # 返回
-    /// - `Ok(())`: API Key 有效。
-    /// - `Err(GarrisonError::Session)`: `GarrisonManager` 未初始化 或 未设置当前请求上下文。
-    /// - `Err(GarrisonError::InvalidToken)`: API Key 不存在或已吊销。
-    /// - `Err(GarrisonError::ExpiredToken)`: API Key 已过期。
-    ///
-    /// # 兼容性
-    ///
-    /// `protocol-apikey` feature 关闭时，本方法返回 `Ok(())`（兼容未启用 API Key 场景）。
+    /// 校验 API Key：从 task_local CURRENT_TOKEN 取 Key 交 `check_api_key(namespace)`；不存在/已吊销返回 `InvalidToken`，已过期返回 `ExpiredToken`；`protocol-apikey` 关闭时返回 `Ok(())`。
     ///
     /// # 示例
     ///
@@ -795,239 +477,87 @@ impl GarrisonUtil {
             .await
     }
 
-    /// 通过外部 token 反向建立会话。
-    ///
-    /// 用于 OAuth2/SSO 场景：外部 token 已通过协议层校验后，
-    /// 调用此方法在当前上下文建立内部会话。
-    ///
-    /// # 参数
-    /// - `token`: 外部 token 字符串。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 未启用协议层 feature：`GarrisonError::NotImplemented`。
+    /// 通过外部 token 反向建立会话（OAuth2/SSO 场景：外部已校验后建立内部会话）；未启用协议层 feature 返回 `NotImplemented`。
     pub async fn login_by_token(token: &str) -> GarrisonResult<()> {
         crate::manager::GarrisonManager::logic()?
             .login_by_token(token)
             .await
     }
 
-    /// 验证显式传入的 token 并返回关联的 login_id。
-    ///
-    /// # 参数
-    /// - `token`: 待验证的 token 字符串。
-    ///
-    /// # 返回
-    /// - `Ok(login_id)`: token 有效，返回关联的 login_id。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - token 无效：`GarrisonError::InvalidToken`。
+    /// 验证显式传入的 token 并返回关联 login_id；token 无效返回 `InvalidToken`。
     pub async fn verify_token(token: &str) -> GarrisonResult<String> {
         crate::manager::GarrisonManager::logic()?
             .verify_token(token)
             .await
     }
 
-    /// 刷新 token。
-    ///
-    /// # 参数
-    /// - `token`: 待刷新的旧 token 字符串。
-    ///
-    /// # 返回
-    /// - `Ok(new_token)`: 刷新后的新 token 字符串。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 未启用 protocol-jwt：`GarrisonError::NotImplemented`。
-    /// - token 已过期：`GarrisonError::InvalidToken`。
+    /// 刷新 token 返回新 token；未启用 protocol-jwt 返回 `NotImplemented`，token 已过期返回 `InvalidToken`。
     pub async fn refresh_token(token: &str) -> GarrisonResult<String> {
         crate::manager::GarrisonManager::logic()?
             .refresh_token(token)
             .await
     }
 
-    // ========================================================================
-    // 同步版本（check_*_sync）：通过 block_in_place + Handle::current().block_on
-    // 包装 async 版本，供 sync fn 宏 wrapper 调用。
-    //
-    // 设计约束：
-    // - 必须在 tokio multi_thread runtime 上下文内调用（block_in_place 要求）
-    // - task_local `CURRENT_TOKEN` 自动继承（同 task 内）
-    // - 参数 `&str` 需 `.to_string()` 后 move 进 block_on future（'static 约束）
-    // ========================================================================
+    // 同步版本（check_*_sync）：block_in_place + Handle::current().block_on 包装 async 版本，供 sync fn 宏 wrapper 调用
+    // 约束：须在 tokio multi_thread runtime 内调用（block_in_place 要求）；task_local CURRENT_TOKEN 同 task 自动继承；`&str` 参数需 `.to_string()` move 进 block_on future（'static）。
 
-    /// 同步版 [`check_login`](Self::check_login)。
-    ///
-    /// 在当前 tokio runtime 上阻塞执行 async `check_login`。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 当前已登录且 token 有效。
-    /// - `Ok(false)`: 未登录或 token 无效（`throw_on_not_login=false`）。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 未登录且 `throw_on_not_login=true`：`GarrisonError::Session`。
-    /// - 不在 tokio multi_thread runtime 上下文：panic（`block_in_place` 要求）。
+    /// 同步版 [`check_login`](Self::check_login)：在当前 runtime 阻塞执行；不在 tokio multi_thread runtime 上下文会 panic（`block_in_place` 要求）。
     pub fn check_login_sync() -> GarrisonResult<bool> {
         task::block_in_place(|| Handle::current().block_on(Self::check_login()))
     }
 
-    /// 同步版 [`check_permission`](Self::check_permission)。
-    ///
-    /// # 参数
-    /// - `perm`: 权限标识字符串。
-    ///
-    /// # 返回
-    /// 成功（持有权限）返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 未登录：`GarrisonError::NotLogin` 或降级为 `GarrisonError::NotPermission`。
-    /// - 未持有权限：`GarrisonError::NotPermission`。
-    /// - 不在 tokio multi_thread runtime 上下文：panic。
+    /// 同步版 [`check_permission`](Self::check_permission)；runtime 约束同 [`check_login_sync`](Self::check_login_sync)。
     pub fn check_permission_sync(perm: &str) -> GarrisonResult<()> {
         let perm = perm.to_string();
         task::block_in_place(|| Handle::current().block_on(Self::check_permission(&perm)))
     }
 
-    /// 同步版 [`check_role`](Self::check_role)。
-    ///
-    /// # 参数
-    /// - `role`: 角色标识字符串。
-    ///
-    /// # 返回
-    /// 成功（持有角色）返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 未登录：`GarrisonError::NotLogin` 或降级为 `GarrisonError::NotRole`。
-    /// - 未持有角色：`GarrisonError::NotRole`。
-    /// - 不在 tokio multi_thread runtime 上下文：panic。
+    /// 同步版 [`check_role`](Self::check_role)；runtime 约束同 [`check_login_sync`](Self::check_login_sync)。
     pub fn check_role_sync(role: &str) -> GarrisonResult<()> {
         let role = role.to_string();
         task::block_in_place(|| Handle::current().block_on(Self::check_role(&role)))
     }
 
-    /// 同步版 [`check_access_token`](Self::check_access_token)。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 当前会话 token 有效（已登录）。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 未登录：`GarrisonError::NotLogin`。
-    /// - 不在 tokio multi_thread runtime 上下文：panic。
+    /// 同步版 [`check_access_token`](Self::check_access_token)；runtime 约束同 [`check_login_sync`](Self::check_login_sync)。
     pub fn check_access_token_sync() -> GarrisonResult<()> {
         task::block_in_place(|| Handle::current().block_on(Self::check_access_token()))
     }
 
-    /// 同步版 [`check_client_token`](Self::check_client_token)。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 当前会话 token 有效（已登录）。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 未登录：`GarrisonError::NotLogin`。
-    /// - 不在 tokio multi_thread runtime 上下文：panic。
+    /// 同步版 [`check_client_token`](Self::check_client_token)；runtime 约束同 [`check_login_sync`](Self::check_login_sync)。
     pub fn check_client_token_sync() -> GarrisonResult<()> {
         task::block_in_place(|| Handle::current().block_on(Self::check_client_token()))
     }
 
-    /// 同步版 [`check_temp_token`](Self::check_temp_token)。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 当前会话 token 有效（已登录）。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 未登录：`GarrisonError::NotLogin`。
-    /// - 不在 tokio multi_thread runtime 上下文：panic。
+    /// 同步版 [`check_temp_token`](Self::check_temp_token)；runtime 约束同 [`check_login_sync`](Self::check_login_sync)。
     pub fn check_temp_token_sync() -> GarrisonResult<()> {
         task::block_in_place(|| Handle::current().block_on(Self::check_temp_token()))
     }
 
-    /// 同步版 [`check_api_key`](Self::check_api_key)。
-    ///
-    /// # 参数
-    /// - `namespace`: 命名空间标识，用于隔离不同业务的 API Key。
-    ///
-    /// # 返回
-    /// - `Ok(())`: API Key 有效。
-    /// - `Err(GarrisonError::Session)`: `GarrisonManager` 未初始化 或 未设置当前请求上下文。
-    /// - `Err(GarrisonError::InvalidToken)`: API Key 不存在或已吊销。
-    /// - `Err(GarrisonError::ExpiredToken)`: API Key 已过期。
-    ///
-    /// # 兼容性
-    ///
-    /// `protocol-apikey` feature 关闭时，本方法返回 `Ok(())`。
-    ///
-    /// # 错误（runtime）
-    /// - 不在 tokio multi_thread runtime 上下文：panic。
+    /// 同步版 [`check_api_key`](Self::check_api_key)（`protocol-apikey` 关闭时返回 `Ok(())`）；runtime 约束同 [`check_login_sync`](Self::check_login_sync)。
     pub fn check_api_key_sync(namespace: &str) -> GarrisonResult<()> {
         let namespace = namespace.to_string();
         task::block_in_place(|| Handle::current().block_on(Self::check_api_key(&namespace)))
     }
 
-    /// 同步版 [`check_safe`](Self::check_safe)。
-    ///
-    /// 在当前 tokio runtime 上阻塞执行 async `check_safe`。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 已通过二级认证或未启用 MFA。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 未通过二级认证：`GarrisonError::NotSafe`。
-    /// - 不在 tokio multi_thread runtime 上下文：panic。
+    /// 同步版 [`check_safe`](Self::check_safe)；runtime 约束同 [`check_login_sync`](Self::check_login_sync)。
     pub fn check_safe_sync() -> GarrisonResult<()> {
         task::block_in_place(|| Handle::current().block_on(Self::check_safe()))
     }
 
-    /// 同步版 [`check_disable`](Self::check_disable)。
-    ///
-    /// 在当前 tokio runtime 上阻塞执行 async `check_disable`。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 账号未禁用。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
-    /// - 账号已禁用：`GarrisonError::DisableService`。
-    /// - 不在 tokio multi_thread runtime 上下文：panic。
+    /// 同步版 [`check_disable`](Self::check_disable)；runtime 约束同 [`check_login_sync`](Self::check_login_sync)。
     pub fn check_disable_sync() -> GarrisonResult<()> {
         task::block_in_place(|| Handle::current().block_on(Self::check_disable()))
     }
 
-    /// 获取当前 `GarrisonConfig` 引用（用于 extractor / middleware 等需要配置的场景）。
-    ///
-    /// # 返回
-    /// 全局配置的 `Arc` 引用。
-    ///
-    /// # 错误
-    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
+    /// 获取当前 `GarrisonConfig` 的 `Arc` 引用（供 extractor / middleware 使用）。
     pub fn config() -> GarrisonResult<Arc<GarrisonConfig>> {
         Ok(crate::manager::GarrisonManager::logic()?.config())
     }
 }
 
-// ============================================================================
 // spawn_cleanup_task：后台定期清理过期 token
-// ============================================================================
 
-/// 启动后台 task 定期清理 `login_token_map` 中的过期/已注销 token。
-///
-/// 每 `interval_secs` 秒调用一次 [`GarrisonSession::cleanup_expired_tokens`]。
-/// 清理失败时仅记录 `tracing::warn!`，不中断 task（错误显性化但不阻断后台清理）。
-///
-/// # 参数
-/// - `session`: `GarrisonSession` 的 `Arc` 引用。
-/// - `interval_secs`: 清理间隔秒数。`<= 0` 时返回 `None`（不启动 task）。
-///
-/// # 返回
-/// - `Some(JoinHandle)`: task 已启动，调用方可通过 `abort()` 取消或 `await` 等待结束。
-/// - `None`: `interval_secs <= 0`，未启动 task。
+/// 启动后台 task 每 `interval_secs` 秒清理 `login_token_map` 中过期/已注销 token；清理失败只记 `warn` 不中断；`interval_secs <= 0` 返回 `None`，否则返回 `Some(JoinHandle)`（可 abort 或 await）。
 pub fn spawn_cleanup_task(
     session: Arc<GarrisonSession>,
     interval_secs: i64,

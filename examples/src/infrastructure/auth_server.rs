@@ -5,11 +5,7 @@
 //!
 //! 对应模块：`src/server/mod.rs`（`auth-server` feature 开启时可用）。
 //!
-//! 提供两种运行模式：
-//! - `run()`：仅演示配置不调用 `listen()`，对应 `auth_server` bin
-//! - `serve()`：从 env 读取配置并阻塞 `listen()`，对应 `auth_server_serve` bin
-//!
-//! `serve()` 用于 E2E / 性能 / 渗透测试的真实进程部署。
+//! 提供两种运行模式：`run()` 仅演示配置不调用 `listen()`（对应 `auth_server` bin）；`serve()` 从 env 读取配置并阻塞 `listen()`（对应 `auth_server_serve` bin，用于 E2E / 性能 / 渗透测试）。
 //!
 //! 运行方式：
 //! ```sh
@@ -32,14 +28,8 @@ use garrison::server::GarrisonAuthServer;
 use garrison::stp::GarrisonInterface;
 use std::sync::Arc;
 
-/// 简单的 GarrisonInterface 实现（空权限/空角色）。
-///
-/// 用于 `auth_server_serve` bin 启动时初始化 GarrisonManager，
-/// 不依赖 `testing` feature 中的 MockInterface（生产 bin 不应使用 test-only 代码）。
-///
-/// 行为：所有 login_id 返回空权限列表 + 空角色列表，
-/// 因此 `check_permission` / `check_role` 调用时将拒绝（无任何权限/角色放行）。
-/// 真实生产场景应替换为业务方自己的 RBAC 实现。
+/// 简单的 GarrisonInterface 实现（空权限/空角色），供 `auth_server_serve` bin 启动时初始化。
+/// 生产 bin 不使用 testing feature 的 MockInterface；check_permission / check_role 将全部拒绝，真实场景应替换为业务方 RBAC 实现。
 struct SimpleInterface;
 
 #[async_trait]
@@ -52,16 +42,8 @@ impl GarrisonInterface for SimpleInterface {
     }
 }
 
-/// 初始化全局 GarrisonManager（创建 GarrisonDaoOxcache + 默认 Config + SimpleInterface）。
-///
-/// 供 `run()` 和 `serve()` 共用，确保 GarrisonManager 全局单例正确初始化。
-///
-/// # 失败处理
-/// - `GarrisonDaoOxcache::new()` 失败：返回底层错误（内存不足等）
-/// - `GarrisonManager::builder().build().await` 失败：返回 `AlreadyInitialized` 错误（单例已初始化）
-///
-/// # 返回
-/// `BackendEmbedded` 实例，委托 GarrisonManager 全局单例处理认证逻辑。
+/// 初始化全局 GarrisonManager（GarrisonDaoOxcache + 默认 Config + SimpleInterface），供 `run()` 和 `serve()` 共用。
+/// 单例已初始化时 builder 返回 `AlreadyInitialized`；返回 `BackendEmbedded`，委托全局单例处理认证逻辑。
 pub async fn setup_garrison_manager() -> GarrisonResult<BackendEmbedded> {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
     let config = Arc::new(GarrisonConfig::default_config());
@@ -75,12 +57,7 @@ pub async fn setup_garrison_manager() -> GarrisonResult<BackendEmbedded> {
     Ok(BackendEmbedded::new())
 }
 
-/// 运行 Auth Server 配置示例。
-///
-/// 演示：
-/// 1. 创建 BackendEmbedded（进程内认证后端）
-/// 2. 创建 GarrisonAuthServer 并配置端口、限速、API Key
-/// 3. 获取 external_router() 和 internal_router()（不调用 listen）
+/// 运行 Auth Server 配置示例：创建 BackendEmbedded、GarrisonAuthServer 配置端口/限速/API Key、获取双路由（不调用 listen）。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison Auth Server 配置示例 ===\n");
 
@@ -124,25 +101,13 @@ pub async fn run() -> GarrisonResult<()> {
 
 /// 启动 GarrisonAuthServer 双端口服务（阻塞）。
 ///
-/// 从 env 读取配置：
-/// - `GARRISON_EXTERNAL_PORT`（默认 8080）：外网端口（login/logout/refresh）
-/// - `GARRISON_INTERNAL_PORT`（默认 8081）：内网端口（check-*/get-*/kickout）
-/// - `EXAMPLE_INTERNAL_API_KEY`（必填）：内网 API Key，缺失时 fail-closed 退出码 1
-/// - `GARRISON_RATE_LIMIT`（默认 100）：每 IP 限速阈值（req/s）
-/// - `GARRISON_EXTERNAL_LOGIN_ENABLED`（默认 true）：是否启用外网登录端点。
-/// 示例默认开启以便演示/e2e 完整链路；框架 login 不校验凭证，
-/// 生产部署应保持默认关闭（`AuthServerConfig` 默认 false）或先注入凭证校验
+/// 从 env 读取配置：`GARRISON_EXTERNAL_PORT`（默认 8080）、`GARRISON_INTERNAL_PORT`（默认 8081）、
+/// `GARRISON_RATE_LIMIT`（默认 100）、`EXAMPLE_INTERNAL_API_KEY`（必填）、
+/// `GARRISON_EXTERNAL_LOGIN_ENABLED`（默认 true；库级默认 false，生产部署勿依赖示例默认开启）。
+/// 初始化全局单例后构造 `GarrisonAuthServer` 并 `listen()` 阻塞监听双端口。
 ///
-/// 调用 `setup_garrison_manager()` 初始化全局单例后，构造 `GarrisonAuthServer`
-/// 并 `server.listen().await` 阻塞监听双端口。
-///
-/// # stderr 输出格式
-/// 启动后向 stderr 输出 `listening on external=0.0.0.0:PORT internal=0.0.0.0:PORT`，
-/// 供测试代码（`tests/e2e/remote.rs`）解析端口。
-///
-/// # Fail-closed 策略
-/// `EXAMPLE_INTERNAL_API_KEY` 缺失时立即 `std::process::exit(1)`，
-/// 避免使用默认/空 API Key 启动不安全服务。
+/// 安全：`EXAMPLE_INTERNAL_API_KEY` 缺失时立即 `exit(1)`（fail-closed），避免空 API Key 启动；
+/// 启动后向 stderr 输出 `listening on external=0.0.0.0:PORT internal=0.0.0.0:PORT` 供 `tests/e2e/remote.rs` 解析端口。
 pub async fn serve() -> GarrisonResult<()> {
     // 1. 从 env 读取配置（端口/限流使用默认值，API Key 必填）
     let external_port: u16 = std::env::var("GARRISON_EXTERNAL_PORT")
@@ -164,8 +129,7 @@ pub async fn serve() -> GarrisonResult<()> {
         );
         std::process::exit(1);
     });
-    // C-1: 示例进程默认开启外网 login（演示/e2e 完整链路）；
-    // 库级默认为 false（secure-by-default），生产部署勿依赖此默认开启
+    // C-1: 示例进程默认开启外网 login（演示/e2e 完整链路）；库级默认 false（secure-by-default），生产部署勿依赖此默认开启
     let external_login_enabled = std::env::var("GARRISON_EXTERNAL_LOGIN_ENABLED")
         .ok()
         .map(|s| s.eq_ignore_ascii_case("true") || s == "1")
@@ -175,10 +139,8 @@ pub async fn serve() -> GarrisonResult<()> {
     let backend: Arc<dyn AuthBackend> = Arc::new(setup_garrison_manager().await?);
 
     // 3. 构造 GarrisonAuthServer 并启动（端口 0.0.0.0:PORT，listen() 内部绑定）
-    // tenant-isolation feature 启用时注入 HeaderTenantResolver，使
-    // tenant_resolution_middleware 解析 X-Tenant-Id header 进入 TENANT scope。
-    // 与 tests/e2e/mod.rs::start_e2e_server 行为保持一致，确保 spawn_child 模式
-    // 下跨租户隔离生效（测试依赖此行为）。
+    // tenant-isolation 启用时注入 HeaderTenantResolver，解析 X-Tenant-Id header 进入
+    // TENANT scope（与 tests/e2e/mod.rs::start_e2e_server 一致，保证跨租户隔离生效）。
     #[cfg(feature = "tenant-isolation")]
     let server = GarrisonAuthServer::new(backend)
         .with_external_port(external_port)

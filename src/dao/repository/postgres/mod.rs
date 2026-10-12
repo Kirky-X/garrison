@@ -4,32 +4,9 @@
 //! PostgreSQL Repository 实现。
 //!
 //! 复用 `sqlite` 模块的 backend-agnostic Repository 实现（通过 [`make_statement`](crate::dao::repository::make_statement)
-//! 自动转换 `?` → `$1, $2` 占位符）。本模块仅提供 postgres 命名空间下的类型别名，
-//! 实际逻辑见 `sqlite` 模块——`DbPool` 后端为 PostgreSQL 时，同一份代码自动走 PG 方言。
-//!
-//! ## 设计说明
-//!
-//! - PostgreSQL 后端无完整 PostgresRepository 设计。
-//! - 本实现参考 SqliteRepository 模式，schema 类型映射
-//! SQLite→Postgres（`INTEGER`→`BIGINT`, `AUTOINCREMENT`→`BIGSERIAL`,
-//! `TEXT`→`TEXT` 保持以兼容 `try_get::<String>`）。
-//! - Repository 代码零重复复用 sqlite 模块
-//! （该模块通过 `make_statement` 已是 backend-agnostic）。
-//!
-//! ## 10 个 Repository
-//!
-//! | 类型别名 | 原 SQLite 类型 | trait |
-//! |:---|:---|:---|
-//! | `DbnexusPostgresUserRepository` | `DbnexusUserRepository` | [`UserRepository`](crate::dao::repository::UserRepository) |
-//! | `DbnexusPostgresRoleRepository` | `DbnexusRoleRepository` | [`RoleRepository`](crate::dao::repository::RoleRepository) |
-//! | `DbnexusPostgresPermissionRepository` | `DbnexusPermissionRepository` | [`PermissionRepository`](crate::dao::repository::PermissionRepository) |
-//! | `DbnexusPostgresUserRoleRepository` | `DbnexusUserRoleRepository` | [`UserRoleRepository`](crate::dao::repository::UserRoleRepository) |
-//! | `DbnexusPostgresRolePermissionRepository` | `DbnexusRolePermissionRepository` | [`RolePermissionRepository`](crate::dao::repository::RolePermissionRepository) |
-//! | `DbnexusPostgresAuthMethodRepository` | `DbnexusAuthMethodRepository` | [`AuthMethodRepository`](crate::dao::repository::AuthMethodRepository) |
-//! | `DbnexusPostgresSessionRepository` | `DbnexusSessionRepository` | [`SessionRepository`](crate::dao::repository::SessionRepository) |
-//! | `DbnexusPostgresLoginLogRepository` | `DbnexusLoginLogRepository` | [`LoginLogRepository`](crate::dao::repository::LoginLogRepository) |
-//! | `DbnexusPostgresUserExtRepository` | `DbnexusUserExtRepository` | [`UserExtRepository`](crate::dao::repository::UserExtRepository) |
-//! | `DbnexusPostgresUserDeviceRepository` | `DbnexusUserDeviceRepository` | [`UserDeviceRepository`](crate::dao::repository::UserDeviceRepository) |
+//! 自动转换 `?` → `$1, $2` 占位符）；本模块仅提供 postgres 命名空间下的 10 个 Repository 类型别名，
+//! 实际逻辑见 `sqlite` 模块——`DbPool` 后端为 PostgreSQL 时，同一份代码自动走 PG 方言；
+//! schema 类型映射 SQLite→Postgres（`INTEGER`→`BIGINT`、`AUTOINCREMENT`→`BIGSERIAL`、`TEXT`→`TEXT` 保持以兼容 `try_get::<String>`）。
 //!
 //! ## 使用示例
 //!
@@ -49,11 +26,6 @@
 //! # Ok(())
 //! # }
 //! ```
-
-// 复用 sqlite 模块的 backend-agnostic Repository 实现。
-// sqlite 模块通过 make_statement(conn, sql, values) 在运行时根据 conn.get_database_backend()
-// 自动转换占位符（SQLite ? / PostgreSQL $1,$2），因此同一份代码两种后端通用。
-// 此处仅以 Postgres 命名空间 re-export，避免代码重复（不重复造轮子）。
 pub use crate::dao::repository::sqlite::{
     DbnexusAuthMethodRepository as DbnexusPostgresAuthMethodRepository,
     DbnexusLoginLogRepository as DbnexusPostgresLoginLogRepository,

@@ -13,10 +13,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{GarrisonJwtClaims, JwtHandler};
 
-/// JWT 签名密钥最小长度（字节）。
-///
-/// 256 位匹配 HS256 算法安全强度，与 OWASP / NIST SP 800-117 推荐一致。
-/// 短于此阈值的密钥可被暴力破解，导致 JWT 伪造。
+/// JWT 签名密钥最小长度（字节，256 位匹配 HS256 强度，OWASP / NIST SP 800-117）：
+/// 短于此阈值可被暴力破解，导致 JWT 伪造。
 const MIN_SECRET_BYTES: usize = 32;
 
 /// JWT 密钥材料（crate 内私有）：决定 sign/verify 的密钥来源与算法白名单。
@@ -85,10 +83,8 @@ pub enum JwkPublicKey {
     },
 }
 
-/// 校验签名算法与密钥类型匹配（fail-closed）。
-///
-/// 白名单：Hs→{HS256,HS384,HS512}、RsaPkcs1Pem→{RS256,RS384,RS512}、
-/// EcPem→{ES256,ES384}、EdPem→{EdDSA}。
+/// 校验签名算法与密钥类型匹配（fail-closed，白名单见
+/// [`KeyMaterial::allowed_algorithms`]）。
 pub(crate) fn validate_algorithm_match(
     key_material: &KeyMaterial,
     algorithm: Algorithm,
@@ -107,9 +103,8 @@ pub(crate) fn validate_algorithm_match(
 /// 提取公钥组件 `(n, e)` 的 base64url 编码（JWK 口径，jsonwebtoken
 /// `DecodingKey::from_rsa_components` 期望该格式）。
 ///
-/// 仅做 DER 结构解析（pkcs1/pkcs8 纯解析库），无任何 RSA 运算。
-/// PEM 剥壳：去掉 BEGIN/END 头尾行与空白，解码标准 Base64 得 DER 字节。
-/// PEM（RFC 7468）使用标准 Base64（非 URL-safe），无 padding 差异问题。
+/// 仅做 DER 结构解析（无 RSA 运算）：剥去 BEGIN/END 头尾行与空白，按 RFC 7468
+/// 标准 Base64（非 URL-safe）解码得 DER 字节。
 fn pem_to_der(pem: &str) -> GarrisonResult<Vec<u8>> {
     use base64::Engine;
 
@@ -211,9 +206,6 @@ fn extract_ed25519_seed(pem: &str) -> GarrisonResult<[u8; 32]> {
         .map_err(|_| GarrisonError::Internal("jwt-ed-seed-len::".to_string()))
 }
 
-/// 将 SEC1 未压缩公钥字节（`0x04 ‖ X ‖ Y`）拆分为 JWK 口径的 EC 公钥参数。
-/// 将 jsonwebtoken 验证错误映射为框架错误（错误消息只含错误类别，
-/// 不含 token 内容/密钥，防泄漏）。
 /// 从 RSA 私钥 PEM 构造验签密钥（提取公钥组件，无私钥运算）。
 fn rsa_decoding_key(pem: &str) -> GarrisonResult<DecodingKey> {
     let (n, e) = extract_rsa_public_components(pem)?;
@@ -239,6 +231,8 @@ fn ed_decoding_key(pem: &str) -> GarrisonResult<DecodingKey> {
         .map_err(|e| GarrisonError::Internal(format!("jwt-ed-key::{}", e)))
 }
 
+/// 将 jsonwebtoken 验证错误映射为框架错误（错误消息只含错误类别，不含
+/// token 内容/密钥，防泄漏）。
 fn map_verify_error(e: jsonwebtoken::errors::Error) -> GarrisonError {
     let msg = e.to_string();
     if msg.contains("ExpiredSignature") {
@@ -289,10 +283,7 @@ fn ec_jwk_from_sec1(sec1: &[u8]) -> GarrisonResult<JwkPublicKey> {
 }
 
 impl JwtHandler {
-    /// 创建新的 JWT 处理器，默认采用 HS256 算法。
-    ///
-    /// # 参数
-    /// - `secret`: 签名密钥（空字符串将在 `sign` 时拒绝）。
+    /// 创建新的 JWT 处理器，默认采用 HS256 算法（空密钥在 `sign` 时拒绝）。
     pub fn new(secret: impl Into<String>) -> Self {
         Self {
             secret: secret.into(),
@@ -308,12 +299,8 @@ impl JwtHandler {
     /// 设置签发租户绑定（签发时写入 claims 的 `tid` claim）。
     ///
     /// crate 内租户上下文签发路径专用（`GarrisonLogicDefault::generate_token`）：
-    /// 租户上下文存在时接入，签发的 token 携带签发租户 ID，供
-    /// `check_login_stateless` 从首次验签的 claims 直接读取校验（无需二次
-    /// 验签探测）。未调用时签发格式与既有 token 逐字节一致（不带 `tid`）。
-    ///
-    /// # 参数
-    /// - `tid`: 签发租户 ID。
+    /// `check_login_stateless` 从验签 claims 直接读取校验（无需二次验签探测）。
+    /// 未调用时签发格式与既有 token 逐字节一致（不带 `tid`）。
     #[must_use]
     pub(crate) fn with_tid(mut self, tid: i64) -> Self {
         self.tid = Some(tid);
@@ -346,11 +333,6 @@ impl JwtHandler {
     ///
     /// `stp/token` 与 `core/token::TokenStyleFactory` 共用本分派逻辑，消除
     /// 构造分派重复；算法名非法或算法与密钥材料不匹配时 fail-fast。
-    ///
-    /// # 参数
-    /// - `algorithm`: 算法名（config 白名单口径：HS256/HS384/HS512/RS256/ES256/EdDSA）。
-    /// - `jwt_secret`: 对称密钥（HS 系使用；非对称路径作占位）。
-    /// - `rsa_pem` / `ec_pem` / `ed_pem`: 对应私钥 PEM（未配置传 None）。
     pub(crate) fn from_algorithm_parts(
         algorithm: &str,
         jwt_secret: &str,
@@ -382,14 +364,6 @@ impl JwtHandler {
     ///
     /// 与 [`with_algorithm`](Self::with_algorithm) 的差异：算法与当前密钥材料
     /// 不匹配时立即返回错误，而非延迟到 `sign`/`verify` 时才拒绝。
-    ///
-    /// # 参数
-    /// - `algorithm`: 算法（必须 ∈ 密钥类型白名单，如 HS 密钥限
-    ///   HS256/HS384/HS512）。
-    ///
-    /// # 返回
-    /// - `Ok(Self)`: 算法合法。
-    /// - `Err(GarrisonError::Config)`: 算法与密钥类型不匹配。
     pub fn try_with_algorithm(mut self, algorithm: Algorithm) -> GarrisonResult<Self> {
         validate_algorithm_match(&self.key_material, algorithm)?;
         self.algorithm = algorithm;
@@ -401,20 +375,12 @@ impl JwtHandler {
     /// 保持既有 builder 签名（返回 `Self`）；算法与密钥材料不匹配时**不在
     /// 此处 panic**，而是在 `sign`/`verify` 入口被 `validate_algorithm_match`
     /// 拦截（fail-closed）。新代码推荐 [`try_with_algorithm`](Self::try_with_algorithm)。
-    ///
-    /// # 参数
-    /// - `algorithm`: 算法（如 `Algorithm::HS512`）。
     pub fn with_algorithm(mut self, algorithm: Algorithm) -> Self {
         self.algorithm = algorithm;
         self
     }
 
-    /// 设置设备标识。
-    ///
-    /// 签发时写入 claims 的 `device` 字段。
-    ///
-    /// # 参数
-    /// - `device`: 设备标识。
+    /// 设置设备标识（签发时写入 claims 的 `device` 字段）。
     pub fn with_device(mut self, device: impl Into<String>) -> Self {
         self.device = Some(device.into());
         self
@@ -426,14 +392,6 @@ impl JwtHandler {
     /// Debug 输出脱敏。切换后默认算法仍为 HS256，须配合
     /// [`try_with_algorithm`](Self::try_with_algorithm)（推荐）或
     /// [`with_algorithm`](Self::with_algorithm) 设置 RS 系算法。
-    ///
-    /// # 参数
-    /// - `pem`: RSA 私钥 PEM 字符串（`-----BEGIN PRIVATE KEY-----` 或
-    ///   `-----BEGIN RSA PRIVATE KEY-----`）。
-    ///
-    /// # 返回
-    /// - `Ok(Self)`: PEM 解析成功。
-    /// - `Err(GarrisonError::Config)`: PEM 解析失败。
     pub fn with_rsa_private_pem(mut self, pem: impl Into<String>) -> GarrisonResult<Self> {
         let pem = pem.into();
         // 构造期 fail-fast：PEM 可解析性在构造时验证，错误延迟到 sign 期难排查
@@ -448,13 +406,6 @@ impl JwtHandler {
     /// 构造期验证 PEM 可解析（fail-fast）；PEM 内容存于私有 `KeyMaterial`，
     /// Debug 输出脱敏。须配合 [`try_with_algorithm`](Self::try_with_algorithm)
     /// 设置 ES 系算法。
-    ///
-    /// # 参数
-    /// - `pem`: EC 私钥 PEM 字符串（PKCS#8，`-----BEGIN PRIVATE KEY-----`）。
-    ///
-    /// # 返回
-    /// - `Ok(Self)`: PEM 解析成功。
-    /// - `Err(GarrisonError::Config)`: PEM 解析失败。
     pub fn with_ec_pem(mut self, pem: impl Into<String>) -> GarrisonResult<Self> {
         let pem = pem.into();
         EncodingKey::from_ec_pem(pem.as_bytes())
@@ -468,13 +419,6 @@ impl JwtHandler {
     /// 构造期验证 PEM 可解析（fail-fast）；PEM 内容存于私有 `KeyMaterial`，
     /// Debug 输出脱敏。须配合 [`try_with_algorithm`](Self::try_with_algorithm)
     /// 设置 `EdDSA`。
-    ///
-    /// # 参数
-    /// - `pem`: Ed25519 私钥 PEM 字符串（PKCS#8）。
-    ///
-    /// # 返回
-    /// - `Ok(Self)`: PEM 解析成功。
-    /// - `Err(GarrisonError::Config)`: PEM 解析失败。
     pub fn with_ed_pem(mut self, pem: impl Into<String>) -> GarrisonResult<Self> {
         let pem = pem.into();
         // 构造期 fail-fast：PKCS#8 结构可解析性验证（种子长度校验在 verify 路径）
@@ -485,22 +429,10 @@ impl JwtHandler {
 
     /// 签发携带 `amr` / `auth_time` claim 的 JWT（MFA 因子账本映射入口）。
     ///
-    /// 与 [`sign`](Self::sign) 同一口径，额外写入账本映射结果：
-    /// `amr` 空切片或 `auth_time` 为 `None` 时对应 claim 不序列化（载荷与
-    /// 既有签发格式一致）。签发路径统一经由本方法或
-    /// `Token::generate_with_amr` 传入账本映射，禁止硬编码 claim。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `timeout`: 有效期（秒），不可为负数。
-    /// - `amr`: RFC 8176 认证方法引用（见 `crate::stp::mfa::amr_claim`）。
-    /// - `auth_time`: 主认证时刻（Unix 秒）；`None` 不写 claim。
-    ///
-    /// # 返回
-    /// - `Ok(String)`: JWT 字符串（三段 Base64URL 通过 `.` 连接）。
-    /// - `Err(GarrisonError::Config)`: 密钥为空、过短或 timeout 为负。
-    /// - `Err(GarrisonError::InvalidParam)`: `now + timeout` 溢出（timeout 过大）。
-    /// - `Err(GarrisonError::Internal)`: 签发失败。
+    /// 与 [`sign`](Self::sign) 同一口径，额外写入账本映射结果：`amr` 空切片或
+    /// `auth_time` 为 `None` 时对应 claim 不序列化（载荷与既有签发格式一致）。
+    /// 签发路径统一经本方法或 `Token::generate_with_amr` 传入账本映射，禁止
+    /// 硬编码 claim。
     pub fn sign_with_amr(
         &self,
         login_id: impl Into<String>,
@@ -530,16 +462,6 @@ impl JwtHandler {
     }
 
     /// 签发 JWT。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `timeout`: 有效期（秒），不可为负数。
-    ///
-    /// # 返回
-    /// - `Ok(String)`: JWT 字符串（三段 Base64URL 通过 `.` 连接）。
-    /// - `Err(GarrisonError::Config)`: 密钥为空、过短或 timeout 为负。
-    /// - `Err(GarrisonError::InvalidParam)`: `now + timeout` 溢出（timeout 过大）。
-    /// - `Err(GarrisonError::Internal)`: 签发失败。
     pub fn sign(&self, login_id: impl Into<String>, timeout: i64) -> GarrisonResult<String> {
         self.sign_with_kid(login_id, timeout, None)
     }
@@ -548,11 +470,6 @@ impl JwtHandler {
     ///
     /// `kid=None` 时与 [`sign`](Self::sign) 输出完全一致（既有签发格式不变）；
     /// `kid=Some` 时 header 携带密钥 ID，供验证方按 kid 路由选择验签钥。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `timeout`: 有效期（秒），不可为负数。
-    /// - `kid`: 写入 JWT header 的密钥 ID（RFC 7515 §4.1.4）。
     pub fn sign_with_kid(
         &self,
         login_id: impl Into<String>,
@@ -682,14 +599,8 @@ impl JwtHandler {
 
     /// 校验 JWT 并返回 Claims。
     ///
-    /// # 参数
-    /// - `token`: JWT 字符串。
-    ///
-    /// # 返回
-    /// - `Ok(GarrisonJwtClaims)`: 校验成功。
-    /// - `Err(GarrisonError::Config)`: secret 为空。
-    /// - `Err(GarrisonError::ExpiredToken)`: token 已过期。
-    /// - `Err(GarrisonError::InvalidToken)`: 签名/格式/算法校验失败。
+    /// 失败分类：secret 为空/过短返回 `Config`，过期返回 `ExpiredToken`，
+    /// 签名/格式/算法校验失败返回 `InvalidToken`。
     pub fn verify(&self, token: &str) -> GarrisonResult<GarrisonJwtClaims> {
         // 空密钥/过短密钥检查仅对称路径适用（与 sign 一致）：config 层允许
         // 非对称算法下 jwt_secret 留空作占位（密钥强度由 PEM 决定），无条件
@@ -708,15 +619,7 @@ impl JwtHandler {
         Ok(decoded.claims)
     }
 
-    /// 刷新 JWT：解析旧 token 的 claims → 签发新 token。
-    ///
-    /// # 参数
-    /// - `token`: 旧 JWT 字符串（需可成功 verify）。
-    /// - `new_timeout`: 新 token 的有效期（秒）。
-    ///
-    /// # 返回
-    /// - `Ok(String)`: 新 JWT 字符串。
-    /// - `Err(GarrisonError)`: 旧 token 校验失败或新 token 签发失败。
+    /// 刷新 JWT：验证旧 token 后以其 claims 签发新 token。
     pub fn refresh(&self, token: &str, new_timeout: i64) -> GarrisonResult<String> {
         let claims = self.verify(token)?;
         self.sign(claims.login_id, new_timeout)
@@ -728,9 +631,6 @@ impl JwtHandler {
     /// （如找回密码 ActionToken 的 `purpose` claim）的模块经本方法以同一
     /// 密钥/算法签发。空密钥与最小密钥长度检查、算法-密钥类型匹配校验
     /// 与 `sign` 完全一致（fail-closed）。
-    ///
-    /// # 参数
-    /// - `claims`: 自定义 claims（`exp` 等时效字段由调用方负责写入）。
     pub fn sign_custom<T: serde::Serialize>(&self, claims: &T) -> GarrisonResult<String> {
         self.ensure_symmetric_secret_usable()?;
         validate_algorithm_match(&self.key_material, self.algorithm)?;
@@ -782,10 +682,9 @@ impl JwtHandler {
 }
 
 // Drop 零化仅在 `protocol-zeroize` feature 下编译：启用后密钥内存在 handler 析构时
-// 被覆写；未启用时为普通 `String` 释放，内存内容不保证被清除（可能残留于已释放
-// 堆块 / swap / core dump）。保持 feature 结构（零开销默认构建），对密钥卫生有
-// 要求的部署应显式启用 `protocol-zeroize`；`secret` 字段的可读性风险见
-// `JwtHandler::secret` 字段文档。
+// 被覆写；未启用时随普通 String 释放、内容不保证被清除（可能残留已释放堆块 /
+// swap / core dump）。保持 feature 结构（零开销默认构建）；`secret` 字段的可读性
+// 风险见 `JwtHandler::secret` 字段文档。
 #[cfg(feature = "protocol-zeroize")]
 impl Drop for JwtHandler {
     fn drop(&mut self) {

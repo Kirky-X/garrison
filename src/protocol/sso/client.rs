@@ -1,12 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! `SsoClient` 实现模块。
-//!
-//! mod.rs 接口隔离：impl 块与顶层 `fn sign_ticket` / `fn verify_ticket_signature` 不允许留在 `mod.rs`。
-//!
-//! 包含 HMAC-SHA256 ticket 签名工具与 `SsoClient` 方法实现。
-//! `server.rs` 通过 `use super::client::{sign_ticket, verify_ticket_signature}` 直接引用。
+//! `SsoClient` 实现（接口隔离：impl 与顶层签名函数不放 `mod.rs`），含 HMAC-SHA256 ticket 签名工具；
+//! `server.rs` 经 `use super::client::{sign_ticket, verify_ticket_signature}` 引用。
 
 use super::SsoClient;
 use super::SsoTicketData;
@@ -25,13 +21,10 @@ type HmacSha256 = Hmac<Sha256>;
 /// SSO ticket 默认 TTL（秒）。
 const DEFAULT_TICKET_TTL: u64 = 60;
 
-/// HMAC secret 最小长度（字节），与 qrlogin / protocol-sign 的 32 字节下限对齐
-/// （安全审计 GAR-15：短 secret 可被持票攻击者离线爆破后伪造票据签名）。
+/// HMAC secret 最小长度（字节）：与 qrlogin / protocol-sign 的 32 字节下限对齐（短 secret 可被持票攻击者离线爆破后伪造票据签名）。
 pub(crate) const MIN_SECRET_LEN: usize = 32;
 
-/// 计算 ticket 随机部分的 HMAC-SHA256 签名（供 SsoClient / DefaultSsoServer 共用）。
-///
-/// 签名输入为 `random_part`，输出为 base64 编码的 HMAC-SHA256。
+/// 计算 ticket 随机部分的 HMAC-SHA256 签名（base64 输出；供 `SsoClient` / `DefaultSsoServer` 共用）。
 pub(crate) fn sign_ticket(secret: &str, random_part: &str) -> GarrisonResult<String> {
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
         .map_err(|e| GarrisonError::Internal(format!("sso-ticket-hmac-init::{}", e)))?;
@@ -39,9 +32,7 @@ pub(crate) fn sign_ticket(secret: &str, random_part: &str) -> GarrisonResult<Str
     Ok(BASE64_STANDARD.encode(mac.finalize().into_bytes()))
 }
 
-/// 验证 ticket 的 HMAC 签名（供 SsoClient / DefaultSsoServer 共用）。
-///
-/// 返回 `Ok(random_part)` 验证通过，`Err` 表示签名无效或格式错误。
+/// 验证 ticket 的 HMAC 签名，通过返回 `Ok(random_part)`（供 `SsoClient` / `DefaultSsoServer` 共用）。
 pub(crate) fn verify_ticket_signature(secret: &str, ticket: &str) -> GarrisonResult<String> {
     let (random_part, sig_b64) = ticket
         .split_once('.')
@@ -62,16 +53,7 @@ pub(crate) fn verify_ticket_signature(secret: &str, ticket: &str) -> GarrisonRes
 impl SsoClient {
     /// 创建新的 SSO 客户端。
     ///
-    /// # 参数
-    /// - `dao`: DAO 抽象层实例。
-    /// - `secret`: HMAC 签名密钥（用于 ticket 防伪造，禁止空字符串，
-    ///   且长度不得少于 `MIN_SECRET_LEN`（32 字节）。
-    ///
-    /// # 错误
-    /// - `secret` 为空时返回 `GarrisonError::InvalidParam`（`sso-client-secret-empty`）；
-    /// - `secret` 短于 32 字节时返回 `GarrisonError::InvalidParam`
-    ///   （`sso-client-secret-too-short`，安全审计 GAR-15）。
-    ///   均不 panic，可恢复配置错误。
+    /// `secret` 不可为空且不少于 `MIN_SECRET_LEN`（32 字节），否则返回 `GarrisonError::InvalidParam`（可恢复配置错误，不 panic）。
     pub fn new(dao: Arc<dyn GarrisonDao>, secret: impl Into<String>) -> GarrisonResult<Self> {
         let secret: String = secret.into();
         if secret.is_empty() {
@@ -99,28 +81,16 @@ impl SsoClient {
         self
     }
 
-    /// 计算 ticket 随机部分的 HMAC 签名（委托到模块级 `sign_ticket`）。
     fn sign_ticket(&self, random_part: &str) -> GarrisonResult<String> {
         sign_ticket(&self.secret, random_part)
     }
 
-    /// 验证 ticket 的 HMAC 签名（委托到模块级 `verify_ticket_signature`）。
     fn verify_ticket_signature(&self, ticket: &str) -> GarrisonResult<String> {
         verify_ticket_signature(&self.secret, ticket)
     }
 
-    /// 签发 SSO ticket。
-    ///
-    /// 生成 `{64_hex_random}.{hmac_b64}` 格式的签名 ticket，
-    /// 存储到 `garrison:sso:ticket:<ticket>`，value 为 JSON `{login_id, client_id}`，
-    /// TTL 为 60 秒（可配置）。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `client_id`: 客户端标识。
-    ///
-    /// # 返回
-    /// `{64_hex_random}.{hmac_b64}` 格式的 ticket 字符串。
+    /// 签发 SSO ticket：生成 `{64_hex_random}.{hmac_b64}` 签名票据，存 `garrison:sso:ticket:<ticket>`
+    /// （value 为 JSON `{login_id, client_id}`，TTL 默认 60 秒可配置）。
     pub async fn issue_ticket(
         &self,
         login_id: impl Into<String>,
@@ -142,37 +112,15 @@ impl SsoClient {
         Ok(ticket)
     }
 
-    /// 校验 SSO ticket。
+    /// 校验 SSO ticket：先验签（防 DAO 攻破后伪造），再 `get` 读取并校验 `client_id`，最后 `get_and_delete` 原子消费（消除 TOCTOU）。
     ///
-    /// 校验逻辑：
-    /// 1. 验证 ticket 的 HMAC 签名（防止 DAO 攻破后伪造）；
-    /// 2. `get` 读取票据（不删除），校验 `client_id` 是否匹配；
-    /// 3. `client_id` 匹配后，`get_and_delete` 原子消费票据（消除 TOCTOU）。
-    ///
-    /// # 参数
-    /// - `ticket`: 票据字符串（格式 `{random}.{hmac}`）。
-    /// - `client_id`: 客户端标识。
-    ///
-    /// # 返回
-    /// - `Ok(login_id)`: 校验成功。
-    /// - `Err(GarrisonError::InvalidToken)`: 签名无效、票据不存在、已过期、client_id 不匹配、或被并发消费。
-    ///
-    /// # client_id 不匹配时不消费票据
-    ///
-    /// 与"防爆破"设计相反，本实现优先用户友好：错误 `client_id` 不删除票据，
-    /// 允许正确 `client_id` 后续重试。适用于客户端配置错误、用户输错等场景。
-    ///
-    /// # 原子性保证（）
-    ///
-    /// `client_id` 校验通过后使用 `GarrisonDao::get_and_delete` 原子消费票据，
-    /// 消除 TOCTOU 竞态。并发调用同一 ticket（同 client_id）仅一个返回 `Ok`，
-    /// 其他返回 `InvalidToken`（"已被并发消费"）。
+    /// `client_id` 不匹配时不消费票据（优先用户友好，允许正确 `client_id` 后续重试）；
+    /// 并发调用同一 ticket（同 `client_id`）仅一个返回 `Ok`，其他返回 `InvalidToken`（已被并发消费）。
     pub async fn validate_ticket(&self, ticket: &str, client_id: i64) -> GarrisonResult<String> {
-        // 先验签，防止 DAO 攻破后伪造 ticket
         let _random_part = self.verify_ticket_signature(ticket)?;
 
         let key = format!("garrison:sso:ticket:{}", ticket);
-        // 步骤 1: 非原子 get，用于校验 client_id（不删除票据）
+        // 非原子 get 校验 client_id（不删除票据）
         let value = self
             .dao
             .get(&key)
@@ -184,14 +132,12 @@ impl SsoClient {
         let data: SsoTicketData = serde_json::from_str(&value)
             .map_err(|e| GarrisonError::Internal(format!("sso-ticket-deserialize::{}", e)))?;
         if data.client_id != client_id {
-            // client_id 不匹配：不消费票据，允许正确 client_id 后续重试。
-            // 安全修复：错误消息固定，不回显存储/调用方 client_id（防止枚举有效 client_id）。
+            // client_id 不匹配：不消费票据（允许正确 client_id 重试）；错误消息固定，不回显 client_id（防枚举）。
             return Err(GarrisonError::InvalidToken(
                 "sso-ticket-client-id-mismatch::".to_string(),
             ));
         }
-        // 步骤 2: 原子 get_and_delete 消费票据（消除 TOCTOU 竞态）
-        // 并发场景：多个同 client_id 请求都通过步骤 1，但仅一个 get_and_delete 返回 Some
+        // 原子消费票据消除 TOCTOU：并发同 client_id 请求仅一个成功
         let consumed = self
             .dao
             .get_and_delete(&key)
@@ -205,9 +151,7 @@ impl SsoClient {
         Ok(data.login_id)
     }
 
-    /// 销毁 SSO ticket。
-    ///
-    /// 从 dao 中删除指定票据。即使票据不存在也返回 `Ok(())`（幂等）。
+    /// 销毁 SSO ticket（幂等：票据不存在也返回 `Ok(())`）。
     pub async fn destroy_ticket(&self, ticket: &str) -> GarrisonResult<()> {
         let key = format!("garrison:sso:ticket:{}", ticket);
         self.dao.delete(&key).await

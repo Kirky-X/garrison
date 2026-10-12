@@ -1,15 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 契约组断言函数库（同一把尺子）。
+//! 契约组断言函数库（同一把尺子）：每个函数断言一个能力层下所有 `GarrisonDao` 实现都应满足的行为属性；
+//! 键名由调用方传入的 `prefix` 隔离（套件用 `<backend>:`），断言消息均携带 `prefix` 便于失败定位。
 //!
-//! 每个函数断言一个能力层下所有 `GarrisonDao` 实现都应满足的行为属性；
-//! 键名一律由调用方传入的 `prefix` 隔离（套件用 `<backend>:`，兼容共享存储
-//! 后端），断言消息均携带 `prefix` 便于失败定位。
-//!
-//! 断言按安全属性组织：并发层的「恰一赢家（SETNX 防并发绑定重复）/
-//! 一次性消费（GETDEL 防票券双花）/计数无丢失与无跨越式递减（防限速绕过）/
-//! CAS 单调（防备份码双花、Digest nc 回退）」即 TOCTOU/双花缓解的持续回归门禁。
+//! 断言按安全属性组织：并发层的「恰一赢家（SETNX 防并发绑定重复）/ 一次性消费（GETDEL 防票券双花）/
+//! 计数无丢失与无跨越式递减（防限速绕过）/ CAS 单调（防备份码双花、Digest nc 回退）」即 TOCTOU/双花缓解的持续回归门禁。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -32,14 +28,8 @@ macro_rules! expect_err {
 // basic 层：单线程 KV / 计数 / rename 契约
 // ---------------------------------------------------------------------------
 
-/// basic 层契约：核心 KV 语义 + 计数器 + rename。
-///
-/// 覆盖：set→get 往返与覆盖、缺键读、delete 幂等、update 保留 TTL 且缺键报错、
-/// expire 续期与缺键报错、永久键、get_with_ttl 三态、incr 初始化/续增/解析与
-/// 溢出显性报错、decr 零值/归零删除/缺键不创建/保留 TTL、CAS-if-greater 单调、
-/// rename 移键保值且缺键报 `InvalidParam`（trait 文档契约）。
+/// basic 层契约：核心 KV 语义 + 计数器 + rename（含各错误路径显性化；rename 缺键报 `InvalidParam`）。
 pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
-    // 1) set→get 往返精确值；二次 set 覆盖
     let k = format!("{prefix}basic:roundtrip");
     expect_ok(prefix, "set", dao.set(&k, "v1", 3600).await);
     assert_eq!(
@@ -54,7 +44,6 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         "[{prefix}] 二次 set 应覆盖值"
     );
 
-    // 2) get 缺键 Ok(None)
     let missing = format!("{prefix}basic:missing");
     assert_eq!(
         expect_ok(prefix, "get 缺键", dao.get(&missing).await),
@@ -62,7 +51,6 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         "[{prefix}] get 缺键应返回 Ok(None)"
     );
 
-    // 3) delete 移除键；delete 缺键 Ok(())（幂等）
     let k = format!("{prefix}basic:delete");
     expect_ok(prefix, "set", dao.set(&k, "v", 60).await);
     expect_ok(prefix, "delete", dao.delete(&k).await);
@@ -73,7 +61,6 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     );
     expect_ok(prefix, "delete 缺键", dao.delete(&missing).await);
 
-    // 4) update 改值；update 缺键 Err(Dao)
     let k = format!("{prefix}basic:update");
     expect_ok(prefix, "set", dao.set(&k, "old", 3600).await);
     expect_ok(prefix, "update", dao.update(&k, "new").await);
@@ -90,7 +77,6 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         "update 缺键应返回 Err(Dao)"
     );
 
-    // 5) expire 延长后 get_timeout 返回 Some(≤新 TTL)；expire 缺键 Err(Dao)
     let k = format!("{prefix}basic:expire");
     expect_ok(prefix, "set", dao.set(&k, "v", 1).await);
     expect_ok(prefix, "expire", dao.expire(&k, 3600).await);
@@ -108,7 +94,6 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         "expire 缺键应返回 Err(Dao)"
     );
 
-    // 6) set(ttl=0) 与 set_permanent 后 get_timeout 为 None（永久）
     let k1 = format!("{prefix}basic:perm_set_zero");
     expect_ok(prefix, "set(ttl=0)", dao.set(&k1, "v", 0).await);
     assert_eq!(
@@ -124,7 +109,6 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         "[{prefix}] set_permanent 应为永久键"
     );
 
-    // 7) get_with_ttl 三态：TTL 键 / 永久键 / 缺键
     let kt = format!("{prefix}basic:get_with_ttl_key");
     expect_ok(prefix, "set", dao.set(&kt, "v", 60).await);
     let got = expect_ok(prefix, "get_with_ttl", dao.get_with_ttl(&kt).await);
@@ -151,7 +135,6 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         "[{prefix}] get_with_ttl 缺键应返回 None"
     );
 
-    // 8) incr 新键初始化为 1 且 TTL 已设；续增；非数值与 u64 溢出显性报错
     let k = format!("{prefix}basic:incr");
     assert_eq!(
         expect_ok(prefix, "incr 新键", dao.incr(&k, 60).await),
@@ -185,7 +168,6 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     let r = dao.incr(&kmax, 60).await;
     expect_err!(prefix, r, GarrisonError::Dao(_), "u64 溢出应返回 Err(Dao)");
 
-    // 9) decr：缺键返回 0 且不创建键；存量 0 返回 0；1→0 删除键；>0 保留 TTL
     let kmissing = format!("{prefix}basic:decr_missing");
     assert_eq!(
         expect_ok(prefix, "decr 缺键", dao.decr(&kmissing).await),
@@ -228,8 +210,6 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         "[{prefix}] 递减后值 >0 应保留 TTL 元数据"
     );
 
-    // 10) compare_and_update_if_greater：缺键+更大值 true 且 TTL 已设；
-    //     更小值 false 且值不变；非数值 Err(Dao)
     let k = format!("{prefix}basic:caui");
     assert!(
         expect_ok(
@@ -268,7 +248,6 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         "非数值值 compare_and_update_if_greater 应返回 Err(Dao)"
     );
 
-    // 11) rename 后旧键消失新键保留值；rename 缺键 Err(InvalidParam)（trait 文档契约）
     let old = format!("{prefix}basic:rename_old");
     let new = format!("{prefix}basic:rename_new");
     expect_ok(prefix, "set", dao.set(&old, "v", 60).await);
@@ -298,10 +277,8 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
 // atomic 层：原子原语单线程语义
 // ---------------------------------------------------------------------------
 
-/// atomic 层契约：set_if_absent / get_and_delete / compare_and_swap 的
-/// 单线程原子语义（并发竞态见 `run_concurrent`）。
+/// atomic 层契约：set_if_absent / get_and_delete / compare_and_swap 的单线程原子语义（并发竞态见 `run_concurrent`）。
 pub async fn run_atomic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
-    // set_if_absent 新键：true + 值写入 + TTL 已设
     let k = format!("{prefix}atomic:sia");
     assert!(
         expect_ok(
@@ -430,19 +407,11 @@ pub async fn run_atomic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
 // concurrent 层：真并发竞态（安全属性回归门禁）
 // ---------------------------------------------------------------------------
 
-/// concurrent 层契约：multi_thread 真并发下的原子性不变式。
-///
-/// 断言精确计数（不放宽为 ≥1）：
-/// 1. set_if_absent 16 任务同键：恰 1 个 `Ok(true)`（SETNX 恰一赢家，防并发绑定重复）；
-/// 2. get_and_delete 16 任务同键：恰 1 个 `Some`（GETDEL 一次性消费，防票券双花）；
-/// 3. incr 32 任务：返回值恰为 `1..=32` 的一个排列（无丢失更新）；
-/// 4. decr 16 任务（预置 16）：返回值（递减后的新值）恰为 `0..=15` 的排列
-///    （无跨越式递减——SMS 限速 flaky 的回归特征签名），终态键被删除；
-/// 5. compare_and_update_if_greater 16 任务互异值：终值恰为 max（并发下更大值
-///    永不被更小值覆盖——Digest nc 单调性）；
-/// 6. compare_and_swap 16 任务同 expected：恰 1 个 true，终值等于唯一赢家。
+/// concurrent 层契约：multi_thread 真并发下的原子性不变式，断言精确计数（不放宽为 ≥1）：
+/// set_if_absent 16 任务恰 1 个 `Ok(true)`（SETNX 恰一赢家）／get_and_delete 16 任务恰 1 个 `Some`（GETDEL 防票券双花）／
+/// incr 32 任务返回值恰为 `1..=32` 排列（无丢失更新）／decr 16 任务（预置 16）返回值恰为 `0..=15` 排列（无跨越式递减，SMS 限速 flaky 回归签名）且终态键删除／
+/// compare_and_update_if_greater 16 任务互异值终值恰为 max（Digest nc 单调）／compare_and_swap 16 任务同 expected 恰 1 个 true，终值等于唯一赢家。
 pub async fn run_concurrent(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
-    // 1) set_if_absent：16 任务并发同键（预不存在），恰 1 个 Ok(true)
     let k = format!("{prefix}concurrent:sia");
     let mut handles = Vec::with_capacity(16);
     for i in 0..16u32 {
@@ -475,7 +444,6 @@ pub async fn run_concurrent(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         "[{prefix}] 回读值应等于恰好一个任务写入的 winner_*，实际: {v:?}"
     );
 
-    // 2) get_and_delete：16 任务并发同键（预置值），恰 1 个 Some
     let k = format!("{prefix}concurrent:gd");
     expect_ok(prefix, "set", dao.set(&k, "ticket", 3600).await);
     let mut handles = Vec::with_capacity(16);
@@ -502,7 +470,6 @@ pub async fn run_concurrent(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         "[{prefix}] get_and_delete 并发其余应返回 None，实际 {got_none}"
     );
 
-    // 3) incr：32 任务各 1 次，返回值集合恰为 1..=32 的一个排列，终值 get==32
     let k = format!("{prefix}concurrent:incr");
     let mut handles = Vec::with_capacity(32);
     for _ in 0..32 {
@@ -529,9 +496,6 @@ pub async fn run_concurrent(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         "[{prefix}] incr 并发终值应为 32"
     );
 
-    // 4) decr：预置值 16 后 16 任务各 1 次，返回值（递减后的新值）恰为
-    //    0..=15 的一个排列（无跨越式递减——SMS 限速 flaky 的回归特征签名），
-    //    终态键被删除
     let k = format!("{prefix}concurrent:decr");
     expect_ok(prefix, "set", dao.set(&k, "16", 3600).await);
     let mut handles = Vec::with_capacity(16);
@@ -559,7 +523,6 @@ pub async fn run_concurrent(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         "[{prefix}] decr 并发归零后键应被删除"
     );
 
-    // 5) compare_and_update_if_greater：16 任务各写互异值，终值恰为 max
     let k = format!("{prefix}concurrent:caui");
     let mut handles = Vec::with_capacity(16);
     for i in 0..16u64 {
@@ -582,8 +545,6 @@ pub async fn run_concurrent(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         "[{prefix}] 并发 CAS-if-greater 终值应恰为 max(全部输入)（nc 单调性）"
     );
 
-    // 6) compare_and_swap：16 任务同 expected（预置初值）各写互异新值，
-    //    恰 1 个 true，终值等于唯一赢家
     let k = format!("{prefix}concurrent:cas");
     expect_ok(prefix, "set", dao.set(&k, "start", 3600).await);
     let mut handles = Vec::with_capacity(16);
@@ -620,32 +581,25 @@ pub async fn run_concurrent(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
 // ttl 层：墙钟过期契约（每测试仅 1 次 sleep，沿用既有惯例 set(ttl=2)+sleep(3s)）
 // ---------------------------------------------------------------------------
 
-/// ttl 层契约：过期即不存在、update/rename/incr 保留原窗口不重置、
-/// `expire(k, 0)` 转永久。所有子断言共用一次 `sleep(3s)` 窗口：
-/// ttl=1 的键必然消失，ttl=2 的键在原窗口后消失（1s 余量，与既有
-/// `oxcache_update_preserves_ttl` 等惯例一致），`expire(0)` 的键存活。
+/// ttl 层契约：过期即不存在、update/rename/incr 保留原窗口不重置、`expire(k, 0)` 转永久；
+/// 子断言共用一次 `sleep(3s)` 窗口（ttl=1 必消失、ttl=2 原窗口后消失，1s 余量）。
 pub async fn run_ttl(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
-    // 1) set(ttl=1)：原窗口后 get 与 get_timeout 均为 None（不复活）
     let ka = format!("{prefix}ttl:expire");
     expect_ok(prefix, "set", dao.set(&ka, "v", 1).await);
 
-    // 2) set(ttl=2) + update：update 不重置 TTL
     let kb = format!("{prefix}ttl:update_keeps_ttl");
     expect_ok(prefix, "set", dao.set(&kb, "v1", 2).await);
     expect_ok(prefix, "update", dao.update(&kb, "v2").await);
 
-    // 3) set(ttl=2) + rename：rename 保留原 TTL
     let kc = format!("{prefix}ttl:rename_src");
     let kc2 = format!("{prefix}ttl:rename_dst");
     expect_ok(prefix, "set", dao.set(&kc, "v", 2).await);
     expect_ok(prefix, "rename", dao.rename(&kc, &kc2).await);
 
-    // 4) set(ttl=1) + expire(k, 0)：转永久，原窗口过后键仍存活
     let kd = format!("{prefix}ttl:expire_zero_permanent");
     expect_ok(prefix, "set", dao.set(&kd, "v", 1).await);
     expect_ok(prefix, "expire(0)", dao.expire(&kd, 0).await);
 
-    // 5) set(ttl=2) + incr：已存在键 incr 保留原窗口不重置
     let ke = format!("{prefix}ttl:incr_keeps_ttl");
     expect_ok(prefix, "set", dao.set(&ke, "0", 2).await);
     assert_eq!(
@@ -692,8 +646,7 @@ pub async fn run_ttl(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
 // keys 层：glob 扫描契约
 // ---------------------------------------------------------------------------
 
-/// keys 层契约：`*` 与 `?` glob 匹配精确计数、无匹配返回空 Vec、
-/// delete/rename 后扫描结果同步。
+/// keys 层契约：`*` 与 `?` glob 匹配精确计数、无匹配返回空 Vec、delete/rename 后扫描结果同步。
 pub async fn run_keys(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     let k1 = format!("{prefix}keys:a1");
     let k2 = format!("{prefix}keys:a2");
@@ -769,15 +722,9 @@ pub async fn run_keys(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
 // refresh token 轮换层契约（db-sqlite + protocol-jwt）
 // ---------------------------------------------------------------------------
 
-/// RefreshTokenRotation SQL 层契约（同一把尺子，跑 sqlite 实例）。
-///
-/// 覆盖四组新操作的行为属性：
-/// 1. `rotated_at` 写入契约——issue 子代/rotate 子代恒为 NULL，被消费旧记录
-///    在原子消费时写入正值时刻；
-/// 2. 重用三级分类契约——RecentPrev（1 跳）/ OrphanedBranch（>1 跳）/
-///    StaleLineage（无存活血缘）/ 存活与未知 hash 均为 `None`；
-/// 3. 宽限窗口契约——窗口内重放兑现同一新 token，预算耗尽转盗用处置；
-/// 4. 旋转失败补偿契约——INSERT 注入失败后无残留子代、原链仍可用。
+/// RefreshTokenRotation SQL 层契约（同一把尺子，跑 sqlite 实例）：
+/// `rotated_at` 写入（子代恒 NULL、被消费旧记录写正值时刻）／重用三级分类（RecentPrev / OrphanedBranch / StaleLineage / 存活与未知 hash 为 `None`）／
+/// 宽限窗口（窗口内重放兑现同一新 token，预算耗尽转盗用处置）／旋转失败补偿（INSERT 注入失败后无残留子代、原链仍可用）。
 ///
 /// 调用方负责先对 `pool` 执行迁移（`GarrisonMigration::migrate_core`）。
 #[cfg(all(feature = "db-sqlite", feature = "protocol-jwt"))]
@@ -965,14 +912,8 @@ pub async fn run_refresh_token_rotation(prefix: &str, pool: &dbnexus::DbPool) {
     assert_eq!(consumed, 1, "[{prefix}] 重试轮换应正常消费原 token");
 }
 
-/// WebAuthn 凭据 repository 契约组（dbnexus sqlite 实例；postgres 方言
-/// 经 make_statement 复用同实现，集成回归由真实 PG E2E 承接）。
-///
-/// WebauthnCredentialRepository 为 SQL 直连层（非 `GarrisonDao` KV 门面），
-/// 与 [`run_refresh_token_rotation`] 同模式挂同一把尺子。断言按行为属性：
-/// create 唯一约束兜底并发绑定（重复绑定 `AlreadyBound` 且不泄露他人行）、
-/// find/list 全字段 roundtrip、update 持久化（缺失显性 `InvalidParam`）、
-/// delete 幂等。
+/// WebAuthn 凭据 repository 契约组（dbnexus sqlite；postgres 方言经 make_statement 复用同实现）：
+/// create 唯一约束兜底并发绑定（重复绑定 `AlreadyBound` 且不泄露他人行）、find/list 全字段 roundtrip、update 持久化（缺失显性 `InvalidParam`）、delete 幂等。
 #[cfg(all(feature = "db-sqlite", feature = "protocol-webauthn"))]
 pub async fn run_webauthn_credential_repository(prefix: &str, pool: &dbnexus::DbPool) {
     use crate::dao::repository::sqlite::DbnexusWebauthnCredentialRepository;

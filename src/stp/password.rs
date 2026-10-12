@@ -2,13 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! PasswordLogic trait — 密码登录契约。
-//! 本 trait 承接密码登录 1 个方法。
-//! super-trait 为 [`SessionLogic`]（密码校验通过后调用
-//! [`login`](SessionLogic::login) 签发 token）。
-//!
-//! # LoginId 形式：全栈使用 String/&str
-//!
-//! `login_id` 参数为 `&str`（字符串形式，对象安全）。
+//! super-trait 为 [`SessionLogic`]（校验通过后调用 [`login`](SessionLogic::login) 签发 token）；`login_id` 参数为 `&str`（对象安全）。
 
 use super::GarrisonLogicDefault;
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
@@ -34,41 +28,12 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 /// 密码逻辑 trait，定义密码登录契约。
-///
-/// # 默认实现
-///
-/// [`login_with_password`](Self::login_with_password) 默认返回 `NotImplemented`
-/// （未启用 `account-credential` + `db-sqlite` feature）。
-/// 由 `GarrisonLogicDefault` 的 impl 覆写为：
-/// 1) `UserRepository::find_by_username` 查询用户
-/// 2) `PasswordHasher` 校验密码（verify 通过且存量哈希档位低于当前配置时
-///    惰性重哈希落库并广播 [`GarrisonEvent::PasswordRehashed`]，尽力而为）
-/// 3) 调用 [`SessionLogic::login`] 签发 token
-///
-/// # 安全约束
-///
-/// 用户不存在与密码错误统一返回 `InvalidParam("stp-invalid-password")`，
-/// 日志和事件 reason 统一为 "invalid_credentials"，
-/// 防止攻击者通过返回值或日志差异进行用户枚举。
+/// 默认返回 `NotImplemented`，`GarrisonLogicDefault` 覆写为：查用户 → 校验密码（verify 通过且档位低于配置时惰性重哈希落库并广播 [`GarrisonEvent::PasswordRehashed`]）→ [`SessionLogic::login`] 签发 token。
+/// 安全约束：用户不存在与密码错误统一返回 `InvalidParam("stp-invalid-password")`，日志和事件 reason 统一 "invalid_credentials"，防止用户枚举。
 #[async_trait]
 pub trait PasswordLogic: SessionLogic {
     /// 密码登录：校验密码后签发 token。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识引用（字符串形式，作为 username 查询 `UserRepository`）。
-    /// - `password`: 明文密码（仅校验时临时持有，不存储）。
-    ///
-    /// # 返回
-    /// - `Ok(token)`: 密码校验通过，返回新签发的 token 字符串。
-    ///
-    /// # 错误
-    /// - 未启用 `account-credential` + `db-sqlite` feature：`GarrisonError::NotImplemented`。
-    /// - 未注入 `password_hasher`：`GarrisonError::Config("password hasher not configured")`。
-    /// - 未注入 `user_repository`：`GarrisonError::Config("user repository not configured")`。
-    /// - 用户不存在 / 密码错误：`GarrisonError::InvalidParam("stp-invalid-password")`
-    /// （不泄露具体原因，防止用户枚举）。
-    /// - 哈希格式不支持：`GarrisonError::InvalidParam("unsupported hash format")`。
-    /// - DAO 查询失败：透传 `GarrisonError::Dao`。
+    /// 未启用 `account-credential` + `db-sqlite` 返回 `NotImplemented`；未注入 hasher/repo 返回 `Config`；用户不存在 / 密码错误 / 哈希格式不支持统一 `InvalidParam("stp-invalid-password")`（不泄露原因）；DAO 失败透传 `Dao`。
     async fn login_with_password(
         &self,
         _login_id: &str,
@@ -81,17 +46,10 @@ pub trait PasswordLogic: SessionLogic {
     }
 }
 
-// ============================================================================
 // GarrisonLogicDefault impl
-// ============================================================================
 
-/// dummy Argon2id 哈希，模块级惰性生成一次。
-///
-/// 参数与 [`crate::account::credential::password::Argon2Hasher`] 默认一致
-/// （Argon2id, m=19456, t=2, p=1）。「用户不存在」分支对它执行一次等价开销的
-/// verify（结果丢弃），使该分支与「密码错误」分支耗时同量级，消除响应时间
-/// 双峰分布——否则攻击者可借此枚举有效用户名（统一错误消息只防住了消息差，
-/// 未防住时序差）。
+/// dummy Argon2id 哈希，模块级惰性生成一次，参数与 [`Argon2Hasher`](crate::account::credential::password::Argon2Hasher) 默认一致（Argon2id, m=19456, t=2, p=1）。
+/// 「用户不存在」分支对它执行一次等价开销的 verify（结果丢弃），使耗时与「密码错误」分支同量级，消除响应时间双峰——否则可借时序差枚举有效用户名（统一错误消息只防住消息差）。
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 static DUMMY_ARGON2_HASH: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     use crate::account::credential::password::{Argon2Hasher, PasswordHasher as _};
@@ -100,19 +58,10 @@ static DUMMY_ARGON2_HASH: std::sync::LazyLock<String> = std::sync::LazyLock::new
         .expect("固定输入的 Argon2 hash 生成恒成功（H-1 时序对齐 dummy）")
 });
 
-// ============================================================================
 // 账号维度密码爆破锁定（firewall-bruteforce）
-// ============================================================================
 
-/// 账号维度失败计数键。
-///
-/// 键空间说明：`bf:acct:<login_id>:*` 与 brute_force.rs 的 IP 维度（`bf:<ip>:*`）
-/// 同属 `DaoKeyPrefix::BruteForce` 但以 `acct:` 段隔离（登录方可控的 login_id
-/// 不得污染 IP 计数键）；与 hooks 的 `fw:acct:*` **无关**——`hooks::reset` 不覆盖
-/// 本键，解锁仅靠 TTL 自然过期或手动删除 `bf:acct:<login_id>:lock`。
-// 唯一生产调用方 login_with_password 门控在 account-credential + db-sqlite 之下：
-// 仅 firewall-bruteforce 而无数据库的组合（如 compile 矩阵 tenant-bruteforce）中
-// 函数编译但调用方不在，按仓库 cfg_attr 先例定向豁免 dead_code。
+/// 账号维度失败计数键：`bf:acct:<login_id>:*` 与 brute_force.rs 的 IP 维度（`bf:<ip>:*`）同属 `DaoKeyPrefix::BruteForce` 但以 `acct:` 段隔离（防登录方可控的 login_id 污染 IP 计数键）；与 hooks 的 `fw:acct:*` 无关，解锁仅靠 TTL 过期或手动删除 `bf:acct:<login_id>:lock`。
+// 唯一生产调用方 login_with_password 门控在 account-credential + db-sqlite 之下：仅 firewall-bruteforce 的组合中函数编译但调用方不在，按仓库 cfg_attr 先例定向豁免 dead_code。
 #[cfg_attr(
     not(all(feature = "account-credential", feature = "db-sqlite")),
     allow(dead_code)
@@ -193,15 +142,10 @@ async fn reset_password_failures(dao: &Arc<dyn GarrisonDao>, login_id: &str) {
 
 #[async_trait]
 impl PasswordLogic for GarrisonLogicDefault {
-    /// 密码登录实现：校验密码后调用 [`login`](Self::login) 签发 token。
-    ///
-    /// 1) UserRepository 查询 2) PasswordHasher 校验 3) login 签发。
-    /// 安全约束：用户不存在与密码错误统一返回 `InvalidParam("stp-invalid-password")`，真实原因记录在 tracing 日志。
+    /// 密码登录实现：UserRepository 查询 → PasswordHasher 校验 → login 签发；用户不存在与密码错误统一 `InvalidParam("stp-invalid-password")`，真实原因只进 tracing 日志。
     #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     async fn login_with_password(&self, login_id: &str, password: &str) -> GarrisonResult<String> {
-        // 账号维度爆破锁定前置短路（firewall-bruteforce 启用时；未启用无锁定）。
-        // 姿态：锁定检查失败降级放行（与 record/reset 的 warn 降级一致）——锁定是
-        // 加速器，最终防线是密码校验本身；fail-closed 会把 DAO 抖动放大为登录全拒。
+        // 账号维度锁定前置短路（仅 firewall-bruteforce）：锁定检查失败降级放行——锁定是加速器，最终防线是密码校验，fail-closed 会把 DAO 抖动放大为登录全拒。
         #[cfg(feature = "firewall-bruteforce")]
         match is_password_locked(self.session.dao(), login_id).await {
             Ok(true) => {
@@ -226,11 +170,8 @@ impl PasswordLogic for GarrisonLogicDefault {
             .as_ref()
             .ok_or_else(|| GarrisonError::Config("stp-user-repo-not-configured::".to_string()))?;
 
-        // 1. 查询用户（login_id 转字符串作为 username 查询）
         let username = login_id.to_string();
-        // tenant_id 不再硬编码 0，
-        // 从租户上下文读取真实租户（多租户部署按调用方租户查询；
-        // 无租户上下文时回退默认租户 0，与旧单租户行为兼容）
+        // 从租户上下文读真实租户（多租户按调用方租户查询），无上下文回退默认租户 0
         let tenant_id = crate::context::tenant::TENANT
             .try_get()
             .map(|ctx| ctx.tenant_id)
@@ -243,19 +184,15 @@ impl PasswordLogic for GarrisonLogicDefault {
         let user = match user {
             Some(u) => u,
             None => {
-                // 先执行一次与真实校验等价开销的 dummy Argon2 verify（结果丢弃），
-                // 对齐「用户不存在」与「密码错误」两分支的响应耗时（见 DUMMY_ARGON2_HASH）。
-                // verify_pooled：慢哈希下沉 spawn_blocking + 并发令牌池闸门。
+                // 与真实校验等价开销的 dummy Argon2 verify（结果丢弃），对齐「用户不存在」与「密码错误」分支耗时（见 DUMMY_ARGON2_HASH）；verify_pooled 把慢哈希下沉 spawn_blocking 并受并发 permit 池约束。
                 let _verified_dummy = verify_pooled(hasher, password, &DUMMY_ARGON2_HASH).await?;
 
-                // 日志和事件统一为 "invalid_credentials"，
-                // 不区分 user_not_found/wrong_password，防止日志泄露用户存在性
+                // 日志和事件统一为 "invalid_credentials"，不区分 user_not_found/wrong_password，防止日志泄露用户存在性
                 tracing::warn!(
                     login_id = login_id,
                     reason = EventReason::InvalidCredentials.as_str(),
                     "login_with_password failed"
                 );
-                // 广播 LoginFailure 事件
                 #[cfg(feature = "listener")]
                 if let Some(lm) = &self.listener_manager {
                     lm.broadcast(&GarrisonEvent::LoginFailure {
@@ -277,14 +214,8 @@ impl PasswordLogic for GarrisonLogicDefault {
             },
         };
 
-        // 2. 校验密码（哈希数据类错误与密码错误统一返回，防账号存在预言机——T019）
-        // verify_and_rehash_pooled：Argon2/bcrypt 为 50-300ms 级纯 CPU 慢哈希，下沉
-        // spawn_blocking 避免阻塞 tokio worker；有池时受并发 permit 约束
-        // （登录风暴下 Argon2 内存驻留上界 = permits × m_cost），verify 与
-        // 惰性重哈希共用同一 permit 占槽。
-        // 基础设施错误（join/池关闭）显性传播；数据类错误（InvalidParam——PHC
-        // 解析失败与 verify 期算法未知/参数越界/salt 或 hash 段无效）并入统一
-        // 防枚举分支。
+        // 校验密码：哈希数据类错误与密码错误统一返回，防账号存在预言机；verify_and_rehash_pooled 把 50-300ms 级纯 CPU 慢哈希下沉 spawn_blocking 避免阻塞 tokio worker，
+        // 有池时受并发 permit 约束（内存驻留上界 = permits × m_cost），verify 与惰性重哈希共用 permit；基础设施错误（join/池关闭）显性传播，数据类错误并入统一防枚举分支。
         let (verified, rehash) = match verify_and_rehash_pooled(
             hasher,
             password,
@@ -294,10 +225,7 @@ impl PasswordLogic for GarrisonLogicDefault {
         {
             Ok(v) => v,
             Err(GarrisonError::InvalidParam(hash_err)) => {
-                // 哈希数据类错误（存量数据异常）：统一返回 invalid-password，
-                // 不以专用错误码泄露账号存在性。畸形哈希使 Argon2 解析处快速失败
-                //（毫秒级），此处补一次等价开销的 dummy verify 对齐「密码错误」
-                // 分支的耗时轮廓（复查修复：消除时序双峰）。
+                // 存量哈希畸形在解析处毫秒级失败，补一次等价开销 dummy verify 对齐「密码错误」分支耗时；统一返回 invalid-password，不以专用错误码泄露账号存在性。
                 let _verified_dummy = verify_pooled(hasher, password, &DUMMY_ARGON2_HASH).await?;
                 tracing::warn!(
                     login_id = login_id,
@@ -305,7 +233,7 @@ impl PasswordLogic for GarrisonLogicDefault {
                     error = %hash_err,
                     "login_with_password: unsupported password hash format"
                 );
-                // 哈希数据类错误同样计入失败计数（T013 接线）
+                // 哈希数据类错误同样计入失败计数
                 #[cfg(feature = "firewall-bruteforce")]
                 if let Err(record_err) = record_password_failure(self.session.dao(), login_id).await
                 {
@@ -320,14 +248,11 @@ impl PasswordLogic for GarrisonLogicDefault {
         };
 
         if !verified {
-            // 日志和事件统一为 "invalid_credentials"，
-            // 不区分 user_not_found/wrong_password，防止日志泄露用户存在性
             tracing::warn!(
                 login_id = login_id,
                 reason = EventReason::InvalidCredentials.as_str(),
                 "login_with_password failed"
             );
-            // 广播 LoginFailure 事件
             #[cfg(feature = "listener")]
             if let Some(lm) = &self.listener_manager {
                 lm.broadcast(&GarrisonEvent::LoginFailure {
@@ -337,7 +262,6 @@ impl PasswordLogic for GarrisonLogicDefault {
                 })
                 .await;
             }
-            // 失败计数：密码错误
             #[cfg(feature = "firewall-bruteforce")]
             if let Err(e) = record_password_failure(self.session.dao(), login_id).await {
                 tracing::warn!(login_id = login_id, error = %e,
@@ -348,16 +272,11 @@ impl PasswordLogic for GarrisonLogicDefault {
             ));
         }
 
-        // 密码校验通过：清零失败计数
         #[cfg(feature = "firewall-bruteforce")]
         reset_password_failures(self.session.dao(), login_id).await;
 
-        // 2.5 惰性升级（尽力而为）：存量哈希档位低于当前配置时重哈希落库。
-        // 本路径无事务上下文（登录主流程的各写操作各自独立提交），事件无法经
-        // GarrisonEventTx::on_commit 绑定「提交后派发」，故退 Immediately 档
-        // （listener_manager.broadcast）并以「先落库成功、后广播」的顺序保证
-        // 审计不虚报；落库失败仅记日志不影响登录结果——升级是安全加固，
-        // 不能反过来成为准入条件（存量弱档位账户在存储故障期仍须可登录）。
+        // 惰性升级（尽力而为）：无事务上下文，退 Immediately 档（listener_manager.broadcast），先落库成功后广播保证审计不虚报；
+        // 落库失败仅日志不影响登录——升级是安全加固，不能反过来成为准入条件（存量弱档位账户在存储故障期仍须可登录）。
         if let Some(new_hash) = rehash {
             match repo
                 .update(
@@ -391,7 +310,6 @@ impl PasswordLogic for GarrisonLogicDefault {
             }
         }
 
-        // 3. 调用 login 签发 token（触发 plugin/listener auto-wire）
         self.login(login_id, &LoginParams::default()).await
     }
 }
@@ -412,12 +330,8 @@ mod tests {
     use crate::strategy::GarrisonPermissionStrategy;
     use std::sync::Arc;
 
-    /// 构造 GarrisonLogicDefault（不注入 hasher/repo，测试 Config 错误路径）。
-    /// 位于 mod tests 顶层：供 default_impl_coverage 与顶层锁定回归测试共用
-    /// （diting B7——锁定测试不能依赖 listener 门）。
-    // 使用方测试均门控在 account-credential + db-sqlite（部分再加 firewall-bruteforce
-    // /listener）之下：缺这两者的组合（compile 矩阵 default/minimal 等）助手
-    // 编译但无调用方，按仓库 cfg_attr 先例定向豁免 dead_code。
+    /// 构造 GarrisonLogicDefault（不注入 hasher/repo，测试 Config 错误路径），供 default_impl_coverage 与顶层锁定回归测试共用（锁定测试不能依赖 listener 门）。
+    // 使用方测试均门控在 account-credential + db-sqlite（部分再加 firewall-bruteforce/listener）之下：缺者的 compile 矩阵组合中助手编译但无调用方，按仓库 cfg_attr 先例定向豁免 dead_code。
     #[cfg_attr(
         not(all(feature = "account-credential", feature = "db-sqlite")),
         allow(dead_code)
@@ -442,8 +356,7 @@ mod tests {
         )
     }
 
-    // 与 make_logic_without_creds 同理：使用方测试均门控在
-    // account-credential + db-sqlite 之下，缺者定向豁免。
+    // 同 make_logic_without_creds：缺组合时定向豁免 dead_code。
     #[cfg_attr(
         not(all(feature = "account-credential", feature = "db-sqlite")),
         allow(dead_code)
@@ -461,10 +374,8 @@ mod tests {
         }
     }
 
-    /// 账号维度爆破锁定：连续失败达阈值（BruteForceConfig::default 5 次）后，
-    /// 正确密码也被拒（FirewallBlocked）；锁定期内不再消耗校验资源。
-    // 位于 mod tests 顶层而非 default_impl_coverage（后者 cfg 含 listener）——
-    // 锁定回归在最小 feature 组合（无 listener）下也必须编译执行（diting B7）。
+    /// 账号维度爆破锁定：连续失败达阈值（BruteForceConfig::default 5 次）后，正确密码也被拒（FirewallBlocked）；锁定期内不再消耗校验资源。
+    // 放 mod tests 顶层而非 default_impl_coverage（后者 cfg 含 listener）：最小 feature 组合下锁定回归也必须编译执行。
     #[cfg(all(
         feature = "firewall-bruteforce",
         feature = "account-credential",
@@ -496,7 +407,6 @@ mod tests {
             );
         }
 
-        // 阈值后的正确密码：锁定拒绝
         let result = logic.login_with_password("alice", correct).await;
         assert!(
             matches!(result, Err(GarrisonError::FirewallBlocked(ref msg)) if msg.contains("stp-password-account-locked")),
@@ -505,10 +415,7 @@ mod tests {
         );
     }
 
-    /// 存量哈希 verify 期数据类错误（`$scrypt$`：`PasswordHash::new` 可解析但
-    /// Argon2 校验期拒绝）→ 与密码错误统一返回 `stp-invalid-password`（响应
-    /// 不可区分，T019）且失败计数递增（T013 不断链）；基础设施错误（join/池
-    /// 关闭）仍显性传播（由 verify_pooled 层测试锁定）。
+    /// 存量哈希 verify 期数据类错误（`$scrypt$`：可解析但 Argon2 校验期拒绝）→ 与密码错误统一返回 `stp-invalid-password`（响应不可区分）且失败计数递增；基础设施错误（join/池关闭）仍显性传播。
     #[cfg(all(
         feature = "firewall-bruteforce",
         feature = "account-credential",
@@ -564,8 +471,7 @@ mod tests {
         );
     }
 
-    /// 最小 mock：实现 `GarrisonCore` + `SessionLogic`（9 必需方法）。
-    /// `PasswordLogic` 1 个方法有默认实现，空 impl 即可获得默认行为。
+    /// 最小 mock：实现 `GarrisonCore` + `SessionLogic`；`PasswordLogic` 有默认实现，空 impl 即可。
     struct MockPassword {
         config: Arc<GarrisonConfig>,
     }
@@ -624,9 +530,7 @@ mod tests {
         assert!(matches!(result, Err(GarrisonError::NotImplemented(_))));
     }
 
-    // ========================================================================
     // MockPassword SessionLogic 方法覆盖测试
-    // ========================================================================
 
     /// MockPassword::login 返回 "mock-token"。
     #[tokio::test]
@@ -678,10 +582,8 @@ mod tests {
         assert!(Arc::ptr_eq(&c1, &c2), "两次 config() 应返回同一 Arc");
     }
 
-    // ========================================================================
     // GarrisonLogicDefault impl 覆盖测试（cfg-gated: account-credential + db-sqlite）
     // 覆盖 hasher/repo 未注入 + listener_manager 广播 LoginFailure 路径
-    // ========================================================================
 
     #[cfg(all(
         feature = "account-credential",
@@ -723,13 +625,10 @@ mod tests {
             }
         }
 
-        /// 未注入 password_hasher 时返回 Config("stp-password-hasher-not-configured")。
-        ///
-        /// 覆盖 password.rs 第 86-89 行 `hasher.as_ref().ok_or_else(...)` 路径。
+        /// 未注入 password_hasher 时返回 Config("stp-password-hasher-not-configured")（覆盖 `hasher.as_ref().ok_or_else(...)` 路径）。
         #[tokio::test]
         async fn login_with_password_missing_hasher_returns_config_error() {
             let logic = make_logic_without_creds();
-            // 注入 repo 但不注入 hasher
             let repo: Arc<dyn UserRepository> = Arc::new(MockUserRepository::new());
             let logic = logic.with_user_repository(repo);
 
@@ -741,13 +640,10 @@ mod tests {
             );
         }
 
-        /// 未注入 user_repository 时返回 Config("stp-user-repo-not-configured")。
-        ///
-        /// 覆盖 password.rs 第 90-93 行 `repo.as_ref().ok_or_else(...)` 路径。
+        /// 未注入 user_repository 时返回 Config("stp-user-repo-not-configured")（覆盖 `repo.as_ref().ok_or_else(...)` 路径）。
         #[tokio::test]
         async fn login_with_password_missing_repo_returns_config_error() {
             let logic = make_logic_without_creds();
-            // 注入 hasher 但不注入 repo
             let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
             let logic = logic.with_password_hasher(hasher);
 
@@ -759,9 +655,7 @@ mod tests {
             );
         }
 
-        /// 用户不存在 + listener_manager 注入 → 广播 LoginFailure 事件。
-        ///
-        /// 覆盖 password.rs 第 113-121 行 `#[cfg(feature = "listener")] lm.broadcast(LoginFailure)` 路径。
+        /// 用户不存在 + listener_manager 注入 → 广播 LoginFailure 事件（覆盖 `lm.broadcast(LoginFailure)` 路径）。
         #[cfg(feature = "listener")]
         #[tokio::test]
         async fn login_with_password_user_not_found_broadcasts_login_failure() {
@@ -794,7 +688,6 @@ mod tests {
                 "应广播 1 次 LoginFailure 事件，实际广播: {} 次",
                 failure_count
             );
-            // 验证事件 reason 为 "invalid_credentials"（防用户枚举）
             if let Some(GarrisonEvent::LoginFailure {
                 login_id, reason, ..
             }) = events.first()
@@ -808,9 +701,7 @@ mod tests {
             }
         }
 
-        /// 密码错误 + listener_manager 注入 → 广播 LoginFailure 事件。
-        ///
-        /// 覆盖 password.rs 第 145-153 行 `#[cfg(feature = "listener")] lm.broadcast(LoginFailure)` 路径。
+        /// 密码错误 + listener_manager 注入 → 广播 LoginFailure 事件（覆盖 `lm.broadcast(LoginFailure)` 路径）。
         #[cfg(feature = "listener")]
         #[tokio::test]
         async fn login_with_password_wrong_password_broadcasts_login_failure() {
@@ -895,14 +786,12 @@ mod tests {
             );
         }
 
-        /// 哈希格式不支持（存量数据异常）→ 与密码错误统一返回
-        /// InvalidParam("stp-invalid-password")（T019：消除账号存在预言机）。
+        /// 哈希格式不支持（存量数据异常）→ 与密码错误统一返回 InvalidParam("stp-invalid-password")，消除账号存在预言机。
         #[tokio::test]
         async fn login_with_password_unsupported_hash_format_returns_error() {
             let logic = make_logic_without_creds();
             let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
             let mock_repo = MockUserRepository::new();
-            // 插入格式非法的 password_hash（非 Argon2/Bcrypt 格式）
             mock_repo.insert(make_user_row("1002", "not-a-valid-hash-format"));
             let repo: Arc<dyn UserRepository> = Arc::new(mock_repo);
 
@@ -918,16 +807,12 @@ mod tests {
             );
         }
 
-        /// 哈希格式非法分支也执行一次 dummy verify（H-1 时序对齐），锁定不因重构静默丢失。
-        ///
-        /// 畸形哈希在解析处即失败（毫秒级），与「密码错误」分支（完整 Argon2 开销）形成
-        /// 耗时双峰——该分支可区分「账号存在但哈希畸形」与「密码错误」，故必须补齐等价开销。
+        /// 哈希格式非法分支也执行一次 dummy verify：畸形哈希在解析处毫秒级失败，与「密码错误」分支的完整 Argon2 开销形成耗时双峰，必须补齐等价开销（锁定不因重构静默丢失）。
         #[tokio::test]
         async fn login_with_password_bad_hash_format_performs_dummy_verify() {
             use std::sync::atomic::{AtomicUsize, Ordering};
 
-            /// 计数哈希器：对畸形存量哈希返回数据类错误（对齐 Argon2Hasher 的 PHC
-            /// 解析失败语义），其余输入记一次 verify 调用并返回不匹配。
+            /// 计数哈希器：对畸形存量哈希返回数据类错误（对齐 Argon2Hasher 的 PHC 解析失败语义），其余输入记一次 verify 并返回不匹配。
             struct FormatErrorCountingHasher {
                 verify_calls: AtomicUsize,
             }
@@ -975,9 +860,7 @@ mod tests {
             );
         }
 
-        /// 用户存在 + 密码正确 → 返回 Ok(token)。
-        ///
-        /// 覆盖 password.rs 第 158-160 行成功登录路径（调用 login 签发 token）。
+        /// 用户存在 + 密码正确 → 返回 Ok(token)（成功登录路径，调用 login 签发）。
         #[tokio::test]
         async fn login_with_password_correct_credentials_returns_token() {
             let logic = make_logic_without_creds();
@@ -1001,9 +884,7 @@ mod tests {
             assert!(!token.is_empty(), "返回的 token 不应为空字符串");
         }
 
-        // ====================================================================
         // 登录期惰性升级（verify_and_rehash 接线）
-        // ====================================================================
 
         /// 低档位存量哈希（m=8MiB < 配置 19MiB）登录成功：库内 hash 已升级为
         /// 当前配置档位（可用原密码 verify），并广播 PasswordRehashed 事件。
@@ -1181,10 +1062,7 @@ mod tests {
             );
         }
 
-        /// 模拟 UserRepository 查询失败的 mock。
-        ///
-        /// `find_by_username` 始终返回 Dao 错误，用于测试 password.rs 第 100 行
-        /// `map_err(|e| GarrisonError::Dao(...))` 错误传播路径。
+        /// 模拟 UserRepository 查询失败的 mock：所有方法返回 Dao 错误，用于测试 `map_err(|e| GarrisonError::Dao(...))` 错误传播路径。
         struct ErrorUserRepository;
 
         #[async_trait]
@@ -1234,9 +1112,7 @@ mod tests {
             }
         }
 
-        /// login_with_password 在 UserRepository 查询失败时传播 Dao 错误。
-        ///
-        /// 覆盖 password.rs 第 100 行 `map_err(|e| GarrisonError::Dao(...))` 错误传播路径。
+        /// login_with_password 在 UserRepository 查询失败时传播 Dao 错误（覆盖 `map_err(...)` 路径）。
         #[tokio::test]
         async fn login_with_password_repo_query_error_propagates_dao_error() {
             let logic = make_logic_without_creds();
@@ -1271,7 +1147,6 @@ mod tests {
             }
         }
 
-        // 账号维度爆破锁定回归测试移至 mod tests 顶层（diting B7）——
-        // 本嵌套模块 cfg 含 listener，最小 feature 组合下测试不得随之消失。
+        // 锁定回归测试位于 mod tests 顶层：本嵌套模块 cfg 含 listener，最小 feature 组合下测试不能随之消失。
     }
 }

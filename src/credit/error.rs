@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Credit 计量错误类型。
-//!
-//! 提供 `CreditError` 枚举与 `CreditResult` 类型别名。
+//! Credit 计量错误类型：`CreditError` 枚举与 `CreditResult` 类型别名。
 
 use std::fmt;
 

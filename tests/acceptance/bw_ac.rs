@@ -3,9 +3,8 @@
 
 //! BW-AC 验收标准追溯移植。
 //!
-//! 原测试中 OIDC 会话创建、设备踢出、锁定等场景已有验收矩阵等价用例
-//! （见各域文件），本模块逐字移植其余用例（语义保持、可强化未弱化），
-//! 保留 Gherkin 注释。
+//! OIDC 会话创建、设备踢出、锁定等场景已在各验收域有等价用例，本模块逐字移植其余
+//! 用例（语义保持、可强化未弱化）。
 
 use garrison::dao::InMemoryDao;
 use garrison::error::{GarrisonError, GarrisonResult};
@@ -29,7 +28,7 @@ where
     TENANT.scope(ctx, f).await
 }
 
-/// 可配置权限/角色列表的接口替身（原 acceptance_criteria.rs helper 移入）。
+/// 可配置权限/角色列表的接口替身。
 struct MockInterface {
     permissions: Vec<String>,
     roles: Vec<String>,
@@ -45,7 +44,7 @@ impl GarrisonInterface for MockInterface {
     }
 }
 
-/// 初始化全局 GarrisonManager 并返回 InMemoryDao（原 helper 移入，语义不变）。
+/// 初始化全局 GarrisonManager 并返回 InMemoryDao。
 async fn init_manager(permissions: Vec<String>, roles: Vec<String>) -> Arc<InMemoryDao> {
     let dao = Arc::new(InMemoryDao::new());
     let mut config = GarrisonConfig::default_config();
@@ -67,12 +66,11 @@ async fn init_manager(permissions: Vec<String>, roles: Vec<String>) -> Arc<InMem
 // 受保护 API 访问时 Token-Session TTL 续期
 // ============================================================================
 
-/// ：受保护 API 访问时 Token-Session TTL 续期）。
+/// 受保护 API 访问时 Token-Session TTL 续期。
 ///
-/// # spec 偏差说明
-///
-/// spec 期望 TTL 续期 30min（1800 秒），但 `GarrisonSession::touch` 重置 TTL 为
-/// `config.timeout`（默认 2592000 秒）。本测试验证 touch 操作重置 TTL 的行为。
+/// # API 偏差
+/// spec 期望 TTL 续期 30min（1800 秒），但 `GarrisonSession::touch` 实际重置 TTL 为
+/// `config.timeout`（默认 2592000 秒）；本测试验证 touch 重置 TTL 的现行行为。
 #[tokio::test]
 #[serial]
 async fn bw_ac_002_protected_api_renews_token_session_ttl() {
@@ -118,7 +116,7 @@ async fn bw_ac_002_protected_api_renews_token_session_ttl() {
 // /005: 角色/权限校验失败返回 403
 // ============================================================================
 
-/// ：无角色访问 `#[check_role("admin")]` 返回 403）。
+/// 无角色访问 `#[check_role("admin")]` 返回 403。
 #[tokio::test]
 #[serial]
 async fn bw_ac_004_role_check_returns_403() {
@@ -176,7 +174,7 @@ async fn bw_ac_005_permission_check_returns_403() {
 // oxcache 内存后端完整流程
 // ============================================================================
 
-/// ：oxcache 后端切换为 Memory 后功能正常）。
+/// oxcache 后端切换为 Memory 后功能正常。
 #[tokio::test]
 #[serial]
 async fn bw_ac_006_oxcache_memory_backend_works() {
@@ -226,7 +224,7 @@ async fn bw_ac_006_oxcache_memory_backend_works() {
 // dbnexus SQLite 后端完整流程（原始 SQL 直插）
 // ============================================================================
 
-/// ：dbnexus 后端切换为 SQLite 后功能正常）。
+/// dbnexus 后端切换为 SQLite 后功能正常。
 #[cfg(feature = "db-sqlite")]
 #[tokio::test]
 #[serial]
@@ -331,11 +329,10 @@ async fn bw_ac_007_dbnexus_sqlite_backend_works() {
 
 /// logout() 后原 Token 失效、Token-Session 从 DAO 删除。
 ///
-/// # spec 偏差说明
-///
-/// 1. spec 期望 `GarrisonError::NotLogin`，但实际 `check_login` 在 token session
-/// 不存在时返回 `GarrisonError::Session("未登录")`；本测试接受任一错误。
-/// 2. spec 期望 jti 黑名单，实际 `logout()` 仅删除 Token-Session（注释随原文件）。
+/// # API 偏差
+/// spec 期望 `GarrisonError::NotLogin`，实际 token session 不存在时 `check_login` 返回
+/// `GarrisonError::Session("未登录")`，本测试接受任一错误；spec 期望的 jti 黑名单不存在，
+/// 实际 `logout()` 仅删除 Token-Session。
 #[tokio::test]
 #[serial]
 async fn bw_ac_009_logout_invalidates_token() {

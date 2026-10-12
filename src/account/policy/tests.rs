@@ -2,14 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `PasswordPolicyEngine` 单元测试。
-//!
-//! 测试自父模块迁移（mod.rs 接口隔离）。
 
 use super::*;
-
-// ------------------------------------------------------------------------
-// Mock 规则（用于引擎测试）
-// ------------------------------------------------------------------------
 
 /// 始终通过的规则。
 struct AlwaysPassRule;
@@ -35,10 +29,6 @@ impl PasswordPolicyRule for AlwaysFailRule {
     }
 }
 
-// ------------------------------------------------------------------------
-// PasswordPolicyRule trait 对象安全测试
-// ------------------------------------------------------------------------
-
 /// `PasswordPolicyRule` trait 可作 `Box<dyn PasswordPolicyRule>` 使用（对象安全）。
 #[test]
 fn password_policy_rule_is_object_safe() {
@@ -59,11 +49,7 @@ fn password_policy_rule_vec_of_boxed_dyn() {
     assert_eq!(rules[1].name(), "always_fail");
 }
 
-// ------------------------------------------------------------------------
-// PolicyContext 构造测试
-// ------------------------------------------------------------------------
-
-/// `PolicyContext` 6 字段构造（类型与 design.md §3.2 一致）。
+/// `PolicyContext` 6 字段构造。
 #[test]
 fn policy_context_constructs_with_6_fields() {
     let ctx = PolicyContext {
@@ -99,10 +85,6 @@ fn policy_context_optional_fields_none() {
     assert!(ctx.password_history.is_empty());
     assert!(ctx.password_created_at.is_none());
 }
-
-// ------------------------------------------------------------------------
-// PasswordPolicyEngine 测试
-// ------------------------------------------------------------------------
 
 /// 空规则集 + 任意密码 → `Ok(())`。
 #[test]
@@ -140,7 +122,6 @@ fn engine_all_pass_returns_ok() {
 /// `FirstError` 模式 — 首条失败即返回单元素 Vec 并短路。
 #[test]
 fn engine_first_error_mode_short_circuits() {
-    // 第一条失败，第二条也失败；FirstError 应只返回第一条错误
     let engine = PasswordPolicyEngine::new(
         vec![
             Box::new(AlwaysFailRule { msg: "fail1" }),
@@ -166,7 +147,6 @@ fn engine_first_error_mode_short_circuits() {
 /// `AllErrors` 模式 — 收集全部失败规则错误。
 #[test]
 fn engine_all_errors_mode_collects_all() {
-    // 第一条通过，第二、三条失败；AllErrors 应返回 2 个错误
     let engine = PasswordPolicyEngine::new(
         vec![
             Box::new(AlwaysPassRule),

@@ -94,8 +94,7 @@ impl RoleRepository for DbnexusRoleRepository {
         if sets.is_empty() {
             return Ok(());
         }
-        // updated_at 随每次成功 UPDATE 刷新（CURRENT_TIMESTAMP 同款格式，
-        // 以字符串参数绑定写入 TEXT/VARCHAR 列，三方言通用）
+        // updated_at 随每次成功 UPDATE 刷新（CURRENT_TIMESTAMP 同款格式，以字符串参数绑定写入 TEXT/VARCHAR，三方言通用）
         sets.push("updated_at = ?");
         params.push(v_str(&now_timestamp()));
         params.push(v_i64(tenant_id));

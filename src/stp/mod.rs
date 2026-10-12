@@ -1,29 +1,15 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Stp 模块，提供核心认证逻辑与工具入口。
+//! Stp 模块，提供核心认证逻辑与工具入口（原 `StpLogic`/`StpInterface`/`StpUtil`，现统一 `Garrison*` 前缀）。
 //!
-//! 对应 `StpLogic` / `StpInterface` / `StpUtil` 三件套，
-//! Garrison 中统一使用 `Garrison*` 前缀。
-//!
-//! ## 核心设计
-//!
-//! - 5 个子 trait（`SessionLogic`/`PermissionLogic`/`TokenLogic`/`MfaLogic`/`PasswordLogic`）：
-//! 按职责域分离，super-trait 为 `GarrisonCore`
-//! - `GarrisonLogicDefault`：默认实现，组合 `GarrisonSession` + `GarrisonConfig`，实现全部 5 个子 trait
-//! - `tokio::task_local`：存储当前请求的 token（类似 `SaHolder`，但适配 async）
-//!
-//! ## task_local 上下文
-//!
-//! 在 axum middleware 中调用 `with_current_token(token, async { handler }).await` 设置作用域，
-//! stp 核心 API（logout/check_login/get_login_id）从 `current_token()` 读取。
+//! 5 个子 trait 按职责域分离（super-trait `GarrisonCore`），`GarrisonLogicDefault` 为默认实现；
+//! `tokio::task_local` 存储当前请求 token，经 `with_current_token` 设置、`current_token` 读取。
 
 use crate::config::GarrisonConfig;
 use crate::core::auth::AuthLogic;
 use crate::core::permission::PermissionChecker;
-// `GarrisonError`/`GarrisonResult` 供 `default_impl.rs` 和 `tests.rs` 通过 `use super::*` glob 使用。
-// `GarrisonError` 仅在 `protocol-apikey` feature 下被 `default_impl.rs` 直接使用，
-// 但 `tests.rs` 在所有 feature 配置下通过 glob 引用，故不可 cfg-gate。
+// `GarrisonError`/`GarrisonResult` 供 `default_impl.rs` / `tests.rs` 经 `use super::*` glob 引用（tests.rs 无 feature 门控），故不可 cfg-gate。
 #[allow(unused_imports)]
 use crate::error::{GarrisonError, GarrisonResult};
 #[cfg(feature = "listener")]
@@ -38,12 +24,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 
-// ParameterQuery 参数化查询模块（feature-gated）
+// ParameterQuery 参数化查询模块
 #[cfg(feature = "parameter-query")]
 pub mod parameter;
 
-// 原 GarrisonLogic 上帝 trait 拆分为 6 个细粒度子 trait
-// （GarrisonCore 基座 + 5 个职责域 trait），按职责域分离。
 pub mod clock;
 pub mod context;
 pub mod core;
@@ -51,7 +35,6 @@ pub mod interface;
 pub mod mfa;
 pub mod password;
 pub mod permission;
-// safe-auth feature-gated
 #[cfg(feature = "security-extra")]
 pub mod safe;
 pub mod session;
@@ -79,18 +62,7 @@ pub use self::token::TokenLogic;
 pub use self::util::init_backend;
 pub use self::util::{GarrisonUtil, JwtMode};
 
-/// 登录参数。
-///
-/// 封装登录时的可选元数据，传递给 `SessionLogic::login`。
-/// 对应 `SaLoginParameter`，但简化为 5 个字段。
-///
-/// # 字段
-///
-/// - `device`: 设备标识（如 "web"/"ios"/"android"），写入 `TokenSession.device`
-/// - `ip`: 客户端 IP 地址，写入 `TokenSession.ip`
-/// - `user_agent`: 客户端 User-Agent，写入 `TokenSession.user_agent`
-/// - `remember_me`: 是否启用记住我（延长 Token 有效期至 `remember_me_timeout`）
-/// - `require_mfa`: 是否要求二级认证（由 `DeviceBindingPolicy` 在 login 流程中设置）
+/// 登录参数（对应 `SaLoginParameter`）：device/ip/user_agent 写入 `TokenSession`，`remember_me` 延长 Token 有效期，`require_mfa` 由 `DeviceBindingPolicy` 在 strict 模式新设备登录时置位。
 ///
 /// # 用法
 ///
@@ -120,46 +92,26 @@ pub struct LoginParams {
     pub user_agent: Option<String>,
     /// 是否启用记住我（延长 Token 有效期）。
     pub remember_me: bool,
-    /// 是否要求二级认证。
-    ///
-    /// 由 `DeviceBindingPolicy` 在 login 流程中设置：strict 模式下新设备登录时置为 `true`，
-    /// 业务方可在登录后检查此标记触发 MFA 流程。默认 `false`（不要求二级认证）。
+    /// 是否要求二级认证：`DeviceBindingPolicy` 在 strict 模式新设备登录时置 `true`，业务方可据此触发 MFA。
     pub require_mfa: bool,
 }
 
-// 原 `GarrisonLogic` 上帝 trait（21 个方法）已彻底删除。
 // Manager / Strategy / Factory 等持有方改为具体类型 `Arc<GarrisonLogicDefault>`，
 // 方法调用通过子 trait（SessionLogic/PermissionLogic/TokenLogic/MfaLogic/PasswordLogic）解析。
 
-// ============================================================================
 // task_local：存储当前请求的 token（类似 SaHolder）
-// ============================================================================
 
 tokio::task_local! {
     /// 当前请求的 token，由 axum middleware 通过 `with_current_token` 设置。
     static CURRENT_TOKEN: String;
 }
 
-// `with_current_token` / `current_token` 实现已迁移至 `context.rs`（接口隔离）。
-// 此处通过 re-export 保持外部调用路径 `crate::stp::with_current_token` 不变。
+// 实现在 context.rs，re-export 保持 `crate::stp::with_current_token` 路径不变。
 
-// ============================================================================
 // GarrisonContext：task_local 上下文传播工具（跨 spawn 传播 CURRENT_TOKEN）
-// ============================================================================
 
-/// task_local 上下文快照，用于跨 `tokio::spawn` 传播 `CURRENT_TOKEN`。
-///
-/// tokio `task_local!` 不会自动传播到 `tokio::spawn` 子任务中，
-/// 导致子任务内 `current_token()` / `check_login()` 失败。
-/// `GarrisonContext` 通过 capture/within 模式手动传播上下文。
-///
-/// # 设计说明（RAII vs scope-based）
-///
-/// tokio `task_local!` 的 `scope(value, future)` 是设置值的唯一方式，
-/// 它接受一个 Future 并在 Future 执行期间设置值，Future 结束后自动清除。
-/// 不支持 RAII guard 模式（无法"临时设置再恢复"，因为 `scope` 需要
-/// 持有 Future 的所有权）。因此采用 `within()` scope-based 方案而非
-/// `restore()` RAII guard——这是 tokio task_local API 的固有限制。
+/// task_local 上下文快照，用于跨 `tokio::spawn` 传播 `CURRENT_TOKEN`（task_local 不自动传播，子任务内 `current_token()` 会失败）。
+/// tokio `scope` 需持有 Future 所有权且无 RAII guard，故用 `within()` scope-based 方案而非 `restore()`（task_local API 固有限制）。
 ///
 /// # 示例
 ///
@@ -184,14 +136,9 @@ pub struct GarrisonContext {
     token: Option<String>,
 }
 
-// ============================================================================
 // Clock trait：可注入时钟抽象
-// ============================================================================
 
-/// 时钟抽象 trait，统一时间源，支持测试注入 MockClock 消除 flaky 测试。
-///
-/// 生产环境使用 [`SystemClock`]（委托 `chrono::Utc::now()`），
-/// 测试环境使用 [`MockClock`] 手动控制时间推进。
+/// 时钟抽象 trait，统一时间源：生产用 [`SystemClock`]，测试用 [`MockClock`] 消除 flaky 测试。
 pub trait Clock: Send + Sync {
     /// 返回当前 UTC 时间。
     fn now(&self) -> DateTime<Utc>;
@@ -200,23 +147,15 @@ pub trait Clock: Send + Sync {
 /// 系统时钟实现，委托 `chrono::Utc::now()`。
 pub struct SystemClock;
 
-/// Mock 时钟，持有可设置的固定时间，用于测试。
-///
-/// 通过 `Arc<RwLock<DateTime<Utc>>>` 共享时间状态，
-/// 测试中可 `advance` 推进时间或 `set_time` 设置固定时间，
-/// 消除依赖 `tokio::time::sleep` 的 flaky 测试。
+/// Mock 时钟：`Arc<RwLock>` 共享可变时间，供测试 `advance` / `set_time`，消除 flaky 测试。
 #[derive(Clone)]
 pub struct MockClock {
     time: Arc<RwLock<DateTime<Utc>>>,
 }
 
-// ============================================================================
 // GarrisonLogicDefault：默认实现
-// ============================================================================
 
-/// 默认实现，实现全部 5 个子 trait（SessionLogic/PermissionLogic/TokenLogic/MfaLogic/PasswordLogic）。
-///
-/// 对应 `StpLogic` 默认实现（design.md Decision 8）。
+/// 默认实现：组合 `GarrisonSession` + `GarrisonConfig`，实现全部 5 个子 trait（对应 `StpLogic`）。
 pub struct GarrisonLogicDefault {
     /// 会话管理器（pub(crate) 供测试验证）。
     pub(crate) session: Arc<GarrisonSession>,
@@ -241,75 +180,36 @@ pub struct GarrisonLogicDefault {
     /// 用户 Repository（可选，注入后 login_with_password 委托此实现查询用户）。
     #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     user_repository: Option<Arc<dyn crate::dao::repository::UserRepository>>,
-    /// 默认 login_type。
-    ///
-    /// 未设置时默认 "default"，通过 `with_login_type` builder 设置。
-    /// `pub(crate)` 供测试验证字段值。
+    /// 默认 login_type：未设置时为 "default"，经 `with_login_type` builder 设置。
     pub(crate) login_type: String,
-    /// JWT 校验模式。
-    ///
-    /// 默认 `JwtMode::Mixin`，通过 `with_jwt_mode` builder 设置。
-    /// 字段不 feature gate（JwtMode 是配置 enum，无外部依赖）；
-    /// 实际 JWT verify 调用在 `check_login` 中由 `#[cfg(feature = "protocol-jwt")]` 门控。
-    /// `pub(crate)` 供测试验证字段值。
+    /// JWT 校验模式（默认 `JwtMode::Mixin`，`with_jwt_mode` 设置）；字段不 feature gate，verify 调用在 `check_login` 中按 protocol-jwt 门控。
     pub(crate) jwt_mode: JwtMode,
     /// Refresh Token 轮换器（可选，注入后 refresh_access_token 委托此实现）。
     #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
     refresh_token_rotation: Option<crate::protocol::jwt::refresh::RefreshTokenRotation>,
-    /// per-login_id 续签锁。
-    ///
-    /// 独立于 `GarrisonSession::login_locks`，避免 `check_and_renew` 持有
-    /// `login_locks` 后调用 `renew_to_equivalent`（内部 `logout` 再次获取
-    /// `login_locks`）导致死锁。续签锁仅序列化并发 `check_and_renew` 调用。
-    ///
-    /// 生命周期：`check_and_renew` 完成后会在安全点
-    /// `remove_if(strong_count == 1)` 清理无等待者的条目，防止条目随
-    /// 唯一 login_id 数量无界增长（OOM / CWE-770）。
+    /// per-login_id 续签锁：仅序列化并发 `check_and_renew`，独立于 `GarrisonSession::login_locks`（避免 renew→logout 嵌套取锁死锁）。
+    /// 用后 `remove_if(strong_count == 1)` 清理无等待者条目，防止随唯一 login_id 数量无界增长（CWE-770）。
     renewal_locks: DashMap<String, Arc<TokioMutex<()>>>,
-    /// 可注入时钟（默认 SystemClock，测试可替换为 MockClock）。
-    ///
-    /// 用于 hover_timeout 检查的时间读取，消除依赖 `tokio::time::sleep` 的 flaky 测试。
+    /// 可注入时钟（默认 SystemClock，测试可替换为 MockClock）：用于 hover_timeout 检查，消除 flaky 测试。
     clock: Arc<dyn Clock>,
-    /// 异常检测器列表（可选，注入后 login/check_login 触发异常检测）。
-    ///
-    /// 需启用 `security-alert` feature。未注入时为 no-op（功能关闭）。
-    /// 检测失败只 `tracing::warn!` 不中断主流程。
+    /// 异常检测器列表（`security-extra` feature）；未注入 no-op，检测失败仅 `tracing::warn!` 不中断主流程。
     #[cfg(feature = "security-extra")]
     pub(crate) anomaly_detectors: Option<Vec<Arc<dyn crate::strategy::alert::AnomalyDetector>>>,
-    /// 告警监听器管理器（可选，注入后广播异常检测产生的事件）。
-    ///
-    /// 需启用 `security-alert` feature。未注入时异常事件不广播（未部署告警系统）。
+    /// 告警监听器管理器（可选，`security-extra` feature，注入后广播异常检测事件；未注入时不广播）。
     #[cfg(feature = "security-extra")]
     pub(crate) alert_listener_manager: Option<Arc<crate::strategy::alert::AlertListenerManager>>,
-    /// 设备绑定策略（可选，注入后 login 流程检测新设备并设置 `require_mfa` 标记）。
-    ///
-    /// 需启用 `device-binding` feature。未注入时跳过检测（功能关闭）。
-    /// 检测失败只 `tracing::warn!` 不中断 login。
+    /// 设备绑定策略（可选，`device-binding` feature，注入后 login 检测新设备并置 `require_mfa`；未注入跳过，检测失败仅 warn 不中断 login）。
     #[cfg(feature = "device-binding")]
     pub(crate) device_binding_policy:
         Option<Arc<dyn crate::strategy::device_binding::DeviceBindingPolicy>>,
-    /// 封禁库（构造时必需注入，`check_disable` 委托其查询当前 login_id 是否被封禁）。
-    ///
-    /// 非 feature-gated（核心能力）。通用场景传
-    /// `Arc::new(DefaultDisableRepository::new(dao))`（委托 DAO 持久化封禁条目），
-    /// 业务方也可实现 `DisableRepository` 接入自定义封禁数据源。
+    /// 封禁库（构造时必需注入）：`check_disable` 委托其查询 login_id 封禁状态；通用传 `DefaultDisableRepository`，也可自定义实现接入其他数据源。
     pub(crate) disable_repository: Arc<dyn crate::account::disable::DisableRepository>,
-    /// 用户缓存服务（可选，注入后 logout/logout_by_login_id 失效用户三层缓存）。
-    ///
-    /// 需启用 `three-tier-cache` feature。未注入时 logout 不失效缓存（缓存失效功能关闭）。
-    /// 缓存失效失败只 `tracing::warn!` 不中断 logout 主流程。
+    /// 用户缓存服务（可选，`three-tier-cache` feature，注入后 logout 失效用户三层缓存；未注入则跳过，失效失败仅 warn 不中断 logout）。
     #[cfg(feature = "three-tier-cache")]
     pub(crate) user_cache_service: Option<Arc<crate::cache::UserCacheService>>,
-    /// 标记字段（可选，`with_marker` 注入）。
-    ///
-    /// 用于测试 / 工厂扩展点标记 logic 来源（如自定义 factory 构造的实例），
-    /// 默认 `None`，不影响运行时行为。
+    /// 标记字段（可选，`with_marker` 注入）：标记 logic 来源，默认 `None`，不影响运行时行为。
     pub(crate) marker: Option<&'static str>,
-    /// 复用的 IP 级暴力破解防护策略（`check_api_key` 专用）。
-    ///
-    /// 此前每次 `check_api_key` 都
-    /// `BruteForceStrategy::new(BruteForceConfig::default(), dao)` 重新分配两个
-    /// `Arc<dyn ...>` 适配器并丢弃已配置实例；改为惰性初始化一次、全实例复用。
+    /// IP 级暴力破解防护策略（`check_api_key` 专用）：`OnceLock` 惰性初始化一次、全实例复用。
     #[cfg(all(feature = "protocol-apikey", feature = "firewall-bruteforce"))]
     brute_force_strategy:
         std::sync::OnceLock<Arc<crate::strategy::firewall::brute_force::BruteForceStrategy>>,
@@ -323,15 +223,9 @@ pub(crate) mod mock;
 #[cfg(test)]
 mod tests;
 
-// ============================================================================
-// security-extra（safe-auth）关闭时的 MfaLogic trait default 行为验证
-// ============================================================================
+// security-extra（safe-auth）关闭时 MfaLogic trait default 行为验证
 
-// 原安全关闭验证测试
-// 置于 safe.rs（`security-extra` 门控模块）内且标注
-// `#[cfg(not(feature = "security-extra"))]`——条件矛盾，任何配置下都不编译。
-// 移至非门控的 mod.rs 并保持 `cfg(not(security-extra))` 门控，
-// 使 `security-extra` 关闭的构建真正编译并运行该验证。
+// 测试必须放在非门控 mod.rs，security-extra 关闭的构建才会真正编译运行（放入 safe.rs 会条件矛盾）。
 #[cfg(test)]
 #[cfg(not(feature = "security-extra"))]
 mod safe_feature_gate_tests {
@@ -341,8 +235,7 @@ mod safe_feature_gate_tests {
     use crate::strategy::GarrisonPermissionStrategy;
     use std::sync::Arc;
 
-    /// security-extra 禁用时，GarrisonLogicDefault 没有 open_safe inherent method，
-    /// 调用解析到 MfaLogic trait default（open_safe=Ok(()), is_safe=Ok(true), close_safe=Ok(())）。
+    /// security-extra 禁用时无 open_safe inherent method，调用解析到 MfaLogic trait default（Ok(())/Ok(true)/Ok(())）。
     #[tokio::test]
     async fn t026_safe_auth_not_in_scope_when_disabled() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -368,19 +261,15 @@ mod safe_feature_gate_tests {
             .await
             .unwrap();
 
-        // security-extra 禁用时，open_safe/is_safe/close_safe 解析到 MfaLogic trait default
         with_current_token(token, async {
-            // open_safe trait default: Ok(()) (no-op)
             assert!(
                 logic.open_safe("default", 3600).await.is_ok(),
                 "security-extra 禁用时 open_safe 应走 trait default 返回 Ok(())"
             );
-            // is_safe trait default: Ok(true) (always safe)
             assert!(
                 logic.is_safe("default").await.unwrap_or(false),
                 "security-extra 禁用时 is_safe 应走 trait default 返回 Ok(true)"
             );
-            // close_safe trait default: Ok(()) (no-op)
             assert!(
                 logic.close_safe("default").await.is_ok(),
                 "security-extra 禁用时 close_safe 应走 trait default 返回 Ok(())"

@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 异常处理示例测试。
-//!
-//! 验证 run() 完整执行，以及 NotLoginException / GarrisonException 的构造与互转。
+//! 异常处理示例测试：验证 run() 完整执行，以及 NotLoginException / GarrisonException 的构造与互转。
 
 use garrison::error::GarrisonError;
 use garrison::exception::{GarrisonException, NotLoginException};
@@ -60,7 +58,6 @@ fn test_exception_to_error_conversion() {
         .with_login_id("1001")
         .build();
     let err: GarrisonError = biz_ex.into();
-    // GarrisonException → GarrisonError 应产生 NotLogin 或 Session 等变体
     let err_str = format!("{}", err);
     assert!(
         !err_str.is_empty(),

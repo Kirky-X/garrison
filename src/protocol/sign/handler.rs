@@ -17,15 +17,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::{HmacSha256, SignHandler, DEFAULT_TIMESTAMP_WINDOW, HKDF_INFO, MIN_APP_SECRET_LEN};
 
 impl SignHandler {
-    /// 创建新的签名处理器。
-    ///
-    /// # 参数
-    /// - `app_key`: 应用标识，不可为空。
-    /// - `app_secret`: HMAC 密钥（最小 32 字节）。
-    /// - `dao`: DAO 抽象层实例。
-    ///
-    /// # 错误
-    /// - `GarrisonError::Config`: app_key 为空或 app_secret 短于 32 字节。
+    /// 创建签名处理器：`app_key` 不可为空、`app_secret` 至少 32 字节；
+    /// 违者返回 `Config` 错误。
     pub fn new(
         app_key: impl Into<String>,
         app_secret: impl Into<String>,
@@ -75,16 +68,9 @@ impl SignHandler {
         self.timestamp_window
     }
 
-    /// 用 HKDF-SHA256 从 (app_secret, app_key) 派生 HMAC 密钥。
-    ///
-    /// HKDF 提供域分隔，防止同一密钥在不同用途间复用导致跨协议攻击。
-    /// - IKM = app_secret
-    /// - salt = app_key（域分隔）
-    /// - info = "garrison-sign-v2"（版本化上下文）
-    /// - 输出 = 32 字节（HMAC-SHA256 密钥长度）
-    ///
-    /// 性能优化：派生密钥在构造时一次性计算并缓存到 `self.derived_key`，
-    /// 此方法仅供测试验证派生结果使用。
+    /// 用 HKDF-SHA256 从 (app_secret, app_key) 派生 HMAC 密钥：salt=app_key 提供
+    /// 域分隔（防同一密钥跨用途复用），info 版本化。构造时已一次性派生并缓存，
+    /// 此方法仅供测试验证派生结果。
     #[cfg(test)]
     #[allow(dead_code, reason = "test helper: 仅供测试验证派生密钥结果")]
     fn derive_hmac_key(&self) -> [u8; 32] {
@@ -96,14 +82,8 @@ impl SignHandler {
         okm
     }
 
-    /// 生成签名。
-    ///
-    /// 签名算法：
-    /// `base64(hmac_sha256(hkdf_key, "{method}\n{path}\n{timestamp}\n{nonce}\n{body_sha256}"))`
-    ///
-    /// 其中 `hkdf_key = HKDF-SHA256(app_secret, salt=app_key, info="garrison-sign-v2")`。
-    ///
-    /// 性能优化：使用构造时缓存的 `derived_key`，避免每次签名重复 HKDF 计算。
+    /// 生成签名：`base64(hmac_sha256(hkdf_key, "{method}\n{path}\n{timestamp}\n{nonce}\n{body_sha256}"))`，
+    /// 使用构造时缓存的 `derived_key`（`hkdf_key` 定义见模块头）。
     pub fn sign(
         &self,
         method: &str,
@@ -122,23 +102,9 @@ impl SignHandler {
         STANDARD.encode(mac.finalize().into_bytes())
     }
 
-    /// 校验签名。
-    ///
-    /// 校验逻辑：(1) 检查时间戳窗口；(2) 检查 nonce 未被使用过；
-    /// (3) 重新计算签名并常量时间比较；(4) 校验成功后存储 nonce。
-    ///
-    /// # 参数
-    /// - `method`: HTTP 方法。
-    /// - `path`: 请求路径。
-    /// - `timestamp`: 请求时间戳（秒）。
-    /// - `nonce`: 随机串。
-    /// - `body_sha256`: 请求体 SHA-256。
-    /// - `signature`: 待校验的签名。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 校验通过。
-    /// - `Err(GarrisonError::ExpiredToken)`: 时间戳超出窗口。
-    /// - `Err(GarrisonError::InvalidToken)`: nonce 重放或签名不匹配。
+    /// 校验签名：时间戳窗口检查 → nonce 原子防重放（`incr`，TTL = 窗口）→
+    /// 重算签名并常量时间比较。时间戳越窗返回 `ExpiredToken`，nonce 重放或
+    /// 签名不匹配返回 `InvalidToken`。
     pub async fn validate(
         &self,
         method: &str,
@@ -148,16 +114,14 @@ impl SignHandler {
         body_sha256: &str,
         signature: &str,
     ) -> GarrisonResult<()> {
-        // (1) 时间戳窗口校验
+        // 时间戳窗口校验
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .map_err(|e| GarrisonError::Internal(format!("sign-clock::{}", e)))?;
-        // 溢出防护：timestamp 为外部可控 i64，`now - timestamp` 在 timestamp 接近
-        // i64::MIN 时溢出（debug panic / release 回绕为负值）。用 checked_sub 显式
-        // 处理：减法溢出意味着 |now - timestamp| 必然远超任何合理窗口，直接按
-        // 窗口外拒绝（与窗口校验失败同语义，不泄露额外信息）。checked_sub 成功后
-        // diff 不可能等于 i64::MIN（那要求 timestamp > i64::MAX），abs() 无二次溢出。
+        // 溢出防护：timestamp 为外部可控 i64，`now - timestamp` 用 checked_sub 显式
+        // 处理——溢出意味着 |now - timestamp| 必然远超任何合理窗口，直接按窗口外拒绝
+        // （不泄露额外信息）；checked_sub 成功后 diff 不可能为 i64::MIN，abs() 无二次溢出。
         let diff = now
             .checked_sub(timestamp)
             .ok_or_else(|| GarrisonError::ExpiredToken("sign-timestamp-window".to_string()))?;
@@ -167,11 +131,9 @@ impl SignHandler {
             ));
         }
 
-        // (2) nonce 防重放：原子自增（消除 get/set TOCTOU 竞态）
-        //
-        // key 增加 `app_key` 前缀，避免多应用共用 DAO 时 nonce 互相污染
-        // （不同 app_key 的相同 nonce 互不冲突）。`incr` 为原子操作，
-        // 返回值 > 1 即表示 nonce 已被使用过（重放），直接拒绝。
+        // nonce 防重放：原子自增（消除 get/set TOCTOU 竞态）；key 带 `app_key`
+        // 前缀隔离多应用（不同 app_key 的相同 nonce 互不冲突）；`incr` 返回值
+        // > 1 即 nonce 已被使用过（重放），直接拒绝。
         let nonce_key = format!("garrison:sign:nonce:{}:{}", self.app_key, nonce);
         let count = self
             .dao
@@ -181,8 +143,7 @@ impl SignHandler {
             return Err(GarrisonError::InvalidToken("sign-nonce-replay".to_string()));
         }
 
-        // (3) 重新计算签名并常量时间比较（使用 HKDF 派生密钥）
-        // 性能优化：使用构造时缓存的 derived_key，避免每次校验重复 HKDF 计算
+        // 重算签名并常量时间比较（复用构造时缓存的 derived_key）
         let payload = format!(
             "{}\n{}\n{}\n{}\n{}",
             method, path, timestamp, nonce, body_sha256
@@ -190,11 +151,9 @@ impl SignHandler {
         let mut mac =
             HmacSha256::new_from_slice(&self.derived_key).expect("HMAC accepts 32-byte key");
         mac.update(payload.as_bytes());
-        // 将传入的 signature（Base64）解码为字节
         let signature_bytes = STANDARD
             .decode(signature)
             .map_err(|e| GarrisonError::InvalidToken(format!("sign-base64-decode::{}", e)))?;
-        // 使用 verify_slice 进行常量时间比较
         match mac.verify_slice(&signature_bytes) {
             Ok(_) => {},
             Err(_) => {
@@ -202,16 +161,14 @@ impl SignHandler {
             },
         }
 
-        // (4) 校验成功：nonce 已由 incr 原子写入（TTL = timestamp_window），无需再 set
+        // nonce 已由 incr 原子写入（TTL = timestamp_window），无需再 set
         Ok(())
     }
 }
 
-// Drop 零化仅在 `protocol-zeroize` feature 下编译：启用后 `app_secret` 与
-// `derived_key` 在 handler 析构时被覆写；未启用时为普通内存释放，HMAC 密钥
-// 材料不保证被清除（可能残留于已释放堆块 / swap / core dump）。保持 feature
-// 结构（零开销默认构建），对密钥卫生有要求的部署应显式启用 `protocol-zeroize`
-// （`full` feature 已包含）。字段级安全说明见 `sign/mod.rs` 的 `SignHandler`。
+// Drop 零化仅在 `protocol-zeroize` feature 下编译（零开销默认构建）：启用后
+// `app_secret` 与 `derived_key` 在 handler 析构时被覆写，未启用时不保证清除
+// （可能残留于已释放堆块 / swap / core dump）；字段级安全说明见 `sign/mod.rs`。
 #[cfg(feature = "protocol-zeroize")]
 impl Drop for SignHandler {
     fn drop(&mut self) {

@@ -2,35 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! ParameterQuery 模块：参数化查询机制（feature-gated by `parameter-query`）。
-//!
-//! 提供 builder 模式的链式参数化校验 API，允许调用方在运行时
-//! 显式指定 login_id / device / token 上下文，避免依赖 task_local。
-//!
-//! ## 设计
-//!
-//! - `ParameterQuery` trait：定义 `with_login_id` / `with_device` / `with_token` /
-//!   `check_permission` / `check_role` 链式 API（check_* 为 async）
-//! - `ParameterQueryBuilder`：默认实现，持有 `Option<String>` login_id / `Option<String>`
-//!   device / `Option<String>` token 上下文，委托 `GarrisonUtil` 静态方法执行校验
-//!
-//! ## login_id 形式
-//!
-//! `login_id` 为 `String`（与全局 login_id 形式一致）：
-//! - `with_login_id` 接收 `String`（builder 持有所有权，避免每次校验克隆）
-//! - 校验路径透传 `&str` 给 `GarrisonUtil::login`
+//! 提供 builder 模式链式参数化校验，运行时显式指定 login_id / device / token 上下文，避免依赖 task_local。
+//! check_* 为 async；with_login_id 接收 String（builder 持有所有权，避免每次校验克隆），校验路径透传 &str。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::stp::{with_current_token, GarrisonUtil};
 use async_trait::async_trait;
 
-/// 参数化查询 trait，提供链式参数化校验 API。
-///
-/// 调用方通过 `with_login_id` / `with_device` / `with_token` 链式设置上下文，
-/// 再调用 `check_permission` / `check_role` 执行校验。
-///
-/// # 上下文优先级
-///
-/// 若同时设置 token 与 login_id，token 优先。
+/// 参数化查询 trait：链式设置上下文（`with_login_id` / `with_device` / `with_token`）后执行校验；token 优先于 login_id。
 ///
 /// # 示例
 ///
@@ -57,32 +36,18 @@ pub trait ParameterQuery: Send + Sync {
     /// 设置 token 上下文。
     fn with_token(self, token: &str) -> Self;
 
-    /// 校验权限（async）。
-    ///
-    /// 使用 builder 上下文中的 login_id 或 token 委托 `GarrisonUtil::check_permission` 校验。
-    ///
-    /// # 错误
-    /// - 未设置 login_id 且未设置 token：`GarrisonError::Internal`。
-    /// - 校验失败：透传 `GarrisonError::NotPermission` 等。
+    /// 校验权限（async）：委托 `GarrisonUtil::check_permission`；未设置 login_id 且未设置 token 时返回 `Internal`，校验失败透传 `NotPermission` 等。
     async fn check_permission(&self, perm: &str) -> GarrisonResult<()>;
 
-    /// 校验角色（async）。
-    ///
-    /// 使用 builder 上下文中的 login_id 或 token 委托 `GarrisonUtil::check_role` 校验。
-    ///
-    /// # 错误
-    /// - 未设置 login_id 且未设置 token：`GarrisonError::Internal`。
-    /// - 校验失败：透传 `GarrisonError::NotRole` 等。
+    /// 校验角色（async）：委托 `GarrisonUtil::check_role`；未设置 login_id 且未设置 token 时返回 `Internal`，校验失败透传 `NotRole` 等。
     async fn check_role(&self, role: &str) -> GarrisonResult<()>;
 }
 
 /// `ParameterQuery` 的默认实现，持有 login_id / device / token 上下文。
 pub struct ParameterQueryBuilder {
-    /// 登录主体标识（显式设置时作为校验上下文，字符串形式）。
     login_id: Option<String>,
-    /// 设备标识（仅存储，不参与校验逻辑，预留扩展）。
+    /// 设备标识（仅存储，不参与校验，预留扩展）。
     device: Option<String>,
-    /// Token（设置时通过 task_local 委托 GarrisonUtil 校验，优先级高于 login_id）。
     token: Option<String>,
 }
 
@@ -96,15 +61,9 @@ impl ParameterQueryBuilder {
         }
     }
 
-    /// 公共 check 流程：根据 token / login_id 上下文执行校验（M7 提取，消除重复代码）。
-    ///
-    /// - token 优先于 login_id
-    /// - token 路径：直接 `with_current_token` 包装后委托 `GarrisonUtil::check_*`
-    /// - login_id 路径：临时 `login()` 获取 token 后校验，最后 `kickout_by_token` 清理
-    /// - 清理失败被忽略（不影响校验结果，但会通过 tracing 输出，符合 fail-soft 语义）
+    /// 按 token（优先）或 login_id 上下文执行校验：login_id 路径临时 login 并在校验后 kickout 清理，清理失败仅 tracing 告警（fail-soft，不影响校验结果）。
     async fn check_common(&self, value: &str, kind: CheckKind) -> GarrisonResult<()> {
         if let Some(token) = &self.token {
-            // Token 已设置：包装 task_local 调用 GarrisonUtil::check_*
             let token = token.clone();
             let value = value.to_string();
             with_current_token(token, async move {
@@ -115,8 +74,6 @@ impl ParameterQueryBuilder {
             })
             .await
         } else if let Some(login_id) = &self.login_id {
-            // Login_id 已设置：创建临时会话获取 token，再委托 GarrisonUtil::check_* 校验
-            // login_id 为 String，GarrisonUtil::login 接收 &str
             let token = GarrisonUtil::login_simple(login_id).await?;
             let value = value.to_string();
             let token_for_cleanup = token.clone();
@@ -127,7 +84,6 @@ impl ParameterQueryBuilder {
                 }
             })
             .await;
-            // 清理临时会话（非致命，失败不影响校验结果）
             if let Err(e) = GarrisonUtil::kickout_by_token(&token_for_cleanup).await {
                 tracing::warn!(
                     error = %e,
@@ -354,8 +310,7 @@ mod tests {
         assert_eq!(builder.token.as_deref(), Some("abc-token"));
     }
 
-    /// spec Scenario: 链式调用设置上下文。
-    /// 验证 with_login_id("1001".to_string()).with_device("dev1") 链式调用后 builder 持有完整上下文。
+    /// spec Scenario: with_login_id + with_device 链式调用后 builder 持有完整上下文。
     #[serial]
     #[test]
     fn chain_with_login_id_and_device_sets_context() {
@@ -378,8 +333,7 @@ mod tests {
     // check_permission 未设置上下文 / login_id / token
     // ------------------------------------------------------------------------
 
-    /// spec Scenario: 未设置 login_id 时校验失败。
-    /// 验证无上下文时 check_permission 返回 Internal("login_id not set...")。
+    /// spec Scenario: 未设置 login_id 时 check_permission 返回 Internal。
     #[tokio::test]
     #[serial]
     async fn check_permission_without_context_returns_internal() {
@@ -393,8 +347,7 @@ mod tests {
         );
     }
 
-    /// spec Scenario: check_permission 使用上下文（持有权限）。
-    /// 验证 login_id=1001 且 MockInterface 返回权限时 check_permission 返回 Ok。
+    /// spec Scenario: login_id 持有权限时 check_permission 返回 Ok。
     #[tokio::test]
     #[serial]
     async fn check_permission_with_login_id_succeeds_when_authorized() {
@@ -414,8 +367,7 @@ mod tests {
         GarrisonManager::reset_for_test();
     }
 
-    /// spec Scenario: check_permission 使用上下文（未持有权限）。
-    /// 验证 login_id=1001 且 MockInterface 返回空权限时 check_permission 返回 NotPermission。
+    /// spec Scenario: login_id 未持有权限时 check_permission 返回 NotPermission。
     #[tokio::test]
     #[serial]
     async fn check_permission_with_login_id_returns_not_permission_when_denied() {
@@ -438,8 +390,7 @@ mod tests {
         GarrisonManager::reset_for_test();
     }
 
-    /// spec Scenario: 设置 token 后使用 token 上下文（持有权限）。
-    /// 验证 with_token 后 check_permission 使用 token 解析的 login_id 校验。
+    /// spec Scenario: token 持有权限时 check_permission 返回 Ok。
     #[tokio::test]
     #[serial]
     async fn check_permission_with_token_succeeds() {
@@ -465,8 +416,7 @@ mod tests {
         GarrisonManager::reset_for_test();
     }
 
-    /// spec Scenario: 设置 token 后使用 token 上下文（未持有权限）。
-    /// 验证 with_token 后 check_permission 在权限不足时返回 NotPermission。
+    /// spec Scenario: token 未持有权限时 check_permission 返回 NotPermission。
     #[tokio::test]
     #[serial]
     async fn check_permission_with_token_returns_not_permission_when_denied() {

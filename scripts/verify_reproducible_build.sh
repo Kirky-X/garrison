@@ -2,24 +2,12 @@
 # Copyright (c) 2026 Kirky.X🌠
 # SPDX-License-Identifier: Apache-2.0
 #
-# 可复现构建验证（reproducible build）：对 garrison 库做两次独立编译，
-# 比对产物 sha256 是否逐字节一致。
+# 可复现构建验证：对 garrison 库做两次独立编译，比对 sha256 是否逐字节一致。
+# 固定构建输入（--locked / --frozen / SOURCE_DATE_EPOCH / --remap-path-prefix），
+# 产物为 target/release/libgarrison.rlib。
 #
-# 方法：
-#   - 固定构建输入：--locked（锁定依赖）、--frozen（禁网络变更）、固定
-#     SOURCE_DATE_EPOCH（防时间戳嵌入）、RUSTFLAGS --remap-path-prefix
-#     （工作区绝对路径 → 固定前缀，消除本地路径差异）。
-#   - 两次构建间 `cargo clean -p garrison` 只清理本 crate 产物（依赖缓存
-#     复用，二次构建仅重编译 garrison 自身，分钟级）。
-#   - 产物：target/release/libgarrison.rlib 的 sha256。
-#
-# 用法：
-#   scripts/verify_reproducible_build.sh                 # 默认 default 特性
-#   GARRISON_REPRO_FEATURES="full" scripts/verify_reproducible_build.sh
-#
-# 退出码：0 = 逐字节一致（可复现）；1 = 不一致或构建失败。
-# 注意：更换 rustc 版本 / 依赖版本后需重跑（可复现性以「同工具链 + 同锁文件」
-# 为前提，与 cargo vet / Attestations 的验证维度互补，见 docs/RELEASING.md）。
+# 用法：GARRISON_REPRO_FEATURES="full" scripts/verify_reproducible_build.sh（默认 default 特性）。
+# 退出码：0 = 一致；1 = 不一致或构建失败。换 rustc/依赖版本后需重跑，见 docs/RELEASING.md。
 
 set -euo pipefail
 
@@ -33,8 +21,7 @@ cd "$(dirname "$0")/.."
 export SOURCE_DATE_EPOCH="$EPOCH"
 export RUSTFLAGS="--remap-path-prefix=$PWD=/garrison"
 
-# 只清理 garrison 自身的产物与指纹（依赖缓存复用，二次构建仅重编译本 crate）。
-# 不用 `cargo clean -p garrison`：对 workspace 根包实测匹配不到产物（Removed 0 files）。
+# 只清理 garrison 自身产物与指纹（依赖缓存复用，二次构建仅重编译本 crate）；不用 `cargo clean -p garrison`：对 workspace 根包实测匹配不到产物。
 clean_garrison_artifacts() {
   rm -rf "$TARGET_DIR"/release/.fingerprint/garrison-* \
          "$TARGET_DIR"/release/deps/libgarrison-* \

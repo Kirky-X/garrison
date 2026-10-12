@@ -88,12 +88,11 @@ fn make_server() -> GarrisonAuthServer {
     GarrisonAuthServer::new(backend)
         .with_internal_api_key("test-api-key")
         .with_rate_limit(100)
-        // C-1: 框架默认拒绝外网 login（secure-by-default）；
-        // 既有 login 链路测试在此显式开启，默认拒绝行为见下方专用回归测试
+        // 框架默认拒绝外网 login（secure-by-default）；此处显式开启供既有链路测试，专用回归见下方
         .with_external_login_enabled(true)
 }
 
-/// C-1: 默认配置下外网 login 返回 404（secure-by-default 回归钉）。
+/// 默认配置下外网 login 返回 404（secure-by-default 回归钉）。
 #[tokio::test]
 async fn test_external_router_login_disabled_by_default() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
@@ -127,7 +126,7 @@ async fn test_external_router_login_disabled_by_default() {
     );
 }
 
-/// C-1: 默认拒绝仅作用于 login，logout/refresh（凭证持有语义）不受影响。
+/// 默认拒绝仅作用于 login；logout/refresh（凭证持有语义）不受影响。
 #[tokio::test]
 async fn test_external_router_logout_not_gated_by_login_flag() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
@@ -153,7 +152,7 @@ async fn test_external_router_logout_not_gated_by_login_flag() {
     );
 }
 
-/// C-1: with_external_login_enabled 显式开启后 login 恢复可达。
+/// with_external_login_enabled 显式开启后 login 恢复可达。
 #[tokio::test]
 async fn test_external_router_login_reachable_when_enabled() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
@@ -251,7 +250,7 @@ async fn test_external_router_rate_limit() {
     let server = GarrisonAuthServer::new(backend)
         .with_internal_api_key("test-api-key")
         .with_rate_limit(2)
-        // 限流断言以 login 为探测端点，需显式开启（框架默认 404，见 C-1 回归测试）
+        // 限流断言以 login 为探测端点，需显式开启（框架默认 404，见上方默认拒绝回归测试）
         .with_external_login_enabled(true);
     let app = server.external_router();
     let body = serde_json::json!({
@@ -350,9 +349,7 @@ async fn test_new_with_kit_missing_module_fails() {
     );
 }
 
-/// 测试 with_tls 设置 TLS 配置（feature = "tls"）。
-///
-/// 验证 with_tls(cert_path, key_path) 后 server.tls_config 含正确的证书/密钥路径。
+/// with_tls(cert_path, key_path) 后 server.tls_config 含正确证书/密钥路径（feature = "tls"）。
 #[cfg(feature = "tls")]
 #[tokio::test]
 async fn test_with_tls_sets_config() {
@@ -404,9 +401,7 @@ async fn test_with_tls_chainable() {
     assert!(server.tls_config.is_some());
 }
 
-// ========================================================================
 // to_api_response 测试
-// ========================================================================
 
 /// 测试 to_api_response 在 Ok 时返回包含数据的成功响应。
 #[test]
@@ -428,14 +423,9 @@ fn test_to_api_response_err() {
     assert_eq!(resp.message.as_deref(), Some("Internal error"));
 }
 
-// ========================================================================
 // 路由 path-filter 测试
-// ========================================================================
 
-/// 测试外网路由拒绝内网路径（返回 404）。
-///
-/// external_path_filter 中间件仅放行 login/logout/refresh，
-/// 内网端点（如 check/login）应被拦截。
+/// external_path_filter 仅放行 login/logout/refresh，内网端点（如 check/login）返回 404。
 #[tokio::test]
 async fn test_external_router_rejects_internal_path() {
     let server = make_server();
@@ -453,10 +443,7 @@ async fn test_external_router_rejects_internal_path() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
-/// 测试内网路由拒绝外网路径（返回 404）。
-///
-/// internal_path_filter 中间件拒绝 login/logout/refresh，
-/// 即使携带有效 API Key 也应被拦截。
+/// internal_path_filter 拒绝 login/logout/refresh，即使携带有效 API Key 也返回 404。
 #[tokio::test]
 async fn test_internal_router_rejects_external_path() {
     let server = make_server();
@@ -494,9 +481,7 @@ async fn test_internal_router_rejects_wrong_api_key() {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
-// ========================================================================
 // AuthServerConfig 测试
-// ========================================================================
 
 /// 测试 AuthServerConfig::default() 返回正确的默认值。
 #[test]
@@ -509,9 +494,8 @@ fn test_auth_server_config_default() {
         config.internal_api_key.is_empty(),
         "Default internal_api_key 必须为空（fail-closed）"
     );
-    // 绑定地址默认 0.0.0.0：框架层向后兼容（既有下游 listen() 行为不变）；
-    // 安全收口由调用方显式 with_external_bind/with_internal_bind 注入
-    // （参考部署 bin 缺省 127.0.0.1）。
+    // 绑定地址默认 0.0.0.0（向后兼容既有下游 listen 行为）；安全收口由调用方 with_external_bind/with_internal_bind
+    // 注入（部署 bin 缺省 127.0.0.1）
     assert_eq!(
         config.external_bind,
         std::net::IpAddr::from([0, 0, 0, 0]),
@@ -604,12 +588,7 @@ fn test_strict_security_tiers() {
     let _ = loopback;
 }
 
-// ========================================================================
-// 非严格档告警锁定（R-auth-server-guardrails-003：只告警不拒绝，且逐条可观测）
-//
-// 范式沿用 `src/oauth2_server/token.rs` 的 LogCapture（fmt layer + with_writer），
-// `set_default` 为线程局部，与并行测试不互干（validate() 为同步调用）。
-// ========================================================================
+// 非严格档告警锁定：只告警不拒绝且逐条可观测（LogCapture 范式沿用 `src/oauth2_server/token.rs`，set_default 线程局部不互干）。
 
 /// 进程内日志捕获 writer（收集格式化后的行）。
 #[derive(Clone)]
@@ -645,8 +624,7 @@ fn count_warn(lines: &[String], needle: &str) -> usize {
         .count()
 }
 
-/// 三条非严格档告警各恰好输出一次，且文案含错误码与 1.0 迁移指引；
-/// 严格档同输入直接拒绝，不产生这三条告警。
+/// 三条非严格档告警各恰好输出一次且文案含错误码与 1.0 迁移指引；严格档同输入直接拒绝、不产生告警。
 #[test]
 fn non_strict_tier_emits_each_warning_exactly_once() {
     use tracing_subscriber::layer::SubscriberExt;
@@ -753,16 +731,10 @@ fn test_with_bind_builders() {
     assert_eq!(server.config.internal_bind, v6_loopback);
 }
 
-// ========================================================================
-// listen() 测试（覆盖 listen 方法的主要代码路径）
-// ========================================================================
+// listen() 测试
 
-/// 测试 listen 在未配置 `internal_api_key` 时被 `validate()` 短路（fail-closed）。
-///
-/// 注意：本测试**不**触达端口绑定路径。`listen()` 首行调用
-/// `self.config.validate()`，因 `internal_api_key` 为空直接返回 Config 错误，
-/// 外网端口即使被占用也不会触发 bind 失败。
-/// 真正覆盖 bind 失败路径的测试见 `test_listen_bind_failure_external_port_with_valid_config`。
+/// listen 未配置 `internal_api_key` 时被 `validate()` 短路（fail-closed）：首行校验失败即返回 Config 错误，
+/// 不触达端口绑定路径；覆盖 bind 失败路径的测试见 `test_listen_bind_failure_external_port_with_valid_config`。
 #[tokio::test]
 async fn test_listen_validates_config_first_external() {
     // 占用外网端口（但 validate 短路，此占用无实际影响）
@@ -789,10 +761,7 @@ async fn test_listen_validates_config_first_external() {
     // external_listener 在函数结束时 drop
 }
 
-/// 测试 listen 在未配置 `internal_api_key` 时被 `validate()` 短路（内网端口场景）。
-///
-/// 与 `test_listen_validates_config_first_external` 对称，覆盖内网端口场景。
-/// 注意：错误来源是 validate 校验而非 bind 失败。
+/// 与 `test_listen_validates_config_first_external` 对称（内网端口场景），错误来源是 validate 而非 bind。
 #[tokio::test]
 async fn test_listen_validates_config_first_internal() {
     let internal_listener = tokio::net::TcpListener::bind("0.0.0.0:0")
@@ -817,10 +786,7 @@ async fn test_listen_validates_config_first_internal() {
     );
 }
 
-/// 测试 listen 成功启动后持续运行（不立即返回）。
-///
-/// 使用 tokio::select! 在 listen 和 sleep 之间竞争，
-/// 如果 listen 在 300ms 内未返回，说明服务器已成功启动。
+/// listen 成功启动后持续运行（不立即返回）：tokio::select! 竞速，300ms 内未返回即说明已启动。
 #[tokio::test]
 async fn test_listen_starts_and_runs() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
@@ -839,11 +805,8 @@ async fn test_listen_starts_and_runs() {
        }
 }
 
-/// 测试 listen 按配置的绑定地址绑定外网端口（而非硬编码 0.0.0.0）。
-///
-/// 判别式：占住 `127.0.0.1:P` 后，`with_external_bind(127.0.0.2)` + 端口 P
-/// 应能成功绑定并持续运行——若 listen 仍硬编码 0.0.0.0（通配），bind 会与
-/// 既有 specific-address 绑定冲突（EADDRINUSE）并立即返回错误。
+/// listen 按配置的绑定地址绑定外网端口（而非硬编码 0.0.0.0）：占住 `127.0.0.1:P` 后以 `with_external_bind(127.0.0.2)`
+/// + 同端口应能绑定成功——若仍通配绑定会 EADDRINUSE 与既有 specific-address 冲突并立即返回错误。
 #[cfg_attr(
     target_os = "macos",
     ignore = "macOS lo0 默认仅含 127.0.0.1，无法绑定 127.0.0.2（平台能力差异，非缺陷）"
@@ -873,10 +836,8 @@ async fn test_listen_uses_configured_external_bind() {
     }
 }
 
-/// 测试 listen 绑定冲突发生在配置的绑定地址上时错误显性化。
-///
-/// 占住 `127.0.0.1:P` 后以相同绑定地址启动 → `TcpListener::bind` EADDRINUSE，
-/// listen 返回 `server-external-bind` 错误（bind 失败路径与通配行为一致）。
+/// bind 冲突发生在配置的绑定地址上时错误显性化：占住 `127.0.0.1:P` 后同址启动 → EADDRINUSE，
+/// listen 返回 `server-external-bind` 错误。
 #[tokio::test]
 async fn test_listen_bind_failure_on_configured_external_bind() {
     let occupier = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -899,9 +860,7 @@ async fn test_listen_bind_failure_on_configured_external_bind() {
     );
 }
 
-/// 测试 listen 在 TLS 证书文件不存在时返回错误（feature = "tls"）。
-///
-/// 设置不存在的证书路径，listen 内部 TLS 配置加载失败 → 返回错误。
+/// TLS 证书文件不存在时 listen 返回错误（feature = "tls"）。
 #[cfg(feature = "tls")]
 #[tokio::test]
 async fn test_listen_tls_returns_error_when_cert_not_found() {
@@ -915,9 +874,7 @@ async fn test_listen_tls_returns_error_when_cert_not_found() {
     assert!(result.is_err(), "TLS 证书不存在时 listen 应返回错误");
 }
 
-// ========================================================================
-// to_api_response 补充测试（覆盖更多 GarrisonError 变体）
-// ========================================================================
+// to_api_response 补充测试（更多 GarrisonError 变体）
 
 /// 测试 to_api_response 处理 NotLogin 错误（401 + NOT_LOGIN）。
 #[test]
@@ -974,9 +931,7 @@ fn test_to_api_response_with_expired_token_error() {
     assert_eq!(resp.message.as_deref(), Some("Token expired"));
 }
 
-// ========================================================================
-// to_api_response 补充测试（覆盖剩余 GarrisonError 变体）
-// ========================================================================
+// to_api_response 补充测试（剩余 GarrisonError 变体）
 
 /// 测试 to_api_response 处理 NotRole 错误（403 + NOT_ROLE）。
 #[test]
@@ -1179,13 +1134,9 @@ fn test_to_api_response_with_exception_other_code() {
     assert_eq!(resp.message.as_deref(), Some("Business exception"));
 }
 
-// ========================================================================
 // 限速边缘条件测试
-// ========================================================================
 
-/// 测试 rate_limit(0) 时所有外网请求被限速（429）。
-///
-/// capacity=0 时 token bucket 初始为空，无令牌可消耗 → 所有请求 429。
+/// rate_limit(0)：token bucket 初始为空、无令牌可消耗，所有外网请求 429。
 #[tokio::test]
 async fn test_rate_limit_zero_rejects_all_requests() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
@@ -1216,9 +1167,7 @@ async fn test_rate_limit_zero_rejects_all_requests() {
     );
 }
 
-/// 测试空 API Key 时内网请求被拒绝（401）。
-///
-/// with_internal_api_key("") 设置空 key，api_key_auth_middleware 应拒绝所有请求。
+/// 空 API Key（`with_internal_api_key("")`）时 api_key_auth_middleware 拒绝所有内网请求（401）。
 #[tokio::test]
 async fn test_empty_internal_api_key_rejects_all() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
@@ -1244,9 +1193,7 @@ async fn test_empty_internal_api_key_rejects_all() {
     );
 }
 
-// ========================================================================
 // OAuth2 路由集成测试（feature = "oauth2-server"）
-// ========================================================================
 
 /// 简化 Mock DAO，仅实现 GarrisonDao 的 5 个必需方法。
 #[cfg(feature = "oauth2-server")]
@@ -1335,9 +1282,7 @@ impl crate::oauth2_server::client::OAuth2ClientStore for SimpleMockClientStore {
     }
 }
 
-/// 测试 with_oauth2 设置 oauth2_state 后 external_router 包含 OAuth2 端点。
-///
-/// 验证 /oauth2/token 端点不再返回 404（而是返回 OAuth2 handler 的响应）。
+/// with_oauth2 后 external_router 含 OAuth2 端点：/oauth2/token 不再 404（返回 handler 响应）。
 #[cfg(feature = "oauth2-server")]
 #[tokio::test]
 async fn test_external_router_includes_oauth2_routes_when_set() {
@@ -1496,9 +1441,7 @@ async fn test_with_oauth2_chainable() {
     );
 }
 
-// ========================================================================
 // builder 边缘条件测试
-// ========================================================================
 
 /// 测试 with_rate_limit 设置极大值时正常工作。
 #[tokio::test]
@@ -1522,9 +1465,7 @@ async fn test_with_internal_api_key_accepts_str_and_string() {
     assert_eq!(server2.config.internal_api_key, "string-key");
 }
 
-// ========================================================================
 // body limit 配置测试
-// ========================================================================
 
 /// AuthServerConfig 默认 body limit 值正确（外网 256KB、内网 1MB）。
 #[tokio::test]
@@ -1545,14 +1486,9 @@ async fn test_with_body_limits() {
     assert_eq!(server.config.internal_body_limit, 2 * 1024 * 1024);
 }
 
-// ========================================================================
 // 覆盖率补测：listen 校验失败 / 真实 bind 失败分支 / builder 补充 / 租户解析器两态
-// ========================================================================
 
-/// 测试 listen 在 `internal_api_key` 未配置时被 config validate 短路（fail-closed）。
-///
-/// 覆盖 `listen()` 首行 `self.config.validate().map_err(GarrisonError::Config)?`
-/// 错误分支：校验失败时不进入端口绑定，直接返回 Config 错误。
+/// listen 在 `internal_api_key` 未配置时被 config validate 短路（fail-closed）：校验失败不进入端口绑定，直接返回 Config 错误。
 #[tokio::test]
 async fn test_listen_validate_fails_when_internal_api_key_empty() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
@@ -1569,11 +1505,8 @@ async fn test_listen_validate_fails_when_internal_api_key_empty() {
     );
 }
 
-/// 测试 listen 在配置合法且外网端口被占用时返回 bind 错误。
-///
-/// 与 `test_listen_validates_config_first_external` 的区别：本测试设置
-/// 了合法 api_key，validate 通过后真正进入 tokio::spawn 的 bind 路径，覆盖
-/// 外网 `TcpListener::bind` 失败分支与 select 的 external 错误臂。
+/// listen 配置合法且外网端口被占用时返回 bind 错误：与 `test_listen_validates_config_first_external` 不同，
+/// 本测试设置合法 api_key、真正进入 tokio::spawn 的 bind 路径，覆盖外网 bind 失败分支与 select 的 external 错误臂。
 #[tokio::test]
 async fn test_listen_bind_failure_external_port_with_valid_config() {
     let external_listener = tokio::net::TcpListener::bind("0.0.0.0:0")
@@ -1595,10 +1528,8 @@ async fn test_listen_bind_failure_external_port_with_valid_config() {
     );
 }
 
-/// 测试 listen 在配置合法且内网端口被占用时返回 bind 错误。
-///
-/// 覆盖内网 `TcpListener::bind` 失败分支与 select 的 internal 错误臂
-///（internal 失败时显式 abort external task）。
+/// listen 配置合法且内网端口被占用时返回 bind 错误（覆盖内网 bind 失败分支与 select 的 internal 错误臂；
+/// internal 失败时显式 abort external task）。
 #[tokio::test]
 async fn test_listen_bind_failure_internal_port_with_valid_config() {
     let internal_listener = tokio::net::TcpListener::bind("0.0.0.0:0")
@@ -1633,9 +1564,8 @@ async fn test_with_trusted_proxies_and_rate_limit_max_entries() {
     assert_eq!(server.config.rate_limit_max_entries, 1234);
 }
 
-/// 测试 with_tenant_resolver 两态（feature = "tenant-isolation"）：
-/// 默认 `None`（不挂载租户中间件），`Some(..)` 时 external / internal 路由
-/// 均挂载租户解析中间件（路由可正常构建）。
+/// with_tenant_resolver 两态（feature = "tenant-isolation"）：默认 `None` 不挂载租户中间件，
+/// `Some(..)` 时 external / internal 路由均挂载（路由可正常构建）。
 #[cfg(feature = "tenant-isolation")]
 #[tokio::test]
 async fn test_with_tenant_resolver_states_none_and_some() {
@@ -1669,8 +1599,8 @@ async fn test_with_tenant_resolver_states_none_and_some() {
     let _ = server_some.internal_router();
 }
 
-/// 测试 with_oauth2 + with_tenant_resolver 组合：OAuth2 router merge 前单独
-/// 注入租户中间件（axum merge 不合并 layer），external / internal 端点均可达。
+/// with_oauth2 + with_tenant_resolver 组合：OAuth2 router merge 前单独注入租户中间件（axum merge 不合并 layer），
+/// external / internal 端点均可达。
 #[cfg(all(feature = "tenant-isolation", feature = "oauth2-server"))]
 #[tokio::test]
 async fn test_oauth2_with_tenant_resolver_routes_reachable() {
@@ -1695,9 +1625,8 @@ async fn test_oauth2_with_tenant_resolver_routes_reachable() {
     let external_app = server.external_router();
     let internal_app = server.internal_router();
 
-    // external：带合法租户头的 authorize 请求不被租户中间件阻断
-    //（SimpleMockClientStore 无注册客户端 → OAuth2 handler 返回业务错误 400；
-    // 若租户中间件缺失/解析失败则表现为 404/500，均视为路由装配失败）
+    // external：带合法租户头的 authorize 不被租户中间件阻断（SimpleMockClientStore 无注册客户端 → 业务错误 400；
+    // 租户中间件缺失/解析失败会表现为 404/500，视为路由装配失败）
     let resp = external_app
         .oneshot(
             Request::builder()
@@ -1726,8 +1655,7 @@ async fn test_oauth2_with_tenant_resolver_routes_reachable() {
         "合法租户头不应触发 401，实际: {status}"
     );
 
-    // internal：introspect 端点在租户中间件 + merge 后仍存在（OAuth2 handler
-    // 有自己的响应语义，不 404 即证明 merge 与租户中间件注入未破坏路由）
+    // internal：introspect 在租户中间件 + merge 后仍存在（不 404 即证明路由装配未被破坏）
     let resp = internal_app
         .oneshot(
             Request::builder()
@@ -1746,12 +1674,9 @@ async fn test_oauth2_with_tenant_resolver_routes_reachable() {
     );
 }
 
-/// server-health-check：探针在两个端口均绕过全部中间件（GAR-14 收敛后）。
-///
-/// - 外网路由：仅 `/healthz`（最小语义，无版本号）；`/readyz` 不暴露（404）
-/// - 内网路由：`/healthz` `/readyz` 均不要求 API Key（K8s 探针不持有 api_key_auth 凭证）
-///
-/// sdforge readiness 注册表是进程级全局态，与其他注册检查的测试串行执行。
+/// 探针在两端口均绕过全部中间件：外网仅 `/healthz`（最小语义无版本号，`/readyz` 404），
+/// 内网 `/healthz`/`/readyz` 均不要求 API Key（K8s 探针不持有 api_key_auth 凭证）；
+/// sdforge readiness 注册表是进程级全局态，与其他注册检查测试串行执行。
 #[cfg(feature = "server-health-check")]
 #[serial_test::serial]
 #[tokio::test]
@@ -1812,8 +1737,7 @@ async fn test_health_probes_bypass_middleware() {
     }
 }
 
-/// GAR-14: 内网 /readyz 默认剥离 checks[].details（可能含内部依赖拓扑），
-/// 显式 with_health_details(true) 后透传。
+/// 内网 /readyz 默认剥离 checks[].details（可能含内部依赖拓扑），显式 with_health_details(true) 后透传。
 #[cfg(feature = "server-health-check")]
 #[serial_test::serial]
 #[tokio::test]
@@ -1869,7 +1793,7 @@ async fn test_internal_readyz_details_gated_by_config() {
     sdforge::health::clear_readiness_checks();
 }
 
-/// GAR-14: readiness 判定语义保持——任一注册检查失败 → 503（details 仍剥离）。
+/// readiness 判定语义保持：任一注册检查失败 → 503（details 仍剥离）。
 #[cfg(feature = "server-health-check")]
 #[serial_test::serial]
 #[tokio::test]
@@ -1901,8 +1825,7 @@ async fn test_internal_readyz_failure_returns_503() {
     sdforge::health::clear_readiness_checks();
 }
 
-/// GAR-27（端到端）：外网 login 畸形类型 body 返回统一 JSON 错误体，
-/// 不含内部类型名 / 字段名 / 字节偏移。
+/// 端到端：外网 login 畸形类型 body 返回统一 JSON 错误体，不含内部类型名/字段名/字节偏移。
 #[tokio::test]
 async fn test_external_router_sanitizes_422_type_leak() {
     let server = make_server();
@@ -1947,7 +1870,7 @@ async fn test_external_router_sanitizes_422_type_leak() {
     assert_eq!(json["error"], "bad_request");
 }
 
-/// GAR-29（端到端）：外网 login 读体超限（>256KB）返回 413 统一 JSON 错误体。
+/// 端到端：外网 login 读体超限（>256KB）返回 413 统一 JSON 错误体。
 #[tokio::test]
 async fn test_external_router_oversize_body_returns_413() {
     let server = make_server();
@@ -1979,8 +1902,7 @@ async fn test_external_router_oversize_body_returns_413() {
     assert_eq!(json["error"], "payload_too_large");
 }
 
-/// GAR-28（端到端）：重复 X-API-Key 头经内网路由 fail-closed 401
-///（首值合法亦拒绝，消除与「取末值」网关的判定分裂）。
+/// 端到端：重复 X-API-Key 头经内网路由 fail-closed 401（首值合法亦拒绝，消除与「取末值」网关的判定分裂）。
 #[tokio::test]
 async fn test_internal_router_rejects_duplicate_api_key_header() {
     let server = make_server().with_api_key_lockout(0, 300);
@@ -2004,7 +1926,7 @@ async fn test_internal_router_rejects_duplicate_api_key_header() {
     );
 }
 
-/// GAR-23（端到端）：内网 get-session 缺失 caller_login_id 返回 400（fail-closed）。
+/// 端到端：内网 get-session 缺失 caller_login_id 返回 400（fail-closed）。
 #[tokio::test]
 async fn test_internal_router_get_session_without_caller_rejected() {
     let server = make_server();
@@ -2031,8 +1953,8 @@ async fn test_internal_router_get_session_without_caller_rejected() {
     assert!(json.get("data").is_none(), "拒绝响应不得携带会话数据");
 }
 
-/// GAR-13（端到端）：auth-server 聚合含 web-security-headers 后，
-/// 认证端点响应携带 Cache-Control: no-store / X-Content-Type-Options / X-Frame-Options。
+/// 端到端：auth-server 聚合含 web-security-headers 后，认证端点响应携带
+/// Cache-Control: no-store / X-Content-Type-Options / X-Frame-Options。
 #[cfg(feature = "web-security-headers")]
 #[tokio::test]
 async fn test_external_router_response_has_security_headers() {

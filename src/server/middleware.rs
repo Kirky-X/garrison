@@ -3,21 +3,14 @@
 
 //! Auth Server 中间件栈。
 //!
-//! 提供：
-//! - `rate_limit_middleware`：基于 IP 的令牌桶限速，超限返回 429
-//! - `inject_client_ip`：从请求提取真实客户端 IP，存入 `Extension<ClientIp>`
-//! - `inject_login_client_ip`：login 端点自动填充 `params.ip`；读体超限/失败返回 413
-//! - `sanitize_json_rejection_middleware`：统一改写 axum Json rejection
-//!   （400/415/422/413）为统一 JSON 错误体，不回显内部类型名/字段名/字节偏移
-//! - `api_key_auth_middleware`：验证 X-API-Key 头，不匹配返回 401；
-//!   重复多值头 fail-closed 拒绝；按源 IP 失败锁定（GAR-25/28）
-//! - `audit_log_middleware`：tracing::info! 记录请求方法+路径+状态码
+//! 提供：`rate_limit_middleware`（IP 令牌桶限速，超限 429）、`inject_client_ip` /
+//! `inject_login_client_ip`（提取真实客户端 IP 并填充 `params.ip`，读体超限/失败 413）、
+//! `sanitize_json_rejection_middleware`（统一改写 axum Json rejection 400/415/422/413 为 JSON
+//! 错误体，不回显内部类型名/字段名/字节偏移）、`api_key_auth_middleware`（校验 X-API-Key，
+//! 重复多值头 fail-closed，按源 IP 失败锁定）、`audit_log_middleware`（记录方法+路径+状态码）。
 //!
-//! # 设计
-//!
-//! - **简化原则**：限速用 in-memory HashMap，不依赖 Redis
-//! - **parking_lot::Mutex**：比 std::sync::Mutex 更高效，无需 await 持锁
-//! - **from_fn_with_state**：通过 axum middleware state 共享配置
+//! 设计：限速用 in-memory HashMap，不依赖 Redis；`parking_lot::Mutex` 无需 await 持锁；
+//! `from_fn_with_state` 通过 axum middleware state 共享配置。
 
 use crate::i18n::translate_detail;
 use axum::extract::ConnectInfo;
@@ -39,24 +32,20 @@ use crate::context::GarrisonPrincipal;
 use crate::error::GarrisonError;
 use crate::server::api_key_lockout::ApiKeyLockout;
 
-/// per-IP 限速桶条目 — 持有 limiteron 令牌桶 + 最后访问时间（用于 LRU 淘汰）。
+/// per-IP 限速桶条目：limiteron 令牌桶 + `last_access`（用于 LRU 淘汰）。
 ///
-/// `TokenBucketLimiter` 内部用 `AtomicU64` 管理令牌数与补充时间（线程安全），
-/// 不暴露 `last_refill`，故在此额外追踪 `last_access` 实现 LRU 淘汰。
+/// `TokenBucketLimiter` 内部不暴露补充时间，故额外追踪 `last_access`。
 struct BucketEntry {
     limiter: Arc<TokenBucketLimiter>,
     last_access: Instant,
 }
 
-/// 限速中间件状态。
-///
-/// 持有 IP → BucketEntry 的映射和限速配置。
-/// 通过 `Arc<RateLimitState>` 共享给 middleware。
+/// 限速中间件状态（经 `Arc` 共享）。
 ///
 /// # 安全性
 ///
-/// - `max_entries` 上限防 DoS 内存耗尽，超限时 LRU 淘汰最久未访问的 bucket。
-/// - `trusted_proxies` 限定 X-Forwarded-For 信任边界，非可信来源的 XFF 被忽略。
+/// `max_entries` 上限防 DoS 内存耗尽，超限 LRU 淘汰最久未访问的 bucket；
+/// `trusted_proxies` 限定 X-Forwarded-For 信任边界，非可信来源的 XFF 被忽略。
 pub struct RateLimitState {
     buckets: DashMap<String, BucketEntry>,
     /// 每个 IP 的令牌桶容量（u64，匹配 limiteron TokenBucketLimiter）。
@@ -73,26 +62,20 @@ pub struct RateLimitState {
 const DEFAULT_MAX_ENTRIES: usize = 100_000;
 
 impl RateLimitState {
-    /// 创建限速状态（默认配置：max_entries=100_000，无可信代理）。
+    /// 创建限速状态（默认 max_entries=100_000，无可信代理）。
     ///
-    /// # 参数
-    /// - `capacity`：每个 IP 每秒允许的请求数（既是桶容量也是补充速率）
+    /// `capacity` 为每个 IP 每秒允许的请求数（既是桶容量也是补充速率）。
     pub fn new(capacity: u32) -> Self {
         Self::with_options(capacity, DEFAULT_MAX_ENTRIES, Vec::new())
     }
 
-    /// 创建限速状态（完整配置）。
-    ///
-    /// # 参数
-    /// - `capacity`：每个 IP 每秒允许的请求数（既是桶容量也是补充速率）
-    /// - `max_entries`：HashMap 最大条目数
-    /// - `trusted_proxies`：可信代理 IP 列表
+    /// 创建限速状态（完整配置：`capacity` 同 [`Self::new`]，`max_entries` 上限，`trusted_proxies` 可信代理列表）。
     pub fn with_options(capacity: u32, max_entries: usize, trusted_proxies: Vec<IpAddr>) -> Self {
         let capacity = capacity as u64;
         Self {
             // 初始容量取 max_entries 的 1/64 与 64 的较大值，避免冷启动时频繁 rehash
             buckets: DashMap::with_capacity((max_entries / 64).max(64)),
-            // 桶容量 = 补充速率 = capacity（与原手写实现一致）
+            // 桶容量 = 补充速率 = capacity
             capacity,
             refill_rate: capacity,
             // 至少保留 1 个条目，避免 max_entries=0 导致所有请求被驱逐
@@ -109,11 +92,9 @@ impl RateLimitState {
 
 /// 从 `X-Forwarded-For` 解析真实客户端 IP（rightmost-untrusted 策略）。
 ///
-/// 从右向左跳过 `trusted_proxies` 中的代理，返回第一个不可信跳。
-/// 客户端可预伪造 XFF 最左值（代理以追加模式写入时），仅最右侧
-/// 不可信跳由可信代理写入、不可伪造；全部跳均可信（纯内网互调）
-/// 时回退最左值。存在不可解析跳时返回 `None`（调用方回退连接 IP），
-/// 防止常量键（如 "unknown"）聚合全部异常客户端。
+/// 从右向左跳过 `trusted_proxies` 中的代理，返回第一个不可信跳：客户端可预伪造 XFF 最左值
+/// （代理以追加模式写入时），仅最右侧不可信跳由可信代理写入、不可伪造；全部跳均可信（纯内网
+/// 互调）时回退最左值。存在不可解析跳时返回 `None`（调用方回退连接 IP），防止常量键聚合全部异常客户端。
 pub fn parse_forwarded_for_rightmost(xff: &str, trusted_proxies: &[IpAddr]) -> Option<String> {
     let hops: Vec<&str> = xff
         .split(',')
@@ -126,9 +107,8 @@ pub fn parse_forwarded_for_rightmost(xff: &str, trusted_proxies: &[IpAddr]) -> O
     for hop in hops.iter().rev() {
         match hop.parse::<IpAddr>() {
             Ok(ip) if trusted_proxies.contains(&ip) => continue,
-            // 非 IP 字面量跳（如异常代理写入的 "unknown"）不可采纳：采纳会使
-            // 所有此类客户端聚成同一限流键（可被利用做集体限流/封禁）——返回
-            // None 由调用方回退连接 IP（fail-closed 到 socket 地址）
+            // 非 IP 字面量跳（如异常代理写入的 "unknown"）不可采纳：采纳会使所有此类客户端聚成同一
+            // 限流键（可被利用做集体限流/封禁）——返回 None 由调用方回退连接 IP（fail-closed 到 socket 地址）
             Ok(_) => return Some((*hop).to_string()),
             Err(_) => return None,
         }
@@ -140,10 +120,9 @@ pub fn parse_forwarded_for_rightmost(xff: &str, trusted_proxies: &[IpAddr]) -> O
 ///
 /// # 信任模型
 ///
-/// - 若连接 IP 在 `trusted_proxies` 中：采用 XFF rightmost-untrusted
-///   （从右向左第一个非可信代理跳，防客户端预伪造最左值）。
-/// - 若连接 IP 不在 `trusted_proxies` 中：使用连接 IP 本身，忽略 XFF（防伪造）。
-/// - 若无 `ConnectInfo`（如 oneshot 测试）：返回 "unknown"（fail-closed，不信任 XFF）。
+/// 连接 IP 在 `trusted_proxies` 中时采用 XFF rightmost-untrusted（从右向左第一个非可信代理跳，
+/// 防客户端预伪造最左值）；否则使用连接 IP 本身并忽略 XFF（防伪造）；无 `ConnectInfo`（如 oneshot
+/// 测试）返回 "unknown"（fail-closed，不信任 XFF）。
 pub fn extract_client_ip(req: &Request, trusted_proxies: &[IpAddr]) -> String {
     let connect_ip = req
         .extensions()
@@ -176,14 +155,10 @@ pub async fn rate_limit_middleware(
     next: Next,
 ) -> Response {
     let ip = extract_client_ip(&req, &state.trusted_proxies);
-    // 短暂持锁：取出 bucket Arc 并更新 last_access，然后在锁外调用 async allow
-    // （limiteron allow 内部用原子 CAS，不阻塞，但避免跨 await 持有 parking_lot 锁）
-    // DashMap 分片锁：不同 IP 的读写操作可并行，避免全局 Mutex 瓶颈
-    //
-    // TOCTOU 修复：先原子 insert（entry() 持分片写锁），再在锁外做
-    // 超限检查与 LRU 淘汰。并发插入不同新 IP 时可能短暂超过 max_entries，
-    // 但每个新插入都会触发一次淘汰检查，保证最终收敛到 max_entries 以内；
-    // 淘汰扫描仅在真正超限时发生（低于上限的新 IP 插入不再全表扫描）。
+    // 短暂持锁：取出 bucket Arc 并更新 last_access，锁外调用 async allow（limiteron 内部原子 CAS，
+    // 避免跨 await 持有 parking_lot 锁）；DashMap 分片锁使不同 IP 的读写可并行。
+    // TOCTOU：先原子 insert（entry() 持分片写锁），再在锁外做超限检查与 LRU 淘汰；并发插入不同新 IP
+    // 时可能短暂超过 max_entries，但每次新插入都会触发淘汰检查，最终收敛到上限以内。
     let is_new_ip = !state.buckets.contains_key(&ip);
     let bucket = {
         let mut entry = state
@@ -197,8 +172,8 @@ pub async fn rate_limit_middleware(
         entry.limiter.clone()
     };
 
-    // 新插入后超限：淘汰最久未访问的 bucket（LRU）。
-    // 在 entry 写锁释放后执行（DashMap iter 会锁各分片，跨 await/持锁迭代会死锁）。
+    // 新插入后超限：淘汰最久未访问的 bucket（LRU）；
+    // 在 entry 写锁释放后执行（DashMap iter 锁各分片，跨 await/持锁迭代会死锁）。
     if is_new_ip && state.buckets.len() > state.max_entries {
         if let Some(oldest_key) = state
             .buckets
@@ -213,24 +188,21 @@ pub async fn rate_limit_middleware(
         }
     }
 
-    // 在锁外调用 allow(1)（limiteron 内部原子操作，无需持锁）
+    // 锁外调用 allow(1)（limiteron 内部原子操作，无需持锁）
     let allowed = match bucket.allow(1).await {
         Ok(allowed) => allowed,
         Err(e) => {
-            // LimiteronError 仅在 cost 非法时出现（cost=0 或超限），cost=1 不应触发，
-            // 但仍按 fail-closed 处理为限速拒绝并记录日志（失败显性化）
+            // LimiteronError 仅在 cost 非法时出现（cost=0 或超限）；cost=1 不应触发，
+            // 仍按 fail-closed 处理为限速拒绝并记录日志（失败显性化）
             tracing::warn!(error = %e, "rate limiter error");
             false
         },
     };
 
     if !allowed {
-        // 统一错误模型（R04）：429 走 GarrisonError::RateLimited，
-        // Retry-After 取 limiteron 快照的 reset_secs（delta-seconds 整数秒，
-        // 下限 1 由 retry_after_secs() 强制）；响应体为统一错误体
-        // （error_code=RATE_LIMITED / error_id / request_id）。
-        // Retry-After 为 advisory 头：allow 判定与本次二次快照之间存在
-        // refill 窗口，头值允许陈旧（提示性质，非精确承诺）。
+        // 429 走 GarrisonError::RateLimited（统一错误体 error_code/error_id/request_id），
+        // Retry-After 取 limiteron 快照的 reset_secs（delta-seconds，下限 1 由 retry_after_secs()
+        // 强制）；该头为 advisory：allow 判定与二次快照之间存在 refill 窗口，头值允许陈旧。
         let reset_secs = bucket
             .remaining()
             .await
@@ -245,14 +217,12 @@ pub async fn rate_limit_middleware(
     next.run(req).await
 }
 
-/// API Key 认证中间件状态。
-///
-/// 持有预期的 API Key 值与认证失败锁定状态，与请求 X-API-Key 头比对。
+/// API Key 认证中间件状态：预期 key 与按源 IP 记账的失败锁定。
 #[derive(Debug, Clone)]
 pub struct ApiKeyState {
     /// 预期的 API Key。
     pub api_key: String,
-    /// 认证失败锁定（按源 IP 记账，GAR-25）。
+    /// 认证失败锁定（按源 IP 记账）。
     pub lockout: Arc<ApiKeyLockout>,
 }
 
@@ -278,34 +248,26 @@ impl ApiKeyState {
 
 /// 常量时间比较循环的固定工作量（字节）。
 ///
-/// 合法 API Key 长度远小于此值；双方不足处以 0 填充对齐到固定长度，
-/// 保证比较循环执行次数与输入长度无关（不泄露 API Key 长度）。
+/// 合法 API Key 长度远小于此值；双方不足处以 0 填充对齐，保证比较循环次数与输入长度无关
+/// （不泄露 API Key 长度）。
 const CT_EQ_FIXED_WORKLOAD: usize = 256;
 
 /// API Key 常量时间比较（固定工作量），防止 timing attack。
 ///
-/// 字节比较统一委托公共原语 [`crate::secure::ct_eq::constant_time_eq`]
-/// （ADR-0003 决策 2：消除本地第二实现）；为保留「比较工作量与输入长度无关、
-/// 不泄露 API Key 长度」的强化语义，双方先按 `CT_EQ_FIXED_WORKLOAD` 定长
-/// 0 填充，再走公共原语（原语在定长缓冲上循环，次数与实际输入长度无关）。
-///
-/// # 安全性
-///
-/// - 字节比较执行**固定工作量**（`CT_EQ_FIXED_WORKLOAD` 次迭代，与输入长度无关），
-///   既不在第一个不匹配字节处短路返回，也不按输入长度决定循环次数，
-///   避免攻击者通过测量响应时间逐字节推断 API Key 内容或长度
-/// - 任一输入超过固定工作量上限时返回 false：仅泄露"长度 > 256"这一粗粒度信息，
-///   不再泄露精确长度（合法 API Key 不会达到该长度）
+/// 字节比较委托公共原语 [`crate::secure::ct_eq::constant_time_eq`]（ADR-0003：消除本地第二实现）；
+/// 为保留「比较工作量与输入长度无关、不泄露 API Key 长度」的强化语义，双方先按
+/// `CT_EQ_FIXED_WORKLOAD` 定长 0 填充再走原语（原语在定长缓冲上循环，次数与输入长度无关）：
+/// 不在首个不匹配字节短路，也不按长度决定循环次数。任一输入超上限返回 false，仅泄露
+/// 「长度 > 256」这一粗粒度信息（合法 API Key 不会达到该长度）。
 fn api_key_ct_eq(a: &str, b: &str) -> bool {
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
 
-    // 超过固定工作量上限的输入不可能匹配真实 key，判不相等
-    //（非短路 & 聚合；仅暴露 "> 上限" 这一 coarse 事实）
+    // 超上限输入不可能匹配真实 key，判不相等（非短路 & 聚合；仅暴露 "> 上限" 粗粒度事实）
     let len_ok = (a_bytes.len() <= CT_EQ_FIXED_WORKLOAD) & (b_bytes.len() <= CT_EQ_FIXED_WORKLOAD);
 
     // 双方按定长 0 填充（超长截断，超长输入由 len_ok 判 false 兜底），
-    // 公共原语在定长缓冲上循环 CT_EQ_FIXED_WORKLOAD 次，与输入长度无关
+    // 公共原语在定长缓冲上循环固定次数，与输入长度无关
     let mut a_padded = [0u8; CT_EQ_FIXED_WORKLOAD];
     let mut b_padded = [0u8; CT_EQ_FIXED_WORKLOAD];
     let a_len = a_bytes.len().min(CT_EQ_FIXED_WORKLOAD);
@@ -316,17 +278,13 @@ fn api_key_ct_eq(a: &str, b: &str) -> bool {
     len_ok & crate::secure::ct_eq::constant_time_eq(&a_padded, &b_padded)
 }
 
-/// API Key 认证中间件 — 验证 X-API-Key 头。
+/// API Key 认证中间件 — 验证 X-API-Key 头，所有拒绝路径 fail-closed。
 ///
-/// # 拒绝语义（全部 fail-closed）
+/// 空 `api_key` 配置拒绝所有请求（防默认值泄露），不参与锁定记账；重复 `X-API-Key` 多值头 401
+/// （首值/末值语义因网关而异，直接拒绝消除判定分裂）；锁定中（同源 IP 连续失败达阈值且在窗口内）
+/// 429 + `Retry-After`；缺失/不匹配 401 并记一次失败，达到锁定阈值时本请求即返回 429。
 ///
-/// - 空 `api_key` 配置：拒绝所有请求（防御默认值泄露），不参与锁定记账
-/// - 重复 `X-API-Key` 头（多值）：401（GAR-28——首值/末值语义因网关而异，
-///   多值头本身就是异常请求，直接拒绝消除判定分裂）
-/// - 锁定中（同源 IP 连续失败达阈值且在窗口内）：429 + `Retry-After`
-/// - 缺失/不匹配：401 并记一次失败；达到锁定阈值时本请求即返回 429
-///
-/// 不匹配或缺失返回 401 Unauthorized，响应体为 JSON：
+/// 401 响应体为 JSON：
 /// ```json
 /// { "error": "unauthorized", "message": "Invalid API Key" }
 /// ```
@@ -335,7 +293,7 @@ pub async fn api_key_auth_middleware(
     req: Request,
     next: Next,
 ) -> Response {
-    // fail-closed —— 空 api_key 时拒绝所有请求（防御默认值泄露）
+    // fail-closed：空 api_key 时拒绝所有请求（防默认值泄露）
     if state.api_key.is_empty() {
         return (
             StatusCode::UNAUTHORIZED,
@@ -347,8 +305,8 @@ pub async fn api_key_auth_middleware(
             .into_response();
     }
 
-    // 锁定记账键：源连接 IP（无 ConnectInfo 时聚合为 "unknown"；
-    // 内网端口面向服务间调用，不做 XFF 解析，避免可信头伪造绕过记账）
+    // 锁定记账键：源连接 IP（无 ConnectInfo 时聚合为 "unknown"）；
+    // 内网端口面向服务间调用，不做 XFF 解析，避免可信头伪造绕过记账
     let source = req
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
@@ -364,7 +322,7 @@ pub async fn api_key_auth_middleware(
         .into_response();
     }
 
-    // GAR-28: 重复 X-API-Key 头 fail-closed 拒绝（首值/末值语义分歧下的判定分裂面）
+    // 重复 X-API-Key 头 fail-closed 拒绝（首值/末值语义分歧下的判定分裂面）
     let mut header_values = req.headers().get_all("x-api-key").iter();
     let first = header_values.next();
     if header_values.next().is_some() {
@@ -415,9 +373,7 @@ fn auth_failure_response(
         .into_response()
 }
 
-/// 审计日志中间件 — tracing::info! 记录请求方法+路径+状态码。
-///
-/// 在请求处理后记录响应状态码，便于审计追踪。
+/// 审计日志中间件：请求处理后记录方法 + 路径 + 状态码，便于审计追踪。
 pub async fn audit_log_middleware(req: Request, next: Next) -> Response {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
@@ -435,17 +391,10 @@ pub async fn audit_log_middleware(req: Request, next: Next) -> Response {
     response
 }
 
-// ============================================================================
-// path-filter 中间件（C-1：双端口架构路由分离）
-// ============================================================================
+// path-filter 中间件（双端口架构路由分离）
 //
-// sdforge::http::build() 收集所有 #[forge] 路由到单一 Router（15 个基础端点，
-// metrics-prometheus 启用时 +1 = 16），
-// 不支持按 name/path/group/tag 过滤。为在双端口架构中分离外网/内网路由，
-// 用 path-filter 中间件在请求入口处按路径过滤：
-//
-// - 外网端口：仅允许 /api/v1/auth/{login,logout,refresh}，其余 404
-// - 内网端口：拒绝上述 3 个外网路径，其余放行（由 api_key_auth 保护）
+// sdforge::http::build() 收集所有 #[forge] 路由到单一 Router 且不支持按 name/group 过滤，
+// 故用 path-filter 入口按路径分离：外网仅放行 login/logout/refresh，内网拒绝这 3 个路径（其余由 api_key_auth 保护）。
 
 /// 外网路径白名单（仅允许 3 个外网端点）。
 const EXTERNAL_ALLOWED_PATHS: &[&str] = &[
@@ -481,19 +430,18 @@ pub async fn external_path_filter(req: Request, next: Next) -> Response {
     }
 }
 
-/// 外网登录端点开关状态（C-1，供 `external_login_gate` 的 middleware state）。
+/// 外网登录端点开关（`external_login_gate` 的 middleware state）。
 ///
-/// `false`（默认）时 `POST /api/v1/auth/login` 返回 404——框架的 login 端点
-/// 不校验任何凭证（Sa-Token 模型：业务层先验密码、框架只签发会话），
-/// 无条件对外暴露将允许任意主体获取任意用户的有效会话。
+/// `false`（默认）时 `POST /api/v1/auth/login` 返回 404——框架 login 端点不校验任何凭证
+/// （Sa-Token 模型：业务层先验密码、框架只签发会话），无条件暴露将允许任意主体获取任意用户会话。
 #[derive(Debug, Clone, Copy)]
 pub struct ExternalLoginGate(pub bool);
 
-/// 外网登录端点 gate 中间件（C-1 fail-closed）。
+/// 外网登录 gate 中间件（fail-closed）。
 ///
-/// 挂载在外网 router、`external_path_filter` 内层：path-filter 放行 login 后
-/// 由本中间件按 `ExternalLoginGate` 决定放行或 404。禁用状态下不打每请求日志
-/// （避免探测刷日志），启用与否由 `listen()` 启动日志声明。
+/// 挂载在外网 router、`external_path_filter` 内层：path-filter 放行 login 后由本中间件按
+/// `ExternalLoginGate` 决定放行或 404。禁用状态下不打每请求日志（避免探测刷日志），
+/// 启用与否由 `listen()` 启动日志声明。
 pub async fn external_login_gate(
     axum::extract::State(gate): axum::extract::State<ExternalLoginGate>,
     req: Request,
@@ -516,34 +464,31 @@ pub async fn internal_path_filter(req: Request, next: Next) -> Response {
     }
 }
 
-// ============================================================================
-// 客户端 IP 注入中间件（fix-security-gaps: IP 自动提取）
-// ============================================================================
+// 客户端 IP 注入中间件（IP 自动提取）
 
 /// 客户端 IP 包装结构体。
 ///
-/// `inject_client_ip` middleware 从 HTTP 请求提取真实客户端 IP 后
-/// 存入 `Extension<ClientIp>`，下游 handler 通过 `req.extensions().get::<ClientIp>()`
-/// 读取。login handler 在 `LoginParams.ip.is_none()` 时自动填充。
+/// `inject_client_ip` 提取真实客户端 IP 后存入 `Extension<ClientIp>`，下游 handler 经
+/// `req.extensions().get::<ClientIp>()` 读取；login handler 在 `LoginParams.ip.is_none()` 时自动填充。
 #[derive(Debug, Clone)]
 pub struct ClientIp(pub String);
 
 /// 可信代理 IP 列表包装结构体。
 ///
-/// 通过 `Extension<TrustedProxies>` 注入到 router，供 `inject_client_ip`
-/// middleware 读取。复用 `AuthServerConfig.rate_limit_trusted_proxies` 配置。
+/// 经 `Extension<TrustedProxies>` 注入 router 供 `inject_client_ip` 读取，复用
+/// `AuthServerConfig.rate_limit_trusted_proxies`。
 #[derive(Debug, Clone)]
 pub struct TrustedProxies(pub Vec<IpAddr>);
 
 /// 客户端 IP 自动注入中间件。
 ///
-/// 从 `ConnectInfo<SocketAddr>` + `X-Forwarded-For`（仅信任 `TrustedProxies` 中的代理）
-/// 提取真实客户端 IP，存入 `Extension<ClientIp>`。
+/// 从 `ConnectInfo<SocketAddr>` + `X-Forwarded-For`（仅信任 `TrustedProxies` 中的代理）提取真实
+/// 客户端 IP，存入 `Extension<ClientIp>`。
 ///
 /// # 挂载位置
 ///
-/// 仅挂载到外网 router（`external_router()`），内网路由不需要。
-/// 应在 `rate_limit_middleware` 之后、`external_path_filter` 之前。
+/// 仅挂载到外网 router（`external_router()`），应在 `rate_limit_middleware` 之后、
+/// `external_path_filter` 之前。
 pub async fn inject_client_ip(mut req: Request, next: Next) -> Response {
     let trusted_proxies = req
         .extensions()
@@ -563,11 +508,7 @@ pub async fn inject_client_ip(mut req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
-// ============================================================================
-// task_local 客户端上下文（供 SessionHijackDetector 读取）
-// ============================================================================
-
-// 当前请求客户端 IP（task_local，`session-hijack-detection` feature 启用时可用）。
+// task_local 客户端上下文（供 SessionHijackDetector 读取）。
 #[cfg(feature = "session-hijack-detection")]
 tokio::task_local! {
     /// 当前请求客户端 IP（task_local，`pub(crate)` 供测试设置上下文）。
@@ -576,10 +517,9 @@ tokio::task_local! {
     pub(crate) static CLIENT_USER_AGENT: std::cell::RefCell<Option<String>>;
 }
 
-/// 获取当前请求的客户端 IP（从 task_local 读取）。
+/// 获取当前请求的客户端 IP（task_local 读取，非 HTTP 路径返回 `None`）。
 ///
 /// 仅在 `session-hijack-detection` feature 启用时可用。
-/// 非 HTTP 请求路径（如直接 API 调用）返回 `None`。
 #[cfg(feature = "session-hijack-detection")]
 pub fn current_client_ip() -> Option<String> {
     CLIENT_IP
@@ -587,10 +527,9 @@ pub fn current_client_ip() -> Option<String> {
         .unwrap_or(None)
 }
 
-/// 获取当前请求的 User-Agent（从 task_local 读取）。
+/// 获取当前请求的 User-Agent（task_local 读取，非 HTTP 路径返回 `None`）。
 ///
 /// 仅在 `session-hijack-detection` feature 启用时可用。
-/// 非 HTTP 请求路径（如直接 API 调用）返回 `None`。
 #[cfg(feature = "session-hijack-detection")]
 pub fn current_user_agent() -> Option<String> {
     CLIENT_USER_AGENT
@@ -600,13 +539,9 @@ pub fn current_user_agent() -> Option<String> {
 
 /// User-Agent 自动注入中间件。
 ///
-/// 从请求 `User-Agent` header 提取值并存入 task_local `CLIENT_USER_AGENT`，
-/// 供 `SessionHijackDetector` 在 `check_login` 路径读取。
-///
-/// # 挂载位置
-///
-/// 仅挂载到外网 router（`external_router()`），在 `inject_client_ip` 之后。
-/// 仅在 `session-hijack-detection` feature 启用时有实际效果。
+/// 提取 `User-Agent` header 存入 task_local `CLIENT_USER_AGENT`，供 `SessionHijackDetector` 在
+/// `check_login` 路径读取；仅挂载到外网 router（`inject_client_ip` 之后），
+/// `session-hijack-detection` feature 启用时有实际效果。
 pub async fn inject_user_agent(req: Request, next: Next) -> Response {
     #[cfg(feature = "session-hijack-detection")]
     {
@@ -626,22 +561,16 @@ pub async fn inject_user_agent(req: Request, next: Next) -> Response {
 
 /// 登录端点 IP 自动填充中间件。
 ///
-/// 仅挂载到 `POST /api/v1/auth/login` 端点。读取 `Extension<ClientIp>`，
-/// 当请求体 JSON 中 `params.ip` 为 null 或缺失时，自动填充客户端 IP。
-///
-/// # 行为说明
-///
-/// 调用方显式传入 `params.ip` 时不覆盖（显式值优先于自动填充）。
-/// 非 login 路径不应挂载此中间件（避免不必要的 body 解析开销）。
+/// 仅挂载到 `POST /api/v1/auth/login`：读取 `Extension<ClientIp>`，请求体 JSON 中 `params.ip`
+/// 为 null 或缺失时自动填充；调用方显式传入时不覆盖。非 login 路径不应挂载（避免 body 解析开销）。
 pub async fn inject_login_client_ip(req: Request, next: Next) -> Response {
     // 仅处理 login 端点，其余路径直接放行（避免不必要的 body 解析）
     if req.uri().path() != "/api/v1/auth/login" {
         return next.run(req).await;
     }
 
-    // GAR-29：读体与限幅判定无条件执行（不依赖 ClientIp 可用性）——否则
-    // Extension 缺失/unknown 时超限 body 会穿透到 axum DefaultBodyLimit，
-    // 以裸 text 413 响应绕开统一 JSON 错误体。
+    // 读体与限幅判定无条件执行（不依赖 ClientIp 可用性）——否则 Extension 缺失/unknown 时
+    // 超限 body 会穿透到 axum DefaultBodyLimit，以裸 text 413 响应绕开统一 JSON 错误体。
     let client_ip = req
         .extensions()
         .get::<ClientIp>()
@@ -652,9 +581,8 @@ pub async fn inject_login_client_ip(req: Request, next: Next) -> Response {
     let bytes = match axum::body::to_bytes(body, 256 * 1024).await {
         Ok(b) => b,
         Err(e) => {
-            // 读体失败（限幅超限 LengthLimitError 或 IO 错误）直接
-            // 返回 413 统一 JSON 错误体——不转发空 body（空 body 会到达
-            // Json extractor 产生误导性的 400 EOF），也不静默断连。
+            // 读体失败（超限 LengthLimitError 或 IO 错误）直接返回 413 统一 JSON 错误体——
+            // 不转发空 body（会到 Json extractor 产生误导性 400 EOF），也不静默断连。
             tracing::warn!(error = %e, "inject_login_client_ip: body read failed (oversize or IO)");
             return (
                 StatusCode::PAYLOAD_TOO_LARGE,
@@ -668,8 +596,8 @@ pub async fn inject_login_client_ip(req: Request, next: Next) -> Response {
         },
     };
 
-    // 畸形 JSON body 不再静默替换为 null——
-    // 直接返回 400 Bad Request（fail-fast），避免下游 handler 收到被破坏的请求体。
+    // 畸形 JSON body 直接返回 400 Bad Request（fail-fast），
+    // 避免下游 handler 收到被破坏的请求体。
     let mut json: serde_json::Value = match serde_json::from_slice(&bytes) {
         Ok(v) => v,
         Err(e) => {
@@ -707,36 +635,30 @@ pub async fn inject_login_client_ip(req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
-// ============================================================================
-// Json extractor rejection 清洗（GAR-27：422 类型名泄露）
-// ============================================================================
+// Json extractor rejection 清洗（422 类型名泄露）
 
 /// Json extractor rejection 的统一错误体（不含任何类型/字段/偏移细节）。
 const REJECTION_BODY: &str =
     r#"{"error":"bad_request","message":"request body failed validation"}"#;
 
-/// 请求体超限（413）的统一错误体——login 读体限幅（`inject_login_client_ip`）
-/// 与 sanitize 中间件（axum `DefaultBodyLimit` 裸 413 rejection）共用同一常量，
-/// 避免第二实现漂移。
+/// 请求体超限（413）的统一错误体：login 读体限幅与 sanitize 中间件（axum `DefaultBodyLimit`
+/// 裸 413 rejection）共用，避免第二实现漂移。
 const PAYLOAD_TOO_LARGE_BODY: &str =
     r#"{"error":"payload_too_large","message":"request body exceeds size limit"}"#;
 
 /// Json extractor rejection 清洗中间件 — 统一改写 axum 默认 rejection 响应。
 ///
-/// axum 的 `Json` extractor rejection（`JsonDataError` 422 / `JsonSyntaxError`
-/// 400 / `MissingJsonContentType` 415）以 `text/plain` 回显序列化诊断信息：
-/// 内部 Rust 类型名（"expected struct LoginRequest"）、字段名与攻击者输入的
-/// 字节偏移，可用于指纹识别与字段枚举。`DefaultBodyLimit` 的 body 超限
-/// rejection（`LengthLimitError`）同为 413 + text/plain 非空诊断体。本中间件
-/// 识别「4xx + text/plain + 非空 body」的 rejection 响应，将 body 改写为统一
-/// JSON 错误体，状态码保持原值（413 用 `PAYLOAD_TOO_LARGE_BODY`，与 login
-/// 读体限幅同体；其余用 `REJECTION_BODY`）。
+/// axum 的 `Json` rejection（422 `JsonDataError` / 400 `JsonSyntaxError` / 415
+/// `MissingJsonContentType`）以 text/plain 回显序列化诊断信息：内部 Rust 类型名（如
+/// "expected struct LoginRequest"）、字段名与攻击者输入的字节偏移，可用于指纹识别与字段枚举；
+/// `DefaultBodyLimit` 超限（413 `LengthLimitError`）同为 text/plain 非空诊断体。本中间件识别
+/// 「4xx + text/plain + 非空 body」的 rejection 响应并改写为统一 JSON 错误体，状态码保持原值
+/// （413 用 `PAYLOAD_TOO_LARGE_BODY`，其余用 `REJECTION_BODY`）。
 ///
 /// # 误伤排除
 ///
-/// - 业务与中间件自身的 JSON 错误体（`application/json`）不匹配，原样通过
-/// - path-filter 等裸 `StatusCode` 响应为空 body，不匹配（且 404 不在集合内）
-/// - OAuth2/qrlogin merge 路由自带中间件栈，handler 自产 JSON 错误，不受影响
+/// 业务与中间件自身的 `application/json` 错误体不匹配原样通过；path-filter 等裸 `StatusCode`
+/// 响应为空 body 不匹配；OAuth2/qrlogin merge 路由自带中间件栈、handler 自产 JSON 错误，不受影响。
 pub async fn sanitize_json_rejection_middleware(req: Request, next: Next) -> Response {
     let response = next.run(req).await;
 
@@ -792,12 +714,11 @@ pub async fn sanitize_json_rejection_middleware(req: Request, next: Next) -> Res
     }
 }
 
-/// Principal 注入中间件 — 从 Authorization header 提取 Bearer token，
-/// 验证后注入 `GarrisonPrincipal` extension。
+/// Principal 注入中间件 — 从 Authorization Bearer token 解析会话，验证后注入
+/// `GarrisonPrincipal` extension。
 ///
-/// 用于 OAuth2 外网路由，使 `/oauth2/authorize` 能检测用户登录状态：
-/// - 有效 token → 注入 `Extension(GarrisonPrincipal { login_id })`，authorize 走授权码签发路径
-/// - 无 token / token 无效 → 不注入（principal 为 None），authorize 重定向到登录页
+/// 用于 OAuth2 外网路由，使 `/oauth2/authorize` 能检测用户登录状态：有效 token 注入
+/// `GarrisonPrincipal { login_id }` 走授权码签发路径，无 token / 无效则不注入（重定向到登录页）。
 ///
 /// 本中间件**不阻断请求**，仅做 best-effort 注入。
 pub async fn principal_inject_middleware(mut req: Request, next: Next) -> Response {
@@ -883,10 +804,9 @@ mod tests {
         assert_eq!(json["error_id"], "ratelimit.rate_limited");
     }
 
-    /// 429 响应携带 Retry-After 头，值为合法 delta-seconds（>= 1）。
+    /// 429 响应携带 Retry-After（合法 delta-seconds ≥ 1）。
     ///
-    /// 精确值 = limiteron 快照 reset_secs（受令牌补充时间影响，不作精确断言；
-    /// 下限 1 的强制逻辑由 error.rs 的 `retry_after_secs` 纯函数测试覆盖）。
+    /// 精确值受令牌补充时间影响不作断言；下限 1 的强制逻辑由 error.rs 的 `retry_after_secs` 纯函数测试覆盖。
     #[tokio::test]
     async fn rate_limit_429_retry_after_matches_reset_secs() {
         let state = Arc::new(RateLimitState::new(2));
@@ -977,9 +897,7 @@ mod tests {
         assert_eq!(json["request_id"], "gw-429-corr");
     }
 
-    // ========================================================================
     // Rate limiter 内存上限 + LRU 淘汰测试
-    // ========================================================================
 
     /// 超过 max_entries 时淘汰旧 bucket，bucket 数量不超过上限。
     #[tokio::test]
@@ -1008,9 +926,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // 多 IP 限速隔离测试
-    // ========================================================================
 
     /// 不同 IP 的限速桶相互隔离 — 一个 IP 耗尽配额不影响另一个 IP。
     #[tokio::test]
@@ -1060,9 +976,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // X-Forwarded-For 信任边界测试
-    // ========================================================================
 
     /// 非可信代理 IP 的 XFF 被忽略，使用连接 IP。
     #[test]
@@ -1212,8 +1126,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
-    /// 常量时间比较函数正确性验证（ADR-0003：字节比较统一委托公共原语，
-    /// 本函数保留固定工作量定长填充策略，防 API Key 长度泄露）。
+    /// 常量时间比较正确性验证（ADR-0003：字节比较委托公共原语 + 固定工作量定长填充，防长度泄露）。
     #[test]
     fn test_api_key_ct_eq() {
         assert!(api_key_ct_eq("abc", "abc"));
@@ -1226,9 +1139,7 @@ mod tests {
         assert!(!api_key_ct_eq("abcdefgh", "abcdefgx"));
     }
 
-    // ========================================================================
     // api_key_ct_eq 长度泄露修复测试
-    // ========================================================================
 
     /// 不同长度返回 false（多种长度组合）。
     #[test]
@@ -1285,9 +1196,7 @@ mod tests {
         assert!(!api_key_ct_eq(" ", ""));
     }
 
-    // ========================================================================
-    // C-1: path-filter 中间件测试
-    // ========================================================================
+    // path-filter 中间件测试
 
     /// 内网路径列表（12 个）。
     const INTERNAL_PATHS: &[&str] = &[
@@ -1326,7 +1235,7 @@ mod tests {
             .route("/api/v1/auth/health", get(|| async { "ok" }))
     }
 
-    /// C-1: 外网 path-filter 放行所有外网路径。
+    /// 外网 path-filter 放行所有外网路径。
     #[tokio::test]
     async fn test_external_path_filter_allows_external_paths() {
         for &path in EXTERNAL_ALLOWED_PATHS {
@@ -1351,7 +1260,7 @@ mod tests {
         }
     }
 
-    /// C-1: gate 禁用（默认）时外网 login 返回 404，其余外网路径不受影响。
+    /// gate 禁用（默认）时外网 login 返回 404，其余外网路径不受影响。
     #[tokio::test]
     async fn test_external_login_gate_disabled_blocks_login() {
         let app = make_all_routes_router().layer(axum::middleware::from_fn_with_state(
@@ -1371,7 +1280,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::NOT_FOUND, "默认应拒绝外网 login");
     }
 
-    /// C-1: gate 启用时外网 login 正常到达 handler。
+    /// gate 启用时外网 login 正常到达 handler。
     #[tokio::test]
     async fn test_external_login_gate_enabled_allows_login() {
         let app = make_all_routes_router().layer(axum::middleware::from_fn_with_state(
@@ -1391,7 +1300,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK, "显式启用后 login 应放行");
     }
 
-    /// C-1: 外网 path-filter 拒绝所有内网路径（返回 404）。
+    /// 外网 path-filter 拒绝所有内网路径（返回 404）。
     #[tokio::test]
     async fn test_external_path_filter_blocks_internal_paths() {
         for &path in INTERNAL_PATHS {
@@ -1421,7 +1330,7 @@ mod tests {
         }
     }
 
-    /// C-1: 内网 path-filter 拒绝所有外网路径（返回 404）。
+    /// 内网 path-filter 拒绝所有外网路径（返回 404）。
     #[tokio::test]
     async fn test_internal_path_filter_blocks_external_paths() {
         for &path in EXTERNAL_ALLOWED_PATHS {
@@ -1446,7 +1355,7 @@ mod tests {
         }
     }
 
-    /// C-1: 内网 path-filter 放行所有内网路径。
+    /// 内网 path-filter 放行所有内网路径。
     #[tokio::test]
     async fn test_internal_path_filter_allows_internal_paths() {
         for &path in INTERNAL_PATHS {
@@ -1476,9 +1385,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // principal_inject_middleware 测试
-    // ========================================================================
 
     /// 测试用 Mock AuthBackend —— `get_session` 对 "valid-token" 返回 login_id="1001"。
     struct MockAuthBackend;
@@ -1666,9 +1573,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
-    // ========================================================================
     // inject_client_ip middleware 测试
-    // ========================================================================
 
     /// 直连（非可信代理）：使用 ConnectInfo 中的连接 IP。
     #[tokio::test]
@@ -1850,9 +1755,7 @@ mod tests {
         assert_eq!(std::str::from_utf8(&body).unwrap(), "unknown");
     }
 
-    // ========================================================================
     // inject_login_client_ip middleware 测试
-    // ========================================================================
 
     /// login 端点 + params.ip 为 null：自动填充 ClientIp。
     #[tokio::test]
@@ -2018,12 +1921,10 @@ mod tests {
         assert!(json["params"].get("ip").is_none(), "unknown IP 不应被注入");
     }
 
-    // ========================================================================
-    // GAR-29: 限幅超限返回 413
-    // ========================================================================
+    // 限幅超限返回 413
 
     /// login 端点读体超限（>256KB）返回 413 统一 JSON 错误体，
-    /// 不再转发空 body（旧行为会以误导性 400 EOF 到达 handler）。
+    /// 不转发空 body（空 body 会以误导性 400 EOF 到达 handler）。
     #[tokio::test]
     async fn inject_login_client_ip_oversize_body_returns_413() {
         let app = Router::new()
@@ -2054,21 +1955,18 @@ mod tests {
         assert_eq!(json["error"], "payload_too_large");
     }
 
-    // ========================================================================
-    // GAR-27: Json extractor rejection 清洗
-    // ========================================================================
+    // Json extractor rejection 清洗
 
     /// 422 rejection 测试目标类型（触发类型不匹配诊断，回显结构体名）。
     #[derive(serde::Deserialize)]
     struct SanitizeProbeBody {
-        /// 仅参与反序列化类型校验（wire 名 `token`），构造后不被读取；
-        /// 下划线前缀豁免 dead_code，serde rename 保持 wire 契约不变。
+        /// 仅参与反序列化类型校验（wire 名 `token`）；下划线前缀豁免 dead_code，serde rename 保持 wire 契约。
         #[serde(rename = "token")]
         _token: String,
     }
 
-    /// 类型错误（422 text/plain，含内部类型名/字段名/字节偏移）被改写为
-    /// 统一 JSON 错误体，状态码保持 4xx，无任何类型/字段细节。
+    /// 类型错误（422 text/plain，含内部类型名/字段名/字节偏移）被改写为统一 JSON 错误体，
+    /// 状态码保持 4xx，无任何类型/字段细节。
     #[tokio::test]
     async fn sanitize_json_rejection_hides_type_details_on_422() {
         let app = Router::new()
@@ -2155,10 +2053,8 @@ mod tests {
         assert!(serde_json::from_slice::<serde_json::Value>(&body).is_ok());
     }
 
-    /// 非 login 端点超限 body（>256KB）命中 `DefaultBodyLimit` 的 413 text/plain
-    /// rejection（axum `LengthLimitError`，非空诊断体），被 sanitize 中间件归一为
-    /// 统一 JSON 错误体——与 login 读体限幅（`inject_login_client_ip`）同体，
-    /// 不回显 axum 内部诊断。
+    /// 非 login 端点超限 body（>256KB）命中 `DefaultBodyLimit` 的 413 text/plain rejection，
+    /// 被 sanitize 归一为与 login 读体限幅相同的统一 JSON 错误体，不回显 axum 内部诊断。
     #[tokio::test]
     async fn sanitize_json_rejection_unifies_413_oversize_body() {
         let app = Router::new()
@@ -2244,9 +2140,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
-    // ========================================================================
-    // GAR-28: 重复 X-API-Key 头 fail-closed
-    // ========================================================================
+    // 重复 X-API-Key 头 fail-closed
 
     /// 重复 X-API-Key 头（错误值在前）→ 401，即使后续存在合法值。
     #[tokio::test]
@@ -2296,9 +2190,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
-    // ========================================================================
-    // GAR-25: API Key 认证失败锁定
-    // ========================================================================
+    // API Key 认证失败锁定
 
     /// 连续失败达阈值后，合法 key 也被 429 + Retry-After 锁定。
     #[tokio::test]

@@ -1,14 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 路由层测试 mock 实现。
-//!
-//! 本模块仅在 `cfg(all(test, feature = "web-axum"))` 下编译（通过 `mod.rs` 中的
-//! `#[cfg(all(test, feature = "web-axum"))] mod mock;` 声明），
-//! 提供 `MockDao`（基于 `parking_lot::Mutex<HashMap>` + `Instant` 模拟 TTL）
-//! 与 `MockInterface`（模拟 `GarrisonInterface` 权限/角色回调），
+//! 路由层测试 mock（仅 `cfg(all(test, feature = "web-axum"))` 编译）：`MockDao`
+//! （`parking_lot::Mutex<HashMap>` + `Instant` 模拟 TTL）与 `MockInterface`（权限/角色回调），
 //! 供 `router::tests` 集成测试复用。
-
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::stp::GarrisonInterface;
@@ -17,9 +12,7 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-// ------------------------------------------------------------------------
 // MockDao（HashMap + Instant 模拟 TTL）
-// ------------------------------------------------------------------------
 
 /// 测试用 mock DAO，模拟 TTL 行为。
 pub struct MockDao {
@@ -27,7 +20,6 @@ pub struct MockDao {
 }
 
 impl MockDao {
-    /// 创建空的 mock DAO 实例（无任何键值）。
     pub fn new() -> Self {
         Self {
             store: Mutex::new(HashMap::new()),
@@ -98,9 +90,7 @@ impl GarrisonDao for MockDao {
     crate::atomic_test_fallback!();
 }
 
-// ------------------------------------------------------------------------
 // MockInterface（权限/角色数据回调）
-// ------------------------------------------------------------------------
 
 /// 测试用 mock GarrisonInterface，模拟权限/角色数据。
 pub struct MockInterface {
@@ -109,7 +99,6 @@ pub struct MockInterface {
 }
 
 impl MockInterface {
-    /// 创建空的 mock 实例（无任何权限/角色）。
     pub fn new() -> Self {
         Self {
             permissions: HashMap::new(),

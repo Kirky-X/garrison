@@ -4,22 +4,13 @@
 //! 密码登录端到端集成测试。
 //!
 //! 验证 `Argon2Hasher` / `BcryptHasher` / `PasswordVerifier` + `GarrisonLogicDefault::login_with_password`
-//! 的完整链路：
-//! 1. `PasswordHasher::hash` → `PasswordHasher::verify` roundtrip
-//! 2. `PasswordVerifier::verify` 自动识别算法
-//! 3. `GarrisonLogicDefault::with_password_hasher` + `with_user_repository` 注入
-//! 4. `login_with_password` 成功路径（用户存在 + 密码匹配 → 签发 token）
-//! 5. `login_with_password` 失败路径（用户不存在 / 密码错误 / 未配置 hasher/repository）
-//! 6. listener 广播 LoginFailure 事件（user_not_found / wrong_password）
+//! 完整链路：`PasswordHasher::hash` → `verify` roundtrip、`PasswordVerifier` 自动识别算法、
+//! hasher + user_repository 注入、成功路径（用户存在 + 密码匹配 → 签发 token）、失败路径
+//! （用户不存在 / 密码错误 / 未配置 hasher/repository）、listener 广播 `LoginFailure` 事件。
 //!
 //! 运行：`cargo test --features "account-credential db-sqlite listener cache-memory" --test login_password_integration`
 //!
-//! # production-mock-purge
-//!
-//! NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化
-//! （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
-//! 本文件 `MockInterface` 替身仅满足 `GarrisonPermissionStrategyDefault::new` 构造，
-//! 不参与任何权限断言）。
+//! 库层无产品 `GarrisonInterface` 实现，本文件 `MockInterface` 替身仅满足策略构造，不参与断言。
 
 use async_trait::async_trait;
 use garrison::account::credential::password::{
@@ -69,10 +60,8 @@ fn reset_listener_counters() {
     LOGIN_FAILURE_WRONG_PASSWORD.store(0, Ordering::SeqCst);
 }
 
-/// 测试用 listener：根据 login_id 区分 user_not_found (9999) 与 wrong_password (1001)。
-///
-/// 实现层 reason 统一为 "invalid_credentials"，
-/// listener 无法仅凭 reason 区分两类失败，需借助 login_id（测试场景固定）。
+/// 测试用 listener：根据 login_id 区分 user_not_found (9999) 与 wrong_password (1001)，
+/// 实现层 reason 统一为 "invalid_credentials"，listener 只能借助 login_id 区分（测试场景固定）。
 struct PasswordLoginListener;
 
 #[async_trait]
@@ -125,7 +114,7 @@ async fn setup_db() -> dbnexus::DbPool {
 }
 
 // ============================================================================
-// 1. PasswordHasher roundtrip（Argon2 + Bcrypt）
+// PasswordHasher roundtrip（Argon2 + Bcrypt）
 // ============================================================================
 
 /// Argon2 hash → verify roundtrip：相同密码匹配，不同密码不匹配。
@@ -224,7 +213,7 @@ async fn password_verifier_auto_detects_algorithm() {
 }
 
 // ============================================================================
-// 2. login_with_password 端到端集成（真实 SQLite + Argon2 + UserRepository）
+// login_with_password 端到端集成（真实 SQLite + Argon2 + UserRepository）
 // ============================================================================
 
 /// 构造 GarrisonLogicDefault 实例，注入 Argon2Hasher + DbnexusUserRepository + ListenerManager。
@@ -418,11 +407,6 @@ async fn login_with_password_fails_without_user_repository() {
 }
 
 // ============================================================================
-// 3. 备注：GarrisonUtil::login_with_password 通过 GarrisonManager 注入的集成测试
+// 备注：GarrisonManager 注入路径下无法便捷预置自定义 factory（`with_factory` 依赖
+// `&'static GarrisonLogicFactoryEntry`），该场景由 src/stp/mod.rs 单元测试覆盖。
 // ============================================================================
-
-// 注：GarrisonManager::builder() 的 `with_factory` 依赖 `&'static GarrisonLogicFactoryEntry`，
-// 集成测试无法便捷注入自定义 factory 来预置 password_hasher + user_repository。
-// 此场景由 src/stp/mod.rs 的单元测试 login_with_password_succeeds（行 2785+）覆盖，
-// 该测试通过 GarrisonLogicDefault::new(...).with_password_hasher(...).with_user_repository(...)
-// 直接构造 logic 实例验证。

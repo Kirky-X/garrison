@@ -1,46 +1,17 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
-//! 二级认证（Safe Auth）瞬态标记实现。
-//!
-//! 本模块在 `safe-auth` feature 启用时，为 `GarrisonLogicDefault` 提供
-//! `open_safe` / `is_safe` / `close_safe` 的 inherent method 实现，
-//! 基于 `TokenSession.safe_services` 实现 service 级二级认证瞬态标记。
-//!
-//! # 设计说明：inherent method vs trait 覆写
-//!
-//! 任务原计划在 safe.rs 中覆写 `MfaLogic` trait 的 `open_safe` 方法，
-//! 但 Rust（E0119）禁止同一类型对同一 trait 有多个 impl 块，
-//! 而 mfa.rs 已有 `impl MfaLogic for GarrisonLogicDefault`（覆写 `check_disable`）。
-//!
-//! 因此本模块采用 inherent method 模式：为 `GarrisonLogicDefault` 添加
-//! `pub async fn open_safe` inherent method。Rust 方法解析规则保证 inherent method
-//! 优先于 trait default method，因此：
-//! - `safe-auth` 启用：`logic.open_safe(...)` 调用 inherent method（本模块实现）
-//! - `safe-auth` 禁用：safe.rs 不编译，`logic.open_safe(...)` 调用 trait default（`Ok(())`）
-//!
-//! # 已知限制
-//!
-//! 通过 trait 引用调用（如 `<GarrisonLogicDefault as MfaLogic>::open_safe`）
-//! 会使用 trait default 而非 inherent method。当前所有调用方均通过
-//! `GarrisonLogicDefault` 实例直接调用，不受此限制影响。
+//! 二级认证（Safe Auth）瞬态标记实现（`safe-auth` feature）。
+//! 为 `GarrisonLogicDefault` 提供 `open_safe` / `is_safe` / `close_safe` inherent method，基于 `TokenSession.safe_services` 记录 service 级瞬态标记。
+//! inherent method 模式：mfa.rs 已有 `impl MfaLogic for GarrisonLogicDefault`，E0119 禁止同类型同 trait 多 impl，故不用 trait 覆写；方法解析优先 inherent——启用时走本模块实现，禁用时走 trait default（`Ok(())`）。
+//! 已知限制：经 trait 引用调用（`<GarrisonLogicDefault as MfaLogic>::open_safe`）走 trait default；当前调用方均直接经实例调用。
 
 use super::current_token;
 use super::GarrisonLogicDefault;
 use crate::error::{GarrisonError, GarrisonResult};
 
 impl GarrisonLogicDefault {
-    /// 开启指定 service 的二级认证。
-    ///
-    /// 在当前 TokenSession 的 safe_services 中记录 service → 过期时间戳。
-    ///
-    /// # 并发安全
-    /// 使用 per-token 锁保护 read-modify-write 序列，避免并发 `open_safe` 调用
-    /// 导致 lost update。
-    ///
-    /// # 错误
-    /// - `GarrisonError::Session`: 未设置 current_token（未登录）。
-    /// - `GarrisonError::InvalidToken`: token 对应的 TokenSession 不存在。
-    /// - DAO 读写失败：透传 GarrisonError。
+    /// 开启指定 service 的二级认证：在 TokenSession.safe_services 记录 service → 过期时间戳。
+    /// per-token 锁保护 read-modify-write 防并发 lost update；未登录返回 `Session`，session 不存在返回 `InvalidToken`，DAO 失败透传。
     pub async fn open_safe(&self, service: &str, duration_secs: u64) -> GarrisonResult<()> {
         if service.is_empty() {
             return Err(GarrisonError::InvalidParam(
@@ -74,16 +45,7 @@ impl GarrisonLogicDefault {
             .await
     }
 
-    /// 检查指定 service 是否处于二级认证有效期内。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: service 已开启且未过期。
-    /// - `Ok(false)`: service 未开启、已过期、或未登录/无 session。
-    /// - `Err`: DAO 读取失败。
-    ///
-    /// # 设计
-    /// 未登录或无 session 时返回 `Ok(false)` 而非 `Err`，因为 is_safe 是查询方法，
-    /// "未认证" = "不安全" = `Ok(false)` 是合理的语义。只有 DAO 读写失败才返回 `Err`。
+    /// 检查 service 是否在二级认证有效期内：未开启 / 已过期 / 未登录或无 session 返回 `Ok(false)`（查询方法语义，未认证即不安全），仅 DAO 读取失败返回 `Err`。
     pub async fn is_safe(&self, service: &str) -> GarrisonResult<bool> {
         if service.is_empty() {
             return Err(GarrisonError::InvalidParam(
@@ -130,26 +92,8 @@ impl GarrisonLogicDefault {
         }
     }
 
-    /// 关闭指定 service 的二级认证（移除瞬态标记）。
-    ///
-    /// 从当前 TokenSession 的 safe_services 中移除 service 条目。
-    /// 移除后 `is_safe(service)` 返回 `false`。
-    ///
-    /// # 并发安全
-    /// 使用 per-token 锁保护 read-modify-write 序列，避免并发 `close_safe` 调用
-    /// 导致 lost update。
-    ///
-    /// # 参数
-    /// - `service`: 服务名称。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 成功关闭（或 service 本就未开启，幂等）。
-    /// - `Err`: 未登录或 session 不存在。
-    ///
-    /// # 错误
-    /// - `GarrisonError::Session`: 未设置 current_token（未登录）。
-    /// - `GarrisonError::InvalidToken`: token 对应的 TokenSession 不存在。
-    /// - DAO 读写失败：透传 GarrisonError。
+    /// 关闭指定 service 的二级认证（移除瞬态标记）：移除后 `is_safe(service)` 返回 `false`；本就未开启时幂等返回 `Ok(())`。
+    /// per-token 锁防 lost update；未登录返回 `Session`，session 不存在返回 `InvalidToken`，DAO 失败透传。
     pub async fn close_safe(&self, service: &str) -> GarrisonResult<()> {
         if service.is_empty() {
             return Err(GarrisonError::InvalidParam(
@@ -309,7 +253,6 @@ mod tests {
         })
         .await;
 
-        // 验证 safe_services 已设置
         let ts = logic
             .session
             .get_token_session(&token)
@@ -469,8 +412,7 @@ mod tests {
             .get("default")
             .expect("default 应在 safe_services 中");
         let now = chrono::Utc::now().timestamp();
-        // duration_secs=0 → expire_at = now + 0 = now（已过期）
-        // 允许 ±5 秒偏差（测试执行耗时）
+        // duration=0 → expire_at = now（已过期）；允许 ±5 秒偏差（测试执行耗时）
         assert!(
             *expire <= now,
             "duration=0 时过期时间应 <= now（已过期），实际: expire={}, now={}",
@@ -489,7 +431,6 @@ mod tests {
     #[tokio::test]
     async fn t022_open_safe_no_session_returns_err() {
         let (logic, _dao) = make_logic();
-        // 不 login，不设置 current_token，直接调用 open_safe
         let result = logic.open_safe("default", 3600).await;
 
         match result {
@@ -513,7 +454,6 @@ mod tests {
             .await
             .unwrap();
 
-        // 删除 token session 模拟 token 不存在
         logic.session.logout(&token).await.unwrap();
 
         let result = with_current_token(token.clone(), async {
@@ -648,7 +588,6 @@ mod tests {
         ts.safe_services.insert("payment".to_string(), now - 100);
         logic.session.save_token_session(&token, &ts).await.unwrap();
 
-        // default 仍 true，payment 变 false（独立性验证）
         let (safe_default_after, safe_payment_after) = with_current_token(token.clone(), async {
             (
                 logic.is_safe("default").await.unwrap(),
@@ -701,7 +640,6 @@ mod tests {
     #[tokio::test]
     async fn t023_is_safe_returns_false_when_not_logged_in() {
         let (logic, _dao) = make_logic();
-        // 不 login，不设置 current_token，直接调用 is_safe
         let result = logic.is_safe("default").await;
 
         assert!(
@@ -863,7 +801,6 @@ mod tests {
             "payment 应仍存在，未被 close_safe(default) 影响"
         );
 
-        // 验证 is_safe 的语义一致性
         let (safe_default, safe_payment) = with_current_token(token.clone(), async {
             (
                 logic.is_safe("default").await.unwrap(),
@@ -908,11 +845,7 @@ mod tests {
     // Feature gate 注册验证（编译测试）
     // --------------------------------------------------------------------
 
-    /// safe-auth feature 启用时，open_safe/is_safe/close_safe inherent methods
-    /// 可访问且行为正确。
-    ///
-    /// 验证 feature gate 配置：safe-auth 启用 → safe.rs 编译 → inherent methods 可调用。
-    /// 本测试在 `--features safe-auth` 或 `--features full` 下编译并运行。
+    /// safe-auth 启用时 open_safe/is_safe/close_safe inherent methods 可访问且行为正确（验证 feature gate 配置与 Cargo feature 传递）。
     #[cfg(feature = "security-extra")]
     #[tokio::test]
     async fn t026_safe_auth_feature_compiles_when_enabled() {
@@ -937,10 +870,7 @@ mod tests {
         .await;
     }
 
-    /// full feature 启用时 safe-auth 也启用（Cargo.toml full 列表包含 "safe-auth"）。
-    ///
-    /// 验证 Cargo.toml 配置正确性：full → safe-auth 依赖关系。
-    /// 本测试在 `--features full` 下编译并运行（full 隐含 safe-auth）。
+    /// full feature 隐含 safe-auth（Cargo.toml full 列表包含 "safe-auth"），验证依赖关系配置正确。
     #[cfg(all(feature = "full", feature = "security-extra"))]
     #[tokio::test]
     async fn t026_full_feature_includes_safe_auth() {
@@ -950,7 +880,6 @@ mod tests {
             .await
             .unwrap();
 
-        // full feature 启用时 safe-auth 也应启用，inherent methods 可访问
         with_current_token(token, async {
             logic.open_safe("default", 3600).await.unwrap();
             assert!(
@@ -966,11 +895,7 @@ mod tests {
     // open_safe/close_safe 并发竞态测试
     // --------------------------------------------------------------------
 
-    /// SlowDao wrapper：在 `get` token session key 后插入延迟，
-    /// 放大 TokenSession read-modify-write 窗口，使并发竞态可靠复现。
-    ///
-    /// 无锁时：两个并发 `open_safe` 都会在对方的 `save_token_session` 之前读到
-    /// 旧的 TokenSession，导致 lost update（最终 safe_services 只剩 1 个 service 而非 2 个）。
+    /// SlowDao：在 `get` token session key 后插入延迟，放大 read-modify-write 窗口使并发竞态可靠复现（无锁时两个并发 `open_safe` 交错读旧 session，导致 lost update）。
     struct SlowDao {
         inner: Arc<MockDao>,
         delay: std::time::Duration,
@@ -1012,10 +937,7 @@ mod tests {
         (inner, session)
     }
 
-    /// 模拟 open_safe 的 read-modify-write 操作（不依赖 task_local current_token）。
-    ///
-    /// 直接调用 `with_token_session_lock` 包裹的 read-modify-write 序列，
-    /// 等价于 `open_safe` 的核心逻辑，用于测试并发安全性。
+    /// 模拟 open_safe 的 read-modify-write（不依赖 task_local current_token，等价于 open_safe 核心逻辑）。
     async fn simulate_open_safe(
         session: &GarrisonSession,
         token: &str,
@@ -1054,17 +976,12 @@ mod tests {
             .await
     }
 
-    /// 修复验证：两个并发 `open_safe` 不同 service，safe_services 应包含两个 service。
-    ///
-    /// 修复前（无 per-token 锁）：两个并发 open_safe 的 read-modify-write 交错，
-    /// 后写入的 TokenSession 覆盖先写入的，导致丢失一个 service（lost update）。
-    /// 修复后（per-token 锁）：两个 open_safe 串行化，safe_services 完整保留两个 service。
+    /// 两个并发 `open_safe` 不同 service，safe_services 应完整保留两个（per-token 锁串行化 read-modify-write，防 lost update）。
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn crit001_concurrent_open_safe_different_services_no_lost_update() {
         let (_dao, session) = make_slow_session(std::time::Duration::from_millis(50));
         session.create("user-crit001-001", "T1").await.unwrap();
 
-        // 并发执行两次 open_safe 不同 service（用 tokio::join! 确保并发）
         let (r1, r2) = tokio::join!(
             simulate_open_safe(&session, "T1", "default", 3600),
             simulate_open_safe(&session, "T1", "payment", 7200),
@@ -1072,7 +989,6 @@ mod tests {
         r1.expect("open_safe default 应成功");
         r2.expect("open_safe payment 应成功");
 
-        // 验证 safe_services 包含两个 service（修复前会丢失一个）
         let ts = session.get_token_session("T1").await.unwrap().unwrap();
         assert_eq!(
             ts.safe_services.len(),
@@ -1092,17 +1008,12 @@ mod tests {
         );
     }
 
-    /// 修复验证：两个并发 `close_safe` 不同 service，safe_services 应清空。
-    ///
-    /// 修复前（无 per-token 锁）：两个并发 close_safe 的 read-modify-write 交错，
-    /// 后写入的 TokenSession 覆盖先写入的，导致已关闭的 service 被恢复（lost update）。
-    /// 修复后（per-token 锁）：两个 close_safe 串行化，两个 service 都被正确移除。
+    /// 两个并发 `close_safe` 不同 service，safe_services 应清空（per-token 锁串行化，防已关闭 service 被恢复）。
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn crit001_concurrent_close_safe_different_services_no_lost_update() {
         let (_dao, session) = make_slow_session(std::time::Duration::from_millis(50));
         session.create("user-crit001-002", "T1").await.unwrap();
 
-        // 先顺序添加两个 service
         simulate_open_safe(&session, "T1", "default", 3600)
             .await
             .unwrap();
@@ -1110,11 +1021,9 @@ mod tests {
             .await
             .unwrap();
 
-        // 验证两个 service 都已添加
         let ts = session.get_token_session("T1").await.unwrap().unwrap();
         assert_eq!(ts.safe_services.len(), 2, "前置条件：应有 2 个 service");
 
-        // 并发执行两次 close_safe 不同 service
         let (r1, r2) = tokio::join!(
             simulate_close_safe(&session, "T1", "default"),
             simulate_close_safe(&session, "T1", "payment"),
@@ -1122,7 +1031,6 @@ mod tests {
         r1.expect("close_safe default 应成功");
         r2.expect("close_safe payment 应成功");
 
-        // 验证 safe_services 已清空（修复前会因 lost update 残留 1 个 service）
         let ts = session.get_token_session("T1").await.unwrap().unwrap();
         assert_eq!(
             ts.safe_services.len(),
@@ -1154,7 +1062,6 @@ mod tests {
             .insert("valid-service".to_string(), now + 3600);
         logic.session.save_token_session(&token, &ts).await.unwrap();
 
-        // 调用 is_safe 应返回 false 并惰性删除过期条目
         let result = with_current_token(token.clone(), async {
             logic.is_safe("expired-service").await.unwrap()
         })
@@ -1172,7 +1079,6 @@ mod tests {
             "过期条目应被惰性删除，实际: {:?}",
             ts_after.safe_services
         );
-        // 验证未过期条目未受影响
         assert!(
             ts_after.safe_services.contains_key("valid-service"),
             "未过期条目不应被删除"

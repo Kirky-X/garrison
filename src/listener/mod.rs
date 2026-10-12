@@ -1,17 +1,10 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 监听器模块，提供事件订阅抽象与编译期注册。
+//! 监听器模块，提供事件订阅抽象与编译期注册（`inventory` crate，替代 Java SPI）。
 //!
-//! 对应 `SaTokenListener`，
-//! 通过 `inventory` crate 实现编译期监听器注册（替代 Java SPI）。
-//!
-//! 与 `plugin` 模块的区别：
-//! - `GarrisonPlugin`：主动钩子（在特定方法前后被调用，如 `on_login`）
-//! - `GarrisonListener`：被动订阅（订阅 `GarrisonEvent` 枚举的变体）
-//!
-//! 此模块仅在启用 `listener` 特性时编译。
-//! 监听器失败仅记录 `tracing::warn!`，不中断主流程。
+//! 与 `plugin` 的区别：plugin 是主动钩子（`on_login` 等方法前后），listener 是被动订阅
+//! `GarrisonEvent` 变体；listener 失败仅记录 `tracing::warn!`，不中断主流程。
 
 use crate::error::GarrisonResult;
 use async_trait::async_trait;
@@ -26,29 +19,22 @@ pub mod audit;
 
 /// 审计事件防篡改 HMAC 链子模块。
 ///
-/// 启用 `audit-log` feature 时编译，提供 `AuditEventChain`（吸收自 inklog
-/// `ArchiveChain`）：随机盐链首 + HMAC-SHA256 链式签名，任一事件被篡改/
-/// 删除/重排/伪造即校验失败，用于审计取证场景的完整性保证。
+/// 启用 `audit-log` feature 时编译：`AuditEventChain` 随机盐链首 + HMAC-SHA256
+/// 链式签名，任一事件被篡改/删除/重排/伪造即校验失败，保证审计取证完整性。
 #[cfg(feature = "audit-log")]
 pub mod audit_chain;
 
 /// 请求上下文。
 ///
-/// 携带与 HTTP 请求相关的客户端信息，由事件广播方注入到 `GarrisonEvent` 的
-/// `request_context` 字段，供 `to_audit_entry` 提取 ip 与 user_agent 填充审计日志。
-///
-/// # 字段
-///
-/// - `ip`: 客户端 IP 地址（可选，未知时为 `None`）
-/// - `user_agent`: 客户端 User-Agent（可选，未知时为 `None`）
+/// 携带 HTTP 请求相关的客户端信息，由事件广播方注入 `GarrisonEvent` 的
+/// `request_context` 字段，供 `to_audit_entry` 提取 ip 与 user_agent。
 ///
 /// # ⚠️ PII 说明
 ///
-/// `ip` 与 `user_agent` 属于**个人身份信息（PII）**：任何 listener / audit sink
-/// 若将其持久化或输出到日志，即把 PII 写入存储层。实现方应：
-/// - 遵循所在司法辖区的数据保护法规（如 GDPR / 个保法）确定留存期限与合法 basis；
-/// - 优先使用部分掩码（如 `203.0.113.*`）或聚合统计；
-/// - 审计场景参考 `AuditLogListener` 的 `mask_metadata` / `audit_mask_mode` 脱敏管线。
+/// `ip` 与 `user_agent` 属于**个人身份信息（PII）**：持久化或输出到日志即把 PII
+/// 写入存储层。实现方应按司法辖区法规（GDPR / 个保法）确定留存期限与合法 basis，
+/// 优先部分掩码或聚合统计；参考 `AuditLogListener` 的 `mask_metadata` /
+/// `audit_mask_mode` 脱敏管线。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestContext {
     /// 客户端 IP 地址（可选）。⚠️ 含 PII，持久化/输出前应脱敏（见类型级文档）。
@@ -62,14 +48,8 @@ pub struct RequestContext {
 /// 长 token（>8 字符）输出前 8 字符 + `***`；短 token 输出固定占位 `***`。
 /// `get(..8)` 为字符安全截取（避免多字节 UTF-8 中间截断 panic）。
 ///
-/// # 语义契约
-///
-/// `Login` / `Logout` / `Kickout` / `Replaced` / `TokenExpired` /
-/// `TokenRefresh` / `RevokeToken` / `SessionTimeout` 等事件的 token 类字段
-/// **统一携带掩码形式**（非完整 token）：listener 直接打日志不再泄露活动会话
-/// token，与 `GarrisonEvent` 手动 `Debug` 脱敏形成双保险。
-/// 需要完整 token 的消费方不应通过事件获取（框架自身消费走内部调用链）。
-/// `SessionExpiryListener` 等回调参数中的完整 token 打日志前也应使用本函数脱敏。
+/// 契约：各事件的 token 类字段**统一**为掩码形式（构造点脱敏），与 `GarrisonEvent`
+/// 手动 `Debug` 脱敏形成双保险；需要完整 token 的消费方不应通过事件获取。
 pub fn mask_token_for_event(token: &str) -> String {
     match token.get(..8) {
         Some(prefix) if token.len() > 8 => format!("{}***", prefix),
@@ -79,16 +59,9 @@ pub fn mask_token_for_event(token: &str) -> String {
 
 /// 事件枚举，定义框架广播的所有事件变体。
 ///
-/// 派生 `Clone`、`PartialEq`；**`Debug` 为手动实现（非 derive）**：
-/// `token` / `old_token` / `new_token` / `old_key` / `new_key` 等敏感字段在
-/// `{:?}` 输出中脱敏（仅保留前 8 字节 + `***`，短密钥整体掩码），防止监听器或
-/// 框架代码用 `{:?}` 打日志时泄露明文 token。
-///
-/// # 载荷脱敏（CWE-532）
-///
-/// 上述 token 类**字段值本身**也统一为 [`mask_token_for_event`] 掩码形式
-/// （构造点脱敏）：即使 listener 以 `{:?}` 之外的方式（如 `token` 字段直读）
-/// 输出日志，活动会话 token 也不会以明文进入日志系统。
+/// 派生 `Clone`、`PartialEq`；**`Debug` 为手动实现（非 derive）**：token / key 类
+/// 敏感字段在 `{:?}` 中脱敏（前 8 字节 + `***`），且字段值本身也统一为掩码形式
+/// （构造点脱敏，CWE-532），防 `{:?}` 或字段直读泄露明文 token。
 #[derive(Clone, PartialEq)]
 pub enum GarrisonEvent {
     /// 登录成功事件。
@@ -150,7 +123,6 @@ pub enum GarrisonEvent {
     /// 登录失败事件。
     ///
     /// 在 `login_with_password` 失败路径广播（invalid_credentials / hash_format_error）。
-    /// 注意：login_id 字段使用 `String` 类型，以保持与现有变体一致。
     LoginFailure {
         /// 登录主体标识。
         login_id: String,
@@ -165,7 +137,7 @@ pub enum GarrisonEvent {
     /// 密码哈希惰性升级事件。
     ///
     /// 在 `login_with_password` verify 通过且存量哈希档位低于当前配置时广播——
-    /// 登录路径完成重哈希**并落库成功后**才广播（落库失败不广播，不虚报审计）。
+    /// 登录路径重哈希并落库成功后才广播（落库失败不广播，不虚报审计）；
     /// 不携带新旧哈希值（哈希即凭据材料，事件载荷最小化）。
     PasswordRehashed {
         /// 登录主体标识。
@@ -188,9 +160,8 @@ pub enum GarrisonEvent {
     },
     /// Token 主动吊销事件。
     ///
-    /// 在 `SessionLogic::revoke_token` 调用时广播（携带被吊销的 token）。
-    /// 与 `Logout` 事件的区别：`revoke_token` 语义为"token 失效"（如 OAuth2 token revocation），
-    /// `Logout` 语义为"用户主动登出"（携带 login_id+token）。
+    /// 在 `SessionLogic::revoke_token` 调用时广播（如 OAuth2 token revocation）；
+    /// 区别于 `Logout`（用户主动登出，携带 login_id+token）。
     RevokeToken {
         /// 被吊销的 token。
         token: String,
@@ -199,8 +170,8 @@ pub enum GarrisonEvent {
     },
     /// 会话超时事件。
     ///
-    /// 在 `check_login_simple` / `check_login_mixin` 判定 token 无效时广播。
-    /// 若 token session 完全不存在（无法获取 login_id）则跳过广播。
+    /// 在 `check_login_simple` / `check_login_mixin` 判定 token 无效时广播；
+    /// token session 完全不存在（无法获取 login_id）时跳过广播。
     SessionTimeout {
         /// 登录主体标识。
         login_id: String,
@@ -253,9 +224,7 @@ pub enum GarrisonEvent {
         /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
-    // ========================================================================
     // 变体
-    // ========================================================================
     /// 社交登录事件。
     ///
     /// 在社交登录（微信/支付宝等）成功时广播。
@@ -785,20 +754,11 @@ impl std::fmt::Debug for GarrisonEvent {
     }
 }
 
-/// 监听器 trait，提供事件订阅抽象。
-///
-/// trait 绑定 `Send + Sync`，核心方法为 `on_event`，实现方按事件类型选择性处理。
-/// 与 `GarrisonPlugin` 的区别：plugin 是"主动钩子"（在特定方法前后被调用），
-/// listener 是"被动订阅"（订阅事件类型）。
+/// 监听器 trait：核心方法 `on_event`，默认空实现返回 `Ok(())`，trait 绑定 `Send + Sync`。
 #[async_trait]
 pub trait GarrisonListener: Send + Sync {
-    /// 事件处理方法。
-    ///
-    /// 实现方按事件类型选择性处理，默认空实现返回 `Ok(())`。
-    /// 监听器实现应快速返回或内部 spawn，避免阻塞主流程。
-    ///
-    /// 支持异步监听器实现（如 SQL-backed AuditLogListener）
-    /// 执行异步持久化操作。所有实现与调用方需 `.await`。
+    /// 事件处理方法：实现方按事件类型选择性处理，应快速返回或内部 spawn，
+    /// 避免阻塞主流程；支持异步监听器（如 SQL-backed `AuditLogListener`）。
     async fn on_event(&self, _event: &GarrisonEvent) -> GarrisonResult<()> {
         Ok(())
     }

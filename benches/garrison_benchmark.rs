@@ -1,32 +1,15 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Garrison Benchmark Suite
-//! 覆盖 6 个基准场景：
-//!
-//! | Bench | 目标 |
-//! |-------|------|
-//! | `login_flow` | ≤ 500ms（5000 TPS） |
-//! | `token_verify_stateless` | ≤ 5ms（20000 TPS） |
-//! | `permission_check` | ≤ 5ms（20000 TPS） |
-//! | `oxcache_backend_switch` | 切换开销 = 0 |
-//! | `convert_placeholders` | SQL 方言转换微基准（自研依赖升级适配面，db-* feature 门控） |
-//! | `circuit_execute_closed_passthrough` | 熔断包装器直通开销微基准（backend-remote 门控） |
+//! Garrison Benchmark Suite：6 个基准场景——login_flow（P99 ≤ 500ms，5000 TPS）、token_verify_stateless / permission_check（P99 ≤ 5ms，20000 TPS）、oxcache_backend_switch（切换开销 = 0）、convert_placeholders（SQL 方言转换）、circuit_execute_closed_passthrough（熔断直通开销）。
 //!
 //! ## 运行方式
 //!
 //! ```bash
-//! # 编译检查（不运行）
-//! cargo bench --no-run
-//!
-//! # 快速运行（减少采样数）
-//! cargo bench -- --quick
-//!
-//! # 启用 JWT 真实验证
-//! cargo bench --features protocol-jwt
-//!
-//! # 完整特性运行
-//! cargo bench --features full
+//! cargo bench --no-run                     # 编译检查
+//! cargo bench -- --quick                   # 快速运行（减少采样数）
+//! cargo bench --features protocol-jwt      # 启用 JWT 真实验证
+//! cargo bench --features full              # 完整特性运行
 //! ```
 
 use async_trait::async_trait;
@@ -215,12 +198,7 @@ fn make_logic() -> GarrisonLogicDefault {
 // Bench 1: login_flow（目标 P99 ≤ 500ms）
 // ============================================================================
 
-/// 基准测试登录流程。
-///
-/// 5000 TPS 并发登录，P99 ≤ 500ms。
-///
-/// 流程：`GarrisonLogicDefault::login("bench-user", &LoginParams::default())` 完整调用
-/// （生成 token + 创建 Token-Session + 创建 Account-Session）。
+/// 登录流程基准：5000 TPS 并发登录，P99 ≤ 500ms；完整调用 `GarrisonLogicDefault::login`（生成 token + 创建 Token-Session + Account-Session）。
 fn bench_login_flow(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let logic = make_logic();
@@ -241,12 +219,7 @@ fn bench_login_flow(c: &mut Criterion) {
 // Bench 2: token_verify_stateless（目标 P99 ≤ 5ms）
 // ============================================================================
 
-/// 基准测试 JWT Stateless 模式 token 验证。
-///
-/// P99 ≤ 5ms（20000 TPS）。
-///
-/// - 启用 `protocol-jwt` feature 时：实际 JWT 签发 + 验签（本地 JWKS 缓存命中场景）
-/// - 未启用时：模拟 stateless 验证（JWT 结构解析，不验证签名）
+/// JWT stateless 验证基准：P99 ≤ 5ms（20000 TPS）。启用 `protocol-jwt` 时为真实签发 + 验签（本地 JWKS 缓存命中场景），未启用时为结构解析模拟（不验签）。
 #[cfg(feature = "protocol-jwt")]
 fn bench_token_verify_stateless(c: &mut Criterion) {
     use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
@@ -280,9 +253,7 @@ fn bench_token_verify_stateless(c: &mut Criterion) {
 
 #[cfg(not(feature = "protocol-jwt"))]
 fn bench_token_verify_stateless(c: &mut Criterion) {
-    // 模拟 JWT Stateless 验证（未启用 `protocol-jwt` feature 时使用）。
-    // 仅解析 JWT 结构（header.payload.signature），不验证签名。
-    // 启用 `protocol-jwt` feature 后将自动切换为真实 JWT 验签。
+    // 未启用 `protocol-jwt` 时模拟 stateless 验证：仅解析 JWT 结构，不验证签名。
     c.bench_function("token_verify_stateless_simulated", |b| {
         let token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.\
                      eyJzdWIiOiJiZW5jaC11c2VyIiwiaWF0IjoxNTE2MjM5MDIyfQ.\
@@ -290,7 +261,6 @@ fn bench_token_verify_stateless(c: &mut Criterion) {
         b.iter(|| {
             let parts: Vec<&str> = token.split('.').collect();
             assert_eq!(parts.len(), 3, "JWT 应有 3 段");
-            // 模拟 payload 解码（base64 → JSON）
             let payload = parts[1];
             assert!(!payload.is_empty());
         });
@@ -301,12 +271,7 @@ fn bench_token_verify_stateless(c: &mut Criterion) {
 // Bench 3: permission_check（目标 P99 ≤ 5ms）
 // ============================================================================
 
-/// 基准测试权限检查。
-///
-/// 20000 TPS，P99 ≤ 5ms。
-///
-/// 流程：登录获取 token → 在 task_local 上下文中调用 `has_permission("bench:read")`。
-/// 使用 mock firewall 返回 true（模拟 oxcache 缓存命中场景）。
+/// 权限检查基准：20000 TPS，P99 ≤ 5ms；登录获取 token 后在 task_local 上下文调用 `has_permission`，mock firewall 返回 true 模拟缓存命中。
 fn bench_permission_check(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let logic = Arc::new(make_logic());
@@ -324,9 +289,7 @@ fn bench_permission_check(c: &mut Criterion) {
             let token = token.clone();
             let logic = logic.clone();
             rt.block_on(async move {
-                // tenant-isolation 启用时 has_permission 经
-                // current_tenant_id_or_error() fail-closed——基准模拟「默认租户
-                // 0 的已登录用户」，与 server 中间件解析 X-Tenant-Id: 0 等价
+                // tenant-isolation 启用时 has_permission 经 current_tenant_id_or_error() fail-closed；本基准模拟默认租户 0 的已登录用户（等价 server 中间件解析 X-Tenant-Id: 0）
                 TENANT
                     .scope(
                         TenantContext {
@@ -347,29 +310,7 @@ fn bench_permission_check(c: &mut Criterion) {
 // Bench 4: oxcache_backend_switch（目标切换开销 = 0）
 // ============================================================================
 
-/// 基准测试缓存后端切换。
-///
-/// 切换 oxcache 后端后代码无修改，切换开销 = 0。
-///
-/// # 命名冲突说明
-///
-/// 1. **Caffeine 不存在**：原基准要求验证 "Memory → Caffeine" 切换，
-///    但 Rust 生态无 Caffeine（oxcache 内存后端），故适配为
-///    memory / redis 两后端
-/// 2. **无 runtime backend 字段**：spec 要求修改 `GarrisonConfig.oxcache.backend`
-///    字段验证切换，但 `GarrisonConfig` 无此字段（后端选择通过 Cargo feature
-///    编译期决定），故通过不同 `GarrisonDao` 实现验证 DAO 抽象层
-///
-/// # 验证方式
-///
-/// 使用不同 `MockDao` 实例（模拟不同后端），同一 `GarrisonLogicDefault` 代码
-/// 无修改即可运行，证明 DAO 抽象层的后端切换开销 = 0。
-///
-/// - `memory`：HashMap 后端（模拟 oxcache 内存 L1）
-/// - `redis_mock`：另一个 HashMap 实例（模拟 redis L2）
-///
-/// 运行时 skip：设置环境变量 `GARRISON_SKIP_REDIS_BENCH=1` 可跳过 redis 相关子 bench
-/// 便于在无 Redis 环境下快速运行 benchmark。
+/// 缓存后端切换基准：不同 `MockDao` 实例（memory / redis_mock）运行同一 `GarrisonLogicDefault` 代码无修改，证明 DAO 抽象层后端切换开销 = 0。`GARRISON_SKIP_REDIS_BENCH=1` 跳过 redis 子 bench（无 Redis 环境快速运行）。
 fn bench_oxcache_backend_switch(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let mut group = c.benchmark_group("oxcache_backend_switch");
@@ -391,11 +332,7 @@ fn bench_oxcache_backend_switch(c: &mut Criterion) {
         },
     );
 
-    // redis_mock 后端（使用另一个 MockDao 实例，模拟不同后端）
-    //
-    // 运行时 skip：当 `GARRISON_SKIP_REDIS_BENCH=1` 时跳过 redis 相关子 bench，
-    // 便于在无 Redis 环境下快速运行 benchmark
-    // 未来引入真实 redis bench 时，此检查将跳过所有 redis 依赖场景。
+    // redis_mock 后端（另一个 MockDao 实例，模拟不同后端）
     let skip_redis = std::env::var("GARRISON_SKIP_REDIS_BENCH")
         .map(|v| v == "1")
         .unwrap_or(false);
@@ -427,12 +364,8 @@ fn bench_oxcache_backend_switch(c: &mut Criterion) {
 // Bench 5: convert_placeholders（SQL 方言转换，每次 Statement 构造必经路径）
 // ============================================================================
 
-/// 基准 SQL 占位符方言转换（自研依赖升级适配面的热路径锁定）。
-///
-/// PostgreSQL 口径：含字符串字面量（`''` 转义）/ 行注释 / 块注释与多个 `?`
-/// 的真实查询形态；SQLite 口径为直通。
-// 无 cfg 门控：本 target 的 required-features = ["full"] 恒含 db-* 与 backend-remote，
-// 条件编译只会制造不可达分支（criterion_group 无条件引用）。
+/// SQL 占位符方言转换基准（自研依赖升级适配面热路径锁定）：PostgreSQL 口径为含字符串字面量/行注释/块注释与多个 `?` 的真实查询，SQLite 直通。
+// 无 cfg 门控：本 target 的 required-features = ["full"] 恒含 db-* 与 backend-remote，条件编译只会制造不可达分支（criterion_group 无条件引用）。
 fn bench_convert_placeholders(c: &mut Criterion) {
     use dbnexus::sea_orm::DbBackend;
     use garrison::dao::repository::convert_placeholders;
@@ -455,11 +388,7 @@ fn bench_convert_placeholders(c: &mut Criterion) {
 // Bench 6: circuit_execute（熔断包装器直通开销，backend-remote 远程调用必经路径）
 // ============================================================================
 
-/// 基准 `CircuitBreakerWrapper::execute` 关闭态直通开销（自研依赖升级适配面
-/// 锁定：limiteron rc.6 CircuitCallError 迁移后的包装成本）。
-///
-/// 操作体为立即就绪的 `Ok`；整个迭代循环包在一次 block_on 内（iter_custom），
-/// 避免每迭代 ~130ns 的 executor 常量项稀释被测的包装器开销。
+/// `CircuitBreakerWrapper::execute` 关闭态直通开销基准（自研依赖升级适配面锁定：limiteron rc.6 CircuitCallError 迁移后的包装成本）；迭代循环包在一次 block_on 内（iter_custom），避免每迭代 ~130ns 的 executor 常量项稀释被测开销。
 fn bench_circuit_execute(c: &mut Criterion) {
     use garrison::limiteron::CircuitBreakerWrapper;
     use limiteron::circuit::CircuitBreakerConfig;

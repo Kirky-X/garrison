@@ -44,12 +44,8 @@ pub struct GarrisonDaoCacheBackend {
 }
 
 impl GarrisonDaoCacheBackend {
-    /// 创建适配器实例。
-    ///
-    /// # 参数
-    /// - `dao`: 内部 DAO 实现（L2 持久层）。
-    /// - `clear_prefixes`: `clear()` 的键前缀枚举范围（如三层缓存的
-    ///   `perm:cache:` / `role:cache:` / `user:cache:`）。
+    /// 创建适配器实例（`clear_prefixes` 为 `clear()` 的键前缀枚举范围，
+    /// 如三层缓存的 `perm:cache:` / `role:cache:` / `user:cache:`）。
     pub fn new(dao: Arc<dyn GarrisonDao>, clear_prefixes: Vec<String>) -> Self {
         Self {
             dao,
@@ -68,9 +64,8 @@ impl GarrisonDaoCacheBackend {
 
     /// L2 TTL 抖动：映射到 `[90%, 110%]` 区间。
     ///
-    /// 哈希种子含进程随机分量（`DefaultHasher` 每次进程启动随机种子）与线程
-    /// id，不同 key 获得不同抖动；确定性落在同一进程同一 key 上（可测）。
-    /// 从 `UserCacheService` 迁入——L2 TTL 策略由本适配器单一承载。
+    /// 哈希种子含进程随机分量（`DefaultHasher` 每进程随机种子）与线程 id，
+    /// 不同 key 获得不同抖动；同一进程同一 key 上结果确定（可测）。
     pub fn l2_ttl_with_jitter(&self, base_secs: u64) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};

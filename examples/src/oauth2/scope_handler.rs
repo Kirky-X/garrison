@@ -3,11 +3,7 @@
 
 //! OAuth2 Scope Handler 示例。
 //!
-//! 演示 `ScopeHandler` trait + `ScopeRegistry` + `OAuth2Client::with_scope_registry`：
-//! 1. 自定义实现 `ScopeHandler` trait（`AdminScopeHandler`）
-//! 2. 创建 `ScopeRegistry`，注册 handler
-//! 3. `OAuth2Client::new(...).with_scope_registry(registry)` 注入
-//! 4. 演示 `validate_scope` 在 token 请求前被调用（成功 / 拒绝 / 未注册三种场景）
+//! 演示 `ScopeHandler` trait + `ScopeRegistry` + `OAuth2Client::with_scope_registry`：自定义 handler、注册、注入，以及 token 请求前 `validate_scope` 的三种场景。
 //!
 //! 运行方式：
 //! ```sh
@@ -19,11 +15,7 @@ use garrison::protocol::oauth2::scope::{ScopeHandler, ScopeRegistry};
 use garrison::protocol::oauth2::OAuth2Client;
 use std::sync::Arc;
 
-/// 管理员 scope handler：根据 scope 名称与 login_id 决定是否允许。
-///
-/// - `openid` / `profile`：所有用户均允许（公共 scope）
-/// - `admin`：仅 login_id > 1000 的用户允许
-/// - 其他 scope：拒绝
+/// 管理员 scope handler：openid / profile 公共放行，admin 仅 login_id > 1000，其他拒绝。
 struct AdminScopeHandler;
 
 impl ScopeHandler for AdminScopeHandler {
@@ -36,10 +28,7 @@ impl ScopeHandler for AdminScopeHandler {
     }
 }
 
-/// 运行 OAuth2 Scope Handler 示例。
-///
-/// 演示 ScopeRegistry 直接校验 + OAuth2Client 注入后 token 请求前的 scope 校验。
-/// 使用 wiremock MockServer mock token 端点，验证校验通过时 HTTP 请求被发送。
+/// 运行 OAuth2 Scope Handler 示例：ScopeRegistry 直接校验 + 注入 OAuth2Client 后 token 请求前的 scope 校验（wiremock mock token 端点）。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison OAuth2 Scope Handler 示例 ===\n");
 

@@ -3,21 +3,14 @@
 
 //! AuthBackend 请求/响应类型定义。
 //!
-//! 包含 BackendRemote HTTP 通信所需的请求体结构，
-//! 以及对现有 stp::LoginParams / session::TokenInfo / session::TokenSession 的 re-export。
-//!
-//! # 设计原则
-//!
-//! - **复用优先**：LoginParams / TokenInfo / TokenSession 已存在于 garrison，
-//!   通过类型别名或 re-export 复用，不创建重复定义
-//! - **序列化兼容**：所有 HTTP 请求/响应结构体派生 `Serialize` + `Deserialize`，
-//!   确保 BackendRemote 与 Auth Server 之间的 JSON 通信兼容
+//! 包含 BackendRemote HTTP 通信所需的请求体/响应体结构，以及对现有
+//! `stp::LoginParams` / `session::TokenInfo` / `session::TokenSession` 的 re-export
+//! （复用优先，不创建重复定义）；所有 HTTP 结构派生 `Serialize` + `Deserialize`，
+//! 确保 BackendRemote 与 Auth Server 的 JSON 通信兼容。
 
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
 // 现有类型 re-export（避免重复定义）
-// ============================================================================
 
 /// 登录请求参数（re-export 自 stp 模块）。
 ///
@@ -34,9 +27,7 @@ pub use crate::session::TokenInfo;
 /// 包含 token 关联的 login_id / 创建时间 / 活跃时间 / 自定义属性 / 设备信息 / IP / UA。
 pub type SessionData = crate::session::TokenSession;
 
-// ============================================================================
 // BackendRemote HTTP 请求体（用于 JSON 序列化）
-// ============================================================================
 
 /// check_login 请求体。
 ///
@@ -93,14 +84,12 @@ pub struct KickoutRequest {
 ///
 /// BackendRemote 调用 `POST /api/v1/auth/login` 时发送的 JSON 结构。
 ///
-/// # login_id 反序列化不变量（渗透-注入-login_id 无长度上限-2 /
-/// 渗透-会话与令牌-2 / 限流与爆破-1）
+/// # login_id 反序列化不变量
 ///
-/// 反序列化即校验（422 拒绝，签发源头之前的第一道防线）：trim 后非空、
-/// 不含 `\x1f` 与其他控制字符、字节长度 ≤
-/// [`DEFAULT_LOGIN_ID_MAX_LEN`](crate::config::DEFAULT_LOGIN_ID_MAX_LEN)。
-/// wire 层不读运行时配置，按框架默认常量封顶（stp 层
-/// `config.login_id_max_len` 可进一步收紧）；错误信息不含输入内容回显。
+/// 反序列化即校验（422 拒绝，签发源头之前的第一道防线）：trim 后非空、不含
+/// `\x1f` 与其他控制字符、字节长度 ≤ `DEFAULT_LOGIN_ID_MAX_LEN`——wire 层不读
+/// 运行时配置，按框架默认常量封顶（stp 层 `config.login_id_max_len` 可进一步收紧）；
+/// 错误信息不回显输入内容。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginRequest {
     /// 登录主体标识。
@@ -112,9 +101,9 @@ pub struct LoginRequest {
 
 /// `LoginRequest.login_id` 的反序列化校验（wire 层硬上限 = 框架默认常量）。
 ///
-/// 校验语义与 stp 层 `validate_login_id` 同源镜像（错误码一致）；
-/// 长度上限取 [`DEFAULT_LOGIN_ID_MAX_LEN`] 而非运行时配置——HTTP 请求
-/// 反序列化发生在配置消费点之前，按防 DoS 的框架默认封顶。
+/// 校验语义与 stp 层 `validate_login_id` 同源镜像（错误码一致）；长度上限取
+/// `DEFAULT_LOGIN_ID_MAX_LEN` 而非运行时配置——HTTP 反序列化发生在配置消费点
+/// 之前，按防 DoS 的框架默认封顶。
 fn validate_login_id_field<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -164,12 +153,12 @@ pub struct SwitchToRequest {
 /// BackendRemote 调用 `POST /api/v1/auth/renew-to-equivalent`（外网 refresh
 /// 端点同构）时发送的 JSON 结构。
 ///
-/// # 未知字段拒绝（R2-2）
+/// # 未知字段拒绝
 ///
 /// `deny_unknown_fields` 使携带未知字段（如误发的 `params.remember_me`）的
-/// refresh 请求在反序列化期显性 4xx，而非静默忽略造成「字段已生效」的
-/// 假象——refresh 的会话时长语义固定为承接旧会话（`effective_timeout`
-/// 承接 + 剩余 TTL 落库），不接受任何续期参数。
+/// refresh 请求在反序列化期显性 4xx，而非静默忽略造成「字段已生效」的假象——
+/// refresh 的会话时长语义固定为承接旧会话（`effective_timeout` 承接 + 剩余
+/// TTL 落库），不接受任何续期参数。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RenewToEquivalentRequest {
@@ -177,9 +166,7 @@ pub struct RenewToEquivalentRequest {
     pub token: String,
 }
 
-// ============================================================================
 // BackendRemote HTTP 响应体（用于 JSON 反序列化）
-// ============================================================================
 
 /// 通用 API 响应包装。
 ///
@@ -219,12 +206,8 @@ impl<T> ApiResponse<T> {
 
     /// 提取业务数据，失败时返回错误。
     ///
-    /// 用于 BackendRemote 解析 HTTP 响应。
-    ///
-    /// # 一致性检查
-    ///
-    /// `error_code` 存在时**一律视为错误**（错误优先于数据）：畸形/恶意响应
-    /// 可能同时携带 `data` 与 `error_code`，此时以错误语义为准，防止
+    /// 一致性检查：`error_code` 存在时**一律视为错误**（错误优先于数据）——畸形/
+    /// 恶意响应可能同时携带 `data` 与 `error_code`，此时以错误语义为准，防止
     /// 「data + error_code 并存」被静默当成功返回。
     pub fn into_result(self) -> Result<T, (String, String)> {
         if let Some(code) = self.error_code {
@@ -301,7 +284,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // LoginRequest.login_id 反序列化不变量（渗透-注入-login_id 无长度上限-2）
+    // LoginRequest.login_id 反序列化不变量（wire 层硬上限）
     // ------------------------------------------------------------------
 
     fn deser_login_request(body: &str) -> Result<LoginRequest, serde_json::Error> {
@@ -355,7 +338,7 @@ mod tests {
         }
     }
 
-    /// R2-2：refresh 请求携带未知字段（如误发的 params.remember_me）反序列化期
+    /// refresh 请求携带未知字段（如误发的 params.remember_me）反序列化期
     /// 显性拒绝，不再静默忽略。
     #[test]
     fn renew_request_rejects_unknown_fields() {

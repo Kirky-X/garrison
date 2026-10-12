@@ -1,21 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! OIDC（OpenID Connect）扩展模块。
+//! OIDC（OpenID Connect）扩展模块（`protocol-oidc` feature，隐含 `protocol-jwt`）：`OidcHandler` 签发/验证 id_token（JWT：iss/sub/aud/exp/iat/nonce + 签名与 nonce 校验）并生成 discovery endpoint 元数据。
 //!
-//! 提供 `OidcHandler` 用于：
-//! - 签发 OIDC id_token（JWT 格式，含 iss/sub/aud/exp/iat/nonce claims）
-//! - 验证 id_token（签名校验 + nonce 校验）
-//! - 生成 OIDC discovery endpoint 元数据（JSON）
-//!
-//! 仅在启用 `protocol-oidc` feature 时编译。
-//! `protocol-oidc` 自动启用 `protocol-jwt`（依赖 jsonwebtoken crate）。
-//!
-//! ## 设计决策
-//!
-//! - `OidcHandler` 独立 struct，不合并到 `OAuth2Client`（关注点分离）
-//! - id_token 使用 `jsonwebtoken` crate 直接签发（复用 `JwtHandler` 的密钥/算法模式，但 claims 不同）
-//! - 默认 HS256 算法（与 `JwtHandler` 一致）
+//! 设计：`OidcHandler` 独立 struct（不并入 `OAuth2Client`），用 `jsonwebtoken` 直接签发，默认 HS256（与 `JwtHandler` 一致）。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
@@ -23,25 +11,10 @@ use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 
-/// OIDC id_token 的 `aud` claim 类型（支持 String 或 `Vec<String>`）。
+/// OIDC id_token 的 `aud` claim 类型：RFC 7519 §4.1.3 允许 String 或数组形式，`#[serde(untagged)]` 按 JSON 值类型自动选择变体。
 ///
-/// RFC 7519 §4.1.3 规定 `aud` 可以是 String 或数组形式。原实现仅接受 String，
-/// 导致 IdP 返回 `aud: ["client-a", "client-b"]` 时反序列化失败，所有 OIDC
-/// 登录失败（与 `sso/oidc.rs` 同步修复）。
-///
-/// `#[serde(untagged)]` 让 serde 根据JSON 值类型自动选择变体：
-/// - JSON 字符串 → `OidcAudience::Single(String)`
-/// - JSON 数组 → `OidcAudience::Multi(Vec<String>)`
-///
-/// 序列化时：`Single` 输出 JSON 字符串，`Multi` 输出数组（两种形式均为 RFC 7519 允许）。
-///
-/// # 与 `sso/oidc.rs::Aud` 的重复说明
-///
-/// 本类型与 `crate::protocol::sso::oidc::Aud` 功能相同（都表示 JWT aud 双形式），
-/// 重复是有意为之，因 `protocol-oauth2` 和 `protocol-sso` 是独立 feature：
-/// - 共享类型会引入跨 feature 依赖，违反 feature 隔离原则
-/// - 用户启用任一 feature 时不需要另一 feature 的依赖
-/// - 未来若 feature 隔离策略调整（如合并为统一 `protocol-jwt` feature），应统一为单一类型
+/// 与 `sso::oidc::Aud` 重复是有意为之：`protocol-oauth2` 与 `protocol-sso` 是独立 feature，共享类型会引入跨 feature 依赖；
+/// 未来若合并为统一 `protocol-jwt` feature 应统一为单一类型。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum OidcAudience {
@@ -53,8 +26,6 @@ pub enum OidcAudience {
 
 impl OidcAudience {
     /// 判断 `client_id` 是否在 `aud` 中（支持 String 和数组形式）。
-    ///
-    /// 用于 `verify_id_token` 校验 `aud` 是否包含本客户端的 `client_id`。
     pub fn contains(&self, client_id: &str) -> bool {
         match self {
             OidcAudience::Single(s) => s == client_id,
@@ -63,9 +34,7 @@ impl OidcAudience {
     }
 }
 
-/// OIDC id_token 的 claims 载荷。
-///
-/// 包含标准 OIDC claims（iss/sub/aud/exp/iat/nonce）+ Garrison 内部字段（login_id）。
+/// OIDC id_token 的 claims：标准 OIDC claims（iss/sub/aud/exp/iat/nonce）+ Garrison 内部字段（login_id）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OidcClaims {
     /// 签发者标识（issuer），通常为 OIDC Provider 的 URL。
@@ -84,39 +53,23 @@ pub struct OidcClaims {
     pub nonce: String,
 }
 
-/// OIDC 处理器，封装 issuer/audience/密钥以供复用。
+/// OIDC 处理器：封装 issuer/audience/密钥，默认 HS256（可经 `with_algorithm` 切换）。
 ///
-/// 默认采用 HS256 算法，可通过 `with_algorithm` 切换。
-///
-/// # 密钥内存安全（zeroize feature 说明）
-///
-/// `secret`（JWT 签名密钥）以明文 `String` 持有。启用 `protocol-zeroize`
-/// feature 时，`Drop` 会对 `secret` 做零化擦除；**未启用该 feature 时
-/// 密钥在内存中保持明文直至分配器回收**。生产环境建议启用
-/// `protocol-zeroize`（以及 `credential-zeroize`）以缩小密钥在内存中的
-/// 残留窗口，降低内存转储 / swap 提取风险。
+/// 密钥内存安全：`secret` 明文持有，启用 `protocol-zeroize` 时 `Drop` 零化擦除，未启用则保持明文直至分配器回收；
+/// 生产建议启用 `protocol-zeroize`（及 `credential-zeroize`）缩小内存转储 / swap 提取风险。
 pub struct OidcHandler {
     /// 签发者标识（issuer）。
     issuer: String,
     /// 受众（audience），通常为 client_id。
     audience: String,
-    /// 签名密钥（明文持有；`protocol-zeroize` feature 开启时 Drop 零化，
-    /// 见 struct 文档的密钥内存安全说明）。
+    /// 签名密钥（明文持有；`protocol-zeroize` 开启时 Drop 零化）。
     secret: String,
     /// 签名算法（默认 HS256）。
     algorithm: Algorithm,
 }
 
 impl OidcHandler {
-    /// 创建新的 OIDC 处理器。
-    ///
-    /// # 参数
-    /// - `issuer`: 签发者标识（如 `https://auth.example.com`）。
-    /// - `audience`: 受众 client_id。
-    /// - `secret`: JWT 签名密钥，不可为空。
-    ///
-    /// # 错误
-    /// - `GarrisonError::Config`: secret 为空。
+    /// 创建 OIDC 处理器（secret 不可为空，为空返回 `Config`）。
     pub fn new(
         issuer: impl Into<String>,
         audience: impl Into<String>,
@@ -136,20 +89,13 @@ impl OidcHandler {
         })
     }
 
-    /// 切换签名算法。
-    ///
-    /// **注意**：当前实现仅支持 HMAC 系列算法（HS256/HS384/HS512），
-    /// 因为 `EncodingKey::from_secret` / `DecodingKey::from_secret` 只接受对称密钥。
-    /// 非对称算法（RS*/ES*/PS*）会在 `sign_id_token` / `verify_id_token` 时返回 `Config` 错误。
+    /// 切换签名算法（仅支持 HMAC 系列 HS256/HS384/HS512：`from_secret` 只接受对称密钥，非对称算法 sign/verify 返回 `Config`）。
     pub fn with_algorithm(mut self, algorithm: Algorithm) -> Self {
         self.algorithm = algorithm;
         self
     }
 
-    /// 校验算法是否为 HMAC 系列（HS256/HS384/HS512）。
-    ///
-    /// 非对称算法需通过 `EncodingKey::from_rsa_pem` 等接口加载密钥，
-    /// 当前 `OidcHandler` 仅持有 `secret: String`，不支持非对称密钥。
+    /// 校验算法为 HMAC 系列（HS256/HS384/HS512）：`OidcHandler` 仅持有 `secret: String`，不支持非对称密钥。
     fn require_hmac_algorithm(&self) -> GarrisonResult<()> {
         if matches!(
             self.algorithm,
@@ -164,22 +110,9 @@ impl OidcHandler {
         }
     }
 
-    /// 签发 OIDC id_token。
+    /// 签发 OIDC id_token（JWT；仅 HMAC 系列，非对称返回 `Config`，JWKS + 非对称支持暂未提供）。
     ///
-    /// **算法限制**：当前仅支持 HMAC 系列算法（HS256/HS384/HS512）。
-    /// 非对称算法（RS*/ES*/PS*）会返回 `GarrisonError::Config`，因为
-    /// `EncodingKey::from_secret` 仅接受对称密钥。JWKS + 非对称算法支持暂未提供。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `nonce`: 客户端提供的 nonce（防重放）。
-    /// - `_scope`: 授权范围（写入 id_token 的 scope claim 可选，当前实现不写入 scope claim）。
-    /// - `timeout`: 有效期（秒），不可为负数。
-    ///
-    /// # 返回
-    /// - `Ok(String)`: JWT 格式的 id_token。
-    /// - `Err(GarrisonError::Config)`: timeout 为负，或当前算法为非对称算法。
-    /// - `Err(GarrisonError::Internal)`: 签发失败。
+    /// `timeout` 不可为负（返回 `Config`）；签发失败返回 `Internal`；`_scope` 当前不写入 scope claim。
     pub fn sign_id_token(
         &self,
         login_id: impl Into<String>,
@@ -216,22 +149,9 @@ impl OidcHandler {
             .map_err(|e| GarrisonError::Internal(format!("jwt-sign::{}", e)))
     }
 
-    /// 验证 OIDC id_token。
+    /// 验证 OIDC id_token（仅 HMAC 系列，非对称返回 `Config`；JWKS + 非对称支持暂未提供）。
     ///
-    /// **算法限制**：当前仅支持 HMAC 系列算法（HS256/HS384/HS512）。
-    /// 非对称算法（RS*/ES*/PS*）会返回 `GarrisonError::Config`，因为
-    /// `DecodingKey::from_secret` 仅接受对称密钥。JWKS + 非对称算法支持暂未提供。
-    ///
-    /// # 参数
-    /// - `id_token`: JWT 格式的 id_token。
-    /// - `expected_nonce`: 客户端期望的 nonce（用于防重放校验）。
-    ///
-    /// # 返回
-    /// - `Ok(OidcClaims)`: 校验成功，返回 claims。
-    /// - `Err(GarrisonError::Config)`: 当前算法为非对称算法。
-    /// - `Err(GarrisonError::OAuth2)`: nonce 不匹配。
-    /// - `Err(GarrisonError::ExpiredToken)`: id_token 已过期。
-    /// - `Err(GarrisonError::InvalidToken)`: 签名/格式/iss/aud 校验失败。
+    /// 校验签名/格式（失败返回 `InvalidToken`）、exp（`ExpiredToken`）、iss/aud 与 nonce（`OAuth2`）。
     pub fn verify_id_token(
         &self,
         id_token: &str,
@@ -243,42 +163,33 @@ impl OidcHandler {
         let mut validation = Validation::new(self.algorithm);
         validation.validate_exp = true;
         validation.leeway = 0;
-        // jsonwebtoken 10 默认 validate_aud=true，但未设置 expected audience 会触发 InvalidAudience。
-        // 关闭库内置 aud 校验，由我们手动校验 iss/aud 以提供更精确的错误信息。
+        // 关闭库内置 aud 校验（未设 expected audience 会报 InvalidAudience），改为手动校验 iss/aud 以给出精确错误
         validation.validate_aud = false;
         let decoded = decode::<OidcClaims>(id_token, &key, &validation).map_err(|e| {
             let msg = e.to_string();
             if msg.contains("ExpiredSignature") {
-                // 修复：错误消息不含 token 内容，仅含 jsonwebtoken 错误类别
+                // 错误消息只含 jsonwebtoken 错误类别，不含 token 内容
                 GarrisonError::ExpiredToken(format!("jwt-expired::{}", e))
             } else {
-                // 修复：错误消息不含 token 内容/密钥，仅含 jsonwebtoken 错误类别
-                //（如 "InvalidSignature" / "InvalidToken"）
+                // 错误消息不含 token 内容/密钥（如 InvalidSignature / InvalidToken）
                 GarrisonError::InvalidToken(format!("jwt-invalid::{}", e))
             }
         })?;
         let claims = decoded.claims;
-        // OIDC 规范要求校验 iss 和 aud
-        // 修复：错误消息不含 claims.iss 实际值（虽 iss 通常公开，但 fail-closed 不泄露任何 token claim）
+        // OIDC 规范要求校验 iss 和 aud；错误消息固定不含 claims 实际值（fail-closed 不泄露任何 token claim）
         if claims.iss != self.issuer {
             return Err(GarrisonError::InvalidToken(
                 "oidc-iss-mismatch::".to_string(),
             ));
         }
-        // aud 支持String 或数组形式（RFC 7519 §4.1.3）。
-        // 校验 `aud` 是否包含本客户端的 `client_id`，与 `sso/oidc.rs` 行为对齐。
-        // 修复：错误消息不含 claims.aud 实际值（虽 aud 通常公开，但 fail-closed 不泄露任何 token claim）
+        // aud 支持 String 或数组形式（RFC 7519 §4.1.3），校验是否包含本客户端 client_id
         if !claims.aud.contains(&self.audience) {
             return Err(GarrisonError::InvalidToken(
                 "oidc-aud-mismatch::".to_string(),
             ));
         }
-        // nonce 校验（防重放）— 修复：使用 subtle::ConstantTimeEq 常量时间比较，
-        // 避免 nonce 长度/前缀差异导致的 timing side-channel 泄漏 nonce 信息。
-        // subtle 的 ct_eq 在长度不等时返回 0（不提前 return），全程常量时间。
-        // nonce 缺失（expected 为空串）fail-closed 拒绝——空对空 ct_eq 恒等，
-        // 放行会使 id_token 防重放锚点失效（sign_id_token 强制 nonce，verify
-        // 侧对称强制）。
+        // nonce 校验（防重放）：subtle::ConstantTimeEq 常量时间比较（长度不等返回 0，不提前 return），避免 timing side-channel
+        // expected 为空串 fail-closed 拒绝（空对空 ct_eq 恒等，放行会使防重放锚点失效；sign 侧强制 nonce，verify 侧对称强制）
         if expected_nonce.is_empty() {
             return Err(GarrisonError::OAuth2("oidc-nonce-missing".to_string()));
         }
@@ -288,20 +199,11 @@ impl OidcHandler {
         Ok(claims)
     }
 
-    /// 生成 OIDC discovery endpoint 元数据。
+    /// 生成 OIDC discovery endpoint 元数据（Discovery 1.0 provider metadata JSON）。
     ///
-    /// 返回 OIDC Discovery 1.0 规范定义的 provider metadata JSON。
-    ///
-    /// # 正确性约束
-    ///
-    /// - `OidcHandler` 仅支持 HMAC 对称密钥，**没有 JWKS 端点**，因此
-    ///   不输出 `jwks_uri`（宣告死链会误导客户端按 spec 去 GET 该端点而失败）。
-    /// - `id_token_signing_alg_values_supported` 只输出实际可用的 HMAC 算法；
-    ///   非 HMAC 算法（sign/verify 会返回 Config 错误）输出空数组，
-    ///   绝不输出 `"unknown"` 这类客户端无法使用的伪算法。
+    /// 正确性约束：HMAC-only 无 JWKS 端点，不输出 `jwks_uri`（死链会误导客户端 GET 失败）；
+    /// `id_token_signing_alg_values_supported` 只输出实际可用 HMAC 算法，非 HMAC 输出空数组，绝不输出 `"unknown"` 伪算法。
     pub fn discovery_metadata(&self) -> serde_json::Value {
-        // 只宣告实际可用的 HMAC 算法；非 HMAC 算法（sign/verify 时返回 Config
-        // 错误）输出空数组，绝不输出 "unknown" 伪算法误导客户端。
         let supported_algs: Vec<&'static str> = match self.algorithm_str() {
             "" => Vec::new(),
             alg => vec![alg],
@@ -317,11 +219,7 @@ impl OidcHandler {
         })
     }
 
-    /// 返回算法字符串表示（用于 discovery metadata）。
-    ///
-    /// 非 HMAC 算法返回空串（discovery 据此输出空数组），
-    /// 绝不输出 `"unknown"`——该值会进入 `id_token_signing_alg_values_supported`
-    /// 误导客户端选择无法使用的算法。
+    /// 算法字符串表示（用于 discovery metadata）；非 HMAC 返回空串（discovery 据此输出空数组，绝不输出 `"unknown"` 伪算法）。
     fn algorithm_str(&self) -> &'static str {
         match self.algorithm {
             Algorithm::HS256 => "HS256",
@@ -332,9 +230,7 @@ impl OidcHandler {
     }
 }
 
-// 密钥零化仅在 `protocol-zeroize` feature 下编译生效；未启用该 feature 时
-// `secret` 以明文保留在内存中直至分配器回收（见 struct 文档「密钥内存安全」）。
-// 保持 feature 结构是为了让默认构建不引入 zeroize 依赖，故不做无条件零化。
+// 零化仅在 `protocol-zeroize` feature 下生效；未启用时 secret 明文保留至分配器回收（见 struct 文档），默认构建不引入 zeroize 依赖。
 #[cfg(feature = "protocol-zeroize")]
 impl Drop for OidcHandler {
     fn drop(&mut self) {
@@ -357,9 +253,7 @@ mod tests {
         .expect("创建 OidcHandler 失败")
     }
 
-    // ========================================================================
     // OidcHandler 构造测试
-    // ========================================================================
 
     /// 构造 OidcHandler，字段正确填充。
     #[test]
@@ -388,9 +282,7 @@ mod tests {
         assert_eq!(handler.algorithm, Algorithm::HS512);
     }
 
-    // ========================================================================
     // sign_id_token / verify_id_token 测试
-    // ========================================================================
 
     /// sign_id_token 返回三段 JWT（签发 id_token 成功）。
     #[test]
@@ -563,9 +455,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // discovery_metadata 测试
-    // ========================================================================
 
     /// discovery_metadata 字段完整（discovery 元数据完整）。
     #[test]
@@ -624,14 +514,9 @@ mod tests {
             .contains(&serde_json::json!("HS512")));
     }
 
-    // ========================================================================
     // verify_id_token 错误路径补充测试
-    // ========================================================================
 
-    /// 验证过期 id_token 返回 ExpiredToken 错误。
-    ///
-    /// 覆盖 verify_id_token 中 `if msg.contains("ExpiredSignature")` 分支：
-    /// 创建 timeout=0 的 token，验证时已过期。
+    /// 验证过期 id_token 返回 ExpiredToken 错误（timeout=1 的 token 等待 3 秒后验证）。
     #[test]
     fn verify_id_token_expired_returns_expired_token_error() {
         let handler = make_handler();
@@ -648,8 +533,6 @@ mod tests {
     }
 
     /// 验证 aud 不匹配返回 InvalidToken 错误。
-    ///
-    /// 覆盖 verify_id_token 中 `if claims.aud != self.audience` 分支。
     #[test]
     fn verify_id_token_aud_mismatch_fails() {
         let signer = OidcHandler::new("https://auth.example.com", "correct-aud", "secret").unwrap();
@@ -665,13 +548,9 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // algorithm_str 非对称算法分支测试
-    // ========================================================================
 
-    /// discovery_metadata 对非 HMAC 算法不得输出 "unknown" 伪算法
-    /// （verify 路径会返回 Config 错误，discovery 却宣告其可用会误导客户端）。
-    /// 覆盖 algorithm_str 中 `_ => ""` 分支。
+    /// discovery_metadata 对非 HMAC 算法不输出 "unknown" 伪算法（verify 会返回 Config，宣告可用会误导客户端）。
     #[test]
     fn discovery_metadata_non_hmac_algorithm_omits_unknown() {
         let handler = make_handler().with_algorithm(Algorithm::RS256);
@@ -693,9 +572,7 @@ mod tests {
         assert!(metadata.get("jwks_uri").is_none());
     }
 
-    // ========================================================================
     // 辅助函数
-    // ========================================================================
 
     /// Base64URL 解码（无 padding）。
     fn base64_url_decode(s: &str) -> Vec<u8> {
@@ -705,11 +582,8 @@ mod tests {
             .expect("Base64URL 解码失败")
     }
 
-    // ========================================================================
     // LoginId newtype 接入（impl Into<LoginId>）
-    // ========================================================================
 
-    /// 验证 `OidcHandler::sign_id_token` 接受 String 形式 login_id。
     #[test]
     fn sign_id_token_accepts_login_id_numeric() {
         let handler = OidcHandler::new("https://auth.example.com", "aud-abc", "secret").unwrap();
@@ -720,14 +594,9 @@ mod tests {
         assert_eq!(claims.login_id, "1001");
     }
 
-    // ========================================================================
     // OIDC aud 数组形式测试（RFC 7519 §4.1.3）
-    // ========================================================================
 
-    /// 手动签发一个 aud 为数组形式的 id_token（模拟 IdP 返回多受众 token）。
-    ///
-    /// `OidcHandler::sign_id_token` 总是签发 `Single` 形式，
-    /// 测试数组形式需直接调用 `jsonwebtoken::encode` 构造 `Multi` 形式的 claims。
+    /// 手动签发 aud 为数组形式的 id_token（sign_id_token 恒签发 Single，数组形式需直接 jsonwebtoken::encode）。
     fn sign_token_with_multi_aud(
         issuer: &str,
         audiences: Vec<&str>,
@@ -754,11 +623,7 @@ mod tests {
         encode(&header, &claims, &key).expect("签发 multi-aud token 失败")
     }
 
-    /// 数组形式 aud 包含 client_id 时校验通过（核心修复验证）。
-    ///
-    /// 场景：IdP 返回 `aud: ["client-a", "client-b"]`，本客户端 `client_id = "client-b"`，
-    /// 原实现因 `aud: String` 反序列化失败导致所有 OIDC 登录失败；
-    /// 修复后 `OidcAudience::Multi` 可正确反序列化，且 `contains` 判定通过。
+    /// 数组形式 aud 包含 client_id 时校验通过（`OidcAudience::Multi` 反序列化 + `contains`）。
     #[test]
     fn verify_id_token_multi_aud_contains_client_id_succeeds() {
         let handler = OidcHandler::new("https://auth.example.com", "client-b", "secret").unwrap();
@@ -770,7 +635,6 @@ mod tests {
             "nonce-xyz",
             3600,
         );
-        // 修复后应能反序列化 + 校验通过
         let claims = handler
             .verify_id_token(&token, "nonce-xyz")
             .expect("数组形式 aud 包含 client_id 时应校验通过");
@@ -787,11 +651,7 @@ mod tests {
         assert!(!claims.aud.contains("client-d"));
     }
 
-    /// 数组形式 aud 不包含 client_id 时校验失败（修复后行为正确）。
-    ///
-    /// 场景：IdP 返回 `aud: ["client-a", "client-b"]`，本客户端 `client_id = "client-x"`，
-    /// 修复后能正确反序列化，但 `contains` 判定不通过，返回 InvalidToken 错误
-    /// （而非原实现的反序列化失败错误）。
+    /// aud 数组不包含 client_id 时 `contains` 判定不通过，返回 InvalidToken。
     #[test]
     fn verify_id_token_multi_aud_not_containing_client_id_fails() {
         let handler = OidcHandler::new("https://auth.example.com", "client-x", "secret").unwrap();
@@ -812,10 +672,7 @@ mod tests {
         }
     }
 
-    /// 单元素数组形式 aud 也能正确处理（边界场景）。
-    ///
-    /// RFC 7519 允许 `aud: ["single-client"]`（单元素数组），虽不常见但合规。
-    /// 验证 `OidcAudience::Multi` 单元素场景的 `contains` 行为。
+    /// RFC 7519 允许单元素数组 `aud: ["single-client"]`：验证 `Multi` 单元素 `contains`。
     #[test]
     fn verify_id_token_single_element_multi_aud_works() {
         let handler =
@@ -837,11 +694,7 @@ mod tests {
         );
     }
 
-    /// `OidcAudience` serde 序列化/反序列化 round-trip 测试。
-    ///
-    /// 验证 `#[serde(untagged)]` 行为：
-    /// - `Single` 序列化为 JSON 字符串，反序列化回 `Single`
-    /// - `Multi` 序列化为 JSON 数组，反序列化回 `Multi`
+    /// 验证 `#[serde(untagged)]`：`Single` 往返 JSON 字符串、`Multi` 往返 JSON 数组。
     #[test]
     fn oidc_audience_serde_roundtrip() {
         let single = OidcAudience::Single("client-a".to_string());
@@ -860,9 +713,7 @@ mod tests {
         assert_eq!(de, multi);
     }
 
-    /// `OidcAudience::contains` 行为验证。
-    ///
-    /// 单元测试 `contains` 方法对 Single / Multi 两种形式的判定。
+    /// `contains` 对 Single / Multi 两种形式的判定。
     #[test]
     fn oidc_audience_contains_behavior() {
         let single = OidcAudience::Single("client-a".to_string());

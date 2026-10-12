@@ -1,16 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 权限注册表模块。
-//!
-//! 提供声明式 `permission -> required_roles` 映射，启动时通过 `inventory::submit!`
-//! 收集编译期注册的权限声明，运行期通过 [`PermissionRegistry::validate`] 校验权限已注册。
-//!
-//! # 设计
-//!
-//! - [`PermissionRegistry`]：运行期注册表，封装 `parking_lot::RwLock<HashMap<String, PermissionSpec>>`
-//! - [`PermissionSpec`]：权限规格（runtime struct，含 `name` / `required_roles` / `description`）
-//! - [`PermissionRegistration`]：inventory 静态注册条目（`&'static str` 字段，编译期注册）
+//! 权限注册表模块：提供声明式 `permission -> required_roles` 映射——启动时经
+//! `inventory::submit!` 收集编译期注册（[`PermissionRegistration`]，`&'static str` 字段），
+//! 运行期 [`PermissionRegistry`] 持 `parking_lot::RwLock<HashMap<String, PermissionSpec>>`
+//! 供 [`PermissionRegistry::validate`] 校验；inventory 模式参考
+//! `crate::strategy::firewall::StrategyRegistration`（启用 `firewall` 时可见）。
 //!
 //! # 使用
 //!
@@ -38,11 +33,8 @@ use parking_lot::RwLock;
 
 use crate::error::{GarrisonError, GarrisonResult};
 
-/// 权限规格，描述单个权限的元数据（runtime struct）。
-///
-/// 与 [`PermissionRegistration`] 的区别：`PermissionSpec` 拥有 `String` 字段，
-/// 用于运行期存储；`PermissionRegistration` 拥有 `&'static str` 字段，
-/// 用于编译期 inventory 注册。
+/// 权限规格（运行期存储，拥有 `String` 字段；编译期注册的 [`PermissionRegistration`]
+/// 则为 `&'static str`）。
 #[derive(Debug, Clone)]
 pub struct PermissionSpec {
     /// 权限名称（唯一标识，如 `"user:read"`）。
@@ -53,16 +45,9 @@ pub struct PermissionSpec {
     pub description: String,
 }
 
-/// 权限注册条目，用于 `inventory` 编译期注册。
-///
-/// 所有字段为 `&'static str` 以支持编译期常量构造。`required_roles` 为逗号分隔字符串，
-/// [`PermissionRegistry::from_inventory`] 时按 `,` split 转换为 `Vec<String>`。
-///
-/// 通过 `inventory::submit! { PermissionRegistration { ... } }` 注册权限，
-/// 运行期通过 `inventory::iter::<PermissionRegistration>()` 遍历。
-///
-/// 参考 `crate::strategy::firewall::StrategyRegistration` 的 inventory 模式
-///（启用 `firewall` feature 时可见）。
+/// 权限注册条目（`inventory` 编译期注册）：字段全为 `&'static str`，`required_roles` 为逗号
+/// 分隔字符串，[`PermissionRegistry::from_inventory`] 按 `,` split 为 `Vec<String>`；
+/// 经 `inventory::submit!` 注册、`inventory::iter::<PermissionRegistration>()` 遍历。
 pub struct PermissionRegistration {
     /// 权限名称（唯一标识，如 `"user:read"`）。
     pub name: &'static str,
@@ -72,15 +57,10 @@ pub struct PermissionRegistration {
     pub description: &'static str,
 }
 
-// 编译期权限注册收集点
 inventory::collect!(PermissionRegistration);
 
-/// 权限注册表，封装 `permission -> required_roles` 映射。
-///
-/// 启动时通过 [`from_inventory`](Self::from_inventory) 收集所有 `inventory::submit!` 注册的
-/// [`PermissionRegistration`]，运行期通过 [`validate`](Self::validate) 校验权限已注册。
-///
-/// 内部用 `parking_lot::RwLock<HashMap<String, PermissionSpec>>` 保护并发访问。
+/// 权限注册表（`permission -> required_roles` 映射）：经 [`from_inventory`](Self::from_inventory)
+/// 收集 inventory 注册项，[`validate`](Self::validate) 校验权限；内部 `parking_lot::RwLock` 保护并发。
 pub struct PermissionRegistry {
     permissions: RwLock<HashMap<String, PermissionSpec>>,
 }
@@ -93,18 +73,10 @@ impl PermissionRegistry {
         }
     }
 
-    /// 注册单个权限规格。
+    /// 注册单个权限规格：`name` 为空或已注册均返回 `GarrisonError::InvalidParam`。
     ///
-    /// # 错误
-    /// - `name` 为空 → `GarrisonError::InvalidParam`
-    /// - `name` 已注册 → `GarrisonError::InvalidParam`
-    ///
-    /// # 安全检测（`secure-confusable` feature 启用时）
-    ///
-    /// 注册前调用 `check_confusable`（`secure-confusable` feature 启用时经
-    /// `crate::secure::confusable` 模块实现） 检测
-    /// permission name 中的 Unicode 同形异义字。发现可疑字符时通过 `tracing::warn` 上报
-    /// 。**不阻止注册**——仅警告，符合"失败显性化但非阻塞"原则。
+    /// `secure-confusable` feature 启用时先经 `crate::secure::confusable::check_confusable`
+    /// 检测 Unicode 同形异义字，可疑字符仅 `tracing::warn` 上报、**不阻止注册**。
     pub fn register(&self, spec: PermissionSpec) -> GarrisonResult<()> {
         if spec.name.is_empty() {
             return Err(GarrisonError::InvalidParam(
@@ -112,8 +84,7 @@ impl PermissionRegistry {
             ));
         }
 
-        // L6: 检测 Unicode 同形异义字
-        // 启用 secure-confusable feature 时生效；不阻止注册，仅 tracing::warn 上报
+        // Unicode 同形异义字检测（secure-confusable）：仅 warn 上报，不阻止注册。
         #[cfg(feature = "secure-confusable")]
         {
             let warnings = crate::secure::confusable::check_confusable(&spec.name);
@@ -137,10 +108,7 @@ impl PermissionRegistry {
         Ok(())
     }
 
-    /// 校验权限是否已注册，返回其 `required_roles`。
-    ///
-    /// # 错误
-    /// - 权限未注册 → `GarrisonError::InvalidParam`
+    /// 校验权限已注册并返回其 `required_roles`；未注册返回 `GarrisonError::InvalidParam`。
     pub fn validate(&self, permission: &str) -> GarrisonResult<Vec<String>> {
         let map = self.permissions.read();
         match map.get(permission) {
@@ -152,9 +120,7 @@ impl PermissionRegistry {
         }
     }
 
-    /// 列出所有已注册权限规格。
-    ///
-    /// 返回顺序按 `name` 字典序排列，保证输出稳定（避免 HashMap 迭代顺序不稳定）。
+    /// 列出所有已注册权限规格，按 `name` 字典序排序（保证输出稳定）。
     pub fn list_all(&self) -> Vec<PermissionSpec> {
         let map = self.permissions.read();
         let mut result: Vec<PermissionSpec> = map.values().cloned().collect();
@@ -162,16 +128,8 @@ impl PermissionRegistry {
         result
     }
 
-    /// 从 inventory 收集所有编译期注册的权限声明。
-    ///
-    /// 遍历 `inventory::iter::<PermissionRegistration>()`，将每个 `PermissionRegistration`
-    /// 转换为 [`PermissionSpec`] 并调用 [`register`](Self::register)。
-    ///
-    /// `required_roles` 字段为逗号分隔字符串（如 `"admin,user"`），按 `,` split 并 trim
-    /// 后转换为 `Vec<String>`；空字符串或纯空白项会被过滤。
-    ///
-    /// # 错误
-    /// 仅在 `PermissionRegistration` 字段冲突时返回错误（实际不应发生，因编译期静态注册）。
+    /// 从 inventory 收集所有编译期注册声明，转为 [`PermissionSpec`] 并 [`register`](Self::register)；
+    /// `required_roles` 按 `,` split + trim（空项过滤），仅在字段冲突时报错（静态注册下不应发生）。
     pub fn from_inventory() -> GarrisonResult<Self> {
         let registry = Self::new();
         for reg in inventory::iter::<PermissionRegistration> {
@@ -205,8 +163,7 @@ impl Default for PermissionRegistry {
 mod tests {
     use super::*;
 
-    // 测试用 inventory 静态注册项（仅在 test build 中链接进来，覆盖 from_inventory 测试）。
-    // 名称加 `test:` 前缀避免与生产代码潜在 submit 项冲突。
+    // 测试用 inventory 静态注册项（仅 test build 链接；`test:` 前缀避免与生产 submit 项冲突）。
     inventory::submit! {
         PermissionRegistration {
             name: "test:from_inventory:item1",
@@ -231,11 +188,9 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // register / validate 测试
-    // ========================================================================
 
-    /// register 单个权限后 validate 命中（spec Scenario）。
+    /// register 单个权限后 validate 命中。
     #[test]
     fn register_single_permission_success() {
         let registry = PermissionRegistry::new();
@@ -269,7 +224,7 @@ mod tests {
         }
     }
 
-    /// register 重复同名权限返回错误（spec Scenario）。
+    /// register 重复同名权限返回错误。
     #[test]
     fn register_duplicate_returns_error() {
         let registry = PermissionRegistry::new();
@@ -281,7 +236,7 @@ mod tests {
         assert!(result.is_err(), "重复注册应返回错误");
     }
 
-    /// register 空 name 返回 InvalidParam 错误（spec Scenario）。
+    /// register 空 name 返回 InvalidParam 错误。
     #[test]
     fn register_empty_name_returns_error() {
         let registry = PermissionRegistry::new();
@@ -294,7 +249,7 @@ mod tests {
         }
     }
 
-    /// list_all 返回所有已注册权限规格（数量正确）。
+    /// list_all 返回全部已注册权限规格。
     #[test]
     fn list_all_returns_all_registered() {
         let registry = PermissionRegistry::new();
@@ -316,9 +271,7 @@ mod tests {
         assert!(names.contains(&"c:delete"));
     }
 
-    /// from_inventory 收集 inventory::submit! 静态注册项。
-    ///
-    /// 验证测试模块顶部 `inventory::submit!` 注册的两个测试项被 `from_inventory` 收集。
+    /// from_inventory 收集测试模块顶部注册的两个静态项。
     #[test]
     fn from_inventory_collects_static_registrations() {
         let registry = PermissionRegistry::from_inventory().expect("from_inventory ok");
@@ -355,7 +308,7 @@ mod tests {
         );
     }
 
-    /// register required_roles 为空时允许注册（某些权限无角色要求）。
+    /// required_roles 为空允许注册（某些权限无角色要求）。
     #[test]
     fn register_empty_required_roles_allowed() {
         let registry = PermissionRegistry::new();

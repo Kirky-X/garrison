@@ -3,7 +3,7 @@
 
 //! 数据主体擦除编排（GDPR Art. 17 / 个保法第 47 条语境的删除权）。
 //!
-//! # 框架管辖内的可定位键
+//! 框架管辖内的可定位键：
 //!
 //! | 数据类 | 键（构造来源） | 主体维度 |
 //! |--------|----------------|----------|
@@ -11,13 +11,7 @@
 //! | 账户锁定状态 | `lockout:{login_id}`（`DaoKeyPrefix::Lockout`） | login_id |
 //! | 暴力破解失败计数 | `bf:{ip}:count`（`DaoKeyPrefix::BruteForce`，同生产路径） | 客户端 IP |
 //!
-//! 会话/token 明细由委托闭包擦除（推荐 `StpLogic::logout_by_login_id`，
-//! 含 per-login 锁、token 键删除与内存索引清理）。
-//!
-//! # 框架管辖外（报告 `residual_guidance` 提示，由业务方处置）
-//!
-//! API Key（owner 关联，含业务授权语义）、验证码记录（手机号/邮箱键，业务映射）、
-//! 业务用户资料、审计日志（合规保留期优先于删除权，见 docs/DATA_COMPLIANCE.md）。
+//! 会话/token 明细由委托闭包擦除（推荐 `StpLogic::logout_by_login_id`，含 per-login 锁、token 键删除与内存索引清理）；管辖外残留由报告 `residual_guidance` 提示业务方处置（API Key、验证码记录、业务用户资料、审计日志，见 `docs/DATA_COMPLIANCE.md`）。
 
 use std::future::Future;
 use std::sync::Arc;
@@ -27,19 +21,12 @@ use crate::dao::GarrisonDao;
 use crate::error::GarrisonResult;
 use crate::session::account_key;
 
-/// 数据主体擦除服务。
-///
-/// 组合框架既有删除原语，按主体执行可定位数据的擦除并产出报告。
-/// 构造只需 [`GarrisonDao`]；会话擦除经 [`erase_subject`](Self::erase_subject)
-/// 的闭包参数委托（推荐注入 `StpLogic::logout_by_login_id`）。
+/// 数据主体擦除服务：组合框架既有删除原语，按主体擦除可定位数据并产出报告；会话擦除经 [`erase_subject`](Self::erase_subject) 闭包委托（推荐注入 `StpLogic::logout_by_login_id`）。
 pub struct DataErasureService {
     dao: Arc<dyn GarrisonDao>,
 }
 
-/// 擦除报告：记录已删除键、委托执行结果与业务方残留处置提示。
-///
-/// 报告本身不含个人信息明文以外的载荷（仅键名与提示文案），可直接
-/// 作为删除权请求的响应留档。
+/// 擦除报告：已删除键、委托执行结果与业务方残留处置提示；仅含键名与提示文案（无个人信息载荷），可作为删除权请求的响应留档。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErasureReport {
     /// 主体标识（login_id）。
@@ -48,8 +35,8 @@ pub struct ErasureReport {
     pub erased_keys: Vec<String>,
     /// 会话擦除委托是否执行成功（false = 调用方未提供或委托返回 Err）。
     pub session_erasure_delegated: bool,
-    /// 框架管辖外、需业务方处置的残留数据提示。
-    pub residual_guidance: Vec<&'static str>,
+    /// 框架管辖外、需业务方处置的残留数据提示（条目按报告生成时的 locale 本地化）。
+    pub residual_guidance: Vec<String>,
 }
 
 impl DataErasureService {
@@ -60,19 +47,8 @@ impl DataErasureService {
 
     /// 擦除指定主体在框架管辖内的可定位数据。
     ///
-    /// # 参数
-    /// - `login_id`: 主体标识。
-    /// - `session_erasure`: 会话擦除委托（推荐 `stp.logout_by_login_id`，
-    ///   持有 per-login 锁与会话完整性语义）。闭包返回 `Ok` 即视为委托成功；
-    ///   若调用方刻意跳过会话擦除，由其自行承担闭包语义（委托的成败以
-    ///   闭包返回值为准，本服务不做二次解读）。
-    ///
-    /// # 报告语义
-    ///
-    /// `erased_keys` 仅含本服务直接删除且调用成功的键；`session_erasure_delegated`
-    /// 忠实反映委托闭包的执行结果——失败为 `false` 且不中断整体擦除（会话残留由
-    /// 报告显性暴露，调用方决定重试或告警），与框架 fail-closed 立场一致：
-    /// 删除权路径宁可报告残留也不静默宣称完成。
+    /// `session_erasure` 为会话擦除委托（推荐 `stp.logout_by_login_id`，持有 per-login 锁与会话完整性语义）：闭包返回 `Ok` 即视为委托成功，本服务不二次解读。
+    /// `erased_keys` 仅含本服务直接删除且调用成功的键；委托失败置 `session_erasure_delegated=false` 且不中断整体擦除——残留由报告显性暴露（fail-closed：宁可报告残留也不静默宣称完成）。
     pub async fn erase_subject<F, Fut>(
         &self,
         login_id: &str,
@@ -84,15 +60,15 @@ impl DataErasureService {
     {
         let mut erased_keys = Vec::new();
 
-        // 1. 会话擦除委托（per-login 锁语义在 StpLogic 侧）
+        // 会话擦除委托（per-login 锁语义在 StpLogic 侧）
         let delegated = session_erasure(login_id.to_string()).await.is_ok();
 
-        // 2. Account-Session 索引键（与 session::account_key 同源构造；委托已删时幂等）
+        // Account-Session 索引键（与 session::account_key 同源构造，委托已删时幂等）
         let account_key = account_key(login_id);
         self.dao.delete(&account_key).await?;
         erased_keys.push(account_key);
 
-        // 3. 账户锁定状态键（锁定状态含失败模式等主体行为画像，属删除权范围）
+        // 账户锁定状态含失败模式等主体行为画像，属删除权范围
         let lockout_key = DaoKeyPrefix::Lockout.build_key(login_id);
         self.dao.delete(&lockout_key).await?;
         erased_keys.push(lockout_key);
@@ -105,10 +81,7 @@ impl DataErasureService {
         })
     }
 
-    /// 擦除指定客户端 IP 在框架管辖内的防护状态（暴力破解失败计数）。
-    ///
-    /// IP 属个人信息（GDPR Recital 30），主体请求删除时同步清理。
-    /// 键构造与 `strategy::firewall::brute_force` 生产路径一致（`bf:{ip}:count`）。
+    /// 擦除指定客户端 IP 的防护状态（暴力破解失败计数）；IP 属个人信息（GDPR Recital 30），键构造与 `strategy::firewall::brute_force` 生产路径一致（`bf:{ip}:count`）。
     pub async fn erase_ip_artifacts(&self, ip: &str) -> GarrisonResult<ErasureReport> {
         let count_key = format!("{}{}:count", DaoKeyPrefix::BruteForce, ip);
         self.dao.delete(&count_key).await?;
@@ -117,22 +90,26 @@ impl DataErasureService {
             login_id: ip.to_string(),
             erased_keys: vec![count_key],
             session_erasure_delegated: false,
-            residual_guidance: vec![
-                "IP 关联的其他防护记录（GeoIP 缓存、限速窗口键）随 TTL 自然过期；若需立即清除请扩展本方法",
-            ],
+            residual_guidance: vec![crate::i18n::translate_detail(
+                "compliance-erasure-residual-ip-artifacts",
+                &[],
+            )],
         })
     }
 }
 
-/// 框架管辖外的残留处置提示（固定清单，报告可留档）。
-fn residual_guidance() -> Vec<&'static str> {
-    vec![
-        "API Key：与 owner 关联且含业务授权语义，经 ApiKeyRepository 按 owner 查询后吊销（见 protocol-apikey 文档）",
-        "审计日志：合规保留期优先于删除权（个保法第 47 条 / GDPR Art. 17(3)(b) 法律义务例外），到期按保留策略销毁",
-        "业务用户资料与业务副本：存储于业务方自有表，框架不可达",
-        "验证码 / 邮箱验证记录：以手机号/邮箱为键（业务映射），随 TTL（≤1 小时）自然过期",
-        "已发出的 JWT：无状态签名，到期前技术不可撤回（除非启用 revocation，见 config enable_jwt_revocation）",
-    ]
+/// 框架管辖外的残留处置提示（固定清单，报告可留档；文案按当前 locale 取值）。
+fn residual_guidance() -> Vec<String> {
+    const KEYS: [&str; 5] = [
+        "compliance-erasure-residual-api-key",
+        "compliance-erasure-residual-audit-log",
+        "compliance-erasure-residual-business-data",
+        "compliance-erasure-residual-verification-code",
+        "compliance-erasure-residual-issued-jwt",
+    ];
+    KEYS.iter()
+        .map(|key| crate::i18n::translate_detail(*key, &[]))
+        .collect()
 }
 
 #[cfg(all(test, feature = "data-erasure"))]
@@ -145,7 +122,6 @@ mod tests {
         (DataErasureService::new(dao.clone()), dao)
     }
 
-    /// 擦除主体：可定位键被删除、委托被调用、报告含残留提示。
     #[tokio::test]
     async fn erase_subject_removes_locatable_keys_and_delegates() {
         let (service, dao) = service();
@@ -205,7 +181,6 @@ mod tests {
         assert_eq!(report.login_id, "1001");
     }
 
-    /// 委托失败不中断擦除：可定位键仍删除，报告显性暴露委托失败（不静默）。
     #[tokio::test]
     async fn erase_subject_surfaces_delegation_failure_without_aborting() {
         let (service, dao) = service();
@@ -225,8 +200,7 @@ mod tests {
         );
     }
 
-    /// 调用方自选跳过（Ok 空委托）：delegated 如实为 true——委托成败以闭包
-    /// 返回值为准，服务不二次解读；与委托失败为 false（上一测试）形成对照。
+    /// Ok 空委托时 delegated=true（与上一测试的委托失败为 false 对照）。
     #[tokio::test]
     async fn erase_subject_trivial_delegate_reports_by_closure_outcome() {
         let (service, _dao) = service();
@@ -237,7 +211,6 @@ mod tests {
         assert!(report.session_erasure_delegated);
     }
 
-    /// IP 防护痕迹擦除：bf 计数键删除且与生产键格式一致。
     #[tokio::test]
     async fn erase_ip_artifacts_removes_brute_force_count() {
         let (service, dao) = service();
@@ -249,7 +222,6 @@ mod tests {
         assert!(dao.get(&key).await.unwrap().is_none());
     }
 
-    /// 幂等：对已擦除主体重复执行不报错。
     #[tokio::test]
     async fn erase_subject_is_idempotent() {
         let (service, _dao) = service();

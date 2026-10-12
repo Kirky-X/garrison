@@ -1,12 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Stp 层测试 mock 实现。
-//!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `MockDao` / `MockFirewall` / `MockInterface` / `MockInterfaceWithPerms` /
-//! `MockUserRepository` / `MockInterfaceWithLoginType` 等 mock，
-//! 供 `stp::tests` 集成测试复用。
+//! Stp 层测试 mock 实现，仅在 `cfg(test)` 下编译（`mod.rs` 中 `#[cfg(test)] mod mock;` 声明）。
+//! 提供 MockDao / MockFirewall / MockInterface 等 mock，供 `stp::tests` 集成测试复用。
 
 use super::GarrisonInterface;
 use crate::dao::GarrisonDao;
@@ -332,9 +328,7 @@ impl GarrisonInterface for MockInterfaceWithLoginType {
     }
 }
 
-// ============================================================================
 // mock 实现自身的单元测试
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -351,14 +345,12 @@ mod tests {
         use crate::dao::GarrisonDao;
         let dao = MockDao::new();
         dao.set("k1", "v1", 60).await.unwrap();
-        // atomic_test_fallback! 方法
         let _ = dao.set_if_absent("a1", "v1", 60).await;
         let _ = dao.get_and_delete("a1").await;
         let _ = dao.incr("ctr", 60).await;
         let _ = dao.decr("ctr").await;
         let _ = dao.rename("k1", "k2").await;
         let _ = dao.compare_and_swap("k2", Some("v1"), "v2", 60).await;
-        // trait 默认方法
         let _ = dao.set_permanent("perm", "val").await;
         let _ = dao.get_with_ttl("k1").await;
         let _ = dao.keys("*").await;
@@ -484,16 +476,14 @@ mod tests {
         let t = dao.get_timeout("k1").await.unwrap();
         assert!(t.is_some(), "带 TTL 的 key get_timeout 应返回 Some");
         let d = t.unwrap();
-        // 容差检查：剩余时间应小于等于 3600 秒
         assert!(d.as_secs() <= 3600, "剩余时间应 <= 3600s，实际: {:?}", d);
     }
 
-    /// set 带 1 秒 TTL 后等待过期，get 返回 None（覆盖 lines 46-49 过期清理路径）。
+    /// set 带 1 秒 TTL 后等待过期，get 返回 None（覆盖过期清理路径）。
     #[tokio::test]
     async fn mock_dao_get_expired_key_returns_none() {
         let dao = MockDao::new();
         dao.set("expiring", "v", 1).await.unwrap();
-        // 确认立即读取有值
         assert_eq!(dao.get("expiring").await.unwrap().as_deref(), Some("v"));
         tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
         assert!(
@@ -502,13 +492,12 @@ mod tests {
         );
     }
 
-    /// get_timeout 在 deadline 已过期时返回 None（覆盖 lines 105-106）。
+    /// deadline 已过期时 get_timeout 返回 None。
     #[tokio::test]
     async fn mock_dao_get_timeout_expired_returns_none() {
         let dao = MockDao::new();
         dao.set("k1", "v1", 1).await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
-        // deadline <= now 时应返回 None
         let t = dao.get_timeout("k1").await.unwrap();
         assert!(
             t.is_none(),
@@ -596,7 +585,6 @@ mod tests {
             iface.get_role_list("u1").await.unwrap(),
             Vec::<String>::new()
         );
-        // 默认委托方法覆盖
         let _ = iface
             .get_permission_list_with_type("u1", "default")
             .await
@@ -622,7 +610,6 @@ mod tests {
             iface.get_role_list("u1").await.unwrap(),
             vec!["admin".to_string()]
         );
-        // 默认委托方法覆盖
         let _ = iface
             .get_permission_list_with_type("u1", "default")
             .await
@@ -664,7 +651,6 @@ mod tests {
                 .unwrap(),
             vec!["user:read".to_string()]
         );
-        // 未知 login_type 返回空 Vec
         assert_eq!(
             iface
                 .get_permission_list_with_type("u1", "unknown")
@@ -687,7 +673,6 @@ mod tests {
             iface.get_role_list_with_type("u1", "admin").await.unwrap(),
             vec!["super-admin".to_string()]
         );
-        // 未知 login_type 返回空 Vec
         assert_eq!(
             iface.get_role_list_with_type("u1", "user").await.unwrap(),
             Vec::<String>::new()

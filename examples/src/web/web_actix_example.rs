@@ -39,7 +39,6 @@ pub struct InMemoryDao {
 }
 
 impl InMemoryDao {
-    /// 创建 InMemoryDao 实例。
     pub fn new() -> Self {
         Self {
             store: Mutex::new(HashMap::new()),
@@ -127,9 +126,7 @@ pub struct MyInterface {
 }
 
 impl MyInterface {
-    /// 创建 MyInterface 实例。
-    ///
-    /// 预置数据：login_id=1001 持有 `["data:read"]` 权限 + `["admin"]` 角色。
+    /// 预置 login_id=1001 持有 data:read 权限 + admin 角色。
     pub fn new() -> Self {
         let mut permissions = HashMap::new();
         permissions.insert("1001".to_string(), vec!["data:read".to_string()]);
@@ -160,10 +157,7 @@ impl GarrisonInterface for MyInterface {
 // LoggingInterceptor（自定义拦截器，演示 with_interceptor）
 // ============================================================================
 
-/// 自定义拦截器：打印鉴权日志，然后委托给 GarrisonUtil 执行实际鉴权。
-///
-/// 演示 `GarrisonRouter::with_interceptor` 用法，生产环境可实现更复杂逻辑
-/// （如审计日志、指标收集、多租户路由等）。
+/// 自定义拦截器：打印鉴权日志后委托 `GarrisonUtil` 执行实际鉴权，演示 `GarrisonRouter::with_interceptor` 用法。
 struct LoggingInterceptor;
 
 #[async_trait]
@@ -193,9 +187,7 @@ impl GarrisonInterceptor for LoggingInterceptor {
 // setup / create_middleware / run
 // ============================================================================
 
-/// 初始化全局 GarrisonManager（注入 InMemoryDao + MyInterface），并登录获取 token。
-///
-/// 返回 `(config, token)`，config 用于构建 App 的 app_data，token 用于测试请求。
+/// 初始化全局 GarrisonManager（注入 InMemoryDao + MyInterface）并登录获取 token，返回 (config, token)。
 pub async fn setup() -> (Arc<GarrisonConfig>, String) {
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let mut config = GarrisonConfig::default_config();
@@ -218,17 +210,8 @@ pub async fn setup() -> (Arc<GarrisonConfig>, String) {
     (config, token)
 }
 
-/// 创建 GarrisonMiddleware（注册路由规则 + 自定义拦截器 + 内置租户解析）。
-///
-/// 注册的路由规则：
-/// - `/api/protected` → `CheckLogin`
-/// - `/api/admin` → `CheckRole("admin")`
-/// - `/api/data` → `CheckPermission("data:read")`
-/// - `/public` → `Ignore`（无鉴权）
-///
-/// 通过 [`GarrisonRouter::with_header_tenant`] 内置租户解析：每个请求从
-/// `X-Tenant-Id` 请求头解析租户并进入 `TENANT.scope`，使 `tenant-isolation`
-/// 下 `check_permission` 获得租户上下文（否则 fail-closed 报 `ctx-tenant-context-missing`）。
+/// 创建 GarrisonMiddleware：注册受保护路由（CheckLogin / CheckRole / CheckPermission / Ignore）+ 自定义拦截器。
+/// `with_header_tenant` 从 `X-Tenant-Id` 请求头解析租户并进入 `TENANT.scope`；tenant-isolation 下缺租户上下文时 `check_permission` fail-closed（`ctx-tenant-context-missing`）。
 pub fn create_middleware(config: Arc<GarrisonConfig>) -> GarrisonMiddleware {
     GarrisonRouter::new(config)
         .with_interceptor(LoggingInterceptor)

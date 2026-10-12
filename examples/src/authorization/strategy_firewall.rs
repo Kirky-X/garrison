@@ -3,14 +3,8 @@
 
 //! 防火墙策略示例：演示 GarrisonPermissionStrategy trait 与自定义策略实现。
 //!
-//! 流程：
-//! 1. 实现 GarrisonPermissionStrategy trait（自定义权限/角色来源）
-//! 2. 创建 GarrisonPermissionStrategyDefault（基于 GarrisonInterface）
-//! 3. check_permission 权限校验
-//! 4. check_role 角色校验
-//! 5. check_role_any 任一角色匹配
-//! 6. check_role_all 全部角色匹配
-//! 7. 空字符串校验（Fail Loud）
+//! 流程：1. 实现 GarrisonPermissionStrategy trait（自定义权限/角色来源）2. 创建 GarrisonPermissionStrategyDefault
+//! 3. check_permission 权限校验 4. check_role 角色校验 5. check_role_any 任一角色匹配 6. check_role_all 全部匹配 7. 空字符串校验（Fail Loud）
 //!
 //! 运行方式：
 //! ```sh
@@ -38,11 +32,7 @@ pub struct CustomFirewall {
 }
 
 impl CustomFirewall {
-    /// 创建 CustomFirewall 实例。
-    ///
-    /// 预置数据：
-    /// - login_id=1001：权限 `["user:read", "user:write"]`，角色 `["admin", "user"]`
-    /// - login_id=1002：权限 `["user:read"]`，角色 `["user"]`
+    /// 创建 CustomFirewall 实例，预置 1001 持有权限 `["user:read", "user:write"]` + 角色 `["admin", "user"]`，1002 持有权限 `["user:read"]` + 角色 `["user"]`。
     pub fn new() -> Self {
         let mut permissions = HashMap::new();
         permissions.insert(
@@ -114,8 +104,7 @@ impl GarrisonPermissionStrategy for CustomFirewall {
         login_id: &str,
         permission: &str,
     ) -> GarrisonResult<bool> {
-        // 示例数据源无租户维度：请求级租户不参与判定（实际租户隔离场景
-        // 应以 tenant_id 过滤数据源或隔离缓存键）。
+        // 示例数据源无租户维度：请求级租户不参与判定（实际租户隔离场景应以 tenant_id 过滤数据源或隔离缓存键）
         let _ = tenant_id;
         self.check_permission(login_id, permission).await
     }
@@ -126,7 +115,6 @@ impl GarrisonPermissionStrategy for CustomFirewall {
         login_id: &str,
         role: &str,
     ) -> GarrisonResult<bool> {
-        // 示例数据源无租户维度，同上。
         let _ = tenant_id;
         self.check_role(login_id, role).await
     }
@@ -160,9 +148,7 @@ pub struct MyInterface {
 }
 
 impl MyInterface {
-    /// 创建 MyInterface 实例。
-    ///
-    /// 预置数据：login_id=1001 持有 `["user:read", "user:write"]` 权限 + `["admin"]` 角色。
+    /// 创建 MyInterface 实例，预置 login_id=1001 持有权限 `["user:read", "user:write"]` + 角色 `["admin"]`。
     pub fn new() -> Self {
         let mut permissions = HashMap::new();
         permissions.insert(
@@ -192,11 +178,8 @@ impl GarrisonInterface for MyInterface {
     }
 }
 
-/// 运行防火墙策略示例。
-///
-/// 演示 CustomFirewall 自定义策略与 GarrisonPermissionStrategyDefault 的
-/// check_permission / check_role / check_role_any / check_role_all 校验，
-/// 以及空字符串 Fail Loud 行为，最后集成到 GarrisonManager。
+/// 运行防火墙策略示例：演示 CustomFirewall 自定义策略与 GarrisonPermissionStrategyDefault 的
+/// check_permission / check_role / check_role_any / check_role_all 校验、空字符串 Fail Loud 行为，最后集成到 GarrisonManager。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 防火墙策略示例 ===\n");
 

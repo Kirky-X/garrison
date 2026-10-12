@@ -1,29 +1,12 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! WAF 级防火墙（策略层 Hook 链）。
+//! WAF 级防火墙（策略层 Hook 链）：提供 `WafContext`（请求内容快照，path / method / host / headers / params 借用引用零拷贝）、
+//! `WafVerdict`（Allow / AllowAndSkip / Deny）、`WafHook` trait（每种校验规则一个 Hook）与 `WafHookChain`
+//! （按注册顺序执行，任一 Deny 则短路返回 `GarrisonError::FirewallBlocked`）。
 //!
-//! 提供 [`WafContext`](crate::strategy::firewall::waf::WafContext) /
-//! [`WafVerdict`](crate::strategy::firewall::waf::WafVerdict) /
-//! [`WafHook`](crate::strategy::firewall::waf::WafHook) trait +
-//! [`WafHookChain`](crate::strategy::firewall::waf::WafHookChain) 短路链。
-//!
-//! # 设计
-//!
-//! - [`WafContext`](crate::strategy::firewall::waf::WafContext)：请求内容快照（path / method / host / headers / params），借用引用零拷贝。
-//! - [`WafVerdict`](crate::strategy::firewall::waf::WafVerdict)：校验结果（Allow / Deny { reason, hook }）。
-//! - [`WafHook`](crate::strategy::firewall::waf::WafHook) trait：每种校验规则实现一个 Hook，返回 `WafVerdict`。
-//! - [`WafHookChain`](crate::strategy::firewall::waf::WafHookChain)：按注册顺序执行 Hook，任一 Deny 则短路返回 `GarrisonError::FirewallBlocked`。
-//!
-//! # 与 web-waf 的区分
-//!
-//! - `web-waf`（web 层）：`WafRule` trait + `WafConfig`，返回 `GarrisonError::Config`（400）。
-//! - `firewall-waf`（strategy 层）：`WafHook` trait + `WafHookChain`，返回 `FirewallBlocked`（403）。
-//!
-//! # 错误适配
-//!
-//! 现有 `GarrisonError::FirewallBlocked(String)` 为单字段变体，
-//! WAF Hook 链将 hook 名与 reason 编码为 `format!("[{}] {}", hook, reason)`。
+//! 与 `web-waf`（web 层 `WafRule` trait + `WafConfig`，返回 `GarrisonError::Config`(400)）区分：本模块在 strategy 层，返回 `FirewallBlocked`(403)。
+//! 错误适配：`FirewallBlocked(String)` 为单字段变体，Hook 链将 hook 名与 reason 编码为 `format!("[{}] {}", hook, reason)`。
 
 use crate::config::GarrisonConfig;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -61,11 +44,7 @@ pub enum WafVerdict {
     },
 }
 
-/// WAF Hook trait，每种校验规则实现一个 Hook。
-///
-/// 实现方返回 [`WafVerdict::Allow`] 放行（继续后续 Hook），
-/// [`WafVerdict::AllowAndSkip`] 放行并短路（跳过后续 Hook），
-/// [`WafVerdict::Deny`] 拒绝。
+/// WAF Hook trait，每种校验规则实现一个 Hook：返回 `Allow` 放行（继续后续 Hook）、`AllowAndSkip` 放行并短路（跳过后续 Hook）、`Deny` 拒绝。
 #[async_trait]
 pub trait WafHook: Send + Sync {
     /// 返回 Hook 名称（用于日志和错误追踪）。
@@ -88,22 +67,18 @@ impl WafHookChain {
 
     /// 追加 Hook 到链尾。
     ///
-    /// # 注册顺序约束（架构评审修复）
+    /// # 注册顺序约束
     ///
-    /// 链按注册顺序执行，任一 `Deny` 短路拒绝、`AllowAndSkip` 短路放行。
-    /// **安全关键 Hook（`DangerCharacterHook` / `BannedCharacterHook` /
-    /// `DirectoryTraversalHook`）必须先于 `WhitePathHook` 注册**。
-    /// 若 `WhitePathHook` 先注册，白名单匹配返回 `AllowAndSkip` 会短路跳过
-    /// 全部安全校验（`WhitePathHook` 内的可疑模式兜底守卫仅是辅助防线）。
+    /// **安全关键 Hook（`DangerCharacterHook` / `BannedCharacterHook` / `DirectoryTraversalHook`）必须先于 `WhitePathHook` 注册**：
+    /// 链按注册顺序执行，`WhitePathHook` 先注册时其 `AllowAndSkip` 会短路跳过全部安全校验（`WhitePathHook` 内的可疑模式兜底守卫仅是辅助防线）。
     /// [`WafHookChain::from_config`](Self::from_config) 已按此顺序注册。
     pub fn register(&mut self, hook: Box<dyn WafHook>) {
         self.hooks.push(hook);
     }
 
-    /// 按注册顺序执行所有 Hook，任一 Deny 则短路返回 `FirewallBlocked` 错误，
-    /// `AllowAndSkip` 则短路返回 `Ok(())` 跳过后续 Hook。
+    /// 按注册顺序执行所有 Hook：任一 `Deny` 短路返回 `FirewallBlocked` 错误，`AllowAndSkip` 短路返回 `Ok(())` 跳过后续 Hook。
     ///
-    /// Deny 时将 reason 直接编码为结构化 i18n key，复用 `GarrisonError::FirewallBlocked(String)` 变体。
+    /// Deny 时将 reason 直接编码为结构化 i18n key，复用 `GarrisonError::FirewallBlocked(String)` 变体；
     /// hook 名仅记录于 tracing 日志，不编码进错误消息（避免破坏 `parse_keyed_detail` 解析）。
     pub async fn check(&self, ctx: &WafContext<'_>) -> GarrisonResult<()> {
         for hook in &self.hooks {
@@ -122,13 +97,10 @@ impl WafHookChain {
         Ok(())
     }
 
-    /// 根据配置创建 WAF Hook 链。
+    /// 根据配置创建 WAF Hook 链：`waf_enabled_hooks` 为空时注册所有可用 Hook。
     ///
-    /// `waf_enabled_hooks` 为空时注册所有可用 Hook。
-    /// 注册顺序：**字符检测类安全 Hook（`danger_char` / `banned_char` / `dir_traversal`，
-    /// 仅按 `waf_enabled_hooks` 开关门控，无配置非空前置条件）先注册**，
-    /// 配置门控 Hook（路径/主机/方法/头/参数，需对应配置非空）后注册——
-    /// 确保安全校验先于可能 `AllowAndSkip` 短路的白名单 Hook 执行。
+    /// 注册顺序：**字符检测类安全 Hook（`danger_char` / `banned_char` / `dir_traversal`，仅按 `waf_enabled_hooks` 开关门控）先注册**，
+    /// 配置门控 Hook（路径/主机/方法/头/参数，需对应配置非空）后注册——确保安全校验先于可能 `AllowAndSkip` 短路的白名单 Hook 执行。
     pub fn from_config(config: &GarrisonConfig) -> Self {
         let mut chain = Self::new();
 
@@ -140,8 +112,7 @@ impl WafHookChain {
         let all_enabled = enabled.is_empty();
         let is_enabled = |name: &str| all_enabled || enabled.contains(name);
 
-        // 安全关键 Hook 先注册：白名单匹配会 AllowAndSkip 短路后续 Hook，
-        // 若 white_path 先注册，双编码路径（旧守卫漏检）可绕过全部安全校验。
+        // 安全关键 Hook 先注册：白名单匹配会 AllowAndSkip 短路后续 Hook，若 white_path 先注册，双编码路径（旧守卫漏检）可绕过全部安全校验。
         Self::register_unconditional_hooks(&mut chain, &is_enabled);
         Self::register_config_gated_hooks(&mut chain, config, &is_enabled);
 
@@ -220,9 +191,7 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    // ----------------------------------------------------------------
     // 测试用 Mock Hook
-    // ----------------------------------------------------------------
 
     /// 始终返回 Allow 的 Mock Hook。
     struct AllowHook {
@@ -286,9 +255,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // 10 个测试（register/check 使用 (未实现占位) 会 panic）
-    // ========================================================================
+    // register / check 基础行为测试
 
     /// 验证空 chain 的 check() 返回 Ok(())。
     #[tokio::test]
@@ -459,9 +426,7 @@ mod tests {
         assert_eq!(executed[1], "second", "第二个 Hook 应后执行");
     }
 
-    // ========================================================================
-    // T-CONV-001: WafHookChain::from_config 测试（4 个）
-    // ========================================================================
+    // WafHookChain::from_config 测试
 
     /// 验证空配置不注册任何 Hook。
     #[tokio::test]

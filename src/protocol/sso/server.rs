@@ -1,13 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! SSO Server 独立抽象模块。
+//! SSO Server 独立抽象模块（`protocol-sso-server` feature）：与 `SsoClient` 解耦，经共享 `GarrisonDao` 间接通信。
 //!
-//! 与 `SsoClient`（客户端）解耦，通过共享 `GarrisonDao` 间接通信。
-//! 提供 `SsoServer` trait / `CenterIdConverter` trait / `SsoChannel` trait，
-//! 以及 `DefaultSsoServer` / `IdentityCenterIdConverter` / `NoopSsoChannel` 默认实现。
-//!
-//! 仅在启用 `protocol-sso-server` 特性时编译。
+//! 提供 `SsoServer` / `CenterIdConverter` / `SsoChannel` trait，以及 `DefaultSsoServer` / `IdentityCenterIdConverter` / `NoopSsoChannel` 默认实现。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -15,31 +11,24 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use uuid::Uuid;
 
-// 复用 `sso::client` 中的 `sign_ticket` + `verify_ticket_signature`，
-// 以及 `sso::mod.rs` 中的 `SsoTicketData`，避免 ticket 格式漂移和签名逻辑重复。
+// 复用 `sso::client` 的签名函数与 `sso::mod.rs` 的 `SsoTicketData`，避免格式漂移与签名逻辑重复。
 use super::client::{sign_ticket, verify_ticket_signature, MIN_SECRET_LEN};
 use super::SsoTicketData;
 
 /// SSO ticket 默认 TTL（秒），与 `SsoClient` 保持一致。
 const DEFAULT_TICKET_TTL: u64 = 60;
 
-// ============================================================================
-// SSO pub/sub 消息信封（R2-3：pub/sub 事件认证 + 防重放）
-// ============================================================================
+// SSO pub/sub 消息信封（事件认证 + 防重放）
 
 /// SSO pub/sub 消息信封：HMAC-SHA256 认证 + 单调 seq 防重放。
 ///
-/// [`SsoServer::push_message`] 发布侧将业务消息封装为本信封（JSON 序列化后
-/// 经 `SsoChannel` 发布）；订阅侧经 [`verify_sso_message`] 验签后取回 payload。
+/// [`SsoServer::push_message`] 发布侧把业务消息封装为本信封（JSON 序列化后经 `SsoChannel` 发布）；订阅侧经 [`verify_sso_message`] 验签后取回 payload。
 ///
 /// # 消费契约
 ///
-/// - `hmac` = base64(HMAC-SHA256(secret, seq(be 字节) || payload))，secret 为
-///   SSO 票据签名密钥（发布/订阅两侧共享）；
-/// - `seq` 为发布实例内单调递增（AtomicU64），订阅方以 `&mut u64` 维护
-///   「已见最大 seq」状态：`seq <= last_seq` 即判定重放拒绝；
-/// - **跨实例部署**：各实例 seq 独立计数，订阅方须按（topic × 发布实例）维度
-///   维护 last_seq，或以共享单调源扩展。
+/// - `hmac` = base64(HMAC-SHA256(secret, seq(be 字节) || payload))，secret 为票据签名密钥（发布/订阅两侧共享）；
+/// - `seq` 发布实例内单调递增（AtomicU64），订阅方以 `&mut u64` 维护「已见最大 seq」，`seq <= last_seq` 即判重放拒绝；
+/// - **跨实例部署**：各实例 seq 独立计数，订阅方须按（topic × 发布实例）维度维护 last_seq，或以共享单调源扩展。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SsoMessageEnvelope {
     /// 业务消息原文。
@@ -106,63 +95,32 @@ pub fn verify_sso_message(secret: &str, raw: &str, last_seq: &mut u64) -> Garris
     Ok(envelope.payload)
 }
 
-// ============================================================================
 // Trait 定义
-// ============================================================================
 
-/// SSO 服务端抽象 trait。
-///
-/// 与 `SsoClient`（客户端）解耦，通过共享 `GarrisonDao` 间接通信。
-/// ticket 一次性使用，校验成功后立即销毁。
+/// SSO 服务端抽象 trait：与 `SsoClient` 解耦，经共享 `GarrisonDao` 间接通信；ticket 一次性使用，校验成功后立即销毁。
 #[async_trait]
 pub trait SsoServer: Send + Sync {
-    /// 签发 SSO ticket。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识（将委托 `CenterIdConverter::to_center_id` 转换为 center_id 后存储）。
-    /// - `client_id`: 客户端标识。
-    ///
-    /// # 返回
-    /// 64 字符的 ticket 字符串。
+    /// 签发 SSO ticket：`login_id` 先经 `CenterIdConverter::to_center_id` 转换后存储。
     async fn issue_ticket(&self, login_id: &str, client_id: i64) -> GarrisonResult<String>;
 
-    /// 校验 SSO ticket（一次性使用，校验成功后立即销毁）。
-    ///
-    /// # 参数
-    /// - `ticket`: 票据字符串。
-    /// - `client_id`: 客户端标识。
-    ///
-    /// # 返回
-    /// - `Ok(login_id)`: 校验成功（经 `CenterIdConverter::to_login_id` 转换回原始 login_id）。
-    /// - `Err(GarrisonError::InvalidToken)`: 票据不存在、已过期或 client_id 不匹配。
-    ///
-    /// # 原子性保证
-    ///
-    /// 与 `SsoClient::validate_ticket` 相同，使用 `GarrisonDao::get_and_delete` 原子操作。
+    /// 校验 SSO ticket（一次性使用，成功后立即销毁）：经 `get_and_delete` 原子消费；票据不存在/已过期/client_id 不匹配返回 `GarrisonError::InvalidToken`。
     async fn validate_ticket(&self, ticket: &str, client_id: i64) -> GarrisonResult<String>;
 
     /// 销毁 SSO ticket（幂等，即使票据不存在也返回 `Ok(())`）。
     async fn destroy_ticket(&self, ticket: &str) -> GarrisonResult<()>;
 
-    /// 推送 SSO 消息到指定 login_id。
+    /// 推送 SSO 消息到指定 login_id（未注入 `SsoChannel` 时 noop 返回 `Ok(())`）。
     ///
-    /// 若未注入 `SsoChannel`，则 noop 返回 `Ok(())`。
+    /// topic 为 `sso:user:{sha256(login_id)[..32hex]}`（确定性指纹脱敏，防邮箱/手机号等 PII 泄漏到 topic/日志），订阅方按同一规则拼接。
     ///
-    /// topic 名为 `sso:user:{sha256(login_id)[..32hex]}`（login_id 经确定性指纹
-    /// 脱敏，防止邮箱/手机号等 PII 泄漏到 topic/日志）；订阅方需按同一规则拼接 topic。
+    /// # 消息认证契约
     ///
-    /// # 消息认证契约（R2-3：pub/sub 事件认证）
-    ///
-    /// 发布侧将 `message` 封装为 HMAC-SHA256 信封
-    /// （[`SsoMessageEnvelope`]：`{payload, hmac, seq}`，seq 单调防重放）后发布；
-    /// 订阅侧必须经 [`verify_sso_message`] 验签消费，未经信封封装或验签失败的
-    /// 原始消息不可信（pub/sub 通道对任意订阅者/发布者开放，无传输层认证）。
+    /// 发布侧把 `message` 封装为 HMAC-SHA256 信封（[`SsoMessageEnvelope`]：`{payload, hmac, seq}`，seq 单调防重放）后发布；
+    /// 订阅侧必须经 [`verify_sso_message`] 验签消费——pub/sub 通道对任意订阅者/发布者开放，无传输层认证。
     async fn push_message(&self, login_id: &str, message: &str) -> GarrisonResult<()>;
 }
 
-/// 中心 ID 转换器 trait。
-///
-/// 用于多子系统 login_id 映射，支持双向转换。
+/// 中心 ID 转换器：多子系统 login_id 双向映射。
 pub trait CenterIdConverter: Send + Sync {
     /// 将 login_id 转换为 center_id。
     fn to_center_id(&self, login_id: &str) -> String;
@@ -171,19 +129,13 @@ pub trait CenterIdConverter: Send + Sync {
     fn to_login_id(&self, center_id: &str) -> String;
 }
 
-/// SSO 消息推送通道 trait。
-///
-/// 作为 SSO 前后端消息推送抽象，支持自定义实现（如 Redis pub-sub）。
+/// SSO 消息推送通道抽象，支持自定义实现（如 Redis pub/sub）。
 #[async_trait]
 pub trait SsoChannel: Send + Sync {
     /// 推送消息到指定 topic。
     async fn push(&self, topic: &str, message: &str) -> GarrisonResult<()>;
 
-    /// 订阅指定 topic 的消息。
-    ///
-    /// # 参数
-    /// - `topic`: 订阅主题。
-    /// - `handler`: 消息处理回调（收到消息时调用，参数为 owned `String` 以支持 `'static` 要求）。
+    /// 订阅指定 topic；`handler` 为消息回调（owned `String` 以满足 `'static` 要求）。
     async fn subscribe(
         &self,
         topic: &str,
@@ -191,13 +143,9 @@ pub trait SsoChannel: Send + Sync {
     ) -> GarrisonResult<()>;
 }
 
-// ============================================================================
 // 默认实现
-// ============================================================================
 
-/// 默认的 identity `CenterIdConverter` 实现。
-///
-/// `to_center_id` 和 `to_login_id` 都返回原始值（identity 转换）。
+/// identity 转换：`to_center_id` / `to_login_id` 均返回原始值。
 pub struct IdentityCenterIdConverter;
 
 impl CenterIdConverter for IdentityCenterIdConverter {
@@ -210,9 +158,7 @@ impl CenterIdConverter for IdentityCenterIdConverter {
     }
 }
 
-/// 空操作 `SsoChannel` 默认实现。
-///
-/// 所有方法返回 `Ok(())`，不实际推送消息。
+/// 空操作 `SsoChannel`：所有方法返回 `Ok(())`，不实际推送消息。
 pub struct NoopSsoChannel;
 
 #[async_trait]
@@ -230,11 +176,7 @@ impl SsoChannel for NoopSsoChannel {
     }
 }
 
-/// 默认 `SsoServer` 实现。
-///
-/// 持有 `Arc<dyn GarrisonDao>` 用于票据存储，
-/// `Option<Arc<dyn SsoChannel>>` 用于消息推送（未注入时 noop），
-/// `Arc<dyn CenterIdConverter>` 用于 login_id <-> center_id 转换。
+/// 默认 `SsoServer` 实现：持有 `Arc<dyn GarrisonDao>`（票据存储）、可选 `SsoChannel`（未注入时 noop）与 `CenterIdConverter`。
 pub struct DefaultSsoServer {
     /// DAO 抽象层，用于票据存储。
     dao: Arc<dyn GarrisonDao>,
@@ -244,30 +186,16 @@ pub struct DefaultSsoServer {
     channel: Option<Arc<dyn SsoChannel>>,
     /// 中心 ID 转换器。
     converter: Arc<dyn CenterIdConverter>,
-    /// HMAC 签名密钥（所有 ticket 必须签名，与 SsoClient 格式一致）。
+    /// HMAC 签名密钥（与 `SsoClient` 格式一致，ticket 必签）。
     secret: String,
-    /// pub/sub 消息发布序号（实例内单调递增，R2-3 信封防重放）。
+    /// pub/sub 消息发布序号（实例内单调递增，供信封防重放）。
     message_seq: std::sync::atomic::AtomicU64,
 }
 
 impl DefaultSsoServer {
-    /// 创建新的 `DefaultSsoServer` 实例。
+    /// 创建 `DefaultSsoServer` 实例（默认 TTL 60 秒、noop channel、identity 转换器）。
     ///
-    /// 默认配置：
-    /// - TTL = 60 秒
-    /// - 无消息推送通道（noop）
-    /// - identity 转换器
-    ///
-    /// # 参数
-    /// - `dao`: DAO 抽象层实例。
-    /// - `secret`: HMAC 签名密钥（与 SsoClient 必须一致，禁止空字符串，
-    ///   且长度不得少于 `MIN_SECRET_LEN`（32 字节）。
-    ///
-    /// # 错误
-    /// - `secret` 为空时返回 `GarrisonError::InvalidParam`（`sso-server-secret-empty`）；
-    /// - `secret` 短于 32 字节时返回 `GarrisonError::InvalidParam`
-    ///   （`sso-server-secret-too-short`，安全审计 GAR-15）。
-    ///   均不 panic，可恢复配置错误。
+    /// `secret` 不可为空且不少于 `MIN_SECRET_LEN`（32 字节），须与 `SsoClient` 一致；否则返回 `GarrisonError::InvalidParam`（不 panic）。
     pub fn new(dao: Arc<dyn GarrisonDao>, secret: impl Into<String>) -> GarrisonResult<Self> {
         let secret: String = secret.into();
         if secret.is_empty() {
@@ -288,8 +216,7 @@ impl DefaultSsoServer {
             channel: None,
             converter: Arc::new(IdentityCenterIdConverter),
             secret,
-            // 首条消息 seq 从 1 起：订阅方 last_seq 以 0 初始化，0 <= 0 会被
-            // `seq <= last_seq` 防重放检查误判为重放
+            // 首条 seq 从 1 起：订阅方 last_seq 初始 0，0 <= 0 会被防重放检查误判为重放
             message_seq: std::sync::atomic::AtomicU64::new(1),
         })
     }
@@ -316,7 +243,6 @@ impl DefaultSsoServer {
 #[async_trait]
 impl SsoServer for DefaultSsoServer {
     async fn issue_ticket(&self, login_id: &str, client_id: i64) -> GarrisonResult<String> {
-        // 委托 CenterIdConverter 将 login_id 转换为 center_id 后存储
         let center_id = self.converter.to_center_id(login_id);
         // 拼接两个 UUID v4 simple（各 32 hex = 64 字符），与 SsoClient 格式一致
         let random_part = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
@@ -339,9 +265,7 @@ impl SsoServer for DefaultSsoServer {
         let _random_part = verify_ticket_signature(&self.secret, ticket)?;
 
         let key = format!("garrison:sso:ticket:{}", ticket);
-        // 步骤 1: 非原子 get，用于校验 client_id（不删除票据）
-        // 与 SsoClient::validate_ticket 行为对齐：client_id 不匹配时不消费票据，
-        // 允许正确 client_id 后续重试（用户友好优先于防爆破）。
+        // 非原子 get 校验 client_id：不匹配时不消费票据，允许正确 client_id 重试（与 `SsoClient` 行为对齐）
         let value = self
             .dao
             .get(&key)
@@ -353,13 +277,12 @@ impl SsoServer for DefaultSsoServer {
         let data: SsoTicketData = serde_json::from_str(&value)
             .map_err(|e| GarrisonError::Internal(format!("sso-ticket-deserialize::{}", e)))?;
         if data.client_id != client_id {
-            // 与 SsoClient::validate_ticket 行为对齐：client_id 不匹配时不消费票据。
-            // 安全修复：错误消息固定，不回显存储/调用方 client_id（防止枚举有效 client_id）。
+            // 错误消息固定，不回显存储/调用方 client_id（防枚举有效 client_id）
             return Err(GarrisonError::InvalidToken(
                 "sso-ticket-client-id-mismatch::".to_string(),
             ));
         }
-        // 步骤 2: 原子 get_and_delete 消费票据（消除 TOCTOU 竞态）
+        // 原子消费票据消除 TOCTOU 竞态
         let consumed = self
             .dao
             .get_and_delete(&key)
@@ -370,7 +293,6 @@ impl SsoServer for DefaultSsoServer {
                 "sso-ticket-consumed-by-concurrent::".to_string(),
             ));
         }
-        // 委托 converter 将 center_id 转回原始 login_id
         let login_id = self.converter.to_login_id(&data.login_id);
         Ok(login_id)
     }
@@ -382,27 +304,21 @@ impl SsoServer for DefaultSsoServer {
 
     async fn push_message(&self, login_id: &str, message: &str) -> GarrisonResult<()> {
         if let Some(channel) = &self.channel {
-            // PII 防护：login_id（可能为邮箱/手机号）不原样进入 topic 名，
-            // 改用 SHA-256 指纹（截断 32 hex），避免 PII 泄漏到 Redis topic /
-            // 监控面板 / broker 元数据。指纹为确定性映射，订阅方按同一规则拼 topic。
+            // PII 防护：login_id（可能为邮箱/手机号）改用 SHA-256 指纹（截断 32 hex）作 topic，
+            // 防泄漏到 Redis topic / 监控面板 / broker 元数据；订阅方按同一规则拼接
             let topic = format!("sso:user:{}", fingerprint_id(login_id));
-            // R2-3：发布侧 HMAC 信封（seq 实例内单调递增），订阅侧经
-            // verify_sso_message 验签消费（见 SsoServer::push_message 消费契约）
+            // 发布侧 HMAC 信封（seq 实例内单调递增），订阅侧经 verify_sso_message 验签消费
             let seq = self
                 .message_seq
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let envelope = seal_sso_message(&self.secret, message, seq)?;
             channel.push(&topic, &envelope).await?;
         }
-        // 未注入 channel 时 noop
         Ok(())
     }
 }
 
-/// 计算标识符的确定性指纹（SHA-256 截断 32 hex，小写）。
-///
-/// 用于 pub/sub topic 等可能进入日志/监控的场景：同输入恒同输出，
-/// 但不暴露原始标识符（邮箱/手机号等 PII）。
+/// 标识符确定性指纹（SHA-256 截断 32 hex，小写）：同输入恒同输出，但不暴露原始标识符（邮箱/手机号等 PII），用于 pub/sub topic 等可能进入日志/监控的场景。
 fn fingerprint_id(id: &str) -> String {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(id.as_bytes());
@@ -427,11 +343,9 @@ mod tests {
     use crate::protocol::sso::SsoClient;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    // ========================================================================
     // 构造测试
-    // ========================================================================
 
-    /// 构造 DefaultSsoServer，持有 dao）。
+    /// 构造 DefaultSsoServer（持有 dao）。
     #[test]
     fn new_creates_server_with_dao() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -453,18 +367,15 @@ mod tests {
         assert!(server.channel.is_some());
     }
 
-    // ========================================================================
     // CenterIdConverter 测试
-    // ========================================================================
 
-    /// IdentityCenterIdConverter 默认实现往返一致）。
+    /// IdentityCenterIdConverter 默认实现往返一致。
     #[test]
     fn identity_converter_roundtrip() {
         let converter = IdentityCenterIdConverter;
         let center_id = converter.to_center_id("1001");
         let login_id = converter.to_login_id(&center_id);
         assert_eq!(login_id, "1001");
-        // identity 转换：center_id == login_id
         assert_eq!(center_id, "1001");
     }
 
@@ -490,11 +401,8 @@ mod tests {
         assert_eq!(login_id, "1001");
     }
 
-    // ========================================================================
     // NoopSsoChannel 测试
-    // ========================================================================
 
-    /// NoopSsoChannel::push 返回 Ok 且不实际推送）。
     #[tokio::test]
     async fn noop_channel_push_returns_ok() {
         let channel = NoopSsoChannel;
@@ -502,7 +410,6 @@ mod tests {
         assert_eq!(result.unwrap(), (), "NoopSsoChannel::push 应返回 Ok(())");
     }
 
-    /// NoopSsoChannel::subscribe 返回 Ok。
     #[tokio::test]
     async fn noop_channel_subscribe_returns_ok() {
         let channel = NoopSsoChannel;
@@ -515,11 +422,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // DefaultSsoServer::issue_ticket + validate_ticket 测试
-    // ========================================================================
 
-    /// issue_ticket + validate_ticket 往返（一次性使用，spec Scenario）。
+    /// issue_ticket + validate_ticket 往返（一次性使用）。
     #[tokio::test]
     async fn issue_and_validate_ticket_roundtrip() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -530,21 +435,19 @@ mod tests {
         assert_eq!(login_id, "1001");
     }
 
-    /// issue_ticket 返回 64 字符（与 SsoClient 格式一致）。
+    /// ticket 格式 `{64_hex_random}.{hmac_b64}`：random 部分为 64 字符 hex。
     #[tokio::test]
     async fn issue_ticket_returns_64_chars() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
             .expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
-        // 新格式：{64_hex_random}.{hmac_b64}，长度不再固定为 64
         let parts: Vec<&str> = ticket.splitn(2, '.').collect();
         assert_eq!(parts.len(), 2, "ticket 应包含分隔符 '.'");
         assert_eq!(parts[0].len(), 64, "random 部分应为 64 字符 hex");
         assert!(parts[0].chars().all(|c| c.is_ascii_hexdigit()));
     }
 
-    /// validate_ticket 一次性使用：第二次校验失败）。
     #[tokio::test]
     async fn validate_ticket_one_time_use_second_fails() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -560,7 +463,6 @@ mod tests {
         );
     }
 
-    /// validate_ticket client_id 不匹配返回 InvalidToken 错误。
     #[tokio::test]
     async fn validate_ticket_client_id_mismatch_returns_error() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -575,7 +477,6 @@ mod tests {
         }
     }
 
-    /// validate_ticket 不存在返回 InvalidToken 错误。
     #[tokio::test]
     async fn validate_ticket_nonexistent_returns_error() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -589,11 +490,8 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // destroy_ticket 测试
-    // ========================================================================
 
-    /// destroy_ticket 幂等：销毁不存在的票据返回 Ok）。
     #[tokio::test]
     async fn destroy_ticket_idempotent() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -608,9 +506,7 @@ mod tests {
         assert_eq!(result2.unwrap(), (), "重复销毁应返回 Ok(())（幂等）");
     }
 
-    // ========================================================================
     // 自定义 CenterIdConverter 集成测试
-    // ========================================================================
 
     /// 注入自定义 CenterIdConverter 后，issue_ticket 存储 center_id，validate_ticket 返回原始 login_id。
     #[tokio::test]
@@ -637,9 +533,7 @@ mod tests {
         assert_eq!(login_id, "1001");
     }
 
-    // ========================================================================
     // push_message 测试
-    // ========================================================================
 
     /// push_message 未注入 channel 时返回 Ok（noop）。
     #[tokio::test]
@@ -688,8 +582,7 @@ mod tests {
         assert_eq!(channel.count.load(Ordering::SeqCst), 2);
     }
 
-    /// push_message 的 topic 不含原始 login_id（PII 脱敏：SHA-256 指纹拼接），
-    /// 且指纹确定性（同 login_id 同 topic、不同 login_id 不同 topic）。
+    /// push_message 的 topic 用 SHA-256 指纹而非原始 login_id（PII 脱敏），且确定性（同输入同 topic、不同输入不同 topic）。
     #[tokio::test]
     async fn push_message_topic_masks_login_id() {
         /// 捕获 push topic 的 channel。
@@ -737,12 +630,11 @@ mod tests {
                 t
             );
         }
-        // 确定性：同 login_id 两次 push 得到相同 topic
         assert_eq!(topics[0], topics[1], "同 login_id 应映射到相同 topic");
         assert_ne!(topics[0], topics[2], "不同 login_id 应映射到不同 topic");
     }
 
-    /// 空 secret 构造返回 InvalidParam 错误而非 panic（错误处理修复）。
+    /// 空 secret 构造返回 InvalidParam 而非 panic。
     #[test]
     fn new_rejects_empty_secret_with_invalid_param() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -760,8 +652,7 @@ mod tests {
         }
     }
 
-    /// 短于 32 字节的 secret 构造返回 InvalidParam（安全审计 GAR-15：
-    /// 与 qrlogin/protocol-sign 对齐，弱密钥可被持票攻击者离线爆破后伪造签名）。
+    /// 短于 32 字节的 secret 返回 InvalidParam（与 qrlogin/protocol-sign 下限对齐，弱密钥可被持票攻击者离线爆破后伪造签名）。
     #[test]
     fn new_rejects_short_secret_with_invalid_param() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -777,7 +668,6 @@ mod tests {
             Err(other) => panic!("期望 InvalidParam，实际: {:?}", other),
             Ok(_) => panic!("31 字节 secret 不应构造成功"),
         }
-        // 32 字节（下限）应构造成功
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         assert!(
             DefaultSsoServer::new(dao, "a".repeat(32)).is_ok(),
@@ -785,9 +675,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // pub/sub 消息信封（R2-3：HMAC 认证 + seq 防重放）
-    // ========================================================================
+    // pub/sub 消息信封（HMAC 认证 + seq 防重放）
 
     /// 捕获 push 消息体的 channel（信封测试用）。
     struct MessageCapturingChannel {
@@ -808,8 +696,7 @@ mod tests {
         }
     }
 
-    /// push_message 发布侧封装 HMAC 信封：订阅侧 verify_sso_message 验签
-    /// 取回原始 payload，且 seq 随发布单调递增。
+    /// push_message 发布侧封装 HMAC 信封：订阅侧 verify_sso_message 验签取回原始 payload，且 seq 随发布单调递增。
     #[tokio::test]
     async fn push_message_seals_hmac_envelope_and_verifies() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -913,8 +800,7 @@ mod tests {
             ),
             other => panic!("期望 InvalidToken，实际: {:?}", other),
         }
-        // 攻击者伪造的高 seq 信封（无有效 HMAC）同样被拒——先验签后查 seq，
-        // 伪造 hmac 不可通过
+        // 伪造的高 seq 信封同样被拒：先验签后查 seq，伪造 hmac 不可通过
         let forged = serde_json::json!({
             "payload": "forged",
             "hmac": "AAAA",
@@ -950,19 +836,15 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // SsoServer 与 SsoClient 通过共享 GarrisonDao 间接通信
-    // ========================================================================
 
-    /// SsoServer 签发的 ticket 可被 SsoClient 校验（共享 DAO，spec Scenario）。
+    /// SsoServer 签发的 ticket 可被 SsoClient 校验（共享 DAO）。
     #[tokio::test]
     async fn server_and_client_communicate_via_shared_dao() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        // SsoServer 签发 ticket
         let server = DefaultSsoServer::new(dao.clone(), "test-sso-secret-key-for-unit-tests-01")
             .expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
-        // SsoClient 校验同一 ticket（共享 DAO）
         let client = SsoClient::new(dao, "test-sso-secret-key-for-unit-tests-01")
             .expect("secret 非空构造应成功");
         let login_id = client.validate_ticket(&ticket, 2001).await.unwrap();
@@ -973,11 +855,9 @@ mod tests {
     #[tokio::test]
     async fn client_and_server_communicate_via_shared_dao() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        // SsoClient 签发 ticket
         let client = SsoClient::new(dao.clone(), "test-sso-secret-key-for-unit-tests-01")
             .expect("secret 非空构造应成功");
         let ticket = client.issue_ticket("1001", 2001).await.unwrap();
-        // SsoServer 校验同一 ticket（共享 DAO）
         let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
             .expect("secret 非空构造应成功");
         let login_id = server.validate_ticket(&ticket, 2001).await.unwrap();

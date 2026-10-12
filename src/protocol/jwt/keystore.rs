@@ -1,27 +1,21 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 多 kid 密钥库：`KeyStatus` 三态与 `JwkSet` 三视图。
+//! 多 kid 密钥库：`KeyStatus` 三态与 `JwkSet` 三视图（状态机语义对齐
+//! keycloak DefaultKeyManager）——签名视图仅 Active，验证/JWKS 视图为
+//! Active ∪ Passive，Disabled 已退役移出发布面。
 //!
-//! 状态机语义（对齐 keycloak DefaultKeyManager）：
-//! - 签名视图：仅 Active（当前签名钥）
-//! - 验证视图：Active ∪ Passive（轮换后的旧钥仍可验证存量 token）
-//! - JWKS 输出视图：Active ∪ Passive（Disabled 已退役，移出发布面）
-//!
-//! `kid` 采用 RFC 7638 JWK thumbprint（SHA-256，确定性：同钥同 kid）。
-//! 密钥库仅收非对称钥：对称（HS）钥无可发布公钥成分，kid 不可派生，
-//! 轮换入口显性拒绝（HS 部署走单钥共享，不经 JWKS 轮换）。
+//! `kid` 采用 RFC 7638 JWK thumbprint（SHA-256，同钥同 kid）。仅收非对称钥：
+//! 对称（HS）钥无可发布公钥成分，轮换入口显性拒绝（HS 部署走单钥共享，不经
+//! JWKS 轮换）。
 
 use std::collections::BTreeMap;
 
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::protocol::jwt::{GarrisonJwtClaims, JwkPublicKey, JwtHandler};
 
-/// 密钥状态三态。
-///
-/// - `Active`：当前签名钥（有且仅有一个）
-/// - `Passive`：轮换退役保留验证（可验证存量 token，仍发布于 JWKS）
-/// - `Disabled`：retention 超期退役（移出 JWKS、拒绝验证）
+/// 密钥状态三态（语义见各变体：仅 Active 签发，Passive 保留验证，Disabled
+/// 超期退役移出 JWKS）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum KeyStatus {
@@ -236,9 +230,7 @@ impl JwkSet {
 
     /// 验证 token：按 header.kid 在 Active ∪ Passive 查钥；无 kid 回退 Active。
     ///
-    /// - 未知 kid：显性拒绝（不静默回退——防伪造 kid 绕过钥选择）
-    /// - Disabled kid：显性拒绝（retention 退役后旧 token 按策略失效）
-    /// - 算法与选中钥不匹配：jsonwebtoken 校验层拒绝（fail-closed）
+    /// 未知 / Disabled kid 与算法不匹配均显性拒绝（fail-closed，不静默回退）。
     pub fn verify(&self, token: &str) -> GarrisonResult<GarrisonJwtClaims> {
         let header = jsonwebtoken::decode_header(token)
             .map_err(|e| GarrisonError::InvalidToken(format!("jwt-header-invalid::{e}")))?;
@@ -344,9 +336,8 @@ fn algorithm_name(algorithm: jsonwebtoken::Algorithm) -> String {
 
 /// 密钥库快照条目（跨实例持久化载体）。
 ///
-/// 私钥 PEM 以明文入快照——DAO 侧由调用方保证存储安全（与既有
-/// `jwt_rsa_private_key_pem` 配置同级敏感，Debug 输出不脱敏单条字段，
-/// 整个快照 JSON 不得写入日志）。
+/// 私钥 PEM 以明文入快照（与既有 `jwt_rsa_private_key_pem` 配置同级敏感）——
+/// DAO 存储安全与整个快照 JSON 的日志屏蔽由调用方保证。
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct KeySnapshot {
     /// 密钥 ID（RFC 7638 thumbprint，与私钥派生值一致性在恢复时校验）。
@@ -362,7 +353,7 @@ pub struct KeySnapshot {
 }
 
 // 手写脱敏 Debug（对齐 KeyMaterial/JwkSet 惯例）：private_pem 是私钥明文，
-// 派生 Debug 会让任何 `{:?}` 误用把整段 PEM 打进日志。
+// 派生 Debug 会把整段 PEM 打进日志。
 impl std::fmt::Debug for KeySnapshot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("KeySnapshot")

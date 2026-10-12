@@ -1,29 +1,20 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 用户级双态账号锁定子模块（吸收 keycloak UserLockoutStrategy）。
-//! 提供用户级 temporary + permanent 双态锁定，与 BruteForceStrategy（IP 级）组合使用。
-//! 详见 spec `user-lockout`。
+//! 用户级双态账号锁定子模块（吸收 Keycloak UserLockoutStrategy）：temporary + permanent 双态，
+//! 与 IP 级 `BruteForceStrategy` 组合使用。
 //!
-//! # 核心类型
-//!
-//! - [`WaitStrategy`](crate::account::lockout::WaitStrategy)：等待策略 enum（Multiple 倍数 / Linear 线性）
-//! - [`UserLockoutConfig`](crate::account::lockout::UserLockoutConfig)：用户级锁定配置（5 字段）
-//! - [`LockoutState`](crate::account::lockout::LockoutState)：锁定状态（4 字段，DAO 持久化）
-//!
-//! # 策略实现
-//!
-//! 的 `UserLockoutStrategy` + `GarrisonFirewallStrategy` trait 实现位于 `strategy` 子模块。
+//! 核心类型：`WaitStrategy`（倍数/线性等待）、[`UserLockoutConfig`](crate::account::lockout::UserLockoutConfig)
+//! （5 字段配置）、[`LockoutState`](crate::account::lockout::LockoutState)（4 字段，DAO 持久化）；
+//! `UserLockoutStrategy` 实现位于 [`strategy`] 子模块。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// 锁定状态存储抽象子模块。
-///
-/// `UserLockoutStrategy` 直接通过 `GarrisonDao` 持久化 `LockoutState`，
-/// 本子模块预留给未来版本的专用存储后端实现（Redis TTL / SQL 持久化 / 分布式锁定）。
+/// 锁定状态存储抽象子模块：当前经 `GarrisonDao` 持久化 `LockoutState`，专用后端
+/// （Redis TTL / SQL / 分布式锁定）预留。
 pub mod storage;
 
 /// 策略实现子模块（impl 块、辅助函数、inventory 注册）。
@@ -33,9 +24,6 @@ pub mod strategy;
 pub mod tests;
 
 /// 等待策略，计算临时锁定时长。
-///
-/// - `Multiple`：倍数等待，第 N 次锁定时长 = `base_seconds × multiplier^(N-1)`
-/// - `Linear`：线性等待，第 N 次锁定时长 = `base_seconds × N`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WaitStrategy {
     /// 倍数等待：第 N 次锁定时长 = `base_seconds × multiplier^(N-1)`。
@@ -52,16 +40,11 @@ pub enum WaitStrategy {
     },
 }
 
-/// 用户级锁定配置。
+/// 用户级锁定配置（5 个公开字段：阈值 / 永久开关 / 临时锁定上限 / 等待策略 / 计数窗口）。
 ///
-/// 含 5 个公开字段，控制锁定行为阈值与策略。
-///
-/// # 配置校验
-///
-/// 字段均为 pub 以支持外部构造；零值/退化值（如 `max_failure_factor = 0` 会
-/// 导致首败即锁）由 [`validate`](Self::validate) 校验。
-/// [`UserLockoutStrategy::new`](crate::account::lockout::UserLockoutStrategy::new)
-/// 构造时调用本方法，非法配置 warn 后回退默认配置。
+/// 字段 pub 以支持外部构造；零值/退化值（如 `max_failure_factor = 0` 首败即锁）由
+/// [`validate`](Self::validate) 校验，[`UserLockoutStrategy::new`](crate::account::lockout::UserLockoutStrategy::new)
+/// 构造时调用，非法配置 warn 后回退默认配置。
 #[derive(Debug, Clone)]
 pub struct UserLockoutConfig {
     /// 触发锁定的失败次数阈值（失败计数达到此值触发临时/永久锁定）。
@@ -79,18 +62,9 @@ pub struct UserLockoutConfig {
 impl UserLockoutConfig {
     /// 校验配置合法性，防止零值退化行为。
     ///
-    /// # 规则
-    ///
-    /// - `max_failure_factor > 0`：0 会导致首次失败即触发锁定
-    /// - `failure_window_seconds > 0`：0 使窗口判断退化（永不重置计数）
-    /// - `permanent_lockout == true` 时 `max_temporary_lockouts > 0`：
-    ///   0 会在第一次临时锁定时立即升级为永久锁定
-    /// - `wait_strategy` 的 `base_seconds` / `multiplier > 0`：0 会使锁定时长为 0
-    ///   （锁定即刻过期，等于没有锁定）
-    ///
-    /// # 返回
-    /// - `Ok(())`: 配置合法。
-    /// - `Err(GarrisonError::Config)`: 存在退化值，附具体原因。
+    /// 规则：`max_failure_factor` / `failure_window_seconds` / `wait_strategy` 参数为 0（首败即锁 /
+    /// 窗口永不重置 / 锁定即刻过期），或 `permanent_lockout` 下 `max_temporary_lockouts = 0` 时，
+    /// 返回 [`GarrisonError::Config`] 并附具体原因。
     pub fn validate(&self) -> GarrisonResult<()> {
         if self.max_failure_factor == 0 {
             return Err(GarrisonError::Config(
@@ -146,17 +120,9 @@ pub struct LockoutState {
     pub first_failure_at: Option<i64>,
 }
 
-// ============================================================================
-// UserLockoutStrategy：用户级双态锁定策略
-// ============================================================================
-
-/// 用户级双态锁定策略。
-///
-/// 实现 [`GarrisonFirewallStrategy`](crate::strategy::firewall::GarrisonFirewallStrategy) trait，
-/// 与 `BruteForceStrategy`（IP 级）组合使用。
-/// 通过 `lockout:{user_id}` key 在 DAO 中持久化 [`LockoutState`]。
-///
-/// impl 块与 trait 实现位于 [`strategy`] 子模块。
+/// 用户级双态锁定策略：实现
+/// [`GarrisonFirewallStrategy`](crate::strategy::firewall::GarrisonFirewallStrategy) trait，与 IP 级
+/// `BruteForceStrategy` 组合，经 `lockout:{user_id}` key 持久化 [`LockoutState`]；impl 块位于 [`strategy`] 子模块。
 ///
 /// # 构造
 ///

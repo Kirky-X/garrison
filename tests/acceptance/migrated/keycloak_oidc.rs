@@ -3,10 +3,10 @@
 
 //! Keycloak OIDC RP 完整流程端到端集成测试。
 //!
-//! 打真实 Keycloak 26（docker-compose.e2e.yml + scripts/keycloak_provision.py
-//! 幂等供给 realm=garrison），验证 garrison 作为 OIDC RP 的完整授权码流程：
-//! discover → 真实登录表单流获取授权码（tests/acceptance/keycloak_fixture.rs）→
-//! exchange_code → verify_id_token（真实 JWKS RS256 验签）。
+//! 打真实 Keycloak 26（docker-compose.e2e.yml + scripts/keycloak_provision.py 幂等供给
+//! realm=garrison），验证 garrison 作为 OIDC RP 的完整授权码流程：discover → 真实登录
+//! 表单流获取授权码（tests/acceptance/keycloak_fixture.rs）→ exchange_code →
+//! verify_id_token（真实 JWKS RS256 验签）；id_token 的 claims 均由真实 realm 数据产生。
 //!
 //! 运行：
 //! ```bash
@@ -14,13 +14,7 @@
 //!   cargo test --features "full,keycloak-oidc" --test acceptance keycloak_oidc
 //! ```
 //!
-//! # production-mock-purge（2026-09 二次裁定）
-//!
-//! 原 wiremock 模拟 Keycloak 端点的实现（曾在 2026-09 早期裁定豁免保留），
-//! 依用户最新裁定「仅单元测试可 mock，验收/集成一律打真实服务」移除；Keycloak
-//! 不可达时经 tests/acceptance/keycloak_fixture.rs 门控 `[SKIP]`。id_token 的
-//! sub / preferred_username / email / realm_access.roles / resource_access /
-//! tenant_id claims 均由真实 realm 数据产生（用户 alice + tenant_id mapper）。
+//! 验收层禁止 mock：Keycloak 不可达时经 keycloak_fixture 门控 `[SKIP]`。
 
 #[cfg(all(
     feature = "keycloak-oidc",
@@ -34,14 +28,9 @@ mod keycloak_e2e {
     use serial_test::serial;
     use std::sync::Arc;
 
-    /// 验证 Keycloak OIDC RP 完整流程：discover → exchange_code → verify_id_token。
-    ///
-    /// 断言：
-    /// 1. `discover()` 返回正确的 OIDC discovery metadata（真实 realm）
-    /// 2. 真实登录表单流授权码经 `exchange_code` 换取 KeycloakTokenSet 三 token
-    /// 3. `verify_id_token(id_token)` 经真实 JWKS 验签并解析 KeycloakClaims
-    ///    （sub / preferred_username / email / realm_access.roles / resource_access /
-    ///    tenant_id）
+    /// 验证 Keycloak OIDC RP 完整流程：discover → exchange_code → verify_id_token，claims
+    /// （sub / preferred_username / email / realm_access.roles / tenant_id）均由真实 realm
+    /// 数据产生。
     // multi_thread flavor 必需：oxcache memory 后端的 sync API 通过
     // `block_in_place` 复用 runtime，current-thread runtime 下会 panic
     //（"Cannot start a runtime from within a runtime"）。
@@ -68,7 +57,7 @@ mod keycloak_e2e {
                     .expect("构造 GarrisonDaoOxcache 应成功"),
             ));
 
-        // Step 1: discover（真实 discovery 端点）
+        // discover（真实 discovery 端点）
         let metadata = provider.discover().await.expect("discover 应成功");
         assert_eq!(
             metadata.issuer,
@@ -87,7 +76,7 @@ mod keycloak_e2e {
             )
         );
 
-        // Step 2: 真实登录表单流获取授权码 → 换取 token set
+        // 真实登录表单流获取授权码 → 换取 token set
         let (code, state) = fx
             .obtain_auth_code(Some("openid"), REDIRECT_HTTPS, "e2e-state", None)
             .await
@@ -102,7 +91,7 @@ mod keycloak_e2e {
         assert!(!token_set.id_token.is_empty(), "id_token 应非空");
         assert!(token_set.expires_in > 0, "expires_in 应为正数");
 
-        // Step 3: verify_id_token（真实 JWKS RS256 验签 + claims 解析）
+        // verify_id_token（真实 JWKS RS256 验签 + claims 解析）
         let keycloak_claims = provider
             .verify_id_token(&token_set.id_token)
             .await

@@ -1,15 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! WAF middleware 适配器（firewall-waf）。
-//!
-//! 将 [`WafHookChain`](crate::strategy::firewall::waf::WafHookChain) 包装为 axum middleware，
-//! 对每个请求执行 Hook 链校验，任一 Hook 返回 Deny 则返回 403 Forbidden。
-//!
-//! # 与 web-waf 的区分
-//!
-//! - `web-waf`（web 层）：`garrison_waf_middleware`，返回 400 Bad Request
-//! - `firewall-waf`（strategy 层）：`waf_middleware`，返回 403 Forbidden
+//! WAF middleware 适配器（firewall-waf）：将 [`WafHookChain`](crate::strategy::firewall::waf::WafHookChain)
+//! 包装为 axum middleware，任一 Hook 返回 Deny 则返回 403 Forbidden。
+//! 区分：strategy 层本中间件返 403，web 层 `garrison_waf_middleware` 返 400。
 //!
 //! # 使用
 //!
@@ -52,13 +46,9 @@ fn parse_query(query: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// 从 `FirewallBlocked` 编码字符串中解析 hook 和 reason。
-///
-/// 支持两种格式：
-/// - 新格式（结构化 i18n key）：`"waf-xxx-key::arg"` — 从 key 前缀映射 hook 名
-/// - Hook 编码格式（由 WAF Hook 链生成）：`"[hook] reason"` — 直接提取
+/// 解析 `FirewallBlocked` 编码字符串：结构化 i18n key `"waf-xxx-key::arg"` 按前缀映射 hook 名，
+/// Hook 编码格式 `"[hook] reason"` 直接提取；均不匹配时返回 `("unknown", 原文)`。
 fn parse_firewall_blocked(s: &str) -> (&str, &str) {
-    // 新格式：结构化 i18n key
     if s.starts_with("waf-") {
         let key_part = s.split("::").next().unwrap_or(s);
         let hook = match key_part {
@@ -76,7 +66,6 @@ fn parse_firewall_blocked(s: &str) -> (&str, &str) {
         };
         return (hook, s);
     }
-    // Hook 编码格式：[hook] reason
     if s.starts_with('[') {
         if let Some(close) = s.find(']') {
             let hook = &s[1..close];
@@ -87,10 +76,7 @@ fn parse_firewall_blocked(s: &str) -> (&str, &str) {
     ("unknown", s)
 }
 
-/// WAF 级防火墙 axum middleware。
-///
-/// 将 [`WafHookChain`] 包装为 axum middleware，对每个请求执行 Hook 链校验。
-/// 任一 Hook 返回 `Deny` 则短路返回 403 Forbidden，响应体为 JSON：
+/// WAF 级防火墙 axum middleware：任一 Hook 返回 `Deny` 则短路返回 403 Forbidden，响应体为 JSON：
 ///
 /// ```json
 /// {
@@ -213,7 +199,7 @@ mod tests {
         chain.register(Box::new(DangerCharacterHook::new()));
         chain.register(Box::new(BlackPathHook::new(vec!["/admin".to_string()])));
         let app = make_app(chain);
-        // 危险字符拦截 //
+        // 危险字符拦截
         let resp = app
             .clone()
             .oneshot(make_request("GET", "/api//test"))
@@ -254,9 +240,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // parse_query 单元测试
-    // ========================================================================
 
     /// parse_query 解析标准 query string。
     #[test]
@@ -308,9 +292,7 @@ mod tests {
         assert_eq!(result[0], ("empty".to_string(), "".to_string()));
     }
 
-    // ========================================================================
     // parse_firewall_blocked 单元测试
-    // ========================================================================
 
     /// parse_firewall_blocked 解析标准格式 "[hook] reason"。
     #[test]
@@ -368,18 +350,15 @@ mod tests {
         assert_eq!(reason, "");
     }
 
-    // ========================================================================
     // middleware 查询参数与 host header 测试
-    // ========================================================================
 
     /// 验证带查询参数的请求能正确传递给 WAF Hook。
     #[tokio::test]
     async fn middleware_passes_query_params() {
         let mut chain = WafHookChain::new();
-        // DangerCharacterHook 检查危险字符，通过查询参数触发
+        // DangerCharacterHook 经查询参数触发
         chain.register(Box::new(DangerCharacterHook::new()));
         let app = make_app(chain);
-        // 合法查询参数应放行
         let resp = app
             .clone()
             .oneshot(make_request("GET", "/api/test?name=alice&page=1"))
@@ -411,7 +390,6 @@ mod tests {
         let mut chain = WafHookChain::new();
         chain.register(Box::new(BlackPathHook::new(vec!["/admin".to_string()])));
         let app = make_app(chain);
-        // 带空查询参数的请求
         let resp = app
             .oneshot(make_request("GET", "/api/test?"))
             .await

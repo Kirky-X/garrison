@@ -1,18 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! X-Request-ID 中间件（axum）：提取 / 生成 / 回传请求标识。
-//!
-//! 处理顺序（与 [`crate::stp`] 的 token task-local 同层机制）：
-//!
-//! 1. 从请求头提取入站 `X-Request-ID`，经 [`propagate_or_generate`](crate::context::request_id::propagate_or_generate) 校验
-//!    （合法原样传播，非法丢弃重新生成 UUID v4——入站 id 是不可信输入）；
-//! 2. 将 [`RequestId`](crate::context::request_id::RequestId) 注入 `request.extensions()`（handler 经
-//!    `Extension<RequestId>` 读取），并在
-//!    [`scope`](crate::context::request_id::scope) 内执行内层服务——统一错误响应体（`request_id` 字段）与
-//!    `X-Request-ID` 响应头均从该 task-local 读取，保证 body 与 header 一致；
-//! 3. 以 `tracing` span（`request_id` 字段）instrument 内层 future，日志可关联；
-//! 4. 响应设置 `X-Request-ID` 头回传调用方。
+//! X-Request-ID 中间件（axum）：提取/生成请求标识（入站 id 不可信，非法则丢弃重生成 UUID v4），
+//! 注入 `request.extensions()` 与 task-local scope 并在 tracing span 内执行内层服务
+//! （响应体 `request_id` 字段与响应头同源，机制与 [`crate::stp`] 的 token task-local 同层）。
 //!
 //! # 挂载
 //!
@@ -35,10 +26,8 @@ use tracing::Instrument;
 /// `x-request-id` 头名（小写静态形式，const 构造零运行时开销）。
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
-/// request id 中间件 — 提取 / 生成 `X-Request-ID` 并在 task-local scope 内执行内层服务。
-///
-/// 成功与错误响应均回传 `X-Request-ID` 响应头；错误响应体经
-/// [`crate::error::GarrisonError::to_json_body`] 携带 `request_id` 字段。
+/// request id 中间件 — 提取 / 生成 `X-Request-ID` 并在 task-local scope 内执行内层服务；
+/// 成功与错误响应均回传该头，错误响应体经 [`crate::error::GarrisonError::to_json_body`] 携带 `request_id` 字段。
 pub async fn request_id_middleware(mut req: Request, next: Next) -> Response {
     let inbound = req
         .headers()
@@ -51,9 +40,7 @@ pub async fn request_id_middleware(mut req: Request, next: Next) -> Response {
     let block_id = id.clone();
     let mut response = scope(id.clone(), async move {
         let response = next.run(req).await;
-        // 结构化日志：请求完成事件携带 request_id（span 上下文内发出，与
-        // actix / warp 路径一致；debug 级避免与 server::audit_log_middleware
-        // 的每请求 info 访问日志重复）
+        // 完成事件携带 request_id（span 上下文内发出）；debug 级避免与 audit_log_middleware 的每请求 info 日志重复（actix/warp 路径一致）
         tracing::debug!(
             request_id = %block_id,
             status = response.status().as_u16(),
@@ -84,9 +71,7 @@ mod tests {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    /// 构建挂载 request_id 中间件的测试路由。
-    ///
-    /// `/ping` 返回自身经 Extension 读到的 request id；`/boom` 返回统一错误。
+    /// 测试路由：`/ping` 返回 Extension 读到的 request id，`/boom` 返回统一错误。
     fn test_router() -> Router {
         Router::new()
             .route(
@@ -127,8 +112,7 @@ mod tests {
         assert_eq!(std::str::from_utf8(&body).unwrap(), "client-trace-001");
     }
 
-    /// 超长入站值（> 128 字节，http 层可构造的唯一非法类）被丢弃，重新生成合法 UUID 回传。
-    /// CRLF / 非 ASCII 的注入防护由 http 框架头解析与
+    /// 超长入站值（> 128 字节）被丢弃并重生成 UUID；CRLF / 非 ASCII 注入防护由框架头解析与
     /// `context::request_id::propagate_or_generate` 纯函数测试覆盖。
     #[tokio::test]
     async fn invalid_inbound_id_regenerated() {
@@ -237,11 +221,8 @@ mod tests {
         }
     }
 
-    /// 初始化线程局部捕获订阅者并重建 callsite interest 缓存。
-    ///
-    /// tracing 的 interest 缓存是进程级全局态：并行运行的非订阅者测试可能抢先
-    /// 首次注册事件 callsite 并缓存 `Interest::never`（事件被宏直接剔除，与本
-    /// 线程订阅者无关），故 set_default 后必须显式重建，捕获缺失时重试。
+    /// 初始化线程局部捕获订阅者并重建 callsite interest 缓存：interest 缓存是进程级全局态，
+    /// 并行运行的非订阅者测试可能抢先注册事件并缓存 `Interest::never`（事件被宏剔除），故必须显式重建。
     fn init_capture(
         logs: &std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
     ) -> tracing::subscriber::DefaultGuard {

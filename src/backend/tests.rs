@@ -1,10 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! AuthBackend 内联测试。
-//!
-//! 从 `src/backend/mod.rs` 外移（mod/crate 接口隔离）。
-//! 测试 MockAuthBackend 实现 trait 基本结构 + 序列化/反序列化。
+//! AuthBackend 内联测试（mod/crate 接口隔离外移）：MockAuthBackend 验证 trait
+//! 基本结构 + 序列化/反序列化。
 
 use super::*;
 use std::sync::Arc;

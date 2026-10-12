@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! strategy_registry 示例测试（cache-memory feature）。
-//!
-//! 验证 run() 完整执行：6 策略 register/get/remove + 自定义实现演示。
+//! strategy_registry 示例测试（cache-memory feature）：验证 run() 完整执行（6 策略 register/get/remove + 自定义实现演示）。
 
 #![cfg(feature = "cache-memory")]
 

@@ -1,21 +1,15 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Credit 配额周期模型。
-//!
-//! 提供 `CreditCycle` 枚举，支持固定窗口（自然月）和滚动窗口两种周期模式。
+//! Credit 配额周期模型：`CreditCycle` 枚举，支持固定窗口（自然月）和滚动窗口两种周期模式。
 
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
-/// Credit 配额周期模式。
+/// Credit 配额周期模式：决定 credit 计数何时重置为零。
 ///
-/// 决定 credit 计数何时重置为零。
-///
-/// # 变体
-///
-/// - `Fixed`：每月固定日期 00:00 UTC 重置（`day_of_month` 范围 1..=28）
-/// - `Rolling`：从首次消费起 N 天后重置
+/// `Fixed` 为每月固定日期 00:00 UTC 重置（`day_of_month` 范围 1..=28），`Rolling` 为
+/// 首次消费起 N 天后重置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CreditCycle {
     /// 固定窗口：每月 `day_of_month` 日 00:00 UTC 重置。
@@ -33,18 +27,12 @@ pub enum CreditCycle {
 }
 
 impl CreditCycle {
-    /// 计算当前周期的起始时间（Unix 时间戳）。
-    ///
-    /// # 参数
-    /// - `window_start`: 滚动窗口的起始时间戳（仅 `Rolling` 模式使用）。
-    ///   `None` 表示尚未开始（首次消费），返回当前时间。
-    /// - `now`: 当前时间。
+    /// 计算当前周期的起始时间（Unix 时间戳）；`window_start` 仅 `Rolling` 使用，
+    /// `None` 表示尚未开始（首次消费），返回当前时间。
     pub fn cycle_start(&self, window_start: Option<i64>, now: NaiveDateTime) -> i64 {
         match self {
             CreditCycle::Fixed { day_of_month } => {
                 let day = *day_of_month;
-                // 若当前日 >= day，周期起始为本月 day 日
-                // 若当前日 < day，周期起始为上月 day 日
                 let (year, month, current_day) = (now.year(), now.month(), now.day());
                 if current_day >= day {
                     chrono::NaiveDate::from_ymd_opt(year, month, day)
@@ -62,7 +50,6 @@ impl CreditCycle {
                         .and_utc()
                         .timestamp()
                 } else {
-                    // 上月 day 日
                     let (prev_year, prev_month) = if month == 1 {
                         (year - 1, 12)
                     } else {
@@ -90,17 +77,12 @@ impl CreditCycle {
     }
 
     /// 计算当前周期的结束时间（Unix 时间戳）。
-    ///
-    /// # 参数
-    /// - `window_start`: 滚动窗口的起始时间戳。
-    /// - `now`: 当前时间。
     pub fn cycle_end(&self, window_start: Option<i64>, now: NaiveDateTime) -> i64 {
         match self {
             CreditCycle::Fixed { day_of_month } => {
                 let day = *day_of_month;
                 let (year, month, current_day) = (now.year(), now.month(), now.day());
                 if current_day >= day {
-                    // 下个周期起始 = 下月 day 日
                     let (next_year, next_month) = if month == 12 {
                         (year + 1, 1)
                     } else {
@@ -120,7 +102,6 @@ impl CreditCycle {
                         .and_utc()
                         .timestamp()
                 } else {
-                    // 当前周期结束 = 本月 day 日
                     chrono::NaiveDate::from_ymd_opt(year, month, day)
                         .unwrap_or_else(|| {
                             chrono::NaiveDate::from_ymd_opt(
@@ -144,10 +125,6 @@ impl CreditCycle {
     }
 
     /// 检查当前周期是否已过期。
-    ///
-    /// # 参数
-    /// - `window_start`: 滚动窗口的起始时间戳。
-    /// - `now`: 当前时间。
     pub fn is_expired(&self, window_start: Option<i64>, now: NaiveDateTime) -> bool {
         let end = self.cycle_end(window_start, now);
         now.and_utc().timestamp() >= end
@@ -168,17 +145,10 @@ impl CreditCycle {
 
     /// 从 meta 中的 type tag + 参数重建 `CreditCycle`。
     ///
-    /// # 参数
-    /// - `type_tag`: "fixed" 或 "rolling"
-    /// - `param`: fixed 模式为 day_of_month，rolling 模式为 days
-    ///
-    /// # 参数校验
-    ///
-    /// 违反文档约定时返回 `None`（调用方如 [`crate::credit::storage`] 的 meta
-    /// 反序列化将其转为脏数据错误，fail-fast）：
-    /// - `fixed`：`day_of_month` 必须在 `1..=28`。0 会使 `from_ymd_opt` 恒失败
-    ///   并静默回退月末；29/30/31 有「月末漂移」问题（见变体文档）。
-    /// - `rolling`：`days` 必须 >= 1。0 会产生立即过期的空窗口。
+    /// 违反文档约定时返回 `None`（调用方如 [`crate::credit::storage`] 的 meta 反序列化
+    /// 将其转为脏数据错误，fail-fast）：`fixed` 要求 `day_of_month` ∈ 1..=28（0 会使
+    /// `from_ymd_opt` 恒失败并静默回退月末，29/30/31 有月末漂移问题），`rolling`
+    /// 要求 `days` >= 1（0 会产生立即过期的空窗口）。
     pub fn from_tag(type_tag: &str, param: u32) -> Option<Self> {
         match type_tag {
             "fixed" if (1..=28).contains(&param) => Some(CreditCycle::Fixed {
@@ -282,11 +252,9 @@ mod tests {
         assert_eq!(end, window_start_ts + 30 * 86400);
     }
 
-    /// Fixed 模式：is_expired 在 window_start=None 时始终返回 false。
-    ///
-    /// 原因：Fixed 模式的 cycle_end 总是返回下一个重置日（未来时间），
-    /// 没有 window_start 无法确定当前周期起始，因此无法判定过期。
-    /// 实际使用中 meter 会先 check_and_reset_cycle 再调用 is_expired。
+    /// Fixed 模式：is_expired 在 window_start=None 时始终返回 false（Fixed 的 cycle_end
+    /// 总是返回未来的下一个重置日，无 window_start 无法确定当前周期起始故无法判定过期；
+    /// 实际使用中 meter 先 check_and_reset_cycle 再调用 is_expired）。
     #[test]
     fn test_fixed_cycle_is_expired_without_window_start() {
         let cycle = CreditCycle::Fixed { day_of_month: 15 };

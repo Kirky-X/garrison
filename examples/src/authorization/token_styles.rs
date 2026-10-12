@@ -15,9 +15,7 @@ use garrison::core::token::{
 };
 use garrison::error::GarrisonResult;
 
-/// 运行 Token 风格示例。
-///
-/// 演示 UUID v4 / Random64 / Simple 三种 token 风格的生成与校验，
+/// 运行 Token 风格示例：演示 UUID v4 / Random64 / Simple 三种 token 风格的生成与校验，
 /// 以及 TokenStyleFactory 按字符串创建对应风格。
 pub fn run() -> GarrisonResult<()> {
     println!("=== Garrison Token 风格示例 ===\n");
@@ -31,7 +29,6 @@ pub fn run() -> GarrisonResult<()> {
     println!("    token = {}", token);
     println!("    长度 = {} 字符（8-4-4-4-12 hex）", token.len());
     assert_eq!(token.len(), 36);
-    // UUID 无 payload，verify 始终返回 None
     assert_eq!(uuid_style.verify(&token)?, None);
     println!("    verify 返回 None（UUID 无 payload）\n");
 
@@ -47,7 +44,7 @@ pub fn run() -> GarrisonResult<()> {
     println!("    长度 = {} 字符（64 hex）", t1.len());
     assert_eq!(t1.len(), 64);
     assert!(t1.chars().all(|c| c.is_ascii_hexdigit()));
-    assert_ne!(t1, t2); // 多次调用返回不同 token
+    assert_ne!(t1, t2);
     println!("    ✓ 全 hex 字符 + 多次调用互异\n");
 
     // ----------------------------------------------------------------

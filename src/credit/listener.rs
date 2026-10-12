@@ -1,10 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Credit 计量监听器（可选自动扣减）。
-//!
-//! `CreditMeteringListener` 监听 `GarrisonEvent::Login` 事件，
-//! 自动扣减 1 credit（weight 由 `CreditSchedule` 中 "login" 资源决定）。
+//! Credit 计量监听器（可选自动扣减）：`CreditMeteringListener` 监听 `GarrisonEvent::Login`
+//! 事件，自动扣减 1 credit（weight 由 `CreditSchedule` 中 "login" 资源决定）。
 
 use crate::context::tenant::current_tenant_id_or_error;
 use crate::credit::meter::CreditMeter;
@@ -13,10 +11,8 @@ use crate::listener::{GarrisonEvent, GarrisonListener};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-/// Credit 计量监听器。
-///
-/// 监听 `GarrisonEvent::Login` 事件，自动扣减 1 credit。
-/// 失败仅记录 `tracing::warn`，不阻断登录流程。
+/// Credit 计量监听器：监听 `GarrisonEvent::Login` 事件自动扣减 1 credit；失败仅记录
+/// `tracing::warn`，不阻断登录流程。
 pub struct CreditMeteringListener {
     meter: Arc<CreditMeter>,
 }

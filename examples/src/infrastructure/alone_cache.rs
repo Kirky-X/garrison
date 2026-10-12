@@ -24,16 +24,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// 最小化内存 DAO 实现（仅供示例，生产环境用 oxcache / dbnexus）。
-///
-/// `store` 内部为 `HashMap<String, (String, Option<Instant>)>`，
-/// 通过 `Instant` 模拟 TTL 过期语义。
+/// 最小化内存 DAO（仅供示例，生产环境用 oxcache / dbnexus）；`Instant` 模拟 TTL 过期语义。
 pub struct InMemoryDao {
     store: Mutex<HashMap<String, (String, Option<Instant>)>>,
 }
 
 impl InMemoryDao {
-    /// 创建 InMemoryDao 实例。
     pub fn new() -> Self {
         Self {
             store: Mutex::new(HashMap::new()),

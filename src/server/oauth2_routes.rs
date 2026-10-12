@@ -1,16 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! OAuth2 HTTP 端点路由（feature = "oauth2-server"）。
+//! OAuth2 HTTP 端点路由（feature = "oauth2-server"）：将 OAuth2 handler 暴露为 HTTP 端点，
+//! 经 axum `Router::merge` 集成进 GarrisonAuthServer（与 sdforge_routes.rs 的 AuthBackend 路由互补）。
 //!
-//! 将 OAuth2 handler 暴露为 HTTP 端点，集成到 GarrisonAuthServer。
-//! 与 sdforge_routes.rs（AuthBackend 路由）互补，使用 axum Router::merge 集成。
-//!
-//! # 端点
-//!
-//! - 外网：`GET /oauth2/authorize`、`POST /oauth2/token`、`POST /oauth2/revoke`、
-//!   `GET /oauth2/jwks.json`（非对称签名时可用）
-//! - 内网：`POST /oauth2/introspect`
+//! 端点——外网：`GET /oauth2/authorize`、`POST /oauth2/token`、`POST /oauth2/revoke`、
+//! `GET /oauth2/jwks.json`（非对称签名时可用）；内网：`POST /oauth2/introspect`。
 
 #![cfg(feature = "oauth2-server")]
 
@@ -35,9 +30,7 @@ use crate::oauth2_server::token::{
     PasswordRateLimiter, TokenHandler, TokenRateLimiter, TokenRequest,
 };
 
-/// OAuth2 路由共享状态。
-///
-/// 持有所有 OAuth2 handler，通过 `Arc<OAuth2State>` 注入到 axum Router。
+/// OAuth2 路由共享状态：持有全部 OAuth2 handler，经 `Arc<OAuth2State>` 注入 axum Router。
 pub struct OAuth2State {
     /// 授权码流程 handler（/oauth2/authorize）。
     pub authorize_handler: Arc<AuthorizeHandler>,
@@ -49,40 +42,34 @@ pub struct OAuth2State {
     pub introspect_handler: Arc<IntrospectHandler>,
     /// 客户端存储（discovery 元数据 `scopes_supported` 派生源）。
     pub client_store: Arc<dyn OAuth2ClientStore>,
-    /// JWKS 导出源（单钥静态形态）：`Some((jwt_algorithm, private_key_pem))` 时
-    /// /oauth2/jwks.json 可用；None 且未注入密钥库时端点 404（fail-closed）。
+    /// JWKS 导出源（单钥静态形态）：`Some` 时 /oauth2/jwks.json 可用；`None` 且未注入密钥库时 404（fail-closed）。
     pub jwks_source: Option<(String, String)>,
     /// 签发者标识（discovery 元数据 `issuer`；未配置时 discovery 端点 404）。
     pub issuer: Option<String>,
-    /// 多 kid JWKS 密钥库账本（注入后 JWKS 端点优先从库发布，单钥 `jwks_source`
-    /// 退居后备）。
+    /// 多 kid JWKS 密钥库账本：注入后 JWKS 端点优先从库发布，单钥 `jwks_source` 退居后备。
     pub jwks_keystore: Option<Arc<crate::oauth2_server::jwks::JwksKeystore>>,
     /// OIDC discovery（`/.well-known/openid-configuration`）开关。
     ///
-    /// 默认跟随 `protocol-oidc` Cargo feature；可用
-    /// `with_oidc_discovery_enabled` 运行时覆写（部署按需关闭）。
+    /// 默认跟随 `protocol-oidc` Cargo feature，可经 `with_oidc_discovery_enabled` 运行时覆写。
     pub oidc_discovery_enabled: bool,
     /// password grant 是否宣告进 discovery 元数据 `grant_types_supported`。
     ///
-    /// TokenHandler 的 password verifier 为运行时注入（无编译期 feature 可查），
-    /// 由装配方在注入 verifier 时同步置位，保证元数据与实际能力一致。
+    /// verifier 为运行时注入（无编译期 feature 可查），装配方注入时同步置位，保证元数据与实际能力一致。
     pub password_grant_advertised: bool,
     /// JWKS 退役保留时长（秒）：Passive 钥超期转 Disabled 并移出 JWKS。
     ///
-    /// 同时决定 JWKS 端点 `Cache-Control: max-age`（取一半，缩短客户端重取
-    /// 间隔以尽早感知退役；部署应保证 retention ≥ 2× access token TTL，使
-    /// 退役时该钥签发的 token 必已过期）。
+    /// 同时决定 JWKS 端点 `Cache-Control: max-age`（取一半）；部署应保证 retention ≥ 2× access
+    /// token TTL，使退役时该钥签发的 token 必已过期。
     pub jwks_retention_secs: u64,
-    /// discovery `scopes_supported` 派生缓存：免每请求全客户端 keys 扫描 +
-    /// N 次串行 DAO 读（discovery 未认证，可被放大为服务端 DAO 压力）。
-    /// TTL 300s 与 discovery 响应 Cache-Control 同周期；客户端增删后元数据
-    /// 最迟 300s 刷新（元数据低频变更，短暂陈旧可接受）。
+    /// discovery `scopes_supported` 派生缓存：免每请求全客户端 keys 扫描 + N 次串行 DAO 读
+    /// （未认证端点可被放大为 DAO 压力）；TTL 300s，客户端增删最迟 300s 后刷新。
     #[doc(hidden)]
     pub scopes_cache:
         tokio::sync::RwLock<Option<(std::time::Instant, std::sync::Arc<Vec<String>>)>>,
     /// JWKS 发布文档缓存：键 = (状态文档内容哈希, now/60 时间桶, retention)。
-    /// 状态不变时免每请求 N 次 PEM 解析重建（无界增长面，未认证端点可被
-    /// 放大为 CPU DoS）；60s 时间桶界保证 retention 退役视图最多陈旧 1 分钟。
+    ///
+    /// 状态不变时免每请求 N 次 PEM 解析重建（未认证端点可被放大为 CPU DoS）；
+    /// 时间桶界保证 retention 退役视图最多陈旧 1 分钟。
     #[doc(hidden)]
     pub jwks_doc_cache: tokio::sync::Mutex<Option<JwksDocCacheEntry>>,
 }
@@ -97,11 +84,10 @@ pub struct JwksDocCacheEntry {
 }
 
 impl OAuth2State {
-    /// 创建 OAuth2State，内部构造 4 个 handler。
+    /// 创建 OAuth2State（内部构造 4 个 handler）。
     ///
-    /// TokenHandler 以安全默认参数构造限速组件（`PasswordRateLimiter::new(5, 300)`
-    /// 账户锁定 + `TokenRateLimiter::new()` 端点 QPS 限制），不提供
-    /// "未注入 = 无防护"的构造形态。
+    /// TokenHandler 以安全默认参数构造限速组件（`PasswordRateLimiter::new(5, 300)` 账户锁定 +
+    /// `TokenRateLimiter::new()` 端点 QPS 限制），不提供「未注入 = 无防护」的构造形态。
     pub fn new(
         store: Arc<dyn OAuth2ClientStore>,
         dao: Arc<dyn GarrisonDao>,
@@ -119,13 +105,11 @@ impl OAuth2State {
         let revoke_handler = Arc::new(RevokeHandler::new(store.clone(), token_handler.clone()));
         let introspect_handler =
             Arc::new(IntrospectHandler::new(store.clone(), token_handler.clone()));
-        // 退化路径结构性告警（构造完成时检测一次）：refresh grant 可用但
-        // RefreshTokenRotation 未注入 → refresh 走 DAO 退化路径，reuse detection
-        // 不可用（盗用 token 重放不会触发链式撤销）。生产部署应通过
-        // `TokenHandler::with_refresh_rotation` 注入轮换服务消除本告警。
-        // 注意：GarrisonConfig 的 recent_reuse_behaviour / refresh_grace_* 字段
-        // 仅由注入的轮换服务读取——注入时须以 `with_reuse_behaviour` /
-        // `with_grace_window` 同步装配配置值，否则配置保持默认不生效。
+        // 退化路径结构性告警（构造完成时检测一次）：refresh grant 可用但 RefreshTokenRotation
+        // 未注入 → refresh 走 DAO 退化路径，reuse detection 不可用（盗用 token 重放不触发链式
+        // 撤销）；生产部署应经 `TokenHandler::with_refresh_rotation` 注入消除本告警。
+        // 注意：recent_reuse_behaviour / refresh_grace_* 配置仅由注入的轮换服务读取——注入时须以
+        // `with_reuse_behaviour` / `with_grace_window` 同步装配，否则配置保持默认不生效。
         #[cfg(feature = "db-sqlite")]
         if !token_handler.has_refresh_rotation() {
             tracing::warn!(
@@ -151,9 +135,7 @@ impl OAuth2State {
 
     /// 启用 /oauth2/jwks.json 端点（仅非对称 JWT 签名时调用）。
     ///
-    /// # 参数
-    /// - `jwt_algorithm`: 签名算法名（RS256/ES256/EdDSA）。
-    /// - `private_key_pem`: 对应私钥 PEM（仅用于导出公钥成分，无私钥暴露）。
+    /// `jwt_algorithm` 为签名算法名（RS256/ES256/EdDSA）；`private_key_pem` 仅用于导出公钥成分，无私钥暴露。
     pub fn with_jwks_source(mut self, jwt_algorithm: &str, private_key_pem: &str) -> Self {
         self.jwks_source = Some((jwt_algorithm.to_string(), private_key_pem.to_string()));
         self
@@ -189,10 +171,8 @@ impl OAuth2State {
     }
 
     /// 覆写 JWKS 退役保留时长（默认 2× access token TTL）。
-    /// # Panics-free 误配防护
     ///
-    /// `retention_secs = 0` 等价于 Passive 钥即刻退役（发布面清空、验证视图
-    /// 失衡），回退默认值并 warn（配置层 `jwks_retention_secs` 校验同语义）。
+    /// `retention_secs = 0` 等价于 Passive 钥即刻退役（发布面清空），回退默认值并 warn。
     pub fn with_jwks_retention_secs(mut self, retention_secs: u64) -> Self {
         if retention_secs == 0 {
             tracing::warn!(
@@ -257,13 +237,9 @@ enum DiscoveryFlavor {
 
 /// 构建 discovery 元数据并产出 200 响应；issuer 未配置返回 404（fail-closed）。
 ///
-/// 元数据从实际能力派生（非静态模板）：
-/// - `grant_types_supported`：authorization_code/refresh_token/client_credentials
-///   为 token 端点既有能力；password 仅在装配方宣告后出现；
-/// - `scopes_supported`：注册客户端 scope 的并集（运行时查询派生）；
-/// - `jwks_uri` / `jwks_algorithms`：仅在实际发布 JWKS 时出现，算法取发布钥集合
-///   （防死链误导客户端）；
-/// - `code_challenge_methods_supported`：PKCE 强制开启 → 仅 S256。
+/// 元数据从实际能力派生（非静态模板）：`grant_types_supported` 按 token 端点既有能力
+/// （password 仅在装配方宣告后出现）；`scopes_supported` 为注册客户端 scope 并集（运行时派生）；
+/// `jwks_uri` / `jwks_algorithms` 仅在实际发布 JWKS 时出现（防死链误导客户端）；PKCE 仅 S256。
 async fn discovery_response(state: &OAuth2State, flavor: DiscoveryFlavor) -> Response {
     let Some(issuer) = state.issuer.as_deref() else {
         return StatusCode::NOT_FOUND.into_response();
@@ -276,9 +252,8 @@ async fn discovery_response(state: &OAuth2State, flavor: DiscoveryFlavor) -> Res
     if state.password_grant_advertised {
         grant_types.push("password".to_string());
     }
-    // scopes 派生带 300s 进程内缓存：discovery 未认证，list() 是
-    // 全键空间扫描 + 逐客户端串行 DAO 读，放任每请求执行可被放大为
-    // 服务端 DAO 压力。TTL 与 discovery 响应 Cache-Control 同周期。
+    // scopes 派生带 300s 进程内缓存：discovery 未认证，list() 为全键空间扫描 + 逐客户端
+    // 串行 DAO 读，每请求执行可被放大为服务端 DAO 压力。TTL 与响应 Cache-Control 同周期。
     let scopes_arc = {
         let cached = state.scopes_cache.read().await.clone();
         match cached {
@@ -332,9 +307,7 @@ async fn discovery_response(state: &OAuth2State, flavor: DiscoveryFlavor) -> Res
 
 /// `scopes_supported` 派生（注册客户端 scope 并集）并写入 300s 进程内缓存。
 ///
-/// `Err` 直接携带完整 `Response` 供调用方 `return resp` 短路（与
-/// `grpc/interceptor.rs` 的 `Result<_, Status>` 同型），装箱仅增间接层——
-/// 豁免 `result_large_err`。
+/// `Err` 直接携带完整 `Response` 供调用方 `return resp` 短路；装箱仅增间接层，豁免 `result_large_err`。
 #[allow(clippy::result_large_err)]
 async fn derive_scopes_supported(
     state: &OAuth2State,
@@ -391,11 +364,10 @@ fn state_content_hash(raw: Option<&str>) -> u64 {
 
 /// JWKS 发布文档获取（keystore 形态，带 60s 时间桶缓存）。
 ///
-/// 缓存键 = (状态文档内容哈希, now/60, retention)：状态不变时免每请求
-/// N 次 PEM 解析重建（Disabled 条目只增不减，重建成本随轮换历史线性
-/// 增长，未认证端点可被放大为 CPU DoS）；时间桶界保证 retention 退役
-/// 视图最多陈旧 1 分钟（配合 retention ≥ 2× access TTL 部署约定，退役
-/// 钥签发的 token 在陈旧窗口内必已过期）。
+/// 缓存键 = (状态文档内容哈希, now/60, retention)：状态不变时免每请求 N 次 PEM 解析重建
+/// （Disabled 条目只增不减，重建成本随轮换历史线性增长，未认证端点可被放大为 CPU DoS）；
+/// 时间桶界保证退役视图最多陈旧 1 分钟（配合 retention ≥ 2× access TTL 部署约定，
+/// 退役钥签发的 token 在陈旧窗口内必已过期）。
 async fn keystore_jwks_document_cached(
     state: &OAuth2State,
     keystore: &crate::oauth2_server::jwks::JwksKeystore,
@@ -434,12 +406,9 @@ async fn keystore_jwks_document_cached(
 
 /// GET /oauth2/jwks.json — 导出非对称签名公钥 JWK Set。
 ///
-/// 密钥库注入时从库发布（多 kid：Active ∪ Passive，retention 到期键即时移出）；
-/// 否则退回单钥 `jwks_source`。fail-closed：两者皆未配置或发布集为空时 404
-/// （不暴露空集合/对称密钥信息）。
-///
-/// `Cache-Control: max-age` 按 `jwks_retention_secs` 动态计算（retention 的一半，
-/// 保证客户端在最早可能退役前重取 JWKS）。
+/// 密钥库注入时从库发布（多 kid：Active ∪ Passive，retention 到期键即时移出），否则退回单钥
+/// `jwks_source`；两者皆未配置或发布集为空时 404（fail-closed，不暴露空集合/对称密钥信息）。
+/// `Cache-Control: max-age` 按 `jwks_retention_secs` 的一半动态计算（客户端在最早可能退役前重取）。
 async fn jwks_endpoint(State(state): State<Arc<OAuth2State>>) -> Response {
     let max_age = jwks_cache_max_age_secs(state.jwks_retention_secs);
     let cache_control = format!("public, max-age={max_age}");
@@ -479,9 +448,8 @@ async fn jwks_endpoint(State(state): State<Arc<OAuth2State>>) -> Response {
 
 /// JWKS 客户端缓存时长（秒）= retention 的一半（下限 1）。
 ///
-/// 取一半是工程折中而非精确安全界：客户端最迟每 retention/2 重取，配合
-/// 部署侧保证 `retention ≥ 2× access token TTL`，退役钥签发的 token 在
-/// 任何缓存窗口内均已过期。
+/// 取一半是工程折中而非精确安全界：客户端最迟每 retention/2 重取，配合部署侧
+/// `retention ≥ 2× access token TTL`，退役钥签发的 token 在任何缓存窗口内均已过期。
 fn jwks_cache_max_age_secs(retention_secs: u64) -> u64 {
     (retention_secs / 2).max(1)
 }
@@ -600,15 +568,12 @@ fn extract_oauth2_request<T: serde::de::DeserializeOwned>(
     }
 }
 
-/// 限流错误桥接：token handler 的速率限制错误统一以
-/// `GarrisonError::OAuth2("rate_limited: ...")` 形态产出（见
-/// `oauth2_server::token` 的 `TokenRateLimiter` / `PasswordRateLimiter`，
-/// `rate_limited` 消息前缀为跨层契约），此处映射为 `RateLimited` 变体，
-/// 使 `retry_after_secs()` 与 `Retry-After` 响应头真实可达。
+/// 限流错误桥接：token handler 的速率限制错误以 `GarrisonError::OAuth2("rate_limited: ...")`
+/// 形态产出（`rate_limited` 前缀为跨层契约），此处映射为 `RateLimited` 变体，使 `retry_after_secs()`
+/// 与 `Retry-After` 响应头真实可达。
 ///
-/// `Retry-After` 取值：滑动窗口 TTL 起点在首次计数时确立，桥接处拿不到
-/// 精确剩余秒数，故取 `TokenHandler::rate_limit_window_upper_bound_secs()`
-/// （限流器配置窗口上界）作保守提示——客户端不早于任一窗口过期重试。
+/// `Retry-After` 取值：滑动窗口 TTL 起点在首次计数时确立，桥接处拿不到精确剩余秒数，故取
+/// `rate_limit_window_upper_bound_secs()`（窗口上界）作保守提示——客户端不早于任一窗口过期重试。
 fn bridge_rate_limited_error(
     e: crate::error::GarrisonError,
     retry_hint_secs: u64,
@@ -624,9 +589,8 @@ fn bridge_rate_limited_error(
 }
 
 /// OIDC 端点自建错误体（RFC 6749 `{"error": ...}` 信封）仅补 `Retry-After` 头：
-/// body 键保持 OAuth2 惯例不动，限流语义经响应头表达（R04 统一错误模型）。
-/// `Retry-After` 仅在错误桥接为 `RateLimited` 后可达（真实 429 路径），
-/// 其余 OAuth2 错误为防御性 no-op。
+/// body 键保持 OAuth2 惯例，限流语义经响应头表达；`Retry-After` 仅在错误桥接为 `RateLimited` 后
+/// 可达（真实 429 路径），其余 OAuth2 错误为防御性 no-op。
 fn with_retry_after(
     mut response: axum::response::Response,
     e: &crate::error::GarrisonError,
@@ -677,11 +641,10 @@ async fn authorize_endpoint(
     }
 }
 
-/// GET /oauth2/authorize/resume — 登录后凭票据续流（R18 两段式）。
+/// GET /oauth2/authorize/resume — 登录后凭票据续流（两段式）。
 ///
-/// user_id 取自 GarrisonPrincipal 会话（登录往返建立），不经 query 传入——
-/// 票据本身不绑定主体，续流主体以会话为准；未登录 → LoginRequired 重发新
-/// 票据（resumable 循环防护：resume 消费旧票据后签发新票据）。
+/// user_id 取自 GarrisonPrincipal 会话（登录往返建立），不经 query 传入——票据本身不绑定主体，
+/// 续流主体以会话为准；未登录 → LoginRequired 重发新票据（resume 消费旧票据后签发新票据）。
 async fn authorize_resume_endpoint(
     State(state): State<Arc<OAuth2State>>,
     Query(params): Query<std::collections::HashMap<String, String>>,
@@ -871,9 +834,7 @@ mod tests {
         (state, store)
     }
 
-    /// 进程内日志捕获 writer（fmt Layer 的 MakeWriter，收集格式化行）。
-    /// 与唯一使用方 `oauth2_state_new_without_rotation_warns_at_construction`
-    /// 同门控：仅 db-sqlite 测试面编译，否则 oauth2-server 开 + db-sqlite 关的组合下 dead_code。
+    /// 进程内日志捕获 writer（fmt Layer 的 MakeWriter）；仅 db-sqlite 测试面编译（与唯一使用方同门控）。
     #[cfg(feature = "db-sqlite")]
     #[derive(Clone)]
     struct LogCapture(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
@@ -903,9 +864,8 @@ mod tests {
         }
     }
 
-    /// OAuth2State::new 构造完成时的结构性告警（T032）：refresh grant 可用
-    /// （db-sqlite）但 RefreshTokenRotation 未注入 → 构造期输出结构化 warn
-    /// （含重放检测不可用后果与修复指引），探针 has_refresh_rotation 为 false。
+    /// 构造期结构性告警：refresh grant 可用（db-sqlite）但未注入 RefreshTokenRotation → 输出结构化
+    /// warn（含重放检测不可用后果与修复指引），探针 `has_refresh_rotation` 为 false。
     #[cfg(feature = "db-sqlite")]
     #[test]
     #[serial_test::serial]
@@ -921,8 +881,8 @@ mod tests {
         );
 
         let _guard = subscriber.set_default();
-        // interest 缓存是进程级全局态：并行非订阅者测试可能抢先首次注册告警
-        // callsite 并缓存 Interest::never（事件被宏直接剔除），须显式重建
+        // interest 缓存是进程级全局态：并行非订阅者测试可能抢先注册告警 callsite 并缓存
+        // Interest::never（事件被宏直接剔除），须显式重建
         tracing::callsite::rebuild_interest_cache();
 
         // 以捕获到告警判断捕获有效，缺失则重建 interest 后重试构造
@@ -1055,9 +1015,8 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
-    /// resume 缺 ticket → 400 + `invalid_request`，message 经 Fluent i18n：
-    /// zh locale 下返回 `oauth2-resume-ticket-missing` 的中文翻译
-    /// （与英文 fallback 文案可区分，命中即证明响应体未硬编码英文）。
+    /// resume 缺 ticket → 400 + `invalid_request`；message 经 Fluent i18n：
+    /// zh locale 返回中文翻译（与英文 fallback 可区分，命中即证明响应体未硬编码英文）。
     #[tokio::test]
     async fn test_authorize_resume_missing_ticket_message_is_localized() {
         let (state, _) = make_state();
@@ -1116,8 +1075,8 @@ mod tests {
         );
     }
 
-    /// 有 GarrisonPrincipal（Extension）时 authorize 端点返回 Redirect 含 code。
-    /// principal.login_id = "1001" → user_id = Some(1001) → 授权成功 → Redirect。
+    /// 有 GarrisonPrincipal（Extension）时 authorize 端点返回 Redirect 含 code
+    /// （login_id = "1001" → user_id = Some(1001) → 授权成功）。
     #[tokio::test]
     async fn test_authorize_endpoint_returns_redirect_with_code_when_principal_present() {
         let (state, store) = make_state();
@@ -1392,10 +1351,8 @@ mod tests {
             "超速率限制应返回 429"
         );
 
-        // R04 统一错误模型：429 必须携带 Retry-After 头（rate_limited 错误桥接
-        // RateLimited 后经 with_retry_after 输出）。值为限流器配置窗口上界的
-        // 保守提示：本测试 PasswordRateLimiter 窗口 300s、TokenRateLimiter
-        // 双窗口 60s → 上界 300。
+        // 429 必须携带 Retry-After（rate_limited 桥接 RateLimited 后经 with_retry_after 输出）；
+        // 值为限流器窗口上界的保守提示：PasswordRateLimiter 300s、TokenRateLimiter 60s → 300。
         assert_eq!(
             resp.headers()
                 .get("retry-after")
@@ -1438,8 +1395,8 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
-    /// 限流错误桥接（H1）：`rate_limited` 前缀的 OAuth2 错误映射为 RateLimited
-    /// （Retry-After 秒数可达），其余 OAuth2 错误原样保留。
+    /// 限流错误桥接：`rate_limited` 前缀的 OAuth2 错误映射为 RateLimited（Retry-After 可达），
+    /// 其余 OAuth2 错误原样保留。
     #[test]
     fn bridge_rate_limited_error_maps_prefix_and_preserves_others() {
         use crate::error::GarrisonError;
@@ -1512,7 +1469,7 @@ mod tests {
         assert_eq!(value["code"], "中");
     }
 
-    /// 畸形请求体返回 400 + invalid_request（不再 panic / 500）。
+    /// 畸形请求体返回 400 + invalid_request（不 panic / 500）。
     #[tokio::test]
     async fn test_token_endpoint_malformed_body_returns_400_invalid_request() {
         let (state, _) = make_state();

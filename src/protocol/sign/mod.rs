@@ -1,12 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! API 签名协议模块，提供请求签名生成与校验 + nonce 防重放。
-//!
-//! 对应 微服务网关签名认证，
-//! 基于 HMAC-SHA256 + Base64 实现请求签名。
-//!
-//! 仅在启用 `protocol-sign` 特性时编译。
+//! API 签名协议模块（对应 微服务网关签名认证）：HMAC-SHA256 + Base64 请求签名
+//! 生成与校验 + nonce 防重放。仅在启用 `protocol-sign` 特性时编译。
 //!
 //! ## 签名算法
 //!
@@ -16,7 +12,7 @@
 //!
 //! ## Key 命名空间
 //!
-//! 所有 sign nonce 存储在 `garrison:sign:nonce:<nonce>` 命名空间下。
+//! sign nonce 存于 `garrison:sign:nonce:<app_key>:<nonce>`（app_key 前缀隔离多应用）。
 
 /// SignHandler 实现（构造/签名/校验/Drop 零化）。
 pub mod handler;
@@ -44,28 +40,20 @@ const HKDF_INFO: &[u8] = b"garrison-sign-v2";
 /// HMAC-SHA256 类型别名。
 type HmacSha256 = Hmac<Sha256>;
 
-/// API 签名处理器。
-///
-/// 持有 `app_key`、`app_secret` 与 `Arc<dyn GarrisonDao>`（用于 nonce 存储）。
-/// 实现 `Send + Sync`，可在多线程环境共享。
-///
-/// `app_secret` 最小 32 字节，内部用 HKDF-SHA256 派生 HMAC 密钥。
-///
-/// 性能优化：HKDF 派生密钥在构造时一次性计算并缓存到 `derived_key` 字段，
-/// `sign`/`validate` 直接使用缓存密钥，避免每次签名重复 HKDF 计算。
+/// API 签名处理器：持有 `app_key`、`app_secret` 与 `Arc<dyn GarrisonDao>`（nonce
+/// 存储）。`app_secret` 最小 32 字节；HKDF 派生密钥在构造时一次性计算并缓存到
+/// `derived_key`，`sign`/`validate` 直接复用。
 pub struct SignHandler {
     /// 应用标识。
     app_key: String,
-    /// 应用密钥（原始，HKDF 输入材料）。
-    /// 保留用于 `protocol-zeroize` feature 下的 Drop 零化；非 zeroize 构建中不再被读取。
+    /// 应用密钥明文（HKDF 输入材料；`protocol-zeroize` 下析构时零化，非 zeroize
+    /// 构建中不再被读取）。
     ///
     /// # 安全注意（明文存储 + 零化 feature 门控）
     ///
-    /// 本字段以明文 `String` 持有原始密钥：默认构建（未启用 `protocol-zeroize`）
-    /// 下 Drop 不做零化，内存随普通 `String` 释放，内容不保证被清除——可能残留于
-    /// 已释放堆块 / swap / core dump；且 `String` 扩容或所有权转移还可能在旧堆块
-    /// 留下密钥碎片。保持 feature 结构（零开销默认构建），对密钥卫生有要求的部署
-    /// 应显式启用 `protocol-zeroize`（见 `handler.rs` 的 `Drop` impl）。
+    /// 默认构建 Drop 不零化，内存随普通 `String` 释放、内容不保证被清除（可能
+    /// 残留于已释放堆块 / swap / core dump，扩容或所有权转移亦留碎片）；对密钥
+    /// 卫生有要求的部署应显式启用 `protocol-zeroize`（见 `handler.rs` 的 `Drop` impl）。
     #[cfg_attr(not(feature = "protocol-zeroize"), allow(dead_code))]
     app_secret: String,
     /// DAO 抽象层，用于 nonce 存储。
@@ -76,8 +64,8 @@ pub struct SignHandler {
     ///
     /// # 安全注意（明文存储 + 零化 feature 门控）
     ///
-    /// HMAC 密钥材料以明文 `[u8; 32]` 存储：仅在 `protocol-zeroize` feature 下
-    /// Drop 时被覆写（见 `handler.rs` 的 `Drop` impl），默认构建中释放后内容不
-    /// 保证被清除——可能残留于已释放堆块 / swap / core dump。
+    /// 明文 `[u8; 32]`：仅 `protocol-zeroize` 下 Drop 时被覆写（见 `handler.rs`
+    /// 的 `Drop` impl），默认构建释放后内容不保证清除（可能残留于已释放堆块 /
+    /// swap / core dump）。
     derived_key: [u8; 32],
 }

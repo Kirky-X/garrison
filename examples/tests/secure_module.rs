@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! secure_module 示例测试。
-//!
-//! 验证 run() 完整执行（内部已包含脱敏/XSS/消毒/同形异义字断言）。
+//! secure_module 示例测试：验证 run() 完整执行（内部已包含脱敏/XSS/消毒/同形异义字断言）。
 
 #![cfg(any(
     feature = "secure-masking",

@@ -1,17 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! SSO 协议层测试 mock 实现。
+//! SSO 协议层测试 mock（仅 `cfg(test)` 编译）：`MockDao` 基于 `tokio::sync::Mutex<HashMap>` 模拟 DAO，供 `tests` 票据签发/校验测试复用。
 //!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `MockDao`（基于 `tokio::sync::Mutex<HashMap>` 模拟 DAO），
-//! 供 `protocol::sso::tests` 票据签发/校验测试复用。
-//!
-//! TTL 语义（对齐产品 `dao::InMemoryDao`）：
-//! - `set(key, value, ttl_seconds)`：`ttl_seconds == 0` 表示永不过期，
-//!   否则记录过期时间点；
-//! - `get` 读取时惰性判断过期，过期键即删即返 `None`；
-//! - `expire(key, seconds)`：改写过期时间点，键不存在返回 `Err(Dao)`（与产品一致）。
+//! TTL 语义对齐产品 `dao::InMemoryDao`：`ttl_seconds == 0` 表示永不过期；`get` 惰性判断过期（即删即返 `None`）；`expire` 对不存在的键返回 `Err(Dao)`。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -39,7 +31,7 @@ pub struct MockDao {
 }
 
 impl MockDao {
-    /// 创建空的 mock DAO 实例（无任何键值）。
+    /// 创建空的 mock DAO。
     pub fn new() -> Self {
         Self {
             data: Mutex::new(HashMap::new()),
@@ -128,9 +120,7 @@ impl GarrisonDao for MockDao {
         }
     }
 
-    // 其余 5 个原子方法经子集宏展开（逻辑单点维护于
-    // dao::atomic_fallback::impls），本 mock 自定义的单锁原子 get_and_delete
-    //（一次性语义）保留不被覆盖。
+    // 其余 5 个原子方法经宏展开（逻辑单点维护于 dao::atomic_fallback::impls），本 mock 的单锁 get_and_delete（一次性语义）保留不被覆盖。
     crate::atomic_test_fallback_no_get_and_delete!();
 }
 
@@ -205,7 +195,6 @@ mod mock_dao_coverage_tests {
             None,
             "expire 后超过时长 get 应返回 None"
         );
-        // 不存在的键 expire 返回 Err
         let missing = dao.expire("no-such-key", 10).await;
         assert!(
             matches!(missing, Err(GarrisonError::Dao(_))),

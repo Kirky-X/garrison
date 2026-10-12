@@ -3,28 +3,21 @@
 
 //! 泛型双窗口限速内核（sms/email 验证码限速共用）。
 //!
-//! 以 limiteron [`QuotaStorage`] 账本承载 hour/day 双窗口判定：对两个
-//! resource 维度各执行一次 `consume(identity, resource, 1, limit, window)`。
-//! 超限由存储适配器内部自回滚（`GarrisonDaoQuotaStorage` 的 `decr` 补偿），
-//! 已成功的另一窗由本内核 `refund` 归还。sms/email 的差异（normalize /
-//! validate、错误变体、命名空间）收敛在各自薄包装内，本内核不含服务特有逻辑。
+//! 以 limiteron [`QuotaStorage`] 账本承载 hour/day 双窗口判定：对两个 resource 维度各执行一次
+//! `consume(identity, resource, 1, limit, window)`。超限由存储适配器内部自回滚
+//! （`GarrisonDaoQuotaStorage` 的 `decr` 补偿），已成功的另一窗由本内核 `refund` 归还。
+//! sms/email 的差异（normalize / validate、错误变体、命名空间）收敛在各自薄包装内。
 //!
-//! 键形说明：账本键 `quota:{resource}:{identity}` 与旧时间桶键
-//! （`sms:rate:{phone}:hour:{bucket}`）不同——窗口滚动由存储 TTL 表达，
-//! 跨小时/午夜边界的回滚命中同一账本（账本已随窗口过期即 no-op，不按当前
-//! 时间重算），过渡语义（旧 key 依赖 TTL 自然过期）见 CHANGELOG。
+//! 键形说明：账本键 `quota:{resource}:{identity}` 不含时间成分——窗口滚动由存储 TTL 表达，
+//! 跨小时/午夜边界的回滚命中同一账本（账本已随窗口过期即 no-op，不按当前时间重算）。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use limiteron::storage::QuotaStorage;
 use std::time::Duration;
 
-/// 小时窗口资源维度名。
 const RESOURCE_HOUR: &str = "hour";
-/// 天窗口资源维度名。
 const RESOURCE_DAY: &str = "day";
-/// 小时窗口长度（与旧 `SECONDS_PER_HOUR` TTL 一致）。
 const HOUR_WINDOW: Duration = Duration::from_secs(3600);
-/// 天窗口长度（与旧 `SECONDS_PER_DAY` TTL 一致）。
 const DAY_WINDOW: Duration = Duration::from_secs(86400);
 
 /// 双窗口拒绝归属（映射回 sms/email 各自的错误变体与 `window` 字段）。
@@ -51,8 +44,7 @@ impl DualWindowExceeded {
 pub(crate) enum DualWindowError {
     /// 窗口超限（归属哪个窗口）。
     Exceeded(DualWindowExceeded),
-    /// 存储故障（消息含 `secure-limiter-incr::{e}` 前缀，与手写实现的
-    /// incr 失败错误串一致；调用方映射为 `GarrisonError::Internal`）。
+    /// 存储故障（消息含 `secure-limiter-incr::{e}` 前缀，错误串契约与手写实现一致；调用方映射为 `GarrisonError::Internal`）。
     Storage(String),
 }
 
@@ -60,18 +52,12 @@ pub(crate) enum DualWindowError {
 pub(crate) struct DualWindowQuota<S: QuotaStorage> {
     /// 账本存储（hour/day 两个 resource 维度）。
     storage: S,
-    /// 小时窗口上限。
     hourly_limit: u64,
-    /// 天窗口上限。
     daily_limit: u64,
 }
 
 impl<S: QuotaStorage> DualWindowQuota<S> {
-    /// 创建内核实例。
-    ///
-    /// # 参数
-    /// - `storage`: 账本存储适配器。
-    /// - `hourly_limit` / `daily_limit`: 小时/天窗口上限（配置默认值不变）。
+    /// 创建内核实例（hourly_limit / daily_limit：小时/天窗口上限，配置默认值不变）。
     pub(crate) fn new(storage: S, hourly_limit: u32, daily_limit: u32) -> Self {
         Self {
             storage,
@@ -82,12 +68,8 @@ impl<S: QuotaStorage> DualWindowQuota<S> {
 
     /// 双窗口消费（hour 通过后消费 day）。
     ///
-    /// 统一回滚约定（与手写实现逐条对齐）：
-    /// - hour 超限：适配器内部已自回滚 hour，直接返回
-    ///   [`DualWindowExceeded::Hourly`]；
-    /// - day 存储故障：refund hour（失败仅 warn），返回存储错误；
-    /// - day 超限：refund hour（失败仅 warn），返回
-    ///   [`DualWindowExceeded::Daily`]（day 自身已由适配器自回滚）。
+    /// 回滚约定（与手写实现逐条对齐）：hour 超限时适配器已自回滚 hour，直接返回 Hourly；
+    /// day 存储故障或超限时 refund hour（失败仅 warn），超限返回 Daily（day 自身已由适配器自回滚）。
     pub(crate) async fn consume_and_check(&self, identity: &str) -> Result<(), DualWindowError> {
         let hour = self
             .storage
@@ -121,8 +103,7 @@ impl<S: QuotaStorage> DualWindowQuota<S> {
 
     /// 退还两个窗口的消费（`rollback` 路径）。
     ///
-    /// 聚合两次退还：首个失败不中断第二个，最终返回首个错误（与现
-    /// `rollback_inner` 的聚合语义一致）；两次均仅 warn，观测口径不变。
+    /// 聚合两次退还：首个失败不中断第二个，最终返回首个错误（聚合语义与 `rollback_inner` 一致）；失败均仅 warn。
     pub(crate) async fn refund_windows(&self, identity: &str) -> GarrisonResult<()> {
         let mut first_err: Option<GarrisonError> = None;
         if let Err(e) = self.refund_mapped(identity, RESOURCE_HOUR).await {
@@ -158,8 +139,7 @@ impl<S: QuotaStorage> DualWindowQuota<S> {
         }
     }
 
-    /// 退还单窗并把 `StorageError` 映射为 `GarrisonError::Dao`（现 rollback
-    /// 路径经 `dao.decr` 返回的即 Dao 变体，错误串保真透传）。
+    /// 退还单窗并把 `StorageError` 映射为 `GarrisonError::Dao`（错误串保真透传）。
     async fn refund_mapped(&self, identity: &str, resource: &str) -> GarrisonResult<()> {
         self.storage
             .refund(identity, resource, 1, 0, Duration::ZERO)
@@ -186,8 +166,7 @@ mod tests {
         DualWindowQuota::new(GarrisonDaoQuotaStorage::new(dao), hourly, daily)
     }
 
-    /// 小时超限：第 hourly+1 次拒绝且归属 Hourly；适配器自回滚使账本
-    /// 不泄漏（再次消费仍被拒，而非放行）。
+    /// 小时超限：第 hourly+1 次拒绝且归属 Hourly；适配器自回滚，再次消费仍被拒而非放行。
     #[tokio::test]
     async fn kernel_hourly_exceed_rejects_without_leak() {
         let kernel = make_kernel(2, 100);
@@ -260,8 +239,7 @@ mod tests {
         kernel.refund_windows("ns:id3").await.unwrap();
     }
 
-    /// 账本键不随时间变化：跨「窗口边界」的 refund 命中同一账本
-    /// （新模型下不存在按当前时间重算键的路径）。
+    /// 账本键不随时间变化：跨窗口边界的 refund 命中同一账本（无按当前时间重算键的路径）。
     #[tokio::test]
     async fn kernel_ledger_key_is_time_independent() {
         let dao = Arc::new(MockDao::new());

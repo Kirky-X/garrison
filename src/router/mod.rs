@@ -1,17 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 路由模块，提供路由器与拦截器抽象。
-//!
-//! 对应 路由拦截器（`SaInterceptor`），
-//! 适配 axum Web 框架的路由层。
-//!
-//! ## 设计
-//!
-//! - `GarrisonInterceptor` trait：预处理 hook，根据 annotation 调用 `GarrisonUtil`
-//! - `DefaultGarrisonInterceptor`：默认实现，根据 annotation 变体调用对应 API
-//! - `GarrisonRouter`：包装 `axum::Router`，提供 `route_protected` 语法糖（cfg `web-axum`）
-//! - `GarrisonLayer` middleware：自动从 header/cookie 提取 token + 设置 task_local
+//! 路由模块：`GarrisonInterceptor` 预处理 hook（按 annotation 调用 `GarrisonUtil`），
+//! `DefaultGarrisonInterceptor` 默认实现，`GarrisonRouter` 包装 `axum::Router`（cfg `web-axum`），
+//! `GarrisonLayer` middleware 自动从 header/cookie 提取 token 并设置 task_local。
 
 pub mod interceptor;
 
@@ -19,61 +11,25 @@ use crate::annotation::Annotation;
 use crate::error::GarrisonResult;
 use async_trait::async_trait;
 
-// ============================================================================
-// GarrisonInterceptor trait（always compiled，prelude 重导出依赖）
-// ============================================================================
-
-/// 拦截器 trait，定义请求预处理抽象。
-///
-/// 对应 `SaInterceptor`，根据 annotation 执行鉴权逻辑。
-///
-/// 实现方在 `pre_handle` 中根据 annotation 调用 `GarrisonUtil::check_login` 等方法。
-/// middleware 在执行 handler 前调用此方法，返回 `Err` 时短路返回错误响应。
+/// 拦截器 trait（对应 `SaInterceptor`）：实现方在 `pre_handle` 中按 annotation 调用
+/// `GarrisonUtil` 鉴权方法，middleware 在执行 handler 前调用，返回 `Err` 时短路返回错误响应。
 #[async_trait]
 pub trait GarrisonInterceptor: Send + Sync {
-    /// 预处理请求，根据 annotation 执行鉴权。
-    ///
-    /// # 参数
-    /// - `path`: 请求路径。
-    /// - `annotation`: 路由关联的鉴权注解。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 鉴权通过，继续执行 handler。
-    /// - `Err`: 鉴权失败，middleware 短路返回错误响应（401/403/500）。
+    /// 根据 annotation 执行鉴权；`Err` 时 middleware 短路返回错误响应（401/403/500）。
     async fn pre_handle(&self, path: &str, annotation: &Annotation) -> GarrisonResult<()>;
 }
 
-// ============================================================================
 // DefaultGarrisonInterceptor（always compiled）
-// ============================================================================
 
-/// 默认拦截器实现，根据 annotation 变体调用对应 `GarrisonUtil` 方法。
+/// 默认拦截器：按 annotation 变体分派 `GarrisonUtil` 鉴权方法。
 ///
-/// # 注解处理方式
-///
-/// **直接鉴权（6 个）**：
-/// - `CheckLogin` → `GarrisonUtil::check_login()`（未登录返回 `NotLogin`）
-/// - `CheckRole(r)` → `GarrisonUtil::check_role(r)`
-/// - `CheckPermission(p)` → `GarrisonUtil::check_permission(p)`
-/// - `CheckSafe` → `GarrisonUtil::check_safe()`（0.3.0 二级认证）
-/// - `CheckDisable` → `GarrisonUtil::check_disable()`（0.3.0 账号禁用）
-/// - `CheckApiKey { namespace }` → `GarrisonUtil::check_api_key(namespace)`（0.6.1 API Key 校验）
-///
-/// **NotImplemented（3 个）**：依赖 HTTP 请求上下文（Authorization header / method / body），
-/// 而 `pre_handle` 签名仅有 `path + annotation`，无法获取。Fail Loud返回
-/// `GarrisonError::NotImplemented`，引导用户改用 axum extractor 或 secure 模块直接调用：
-/// - `CheckBasicAuth` → 使用 `secure::httpbasic::HttpBasicAuth` 或 axum extractor
-/// - `CheckDigestAuth` → 使用 `secure::httpdigest::HttpDigestAuth` 或 axum extractor
-/// - `CheckSign` → 使用 `protocol::sign::SignHandler` 或 axum extractor
-///
-/// **直接放行（no-op）**：
-/// - `Ignore` / 逻辑组合注解（`CheckOr` / `CheckAnd` / `CheckNot` / `Mode`）→ no-op
-///   （组合逻辑由注解处理器在编译期或路由配置层处理；`Mode` 是配置注解非直接检查）
+/// CheckLogin / CheckRole / CheckPermission / CheckSafe / CheckDisable / CheckApiKey 直接调用对应方法；
+/// CheckBasicAuth / CheckDigestAuth / CheckSign 依赖 HTTP 请求上下文（`pre_handle` 仅有 path + annotation）
+/// 无法校验，Fail Loud 返回 `GarrisonError::NotImplemented`，引导改用 axum extractor 或 secure 模块；
+/// Ignore / CheckOr / CheckAnd / CheckNot / Mode 为 no-op（组合逻辑由注解处理器或路由配置层处理）。
 pub struct DefaultGarrisonInterceptor;
 
-// ============================================================================
 // GarrisonRouter（cfg feature = "web-axum"）
-// ============================================================================
 
 #[cfg(feature = "web-axum")]
 pub use web_axum::GarrisonRouter;

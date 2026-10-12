@@ -1,13 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 用户级双态锁定策略实现。
-//!
-//! 本文件包含 `UserLockoutStrategy` 的 impl 块、
-//! [`GarrisonFirewallStrategy`](crate::strategy::firewall::GarrisonFirewallStrategy) trait 实现，
-//! 以及辅助函数 `now_timestamp` / `calculate_lock_seconds`。
-//!
-//! 接口定义（struct 字段、enum）保留在 [`super`](crate::account::lockout) 模块。
+//! 用户级双态锁定策略实现：`UserLockoutStrategy` 的 impl 块、`GarrisonFirewallStrategy` trait 实现与
+//! 辅助函数 `now_timestamp` / `calculate_lock_seconds`；接口定义保留在 [`super`](crate::account::lockout) 模块。
 
 use crate::constants::DaoKeyPrefix;
 use crate::dao::GarrisonDao;
@@ -42,36 +37,27 @@ pub(super) fn now_timestamp() -> i64 {
         .unwrap_or(0)
 }
 
-/// 计算临时锁定时长（秒），依据 WaitStrategy 公式。
-///
-/// - Multiple: base × multiplier^(N-1)
-/// - Linear: base × N
-///
-/// N 为当前临时锁定次数（调用前已自增，N >= 1）。n=0 时按 N=1 计算防御性兜底。
+/// 计算临时锁定时长（秒）：Multiple = base × multiplier^(N-1)，Linear = base × N；N 为当前临时锁定
+/// 次数（调用前已自增，N ≥ 1）。n=0 时按 N=1 防御性兜底。
 fn calculate_lock_seconds(strategy: &WaitStrategy, n: u32) -> u64 {
-    // 防御性编程：n=0 时 `pow(n - 1)` 会下溢 panic，按 N=1 兖底（显性化）
+    // n=0 时 `pow(n - 1)` 会下溢 panic，按 N=1 兜底
     let n = n.max(1);
     match strategy {
         WaitStrategy::Multiple {
             base_seconds,
             multiplier,
         } => {
-            // 使用饱和算术防止整数溢出
             let factor = (*multiplier as u64).saturating_pow(n - 1);
             base_seconds.saturating_mul(factor)
         },
-        WaitStrategy::Linear { base_seconds } => {
-            // 使用饱和算术防止整数溢出
-            base_seconds.saturating_mul(n as u64)
-        },
+        WaitStrategy::Linear { base_seconds } => base_seconds.saturating_mul(n as u64),
     }
 }
 
 /// CAS 并发重试上限（`record_failure` / `record_success` 读改写冲突时重试次数）。
 const MAX_STATE_CAS_RETRIES: u32 = 5;
 
-/// 单次失败记录触发的锁定类型（[`UserLockoutStrategy::record_failure`] 的
-/// 状态推进结果，metrics 在 CAS 成功后按此分类记录）。
+/// 单次失败记录触发的锁定类型（metrics 在 CAS 成功后按此分类记录）。
 enum LockoutTrigger {
     /// 未达阈值，仅计数累积。
     None,
@@ -84,9 +70,8 @@ enum LockoutTrigger {
 impl UserLockoutStrategy {
     /// 创建用户级锁定策略实例。
     ///
-    /// 构造时调用 [`UserLockoutConfig::validate`] 校验配置：非法配置（如
-    /// `max_failure_factor = 0` 会导致首败即锁）以 `tracing::warn` 记录并回退到
-    /// [`UserLockoutConfig::default`]，避免零值退化行为静默生效。
+    /// 构造时经 [`UserLockoutConfig::validate`] 校验：非法配置（零值退化，如 `max_failure_factor = 0`
+    /// 首败即锁）以 `tracing::warn` 记录并回退 [`UserLockoutConfig::default`]。
     pub fn new(config: UserLockoutConfig, dao: Arc<dyn GarrisonDao>) -> Self {
         let config = match config.validate() {
             Ok(()) => config,
@@ -107,10 +92,8 @@ impl UserLockoutStrategy {
         }
     }
 
-    /// 注入账号安全指标（builder 模式，需启用 `metrics-prometheus` feature）。
-    ///
-    /// 注入后 `record_failure` 触发临时/永久锁定时调用 `record_lockout(permanent)`。
-    /// 未注入时锁定逻辑不变，仅不记录指标。
+    /// 注入指标（builder，需 `metrics-prometheus` feature）：注入后触发临时/永久锁定时调用
+    /// `record_lockout`；未注入时锁定逻辑不变，仅不记录指标。
     #[cfg(feature = "metrics-prometheus")]
     pub fn with_metrics(mut self, metrics: Arc<crate::account::metrics::AccountMetrics>) -> Self {
         self.metrics = Some(metrics);
@@ -139,11 +122,8 @@ impl UserLockoutStrategy {
         self.dao.set(&key, &json, 0).await
     }
 
-    /// CAS 原子写回锁定状态（expected = 读取时的原始 JSON）。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: CAS 成功，状态已写入。
-    /// - `Ok(false)`: CAS 失败（状态已被并发修改，未写入）。
+    /// CAS 原子写回锁定状态（expected = 读取时的原始 JSON）；`Ok(false)` 表示 CAS 失败未写入
+    /// （状态已被并发修改）。
     pub(super) async fn cas_state(
         &self,
         user_id: &str,
@@ -156,23 +136,16 @@ impl UserLockoutStrategy {
         self.dao.compare_and_swap(&key, expected, &json, 0).await
     }
 
-    /// 记录登录失败，更新锁定状态。
-    ///
-    /// 逻辑：
-    /// 1. 检查 failure_window_seconds 窗口是否过期 → 过期则重置 failure_count
-    /// 2. failure_count += 1 → 达阈值触发锁定 → 临时/永久锁定 → 持久化
+    /// 记录登录失败：窗口过期重置计数，自增后达阈值触发临时/永久锁定，CAS 写回。
     ///
     /// # 并发安全（CAS 原子读改写）
     ///
-    /// 读（get/CAS-expected）→ 改 → 写（compare_and_swap）为原子序列：
-    /// 同一用户并发调用时 CAS 冲突方自动重试（上限 `MAX_STATE_CAS_RETRIES`），
-    /// 消除 get→mutate→set 非原子读改写导致的丢失自增。
-    /// 重试耗尽返回 `GarrisonError::Dao`（fail-closed，不静默丢失失败计数）。
+    /// 读 → 改 → CAS 为原子序列：并发冲突方自动重试（上限 `MAX_STATE_CAS_RETRIES`），消除非原子
+    /// 读改写的丢失自增；重试耗尽返回 `GarrisonError::Dao`（fail-closed，不静默丢失失败计数）。
     pub async fn record_failure(&self, user_id: &str) -> GarrisonResult<()> {
         let now = now_timestamp();
 
         for attempt in 1..=MAX_STATE_CAS_RETRIES {
-            // 1. 读取当前状态（原始 JSON 作为 CAS expected）
             let key = DaoKeyPrefix::Lockout.build_key(user_id);
             let old_json = self.dao.get(&key).await?;
             let mut state = match &old_json {
@@ -182,11 +155,9 @@ impl UserLockoutStrategy {
                 None => LockoutState::default(),
             };
 
-            // 2. 纯状态推进：窗口重置 → 计数自增 → 阈值触发锁定
             #[cfg_attr(not(feature = "metrics-prometheus"), allow(unused_variables))]
             let trigger = self.advance_failure_state(&mut state, now);
 
-            // 3. CAS 原子写回；冲突则重试（读取-修改基于最新状态重新计算）
             if self.cas_state(user_id, old_json.as_deref(), &state).await? {
                 // 指标在 CAS 成功后记录，避免重试导致重复计数
                 #[cfg(feature = "metrics-prometheus")]
@@ -212,14 +183,11 @@ impl UserLockoutStrategy {
         )))
     }
 
-    /// 单次失败的锁定状态推进（纯函数，持久化由调用方 CAS 负责）。
-    ///
-    /// 窗口过期则重置计数；自增后达 `max_failure_factor` 触发锁定：
-    /// 永久条件满足走永久锁定，否则按退避策略延长临时锁定。
-    /// 返回本次推进触发的锁定类型（metrics 记录用）。
+    /// 单次失败的纯状态推进（持久化由调用方 CAS 负责）：窗口过期则重置计数，自增达
+    /// `max_failure_factor` 触发锁定（永久条件满足走永久，否则按退避策略延长临时锁定）；
+    /// 返回触发的锁定类型（metrics 记录用）。
     fn advance_failure_state(&self, state: &mut LockoutState, now: i64) -> LockoutTrigger {
         match state.first_failure_at {
-            // 窗口过期：重置失败计数并重新起算窗口
             Some(first_at) if now - first_at > self.config.failure_window_seconds as i64 => {
                 state.failure_count = 0;
                 state.first_failure_at = Some(now);
@@ -243,8 +211,8 @@ impl UserLockoutStrategy {
             return LockoutTrigger::Permanent;
         }
 
-        // u64 → i64 用饱和转换（`as` 会把 u64::MAX 回绕为 -1，
-        // 使 locked_until 落在过去、锁定即刻失效），并用 saturating_add 防溢出
+        // u64 → i64 用饱和转换（`as` 会把 u64::MAX 回绕为 -1，使 locked_until 落在过去、
+        // 锁定即刻失效），并用 saturating_add 防溢出
         state.temporary_lockout_count = state.temporary_lockout_count.saturating_add(1);
         let lock_seconds =
             calculate_lock_seconds(&self.config.wait_strategy, state.temporary_lockout_count);
@@ -253,15 +221,13 @@ impl UserLockoutStrategy {
         LockoutTrigger::Temporary
     }
 
-    /// 记录登录成功，重置失败计数和临时锁定状态。
-    ///
-    /// 重置 failure_count、first_failure_at、temporary_lockout_count 和 locked_until，
-    /// 不修改 permanent_locked（永久锁定不可通过登录成功解除）。
+    /// 记录登录成功：重置 failure_count / first_failure_at / temporary_lockout_count / locked_until，
+    /// 不修改 `permanent_locked`（永久锁定不可通过登录成功解除）。
     ///
     /// # 并发安全
     ///
-    /// 与 [`record_failure`](Self::record_failure) 相同的 CAS 原子读改写 +
-    /// 重试（上限 `MAX_STATE_CAS_RETRIES`），避免并发下丢失重置或覆盖他方更新。
+    /// 与 [`record_failure`](Self::record_failure) 相同的 CAS 原子读改写 + 重试（上限
+    /// `MAX_STATE_CAS_RETRIES`），避免并发下丢失重置或覆盖他方更新。
     pub async fn record_success(&self, user_id: &str) -> GarrisonResult<()> {
         for attempt in 1..=MAX_STATE_CAS_RETRIES {
             let key = DaoKeyPrefix::Lockout.build_key(user_id);
@@ -304,16 +270,13 @@ impl UserLockoutStrategy {
 #[async_trait]
 impl GarrisonFirewallStrategy for UserLockoutStrategy {
     async fn check(&self, ctx: &FirewallContext) -> GarrisonResult<()> {
-        // (1) login_id 为 None 时跳过用户级检查
         let user_id = match &ctx.login_id {
             Some(id) => id.as_str(),
             None => return Ok(()),
         };
 
-        // (2) 读取锁定状态
         let state = self.get_state(user_id).await?;
 
-        // (3) 永久锁定 → 拦截
         if state.permanent_locked {
             return Err(GarrisonError::FirewallBlocked(format!(
                 "user-lockout-permanent::{}",
@@ -321,7 +284,6 @@ impl GarrisonFirewallStrategy for UserLockoutStrategy {
             )));
         }
 
-        // (4) 临时锁定期内 → 拦截
         let now = now_timestamp();
         if state.locked_until > now {
             return Err(GarrisonError::FirewallBlocked(format!(
@@ -330,7 +292,6 @@ impl GarrisonFirewallStrategy for UserLockoutStrategy {
             )));
         }
 
-        // (5) 否则允许
         Ok(())
     }
 }

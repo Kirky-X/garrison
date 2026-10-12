@@ -3,10 +3,8 @@
 
 //! JWT 三模式示例。
 //!
-//! 演示 `JwtMode` 三种模式的配置切换：
-//! - `Stateless`：仅 JWT verify，不查询 oxcache session（高可用场景）
-//! - `Mixin`（默认）：JWT verify + session 二级校验（推荐）
-//! - `Simple`：仅 session，JWT 仅作为 token 载体（不验证签名）
+//! 演示 `JwtMode` 三种模式的配置切换：`Stateless` 仅 JWT verify 不查 session（高可用场景）；
+//! `Mixin`（默认）JWT verify + session 二级校验；`Simple` 仅 session，JWT 仅作 token 载体（不验证签名）。
 //!
 //! 运行方式：
 //! ```sh
@@ -76,7 +74,6 @@ async fn make_logic_with_mode(mode: JwtMode) -> Arc<GarrisonLogicDefault> {
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison JWT 三模式示例 ===\n");
 
-    // 1. Mixin 模式（默认推荐）
     println!("[1] Mixin 模式（JWT verify + session 二级校验，默认推荐）");
     let logic_mixin = make_logic_with_mode(JwtMode::Mixin).await;
     let token = logic_mixin.login("1001", &LoginParams::default()).await?;
@@ -113,7 +110,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(claims.login_id, "1001");
     println!("    ✓ JWT 校验通过，claims 正确\n");
 
-    // 5. 错误的 secret 校验失败
     println!("[5] 错误密钥校验失败（预期）");
     let wrong_handler = JwtHandler::new("wrong-secret-min-32-bytes-long!!!!");
     let result = wrong_handler.verify(&token);

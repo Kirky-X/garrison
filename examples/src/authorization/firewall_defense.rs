@@ -3,20 +3,16 @@
 
 //! 防火墙防护完整流程示例：暴力破解防护 → 速率限制 → DDoS 防护 → 策略组合。
 //!
-//! 演示 Garrison 防火墙策略套件的完整业务链路：
-//! 1. BruteForceStrategy：IP 级暴力破解防护（计数 + 锁定 + 解封）
-//! 2. RateLimitStrategy：滑动窗口速率限制（per-login_id 限流）
-//! 3. DDoSStrategy：自适应 DDoS 防护（令牌桶 + 优先级队列）
-//! 4. 策略组合：多策略串联，模拟真实请求防护链路
+//! 演示防火墙策略套件完整链路：1. BruteForceStrategy IP 级暴力破解防护（计数+锁定+解封）
+//! 2. RateLimitStrategy 滑动窗口速率限制（per-login_id）3. DDoSStrategy 自适应防护（令牌桶）4. 多策略组合串联。
 //!
 //! 运行方式：
 //! ```sh
 //! cargo run -p garrison-examples --bin firewall_defense --features "firewall-bruteforce firewall-ratelimit firewall-ddos cache-memory"
 //! ```
 //!
-//! 本示例使用框架 InMemoryDao（支持 limiteron Lua 原子原语），无需外部依赖即可运行。
-//! 注意：oxcache 内存后端不支持 eval_lua，无法承载限流器/封禁的原子计数，
-//! 生产环境请使用 oxcache + Redis 后端。
+//! 本示例使用框架 InMemoryDao（支持 limiteron Lua 原子原语）；注意 oxcache 内存后端不支持
+//! eval_lua，无法承载限流器/封禁的原子计数，生产环境请使用 oxcache + Redis 后端。
 
 use garrison::dao::InMemoryDao;
 use garrison::error::GarrisonResult;
@@ -64,14 +60,7 @@ pub async fn run() -> GarrisonResult<()> {
     Ok(())
 }
 
-/// 场景一：暴力破解防护完整链路。
-///
-/// 业务流程：
-/// 1. 正常请求通过
-/// 2. 连续失败触发计数递增
-/// 3. 超过阈值 → IP 被锁定
-/// 4. 锁定期间所有请求被拦截
-/// 5. 不同 IP 互不干扰（隔离性验证）
+/// 场景一：暴力破解防护完整链路：正常放行 → 失败计数递增 → 超阈值 IP 锁定 → 锁定期间全部拦截 → 不同 IP 互不干扰。
 async fn demo_bruteforce(dao: Arc<dyn GarrisonDao>) -> GarrisonResult<()> {
     println!("--- 场景一：暴力破解防护 ---");
 
@@ -119,12 +108,7 @@ async fn demo_bruteforce(dao: Arc<dyn GarrisonDao>) -> GarrisonResult<()> {
     Ok(())
 }
 
-/// 场景二：速率限制完整链路。
-///
-/// 业务流程：
-/// 1. 正常请求在限额内通过
-/// 2. 超出 QPS 限额后被拦截
-/// 3. 不同 scope（per-login_id vs per-ip）独立限流
+/// 场景二：速率限制完整链路：限额内通过 → 超出 QPS 限额拦截 → 不同 scope（per-login_id vs per-ip）独立限流。
 async fn demo_rate_limit(dao: Arc<dyn GarrisonDao>) -> GarrisonResult<()> {
     println!("--- 场景二：速率限制 ---");
 
@@ -159,12 +143,7 @@ async fn demo_rate_limit(dao: Arc<dyn GarrisonDao>) -> GarrisonResult<()> {
     Ok(())
 }
 
-/// 场景三：DDoS 防护完整链路。
-///
-/// 业务流程：
-/// 1. 正常流量通过
-/// 2. 突发流量超过令牌桶容量后被拦截
-/// 3. 等待令牌恢复后可再次通过
+/// 场景三：DDoS 防护完整链路：正常流量通过 → 突发流量超令牌桶容量被拦截 → 等待令牌恢复后可再次通过。
 async fn demo_ddos(dao: Arc<dyn GarrisonDao>) -> GarrisonResult<()> {
     println!("--- 场景三：DDoS 防护 ---");
 
@@ -195,10 +174,7 @@ async fn demo_ddos(dao: Arc<dyn GarrisonDao>) -> GarrisonResult<()> {
     Ok(())
 }
 
-/// 场景四：多策略组合。
-///
-/// 模拟真实业务场景：登录接口同时启用暴力破解防护 + 速率限制。
-/// 请求必须通过所有策略检查才放行。
+/// 场景四：多策略组合：模拟登录接口同时启用暴力破解防护 + 速率限制，请求必须通过所有策略检查才放行。
 async fn demo_composed_strategies(dao: Arc<dyn GarrisonDao>) -> GarrisonResult<()> {
     println!("--- 场景四：多策略组合（暴力破解 + 速率限制）---");
 

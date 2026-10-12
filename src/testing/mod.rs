@@ -1,34 +1,14 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 声明式 JSON 测试套件。
-//!
-//! 提供从 JSON 文件加载测试用例并运行 [`Authorizer`] trait 的能力，
-//! 输出 [`TestReport`] 报告。
-//!
-//! # 启用方式
-//!
-//! 启用 `garrison-testing` feature（依赖 `authorize-api`）：
+//! 声明式 JSON 测试套件（启用 `garrison-testing` feature，依赖 `authorize-api`）：
 //!
 //! ```toml
 //! [dependencies]
 //! garrison = { version = "0.5", features = ["garrison-testing"] }
 //! ```
 //!
-//! # JSON 格式
-//!
-//! ```json
-//! {
-//! "name": "rbac-basic",
-//! "cases": [
-//! {
-//! "name": "admin_can_read",
-//! "request": {"login_id": "1", "tenant_id": 0, "action": "read", "resource": null, "context": null},
-//! "expected": {"allowed": true, "reason": "explicit_allow"}
-//! }
-//! ]
-//! }
-//! ```
+//! 从 JSON 文件加载测试用例并运行 [`Authorizer`]，输出 [`TestReport`]。
 //!
 //! # 使用示例
 //!
@@ -120,9 +100,8 @@ pub struct TestFailure {
     /// 实际的决策。
     ///
     /// `None` 表示 [`Authorizer::authorize`] 自身返回 `Err`（错误详情见
-    /// [`TestFailure::error`]）——此时**没有**实际决策，不再用
-    /// `Decision::deny` 占位，避免授权失败与真实拒绝在 `actual` 字段混淆
-    /// 。
+    /// [`TestFailure::error`]）——此时不产生实际决策，不再用 `Decision::deny`
+    /// 占位，避免授权错误与真实拒绝在 `actual` 字段混淆。
     pub actual: Option<Decision>,
     /// 错误消息（`authorize` 返回 `Err` 时填充，否则 `None`）。
     pub error: Option<String>,

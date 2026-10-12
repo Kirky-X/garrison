@@ -20,10 +20,8 @@ use chrono::Utc;
 use parking_lot::RwLock;
 use std::sync::Arc;
 
-/// Credit 计量引擎。
-///
-/// 提供 team-level credit 消费、查询、重置 API。
-/// 热数据走 KV 缓存（`GarrisonDao`），冷数据走 SQL（可选）。
+/// Credit 计量引擎：提供 team-level credit 消费、查询、重置 API；热数据走 KV 缓存
+/// （`GarrisonDao`），冷数据走 SQL（可选）。
 pub struct CreditMeter {
     dao: Arc<dyn GarrisonDao>,
     config: Arc<RwLock<CreditConfig>>,
@@ -82,8 +80,8 @@ impl CreditMeter {
     /// 创建计量引擎实例。
     ///
     /// persist_history 落库默认经活跃度节流（去抖窗口聚合，语义见
-    /// [`ActivityWriteThrottle`]）：同 key 窗口内仅首次落库（窗口内首次消费
-    /// 快照）、容量满丢弃显性化、进程退出不持久化。需逐笔流水时用
+    /// [`ActivityWriteThrottle`]）：同 key 窗口内仅首次落库（窗口内首次消费快照）、
+    /// 容量满丢弃显性化、进程退出不持久化。需逐笔流水时用
     /// [`Self::without_activity_throttle`] 显式关闭。
     pub fn new(dao: Arc<dyn GarrisonDao>, config: CreditConfig) -> Self {
         let storage = CreditMeterStorage::new(dao.clone());
@@ -177,25 +175,15 @@ impl CreditMeter {
 
     /// 消费 credit（热路径）。
     ///
-    /// 1. 从 `CreditSchedule` 获取 resource weight → `credits = cost * weight`
-    ///    （`checked_mul`，溢出返回 [`CreditError::ConfigInvalid`]，不再静默回绕）
-    /// 2. 检查周期是否过期，过期则重置
-    /// 3. **预检**：已消费 + credits 超限时直接拒绝，**不递增计数**
-    ///    （被拒请求不消耗配额，租户可继续用剩余额度发起小额请求）
-    /// 4. KV incr 递增 consumed；并发交错导致超限时 decr 回滚本次递增并拒绝
-    /// 5. 计算 usage_percent，检查 alert_thresholds
-    /// 6. 更新 meta
-    /// 7. 广播事件（若 listener 已注入；拒绝路径不广播——无新消耗即无新告警）
-    /// 8. 异步写入 SQL 流水（若 persist_history = true；默认经活跃度节流
-    ///    聚合，语义见 [`Self::new`]）
+    /// credits = cost × weight（`checked_mul`，溢出返回 [`CreditError::ConfigInvalid`]，
+    /// 不静默回绕）；先做周期过期检查与重置，预检已消费 + credits 超限直接拒绝（不递增
+    /// 计数），KV incr 后确认并发交错超限则 decr 回滚本次递增并拒绝；再计算使用率与
+    /// 告警阈值、更新 meta、广播事件（拒绝路径不广播）、按 persist_history 写 SQL 流水。
     ///
-    /// # 一致性语义
-    ///
-    /// - 拒绝路径不消耗配额：预检拒绝零副作用；并发交错超限时回滚本次扣减
-    ///   （decr 为 best-effort，单次失败仅 `tracing::warn`，见
-    ///   [`CreditMeterStorage::decr_consumed`]）；
-    /// - 回滚后 `total_consumed` / `usage_percent` 基于回滚后的已消费量，
-    ///   `alerts_triggered` 为空（无新消耗即不触发新告警）。
+    /// 一致性语义：拒绝路径不消耗配额——预检拒绝零副作用，并发交错超限时回滚本次扣减
+    /// （decr 为 best-effort，单次失败仅 `tracing::warn`，见
+    /// [`CreditMeterStorage::decr_consumed`]）；回滚后 `total_consumed` /
+    /// `usage_percent` 基于回滚后的已消费量，`alerts_triggered` 为空（无新消耗即不触发新告警）。
     pub async fn consume_credit(
         &self,
         tenant_id: i64,
@@ -227,8 +215,6 @@ impl CreditMeter {
         let credit_limit = config.credit_limit;
 
         // ---- 预检：已消费 + credits 超限时直接拒绝，不递增计数 ----
-        //（修复旧实现「先 incr 后判 allowed、拒绝不回滚」导致的配额被拒绝
-        // 请求永久消耗的问题）
         let current = self.storage.get_consumed(tenant_id).await?.unwrap_or(0);
         if credit_limit != 0 && current.saturating_add(credits) > credit_limit {
             return Ok(Self::denied_result(
@@ -239,8 +225,7 @@ impl CreditMeter {
             ));
         }
 
-        // ---- 扣减：credits=0 无消耗直接复用当前值；>0 循环 incr（见
-        // CreditMeterStorage::incr_consumed 非原子声明）----
+        // ---- 扣减：credits=0 无消耗直接复用当前值；>0 循环 incr（见 CreditMeterStorage::incr_consumed 非原子声明）----
         let new_count = if credits == 0 {
             current
         } else {
@@ -253,7 +238,11 @@ impl CreditMeter {
                     credits,
                     new_count = n,
                     credit_limit,
-                    "credit: 并发交错导致超限扣减，回滚本次消费"
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-credit-concurrent-over-limit-rollback",
+                        &[]
+                    )
                 );
                 self.storage.decr_consumed(tenant_id, credits).await;
                 return Ok(Self::denied_result(
@@ -340,9 +329,7 @@ impl CreditMeter {
             }
         }
 
-        // 异步写入 SQL 流水（节流开启经去抖窗口聚合——同 key 窗口内仅首次
-        // 入队，落库为窗口内首次快照，到期由后台循环批量落库；显式关闭时
-        // 逐笔异步落库）
+        // 异步写入 SQL 流水（节流开启经去抖窗口聚合——同 key 窗口内仅首次入队，落库为窗口内首次快照，到期由后台循环批量落库；显式关闭时逐笔异步落库）
         #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
         if config.persist_history {
             match &self.activity_throttle {
@@ -404,8 +391,7 @@ impl CreditMeter {
     /// 构造拒绝结果（配额未被本次请求消耗）。
     ///
     /// `total_consumed` / `remaining` / `usage_percent` 基于回滚后的已消费量；
-    /// `alerts_triggered` 为空（拒绝请求无新消耗，不触发新告警，避免与已成功
-    /// 消费触发的告警重复广播）。
+    /// `alerts_triggered` 为空（拒绝请求无新消耗，不触发新告警，避免与已成功消费触发的告警重复广播）。
     fn denied_result(
         credit_limit: u64,
         consumed: u64,
@@ -467,14 +453,11 @@ impl CreditMeter {
     ///
     /// 返回 `true` 表示已执行重置，`false` 表示周期未过期。
     ///
-    /// # 一致性语义（check-then-reset 非原子）
-    ///
-    /// 「读 window_start → 判断过期 → reset」无锁/CAS：并发调用可能同时观察到
-    /// 过期并各自执行一次 reset。reset 为删除操作，重复执行幂等；最坏情况是
-    /// 清掉并发消费刚写入的新计数（窗口内计数少量低估），属可接受的降级。
-    /// Rolling 模式重置后的 window_start 删除为 best-effort：delete 失败仅
-    /// `tracing::warn`（残留 key 带 TTL 自动过期；下次消费按 get_window_start
-    /// 读到旧值时会因再次过期判断重新触发重置）。
+    /// check-then-reset 非原子：「读 window_start → 判断过期 → reset」无锁/CAS，并发
+    /// 调用可能同时观察到过期并各自执行一次 reset（reset 为删除操作，重复执行幂等；
+    /// 最坏情况清掉并发消费刚写入的新计数，属可接受的降级）。Rolling 重置后删除
+    /// window_start 为 best-effort：delete 失败仅 `tracing::warn`（残留 key 带 TTL
+    /// 自动过期；下次消费读到旧值时会因再次过期判断重新触发重置）。
     pub async fn check_and_reset_cycle(&self, tenant_id: i64) -> CreditResult<bool> {
         let config = self.config.read().clone();
         let now = Utc::now().naive_utc();
@@ -489,8 +472,11 @@ impl CreditMeter {
                     tracing::warn!(
                         tenant_id,
                         error = %e,
-                        "credit: Rolling 周期重置后删除 window_start 失败（best-effort，\
-                         残留 key 由 TTL 过期或下次重置兜底）"
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "logs-credit-rolling-window-start-delete-failed",
+                            &[]
+                        )
                     );
                 }
             }
@@ -1065,12 +1051,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // persist_history / get_usage_history（需 db feature 的 SQL 流水接口）
-    // ========================================================================
 
-    /// 测试用 DAO：在 MockDao 之上内存记录 credit 消费流水，
-    /// 用于覆盖 persist_history 异步落库与 get_usage_history 查询映射。
+    /// 测试用 DAO：在 MockDao 之上内存记录 credit 消费流水，用于覆盖 persist_history 异步落库与 get_usage_history 查询映射。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     /// 流水记录行：(tenant_id, resource, cost, credits, total, cycle_start, created_at)
     type HistoryRecord = (i64, String, u64, u64, u64, i64, i64);
@@ -1376,9 +1359,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // 活跃度写路径节流（persist_history 经 ActivityWriteThrottle 聚合）
-    // ========================================================================
 
     /// meter 接入节流后：同 key 窗口内仅首次落库（落库为首次消费快照），
     /// 到期由后台 flush 循环批量落库（pause 时钟驱动，无真实 sleep）。

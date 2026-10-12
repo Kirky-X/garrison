@@ -1,48 +1,20 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 弃用配置键注册表：0.x → 1.0 的平滑升级路径。
+//! 弃用配置键注册表：0.x → 1.0 平滑升级，配置键改名/移除经加载期显性化（不依赖 serde 静默忽略未知键）。
 //!
-//! 配置键的改名/移除不再依赖“静默忽略未知键”（serde 默认行为，旧配置失效
-//! 无任何提示），而是在加载期显性化：
-//!
-//! - **可自动映射**的键（`auto_map` / `map_fn`）：`< 1.0.0` 时旧值迁移到新键
-//!   （可选经 `map_fn` 转换）并输出 `tracing::warn!`（含弃用起始版本与新键名）；
-//! - **不可自动映射**的键：`< 1.0.0` 时 warn 迁移指引后放行（旧键随 serde
-//!   忽略，新键取默认值——显性降级，不静默）；`≥ 1.0.0` 时返回
-//!   [`GarrisonError::Config`](crate::error::GarrisonError::Config)（含弃用键名
-//!   与迁移指引），强制配置文件在 1.0 前完成迁移。
-//!
-//! 挂点：[`GarrisonConfig::load`](super::GarrisonConfig::load) 借助 confers
-//! `ConfigBuilder::map_json`，在 env/toml 合并树反序列化**前**、`validate()`
-//! **前**执行（保证迁移后的值能通过校验）；不修改 confers 加载机制本身。
-//!
-//! 键格式：点号分隔的逻辑路径，与合并后 JSON 树的嵌套结构一致——扁平键
-//! （如 `timeout_seconds`）与嵌套段键（如 `password_hasher.bcrypt_cost`）
-//! 统一表示；env 变量经 `GARRISON_` 前缀 + `__` 分隔折叠后等价。
+//! 可自动映射键（`auto_map`/`map_fn`）：`< 1.0.0` 时迁移旧值到新键并 warn（含 since 版本与新键名）；不可映射键：`< 1.0.0` warn 迁移指引后放行（显性降级），`>= 1.0.0` 返回 [`GarrisonError::Config`](crate::error::GarrisonError::Config) 强制迁移。
+//! 挂点：[`GarrisonConfig::load`](super::GarrisonConfig::load) 经 confers `ConfigBuilder::map_json`，在合并树反序列化前、`validate()` 前执行（不修改 confers 加载机制）。
+//! 键格式：点号分隔逻辑路径（扁平键与嵌套段键统一表示）；env 经 `GARRISON_` 前缀 + `__` 分隔折叠后等价。
 
 use serde_json::Value;
 
 /// 旧值 → 新值转换函数类型（`map_fn` 字段的签名；转换失败以 `Err` 拒绝迁移）。
 pub type DeprecationMapper = fn(&Value) -> Result<Value, String>;
 
-/// 单条弃用键注册项。
+/// 单条弃用键注册项：`since_version` 仅用于日志/错误指引，不参与 1.0 门判定（门只看当前版本）；`new_key` 为迁移目标（彻底移除填空串）。
 ///
-/// # 字段
-///
-/// - `key`：弃用键（点号分隔逻辑路径，见模块文档）
-/// - `since_version`：弃用起始版本（SemVer 字符串，仅用于日志与错误指引，
-///   不参与 1.0 门判定——门只看当前版本）
-/// - `new_key`：迁移目标键；键被彻底移除且无对应物时填 `""`（指引文案相应
-///   退化为“直接移除该键”）
-/// - `auto_map`：是否允许加载期自动迁移；与 `map_fn` 组合语义：
-///   - `auto_map = true, map_fn = None`：旧值原样搬到新键（同类型改名）
-///   - `auto_map = true, map_fn = Some(f)`：旧值经 `f` 转换后写入新键
-///   - `auto_map = false, map_fn = None`：不可自动映射（`is_mappable` 为 false）
-///   - `auto_map = false, map_fn = Some(f)`：等价于 `auto_map = true`（映射函数
-///     存在即可迁移）；注册时建议直接写 `auto_map = true` 避免歧义
-/// - `map_fn`：旧值 → 新值转换函数；返回 `Err` 表示该值无法迁移（加载失败，
-///   错误显性化）
+/// `auto_map` 与 `map_fn` 组合语义：`map_fn = Some(f)` 存在即可迁移（等价 auto_map=true，注册建议直接写 `auto_map = true` 避免歧义）；`auto_map = true, map_fn = None` 旧值原样搬迁；两者皆无则不可自动映射；`map_fn` 返回 `Err` 表示值无法迁移（加载失败，错误显性化）。
 #[derive(Debug, Clone, Copy)]
 pub struct Deprecation {
     /// 弃用键（点号分隔逻辑路径）。
@@ -66,25 +38,10 @@ impl Deprecation {
 
 /// 生产弃用键注册表。
 ///
-/// 首批唯一条目 `waf_config`——GarrisonConfig 全历史（63 个提交触及
-/// `src/config/mod.rs`）字段集逐对 diff 的唯一删除项：web-waf feature 门控的
-/// `waf_config: WafConfig` 字段于 v0.9.0 feature 重组中移除（含
-/// enabled/path_whitelist/path_blacklist/check_dangerous_chars/
-/// check_directory_traversal/allowed_methods 五个子键），随 0.9.0-rc.1 发布。
-/// `docs/CHANGELOG.md` 只记录了其引入（0.6.4），**未记录移除**——存量 toml
-/// 的 `[waf_config] enabled = true` 升级后会被 serde 静默忽略、WAF 防护无
-/// 提示消失，正是本模块要显性化的失效模式；该键因 CHANGELOG 漏记而无法满足
-/// “Breaking 段可溯源”的字面验收，经复审裁定仍须登记（不登记即保留静默
-/// 失效）。无单一继任键：防护配置由 `firewall-waf` feature 的 `waf_*` 平铺键
-/// （`waf_enabled_hooks` / `waf_white_paths` / `waf_black_paths` 等）按新语义
-/// 重建，故 `new_key = ""`、不可自动映射。
+/// 唯一条目 `waf_config`：web-waf 门控的 `waf_config: WafConfig` 字段于 0.9.0 feature 重组中移除（CHANGELOG 只记录引入未记录移除），存量 toml 的 `[waf_config]` 升级后会被 serde 静默忽略、WAF 防护无提示消失——登记以显性化该失效模式。
+/// 无单一继任键：防护配置由 `firewall-waf` 的 `waf_*` 平铺键按新语义重建，故 `new_key = ""` 且不可自动映射。
 ///
-/// 其余 Breaking 段条目（QRLogin poll `bind_token` 请求字段、
-/// `ApiKeyHandler::verify` 默认禁用、`firewall-quota` feature 移除等）均为
-/// 协议/代码 API/feature 面，不在配置键注册范围。
-///
-/// 后续任何配置键级弃用登记于此，并同步 `docs/CONFIGURATION.md` 弃用键表、
-/// CHANGELOG Breaking 段与本文件测试模块的逐键断言。
+/// 后续配置键级弃用登记于此，并同步 `docs/CONFIGURATION.md` 弃用键表、CHANGELOG Breaking 段与本文件测试的逐键断言。
 pub const fn deprecations() -> &'static [Deprecation] {
     &[Deprecation {
         key: "waf_config",
@@ -97,25 +54,8 @@ pub const fn deprecations() -> &'static [Deprecation] {
 
 /// 对合并后的配置树执行弃用键迁移/报错。
 ///
-/// - 命中可自动映射的键：迁移（`map_fn` 或原样）+ `tracing::warn!`（含
-///   `since` 版本与新键名）。新键写入条件：树中缺失，**或**当前值仍等于
-///   `new_key_defaults` 中该键的默认值（默认值填充不算显式配置）；用户显式
-///   设置过新键（非默认值）时保留用户值，旧键仍移除并告警。
-/// - 命中不可自动映射的键：`current_version < 1.0.0` 时 warn 迁移指引后
-///   放行（树不变）；`≥ 1.0.0` 时计入错误。
-/// - `current_version ≥ 1.0.0`：弃用宽限窗口关闭，命中任何注册键一律计入
-///   错误（含可自动映射的键——1.0 起不再代迁）。
-/// - `map_fn` 返回 `Err`：计入错误（值无法迁移，静默丢弃即静默失效）。
-/// - `current_version` 无法解析且存在命中：fail-closed 计入错误。
-///
-/// `new_key_defaults`：新键默认值对照树（生产路径传序列化的
-/// `GarrisonConfig::default_config()`；无对照信息传 `Value::Null`，此时新键
-/// 已存在即视为显式配置不覆盖）。
-///
-/// 返回 `Err(消息列表)` 时消息已含弃用键名与迁移指引，由调用方聚合为
-/// [`GarrisonError::Config`](crate::error::GarrisonError::Config)。
-///
-/// 无命中时不解析版本、不修改树（热路径零开销）。
+/// 可映射键：迁移（`map_fn` 或原样）并 warn；新键仅在树中缺失、或其值仍等于 `new_key_defaults` 默认值（默认值填充不算显式配置）时写入，用户显式配置的新键保留、旧键移除并告警。
+/// 不可映射键：`< 1.0.0` warn 迁移指引后放行（树不变）；`>= 1.0.0` 命中任何注册键一律计入错误（宽限窗口关闭，可映射键也不再代迁）。`map_fn` 返回 `Err` 或版本无法解析且存在命中时 fail-closed 计入错误；`Err(消息列表)` 由调用方聚合为 [`GarrisonError::Config`](crate::error::GarrisonError::Config)；无命中不解析版本、不改树（热路径零开销）。
 pub fn apply_deprecations(
     tree: &mut Value,
     registry: &[Deprecation],
@@ -174,8 +114,7 @@ pub fn apply_deprecations(
                     },
                 }
             },
-            // < 1.0.0 且不可自动映射：warn 迁移指引后放行（树不变，旧键随
-            // serde 忽略，新键取默认值——显性降级）
+            // < 1.0.0 且不可自动映射：warn 指引后放行（树不变，旧键随 serde 忽略、新键取默认值）
             Ok(_) => warn_unmigrated(dep),
         }
     }
@@ -186,11 +125,7 @@ pub fn apply_deprecations(
     }
 }
 
-/// 新键是否为用户显式配置（存在且不等于默认对照值）。
-///
-/// 树中不存在 → 非显式（可写入）；存在但与默认对照相等 → 默认值填充，
-/// 非显式（可写入）；无默认对照信息（`Value::Null` 或对照树缺该键）→
-/// 保守视为显式（不覆盖）。
+/// 新键是否为用户显式配置：树中不存在或等于默认对照 → 非显式（可写入）；无默认对照信息（`Value::Null` 或对照树缺该键）保守视为显式（不覆盖）。
 fn new_key_is_explicit(new_segments: &[&str], tree: &Value, defaults: &Value) -> bool {
     let Some(current) = value_at_path(tree, new_segments) else {
         return false;
@@ -247,8 +182,7 @@ fn warn_unmigrated(dep: &Deprecation) {
 /// 解析后的 SemVer（major, minor, patch + 可选 pre-release 标识）。
 type SemVer = ((u64, u64, u64), Option<String>);
 
-/// 解析 `major[.minor[.patch]][-pre]` 形式的版本号（整段 pre-release 不参与
-/// 门判定比较，仅区分 `1.0.0-rc.1 < 1.0.0`）。
+/// 解析 `major[.minor[.patch]][-pre]` 版本号；pre-release 不参与门判定比较，仅区分 `1.0.0-rc.1 < 1.0.0`。
 fn parsed_version(version: &str) -> Result<SemVer, String> {
     let (core, pre) = match version.split_once('-') {
         Some((core, pre)) => (core, Some(pre.to_string())),

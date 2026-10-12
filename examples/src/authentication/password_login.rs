@@ -42,14 +42,8 @@ impl GarrisonInterface for NoopInterface {
     }
 }
 
-/// 运行密码登录示例。
-///
-/// 流程：
-/// 1. 初始化 SQLite + oxcache
-/// 2. 创建 Argon2Hasher 并预生成用户密码哈希
-/// 3. 注入 hasher + user_repository 到 GarrisonLogicDefault
-/// 4. 调用 `login_with_password` 验证密码并签发 token
-/// 5. 演示错误路径（用户不存在 / 密码错误，统一返回 InvalidParam 防止用户枚举）
+/// 运行密码登录示例：Argon2 哈希/校验 + `login_with_password` 端到端流程，
+/// 含错误路径（用户不存在与密码错误统一返回 InvalidParam 防止用户枚举）。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison 密码登录示例 ===\n");
 
@@ -65,8 +59,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
     let user_repo: Arc<DbnexusUserRepository> = Arc::new(DbnexusUserRepository::new(pool.clone()));
 
-    // 3. 预创建用户：login_id=1001，username="1001"
-    // login_with_password(login_id, password) 内部调用
+    // 预创建用户：login_id=1001，username="1001"；login_with_password 内部调用
     // find_by_username(0, &login_id.to_string())，故 username 必须等于 login_id 的字符串形式
     let password_plain = "my-secret-password";
     let password_hash = hasher.hash(password_plain)?;

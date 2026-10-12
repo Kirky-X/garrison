@@ -1,17 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! warp 框架 Extractor 适配器。
-//!
-//! 提供 `garrison_principal` Filter：从 `Authorization: Bearer <token>` header
-//! 解析当前登录用户 ID，返回 `GarrisonPrincipal` 供 handler 链使用。
-//!
-//! ## 设计
-//!
-//! - 与现有 `check_login` / `check_role` / `check_permission` Filter 互补：
-//!   现有 Filter 仅执行鉴权（返回 `()`），`garrison_principal` 携带
-//!   `login_id` 字段供 handler 直接读取当前用户身份。
-//! - `GarrisonPrincipal` 类型定义在 [`crate::context`] 模块，与 actix extractor 共享。
+//! warp Extractor 适配器：`garrison_principal`（Bearer token → `login_id`）与 `tenant_context`
+//! （`tenant-isolation`，从 `X-Tenant-Id` 解析）。与 check_* Filter 互补：后者仅鉴权，本模块携带身份；
+//! `GarrisonPrincipal` 类型定义在 [`crate::context`]，与 actix extractor 共享。
 //!
 //! ## 使用示例
 //!
@@ -35,21 +27,10 @@ use std::sync::Arc;
 use warp::http::HeaderMap;
 use warp::Filter;
 
-// ============================================================================
 // garrison_principal Filter：提取 login_id
-// ============================================================================
 
-/// `garrison_principal` Filter：从请求 header 提取 token 并解析 `login_id`。
-///
-/// 返回 [`Filter`]，Extract 类型为 `(GarrisonPrincipal,)`，Error 类型为 `warp::Rejection`。
-///
-/// # 参数
-///
-/// - `config`: 全局配置（决定从 header 还是 cookie 提取 token）。
-///
-/// # 错误
-///
-/// - `GarrisonRejection(GarrisonError::NotLogin)`: 未提供 token 或 token 无效。
+/// `garrison_principal` Filter：从请求 header 提取 token 并解析 `login_id`（Extract 为
+/// `(GarrisonPrincipal,)`，Error 为 `warp::Rejection`）；无 token 或无效返回 `GarrisonRejection(NotLogin)`。
 pub fn garrison_principal(
     config: Arc<GarrisonConfig>,
 ) -> impl Filter<Extract = (GarrisonPrincipal,), Error = warp::Rejection> + Clone {
@@ -80,17 +61,10 @@ pub fn garrison_principal(
         })
 }
 
-// ============================================================================
 // tenant_context Filter（feature gate tenant-isolation）
-// ============================================================================
 
-/// `tenant_context` Filter：从 `X-Tenant-Id` header 解析 `TenantContext`。
-///
-/// 返回 [`Filter`]，Extract 类型为 `(TenantContext,)`，Error 类型为 `warp::Rejection`。
-///
-/// # 错误
-///
-/// - `GarrisonRejection(GarrisonError::Config)`: `X-Tenant-Id` header 缺失或非合法 i64。
+/// `tenant_context` Filter：从 `X-Tenant-Id` header 解析 `TenantContext`；缺失或非合法 i64 返回
+/// `GarrisonRejection(Config)`。
 #[cfg(feature = "tenant-isolation")]
 pub fn tenant_context(
 ) -> impl Filter<Extract = (crate::context::tenant::TenantContext,), Error = warp::Rejection> + Clone
@@ -154,12 +128,9 @@ mod tests {
             .unwrap();
     }
 
-    // ----------------------------------------------------------------
     // garrison_principal Filter 测试
-    // ----------------------------------------------------------------
 
-    /// 验证 `garrison_principal` Filter 从 `Authorization: Bearer <token>`
-    /// header 解析出 `login_id`。
+    /// 从 `Authorization: Bearer <token>` header 解析出 `login_id`。
     #[tokio::test]
     #[serial]
     async fn garrison_principal_extracted_from_warp_request() {
@@ -181,7 +152,7 @@ mod tests {
         GarrisonManager::reset_for_test();
     }
 
-    /// 验证 `garrison_principal` Filter 在无 token 时返回 Rejection。
+    /// `garrison_principal` Filter 无 token 时返回 Rejection。
     #[tokio::test]
     #[serial]
     async fn garrison_principal_returns_rejection_without_token() {
@@ -200,7 +171,7 @@ mod tests {
         GarrisonManager::reset_for_test();
     }
 
-    /// 验证 `garrison_principal` Filter 在无效 token 时返回 Rejection。
+    /// `garrison_principal` Filter 无效 token 时返回 Rejection。
     #[tokio::test]
     #[serial]
     async fn garrison_principal_returns_rejection_with_invalid_token() {
@@ -223,16 +194,14 @@ mod tests {
     }
 }
 
-// ============================================================================
 // TenantContext Filter 测试（feature gate tenant-isolation）
-// ============================================================================
 
 #[cfg(all(test, feature = "tenant-isolation"))]
 mod tenant_tests {
     use crate::context::tenant::TenantSource;
     use serial_test::serial;
 
-    /// 验证 `tenant_context` Filter 从 `X-Tenant-Id` header 解析出 `tenant_id`。
+    /// `tenant_context` Filter 从 `X-Tenant-Id` header 解析出 `tenant_id`。
     #[tokio::test]
     #[serial]
     async fn tenant_context_extracted_from_warp_request_when_tenant_isolation_enabled() {
@@ -248,8 +217,7 @@ mod tenant_tests {
         assert_eq!(ctx.resolved_from, TenantSource::Header);
     }
 
-    /// 验证 `tenant_context` Filter 在无 `X-Tenant-Id` header 时返回 Rejection。
-    /// 缺失 header 时显式失败。
+    /// `tenant_context` Filter 无 `X-Tenant-Id` header 时返回 Rejection（显式失败）。
     #[tokio::test]
     #[serial]
     async fn tenant_context_returns_rejection_without_x_tenant_id_header() {
@@ -263,8 +231,7 @@ mod tenant_tests {
         );
     }
 
-    /// 验证 `tenant_context` Filter 在 `X-Tenant-Id` 非数字时返回 Rejection。
-    /// 非法 tenant_id 显式失败。
+    /// `tenant_context` Filter `X-Tenant-Id` 非数字时返回 Rejection（显式失败）。
     #[tokio::test]
     #[serial]
     async fn tenant_context_returns_rejection_with_non_numeric_x_tenant_id() {

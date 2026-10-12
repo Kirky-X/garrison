@@ -1,12 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! parameter_query 示例测试（parameter-query feature）。
-//!
-//! 验证 run() 完整执行（内部已包含 with_login_id / with_token / 无上下文断言）。
-//!
-//! 使用 `#[serial_test::serial]` 串行化，因为 `run()` 修改全局 `GarrisonManager` 单例
-//! （调用 `reset_for_test` + `init`），并行执行会触发 race condition。
+//! parameter_query 示例测试（parameter-query feature）：验证 run() 完整执行（内部已包含 with_login_id /
+//! with_token / 无上下文断言）；`run()` 修改全局 `GarrisonManager` 单例（reset_for_test + init），
+//! 并行执行触发 race condition，用 `#[serial_test::serial]` 串行化。
 
 #![cfg(feature = "parameter-query")]
 

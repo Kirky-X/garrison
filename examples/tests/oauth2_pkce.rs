@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! oauth2_pkce 示例测试（protocol-oauth2 feature）。
-//!
-//! 验证 run() 完整执行：PKCE S256 challenge 生成 + RFC 7636 测试向量 + 授权 URL 构造。
+//! oauth2_pkce 示例测试（protocol-oauth2 feature）：验证 run() 完整执行（PKCE S256 challenge 生成 + RFC 7636 测试向量 + 授权 URL 构造）。
 
 #![cfg(feature = "protocol-oauth2")]
 

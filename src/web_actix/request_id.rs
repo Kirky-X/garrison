@@ -1,20 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! X-Request-ID 中间件（actix-web）：提取 / 生成 / 回传请求标识。
+//! X-Request-ID 中间件（actix-web）：请求入口提取/生成请求标识（非法入站值丢弃重生成 UUID v4），
+//! 注入 [`RequestId`] 并在 task-local scope 内执行内层 service，回填 `X-Request-ID` 响应头并 instrument tracing span。
 //!
-//! Transform / Service 结构与 [`super::GarrisonMiddleware`] 一致：
-//! 请求入口提取（合法原样传播，非法丢弃重新生成 UUID v4）→
-//! `req.extensions_mut()` 注入 [`RequestId`] → 内层 service future 包在
-//! request id task-local scope → `ServiceResponse` 回填 `X-Request-ID`
-//! 响应头，并以 tracing span（`request_id` 字段）instrument。
-//!
-//! # 错误响应的渲染位置（三框架一致性约束）
-//!
-//! actix 框架在 dispatch 层（scope 外）渲染 `Err(actix_web::Error)`，若直接
-//! 传播 Err，统一错误体的 `request_id` 字段将缺失。因此本 service 在 scope 内
-//! 自行调用 `Error::error_response()` 渲染为 `Ok(ServiceResponse)`：
-//! 错误体与 `X-Request-ID` 头在同一 scope 内产出，与 axum / warp 行为一致。
+//! 三框架一致性约束：actix 在 dispatch 层（scope 外）渲染 `Err(actix_web::Error)`，直接传播会缺
+//! 错误体 `request_id`；故本 service 在 scope 内自行用 `Error::error_response()` 渲染为 `Ok(ServiceResponse)`。
 //!
 //! 头名 `X-Request-ID` 为固定常量（[`REQUEST_ID_HEADER`]），非配置项。
 
@@ -79,10 +70,8 @@ where
         let id = propagate_or_generate(inbound);
         req.extensions_mut().insert(RequestId(id.clone()));
 
-        // Err 分支需在 scope 内渲染错误响应（见模块文档），req 将随 inner.call
-        // 被 move，提前留存 HttpRequest 供 ServiceResponse 构造。actix-web 4 的
-        // HttpRequest 是 Arc 包装的官方廉价 clone；历史 BUG #8（Rc 引用计数 panic）
-        // 属 actix 3.x 的 match_info_mut 时代，4.12 不适用。
+        // Err 分支需在 scope 内渲染错误响应（见模块文档）：提前留存 HttpRequest（actix 4 是 Arc 廉价 clone）
+        // 供 ServiceResponse 构造；3.x match_info_mut 的 Rc panic 问题在 4.12 不适用。
         let http_req = req.request().clone();
 
         let span = tracing::info_span!("request_id", request_id = %id);
@@ -92,9 +81,7 @@ where
                 match fut.await {
                     Ok(res) => {
                         let mut res = res.map_into_left_body();
-                        // 结构化日志：请求完成事件携带 request_id（scope 内发出；
-                        // debug 级避免与 server::audit_log_middleware 的每请求
-                        // info 访问日志重复）
+                        // 完成事件携带 request_id（scope 内发出）；debug 级避免与 audit_log_middleware 的每请求 info 日志重复
                         tracing::debug!(
                             request_id = %id,
                             status = res.status().as_u16(),
@@ -106,10 +93,8 @@ where
                         Ok(res)
                     },
                     Err(err) => {
-                        // scope 内渲染统一错误响应：error_response() 经
-                        // GarrisonError 的 ResponseError impl 读取 task-local，
-                        // 错误体携带 request_id 字段，与 axum / warp 输出一致；
-                        // 错误日志由 error_response() 侧统一发出，此处不重复
+                        // scope 内渲染统一错误响应：error_response() 读取 task-local，错误体携带 request_id，
+                        // 与 axum / warp 输出一致；错误日志由 error_response() 侧统一发出，此处不重复。
                         let mut res = ServiceResponse::new(http_req, err.error_response())
                             .map_into_right_body();
                         if let Ok(value) = HeaderValue::from_str(id.as_ref()) {
@@ -136,9 +121,8 @@ mod tests {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    /// 内层 service 桩：回显 extensions 中的 RequestId（200）、scope 内渲染错误
-    /// （`failing`），或向外传播 `Err`（`propagating`——生产中 handler Err 的
-    /// 真实路径，覆盖中间件 Err 分支）。
+    /// 内层 service 桩：回显 extensions 中的 RequestId（200）；`failing` 在 scope 内渲染错误，
+    /// `propagating` 向外传播 `Err`（生产中 handler Err 的真实路径，覆盖中间件 Err 分支）。
     struct EchoService {
         fail: bool,
         propagate: bool,
@@ -183,8 +167,7 @@ mod tests {
                     // actix handler Err 传播路径：Err 交给中间件 Err 分支处理
                     return Box::pin(async move { Err(actix_web::Error::from(err)) });
                 }
-                // 错误响应在 EchoService 内（即 request id scope 内）渲染，
-                // 与真实链路中 ResponseError 由 scope 内渲染的行为对齐
+                // 错误响应在 EchoService 内（即 scope 内）渲染，与真实链路中 ResponseError 的渲染位置对齐
                 return Box::pin(async move {
                     use actix_web::ResponseError;
                     Ok(ServiceResponse::new(http_req, err.error_response()))
@@ -251,9 +234,8 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&body), "actix-corr-001");
     }
 
-    /// 内层 service 向外传播 Err（生产中 handler `Err(actix_web::Error)` 的真实
-    /// 路径）：中间件 Err 分支同样注入 `X-Request-ID`，错误体携带同值
-    /// `request_id` 字段，且不向外传播 Err（三框架 in-scope 渲染一致性保证）。
+    /// 内层 service 向外传播 Err（生产中 handler `Err(actix_web::Error)` 的真实路径）：中间件 Err 分支
+    /// 同样注入 `X-Request-ID` 且不向外传播，错误体携带同值 `request_id`（三框架 in-scope 渲染一致性）。
     #[tokio::test]
     async fn propagated_err_rendered_with_request_id() {
         let res = run_call_with(
@@ -276,8 +258,7 @@ mod tests {
         );
     }
 
-    /// 超长入站值（> 128 字节，http 层可构造的唯一非法类）重新生成合法 UUID。
-    /// CRLF / 非 ASCII 的注入防护由 http 框架头解析与
+    /// 超长入站值（> 128 字节）被丢弃并重生成 UUID；CRLF / 非 ASCII 注入防护由框架头解析与
     /// `context::request_id::propagate_or_generate` 纯函数测试覆盖。
     #[tokio::test]
     async fn invalid_inbound_id_regenerated() {
@@ -311,8 +292,7 @@ mod tests {
         assert_eq!(parsed.get_version_num(), 4);
     }
 
-    /// 错误响应在 scope 内渲染：X-Request-ID 头与 body.request_id 一致，
-    /// 状态码与统一体字段（error_code / error_id / code）正确。
+    /// 错误响应在 scope 内渲染：X-Request-ID 头与 body.request_id 一致，状态码与统一体字段正确。
     #[tokio::test]
     async fn error_response_header_matches_body_request_id() {
         let res = run_call(true, Some(("X-Request-ID", "actix-err-corr-001"))).await;
@@ -356,11 +336,8 @@ mod tests {
         }
     }
 
-    /// 初始化线程局部捕获订阅者并重建 callsite interest 缓存。
-    ///
-    /// tracing 的 interest 缓存是进程级全局态：并行运行的非订阅者测试可能抢先
-    /// 首次注册事件 callsite 并缓存 `Interest::never`（事件被宏直接剔除，与本
-    /// 线程订阅者无关），故 set_default 后必须显式重建，捕获缺失时重试。
+    /// 初始化线程局部捕获订阅者并重建 callsite interest 缓存：interest 缓存是进程级全局态，
+    /// 并行运行的非订阅者测试可能抢先注册事件并缓存 `Interest::never`（事件被宏剔除），故必须显式重建。
     fn init_capture(
         logs: &std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
     ) -> tracing::subscriber::DefaultGuard {
@@ -371,8 +348,7 @@ mod tests {
         guard
     }
 
-    /// tracing 捕获断言：完成事件为 debug 级（避免与 audit_log_middleware 的
-    /// info 访问日志重复）且携带 request_id 字段。
+    /// tracing 捕获断言：完成事件为 debug 级（避免与 audit_log_middleware 的 info 日志重复）且携带 request_id 字段。
     #[tokio::test]
     #[serial]
     async fn tracing_event_carries_request_id_field() {

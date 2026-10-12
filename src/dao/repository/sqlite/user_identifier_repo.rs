@@ -12,7 +12,7 @@ use dbnexus::sea_orm::ConnectionTrait;
 use dbnexus::DbPool;
 
 impl DbnexusUserIdentifierRepository {
-    /// 创建实例。
+    /// 创建仓库实例。
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
@@ -43,10 +43,10 @@ impl UserIdentifierRepository for DbnexusUserIdentifierRepository {
         match conn.execute_raw(stmt).await {
             Ok(_) => Ok(RegisterOutcome::Registered),
             Err(e) => {
-                // 唯一约束冲突（全局主键 id_type+id_value）：按租户作用域回查归属——
+                // 唯一约束冲突（全局主键 id_type+id_value）按租户作用域回查归属：
                 // 同租户冲突返回 Taken；他租户占用（或冲突行并发消失）返回中性
-                // Registered（不向他租户泄露 by_user_id，渗透-租户隔离-标识符注册表-1）。
-                // 无法识别冲突时 fail-loud 透传，不静默吞错
+                // Registered，不向他租户泄露 by_user_id（渗透-租户隔离-标识符注册表-1）；
+                // 无法识别的冲突 fail-loud 透传，不静默吞错。
                 let msg = format!("{}", e);
                 if msg.contains("UNIQUE") || msg.contains("unique") || msg.contains("Duplicate") {
                     match self
@@ -55,9 +55,8 @@ impl UserIdentifierRepository for DbnexusUserIdentifierRepository {
                     {
                         Some(by_user_id) => Ok(RegisterOutcome::Taken { by_user_id }),
                         None => {
-                            // UNIQUE 命中但回查为空：冲突行并发消失，INSERT 实际未落库。
-                            // 显性告警而非静默假成功（规则11）；中性 Registered 的
-                            // 防跨租户泄露语义不变（渗透-租户隔离-标识符注册表-1）。
+                            // UNIQUE 命中但回查为空：冲突行并发消失，INSERT 实际未落库；
+                            // 显性告警而非静默假成功，中性 Registered 的防跨租户泄露语义不变。
                             tracing::warn!(
                                 id_type = %id_type,
                                 "identifier register: unique conflict row vanished before tenant-scoped recheck, returning neutral Registered"
@@ -130,7 +129,6 @@ mod tests {
     use super::*;
     use crate::dao::repository::sqlite::test_support::setup_db;
 
-    /// 同租户冲突返回 Taken{by_user_id}（原语义保持，租户内归属可回显）。
     #[tokio::test(flavor = "multi_thread")]
     async fn register_same_tenant_conflict_returns_taken() {
         let pool = setup_db().await;
@@ -155,14 +153,12 @@ mod tests {
         );
     }
 
-    /// 跨租户注册同名标识返回中性 Registered，不泄露他租户 user_id
-    /// （渗透-租户隔离-标识符注册表-1 回归）。
+    /// 跨租户冲突返回中性 Registered、不泄露他租户 user_id（渗透-租户隔离-标识符注册表-1 回归）。
     #[tokio::test(flavor = "multi_thread")]
     async fn register_cross_tenant_conflict_is_neutral_without_owner_leak() {
         let pool = setup_db().await;
         let repo = DbnexusUserIdentifierRepository::new(pool);
 
-        // 租户 1 占用标识
         let first = repo
             .register(1, "email", "victim@mail.com", "user-tenant-A")
             .await

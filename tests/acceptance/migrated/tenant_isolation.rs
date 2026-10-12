@@ -11,11 +11,7 @@
 //! cargo test --features "tenant-isolation audit-log db-sqlite decision-trace cache-memory" --test tenant_isolation_integration
 //! ```
 //!
-//! # production-mock-purge
-//!
-//! NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化
-//! （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
-//! 本文件 `MockInterface` 替身提供 `login_id="1001"` 的权限数据）。
+//! 库层无产品 `GarrisonInterface` 实现，本文件 `MockInterface` 替身提供 `login_id="1001"` 的权限数据。
 
 #[cfg(all(
     feature = "tenant-isolation",
@@ -59,15 +55,10 @@ mod tenant_audit_decision_e2e {
         }
     }
 
-    /// 验证租户 42 用户 1001 的权限校验全链路：
-    /// `check_permission` → `authorize` → `Decision` → 广播 `PermissionCheck` → `AuditLogListener` 写入。
-    ///
-    /// 断言：
-    /// 1. `check_permission("user:read")` 返回 `Ok(())`
-    /// 2. `authorize()` 返回 `Decision { allowed: true, reason: ExplicitAllow }`
-    /// 3. `audit_logs` 表存在 `tenant_id=42, event_type="permission_check"` 的记录
-    ///
-    /// 租户 A 的数据对租户 B 不可见（tenant_id 强制过滤）。
+    /// 验证租户 42 用户 1001 的权限校验全链路：`check_permission` → `authorize` →
+    /// `Decision` → 广播 `PermissionCheck` → `AuditLogListener` 写入；断言
+    /// `check_permission` 返回 `Ok(())`、`authorize` 返回 `ExplicitAllow`、
+    /// `audit_logs` 存在对应记录，且租户 A 的数据对租户 B 不可见（tenant_id 强制过滤）。
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn tenant_isolation_with_audit_log_and_decision_trace_e2e() {

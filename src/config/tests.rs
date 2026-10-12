@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! config 模块测试（从 mod.rs 迁移）。
+//! config 模块测试。
 
 // jwt_secret 的 `.into()` 是跨 feature 兼容的必要转换：protocol-zeroize 下字段
 // 类型为 Zeroizing<String>（String→Zeroizing<String>），feature 关闭时退化为
@@ -12,16 +12,9 @@ use super::*;
 use crate::error::GarrisonError;
 use serial_test::serial;
 
-/// panic 安全的环境变量守卫。
+/// panic 安全的环境变量守卫：Drop（含 unwind）时 remove_var，防断言 panic 后变量残留污染共享进程 env 的 serial 测试。
 ///
-/// 原环境变量测试在测试末尾手动 `remove_var`：一旦断言 panic，清理被跳过，
-/// 变量残留会污染后续（共享进程 env 的）serial 测试。守卫在 Drop（含 unwind）
-/// 时移除变量，保证 panic 路径同样清理。
-///
-/// 互斥规则：`#[serial]` 只让 serial 测试彼此互斥，挡不住并行的非 serial
-/// 测试；而 confers `EnvSource` 读进程级 `std::env`。因此凡设置环境变量的
-/// 测试与凡调用 `load()`（经 EnvSource 读 env）的测试一律 `#[serial]`，
-/// 两组同处一个互斥队列，读侧与写侧才不会交错。
+/// 互斥规则：设置环境变量的测试与调用 `load()`（经 confers `EnvSource` 读进程 env）的测试一律 `#[serial]`，读侧与写侧同队列才不交错。
 struct EnvVarGuard {
     keys: Vec<String>,
 }
@@ -46,8 +39,7 @@ impl Drop for EnvVarGuard {
 
 // jwt_secret 用 Zeroizing<String> 自动 zeroize on Drop 测试
 
-/// 编译期断言：protocol-zeroize feature 下 jwt_secret 字段类型为 Zeroizing<String>，
-/// Drop 时自动 zeroize。如果有人改回 String，此测试将编译失败。
+/// 编译期断言：protocol-zeroize 下 jwt_secret 为 `Zeroizing<String>`（Drop 自动 zeroize），改回 String 即编译失败。
 #[cfg(feature = "protocol-zeroize")]
 #[test]
 fn jwt_secret_is_zeroizing_type_when_protocol_zeroize() {
@@ -57,12 +49,8 @@ fn jwt_secret_is_zeroizing_type_when_protocol_zeroize() {
     assert_zeroizing(&cfg.jwt_secret);
 }
 
-/// 验证 Zeroizing<String> zeroize 后 buffer 内容被清零。
-///
-/// `Zeroizing<T>::drop` 内部调用 `T::zeroize()`，此测试直接调用 `zeroize()`
-/// 验证同一行为（Drop 后访问字段是 UB，因为 String::drop 释放 buffer）。
-/// 测试逻辑：zeroize() 清零 buffer 内容但不释放 buffer（String 仍持有 capacity），
-/// 所以 ptr 在 zeroize 后仍指向有效内存，可安全读取验证全 0。
+/// zeroize 后 buffer 内容被清零（`Zeroizing::drop` 内部调 `T::zeroize()`，测试直接调用同一方法；Drop 后访问字段是 UB）。
+/// zeroize 不释放 buffer（String 仍持有 capacity），ptr 仍有效可安全读取验证全 0。
 #[cfg(feature = "protocol-zeroize")]
 #[test]
 fn zeroizing_string_drop_clears_buffer() {
@@ -98,11 +86,8 @@ fn write_temp_toml(content: &str) -> tempfile::NamedTempFile {
     file
 }
 
-// ========================================================================
-// 代码默认值测试（spec Scenario: 代码默认值生效）
-// ========================================================================
+// 代码默认值测试
 
-/// 验证 default_config() 返回符合 spec 的默认值。
 #[test]
 fn default_config_matches_spec() {
     let config = GarrisonConfig::default_config();
@@ -113,31 +98,25 @@ fn default_config_matches_spec() {
     assert!(config.is_read_cookie);
     assert!(config.is_read_header);
     assert!(config.is_write_header);
-    // 字段默认值
     assert_eq!(config.jwt_algorithm, "HS256");
     assert_eq!(config.sign_window_seconds, 300);
     assert_eq!(config.sso_ticket_ttl_seconds, 60);
 }
 
-// ========================================================================
 // is_write_cookie 配置测试
-// ========================================================================
 
-/// `default_config()` 的 `is_write_cookie` 为 false。
 #[test]
 fn default_is_write_cookie_is_false() {
     let config = GarrisonConfig::default_config();
     assert!(!config.is_write_cookie, "默认 is_write_cookie 应为 false");
 }
 
-/// `default_config()` 的 `is_write_header` 为 true（验证已有字段）。
 #[test]
 fn default_is_write_header_is_true() {
     let config = GarrisonConfig::default_config();
     assert!(config.is_write_header, "默认 is_write_header 应为 true");
 }
 
-/// 可自定义 `is_write_cookie` 为 true。
 #[test]
 fn custom_is_write_cookie_can_be_set() {
     let mut config = GarrisonConfig::default_config();
@@ -146,7 +125,6 @@ fn custom_is_write_cookie_can_be_set() {
     assert!(config.validate().is_ok(), "is_write_cookie=true 应通过校验");
 }
 
-/// `is_write_header` 和 `is_write_cookie` 可同时为 true。
 #[test]
 fn both_is_write_header_and_is_write_cookie_can_be_true() {
     let mut config = GarrisonConfig::default_config();
@@ -157,7 +135,6 @@ fn both_is_write_header_and_is_write_cookie_can_be_true() {
     assert!(config.validate().is_ok(), "两者同时为 true 应通过校验");
 }
 
-/// 验证 Default::default() 等价于 default_config()。
 #[test]
 fn default_trait_eq_default_config() {
     let d = GarrisonConfig::default();
@@ -167,11 +144,8 @@ fn default_trait_eq_default_config() {
     assert_eq!(d.throw_on_not_login, dc.throw_on_not_login);
 }
 
-// ========================================================================
-// 配置校验测试（spec Requirement: 配置校验）
-// ========================================================================
+// 配置校验测试
 
-/// 验证非法 token_style 抛错（spec Scenario: 非法 token_style）。
 #[test]
 fn validate_rejects_invalid_token_style() {
     let mut config = GarrisonConfig::default_config();
@@ -186,7 +160,6 @@ fn validate_rejects_invalid_token_style() {
     );
 }
 
-/// 验证 timeout = -1 抛错（spec Scenario: timeout 为负数）。
 #[test]
 fn validate_rejects_negative_timeout() {
     let mut config = GarrisonConfig::default_config();
@@ -201,7 +174,6 @@ fn validate_rejects_negative_timeout() {
     );
 }
 
-/// 验证 timeout = 0 抛错。
 #[test]
 fn validate_rejects_zero_timeout() {
     let mut config = GarrisonConfig::default_config();
@@ -209,10 +181,7 @@ fn validate_rejects_zero_timeout() {
     assert!(config.validate().is_err());
 }
 
-/// 验证所有合法 token_style 通过校验。
-///
-/// simple 风格自 静态-配置与部署-6 起 jwt_secret 即 HMAC 签名密钥，同 jwt 一样
-/// 要求 ≥32B 强密钥（空/短密钥硬错误），循环内一并补齐。
+/// 循环内为 simple 风格补齐 ≥32B 强密钥（simple 的 jwt_secret 即 HMAC 签名密钥，同 jwt 要求）。
 #[test]
 #[cfg_attr(not(feature = "protocol-zeroize"), allow(clippy::useless_conversion))]
 fn validate_accepts_all_legal_token_styles() {
@@ -231,17 +200,13 @@ fn validate_accepts_all_legal_token_styles() {
     }
 }
 
-/// 验证默认配置通过校验。
 #[test]
 fn default_config_validates_ok() {
     let config = GarrisonConfig::default_config();
     assert!(config.validate().is_ok());
 }
 
-/// 验证 token_style=jwt 但 jwt_secret 为空时校验失败。
-///
-/// 配置校验——jwt_secret 不能为空当 token_style=jwt，
-/// 防止攻击者用公开的空字符串密钥伪造 JWT。
+/// jwt_secret 为空（token_style=jwt）应拒绝，防空字符串密钥伪造 JWT。
 #[test]
 fn validate_rejects_empty_jwt_secret_when_token_style_is_jwt() {
     let mut config = GarrisonConfig::default_config();
@@ -261,9 +226,7 @@ fn validate_rejects_empty_jwt_secret_when_token_style_is_jwt() {
     }
 }
 
-/// 验证 token_style=jwt 且 jwt_secret 短于 32 字节（HS256）时校验失败。
-///
-/// 弱密钥易被离线爆破，validate() 应拒绝（CWE-326 防御）。
+/// jwt_secret 短于 32B（HS256）应拒绝（弱密钥易离线爆破，CWE-326 防御）。
 #[test]
 fn validate_rejects_short_jwt_secret_hs256() {
     let mut config = GarrisonConfig::default_config();
@@ -282,7 +245,7 @@ fn validate_rejects_short_jwt_secret_hs256() {
     }
 }
 
-/// 验证 HS512 算法下 jwt_secret 短于 64 字节时校验失败（即使已满足 HS256 的 32 字节）。
+/// HS512 短于 64B 拒绝（即使已满足 HS256 的 32B）。
 #[test]
 fn validate_rejects_short_jwt_secret_hs512() {
     let mut config = GarrisonConfig::default_config();
@@ -302,7 +265,7 @@ fn validate_rejects_short_jwt_secret_hs512() {
     }
 }
 
-/// 验证 HS384 算法下 jwt_secret 短于 48 字节时校验失败（即使已满足 HS256 的 32 字节）。
+/// HS384 短于 48B 拒绝（即使已满足 HS256 的 32B）。
 #[test]
 fn validate_rejects_short_jwt_secret_hs384() {
     let mut config = GarrisonConfig::default_config();
@@ -322,7 +285,7 @@ fn validate_rejects_short_jwt_secret_hs384() {
     }
 }
 
-/// 验证 jwt_algorithm 不在白名单内时校验失败（防拼写错误静默走 32 字节分支）。
+/// jwt_algorithm 不在白名单应拒绝（防拼写错误静默走 32B 分支）。
 #[test]
 fn validate_rejects_unknown_jwt_algorithm() {
     let mut config = GarrisonConfig::default_config();
@@ -341,12 +304,7 @@ fn validate_rejects_unknown_jwt_algorithm() {
     }
 }
 
-/// 验证 token_style=simple 且 jwt_secret 短于 32 字节时校验失败。
-///
-/// simple 风格的 jwt_secret 直接作为 HMAC-SHA256 签名密钥（`SimpleTokenStyle`），
-/// 弱密钥可离线爆破，安全关键。rc 阶段接受 breaking：原 warn 不阻断与
-/// `SimpleTokenStyle::generate` 的运行时 fail-closed（`core-simple-secret-too-short`）
-/// 不一致，现配置层对齐硬错误，错误信息注明升级指引。
+/// simple 的 jwt_secret 直接作 HMAC-SHA256 签名密钥，弱密钥可离线爆破：配置层硬错误对齐运行时 `core-simple-secret-too-short` 的 fail-closed，错误信息含升级指引。
 #[test]
 fn validate_rejects_short_secret_for_simple_style() {
     let mut config = GarrisonConfig::default_config();
@@ -354,19 +312,23 @@ fn validate_rejects_short_secret_for_simple_style() {
     config.jwt_secret = "weak".to_string().into(); // 4 字节 < 32
     match config.validate() {
         Err(GarrisonError::Config(msg)) => {
+            // 原始 detail 只带结构化 key + 参数；升级指引在 locales/{en,zh}.ftl 模板内
             assert!(
-                msg.contains("config-jwt-secret-too-short")
-                    && msg.contains("min 32")
-                    && msg.contains("openssl rand"),
-                "simple 短密钥错误应含长度约束与升级指引，实际: {}",
+                msg.contains("config-jwt-secret-too-short") && msg.contains("min 32"),
+                "simple 短密钥错误应含长度约束，实际: {}",
                 msg
+            );
+            let localized = crate::i18n::translate_error(&GarrisonError::Config(msg));
+            assert!(
+                localized.contains("openssl rand"),
+                "simple 短密钥错误应含升级指引（按 locale 取值），实际: {}",
+                localized
             );
         },
         other => panic!("simple 风格短密钥应被拒绝，实际: {:?}", other),
     }
 }
 
-/// 验证 ≥32 字节的 jwt_secret 在 HS256 下通过校验。
 #[test]
 fn validate_accepts_strong_jwt_secret_hs256() {
     let mut config = GarrisonConfig::default_config();
@@ -376,7 +338,6 @@ fn validate_accepts_strong_jwt_secret_hs256() {
     assert!(config.validate().is_ok(), "32 字节密钥应通过 HS256 校验");
 }
 
-/// 验证 HS384 算法下 ≥48 字节 jwt_secret 通过校验。
 #[test]
 fn validate_accepts_strong_jwt_secret_hs384() {
     let mut config = GarrisonConfig::default_config();
@@ -386,7 +347,6 @@ fn validate_accepts_strong_jwt_secret_hs384() {
     assert!(config.validate().is_ok(), "48 字节密钥应通过 HS384 校验");
 }
 
-/// 验证 HS512 算法下 ≥64 字节 jwt_secret 通过校验。
 #[test]
 fn validate_accepts_strong_jwt_secret_hs512() {
     let mut config = GarrisonConfig::default_config();
@@ -396,14 +356,9 @@ fn validate_accepts_strong_jwt_secret_hs512() {
     assert!(config.validate().is_ok(), "64 字节密钥应通过 HS512 校验");
 }
 
-// ========================================================================
-// JWT 弱密钥黑名单（静态-配置与部署-6）
-// ========================================================================
+// JWT 弱密钥黑名单
 
-/// 验证 jwt 风格下 32 字节填充变体弱密钥被拒（过长度校验、命中黑名单）。
-///
-/// "changeme" + 24 个 '_' = 32 字节：仅靠长度校验拦不住可预测密钥，
-/// 黑名单剥离填充字符后整串比对（忽略大小写）。
+/// "changeme" + 24 个 '_'（32B）过长度校验但命中黑名单：可预测密钥剥离填充字符后整串比对（忽略大小写）被拒。
 #[test]
 fn validate_rejects_weak_padded_jwt_secret_hs256() {
     let mut config = GarrisonConfig::default_config();
@@ -422,7 +377,6 @@ fn validate_rejects_weak_padded_jwt_secret_hs256() {
     }
 }
 
-/// 验证弱密钥黑名单忽略大小写（jwt/HS512，满足长度仍拒）。
 #[test]
 fn validate_rejects_weak_jwt_secret_case_insensitive() {
     let mut config = GarrisonConfig::default_config();
@@ -430,28 +384,29 @@ fn validate_rejects_weak_jwt_secret_case_insensitive() {
     config.jwt_algorithm = "HS512".to_string();
     config.jwt_secret = format!("PASSWORD{}", "-".repeat(56)).into(); // 64 字节
     let err = config.validate().expect_err("大写弱密钥填充变体应被拒绝");
+    let display = err.to_string();
     assert!(
-        err.to_string().contains("config-jwt-secret-weak"),
-        "实际: {}",
-        err
+        display.contains("jwt_secret") && display.contains("blacklist"),
+        "弱密钥 Display 应含密钥字段与命中原因，实际: {}",
+        display
     );
 }
 
-/// 验证 simple 风格弱密钥（满足 32 字节长度）同样命中黑名单。
 #[test]
 fn validate_rejects_weak_secret_for_simple_style() {
     let mut config = GarrisonConfig::default_config();
     config.token_style = "simple".to_string();
     config.jwt_secret = format!("letmein{}", ".".repeat(25)).into(); // 32 字节
     let err = config.validate().expect_err("simple 弱密钥应被拒绝");
+    let display = err.to_string();
     assert!(
-        err.to_string().contains("config-jwt-secret-weak"),
-        "实际: {}",
-        err
+        display.contains("jwt_secret") && display.contains("blacklist"),
+        "弱密钥 Display 应含密钥字段与命中原因，实际: {}",
+        display
     );
 }
 
-/// 验证强密钥包含弱密钥子串不误伤（黑名单为整串匹配，非子串匹配）。
+/// 强密钥含弱密钥子串不误伤（黑名单整串匹配，非子串）。
 #[test]
 fn validate_accepts_strong_secret_containing_weak_substring() {
     let mut config = GarrisonConfig::default_config();
@@ -462,12 +417,7 @@ fn validate_accepts_strong_secret_containing_weak_substring() {
     assert!(config.validate().is_ok(), "含弱密钥子串的强密钥不应被误伤");
 }
 
-/// 验证各 token_style × 空/弱/强 jwt_secret 的校验矩阵。
-///
-/// - `uuid` / `random_64`：CSPRNG 不透明 token，签名不消费 jwt_secret，
-///   空/弱均放行（维持宽松默认，不迫使非 JWT 部署配置无意义密钥）
-/// - `simple`：空（<32B）硬错误
-/// - `jwt` + 非对称算法：强度由 PEM 决定，jwt_secret 空放行（既有语义）
+/// 校验矩阵：uuid/random_64（CSPRNG 不消费 jwt_secret）空弱均放行；simple 空（<32B）硬错误；jwt+非对称算法强度由 PEM 决定、空 secret 放行。
 #[test]
 fn validate_jwt_secret_style_matrix() {
     for style in ["uuid", "random_64"] {
@@ -502,11 +452,8 @@ fn validate_jwt_secret_style_matrix() {
     );
 }
 
-// ========================================================================
-// remember_me 配置测试（spec R-session-lifecycle-004）
-// ========================================================================
+// remember_me 配置测试
 
-/// 验证 remember_me 默认值：enabled=false, timeout=7776000（90 天）。
 #[test]
 fn remember_me_defaults() {
     let config = GarrisonConfig::default_config();
@@ -515,7 +462,6 @@ fn remember_me_defaults() {
     assert_eq!(config.remember_me_timeout, 7_776_000);
 }
 
-/// 验证 remember_me_enabled=true 且 remember_me_timeout > timeout 时校验通过。
 #[test]
 fn validate_remember_me_ok_when_timeout_greater() {
     let mut config = GarrisonConfig::default_config();
@@ -524,7 +470,6 @@ fn validate_remember_me_ok_when_timeout_greater() {
     assert!(config.validate().is_ok());
 }
 
-/// 验证 remember_me_enabled=true 且 remember_me_timeout <= timeout 时校验失败。
 #[test]
 fn validate_remember_me_fails_when_timeout_not_greater() {
     let mut config = GarrisonConfig::default_config();
@@ -546,7 +491,6 @@ fn validate_remember_me_fails_when_timeout_not_greater() {
 }
 
 #[serial]
-/// 验证 remember_me_enabled=false 时 remember_me_timeout 仅需 > 0。
 #[test]
 fn validate_remember_me_disabled_only_checks_positive() {
     let mut config = GarrisonConfig::default_config();
@@ -556,7 +500,6 @@ fn validate_remember_me_disabled_only_checks_positive() {
 }
 
 #[serial]
-/// 验证 remember_me_enabled=false 且 remember_me_timeout <= 0 时校验失败。
 #[test]
 fn validate_remember_me_fails_when_timeout_non_positive() {
     let mut config = GarrisonConfig::default_config();
@@ -565,7 +508,6 @@ fn validate_remember_me_fails_when_timeout_non_positive() {
     assert!(config.validate().is_err());
 }
 
-/// 验证 toml 可覆盖 remember_me 字段。
 #[test]
 #[serial]
 fn toml_overrides_remember_me() {
@@ -580,7 +522,6 @@ remember_me_timeout = 9999999
     assert_eq!(config.remember_me_timeout, 9999999);
 }
 
-/// 验证环境变量可覆盖 remember_me 字段。
 #[test]
 #[serial]
 fn env_overrides_remember_me() {
@@ -595,18 +536,14 @@ fn env_overrides_remember_me() {
     assert_eq!(config.remember_me_timeout, 9999999);
 }
 
-// ========================================================================
 // session_hover_timeout 配置测试
-// ========================================================================
 
-/// `GarrisonConfig::default()` 的 `session_hover_timeout` 为 -1（不启用）。
 #[test]
 fn config_default_session_hover_is_negative_one() {
     let config = GarrisonConfig::default_config();
     assert_eq!(config.session_hover_timeout, -1);
 }
 
-/// `session_hover_timeout` 超过 10 年（315_360_000 秒）上界时校验应拒绝。
 #[test]
 fn config_rejects_session_hover_timeout_above_max() {
     let mut config = GarrisonConfig::default_config();
@@ -618,7 +555,6 @@ fn config_rejects_session_hover_timeout_above_max() {
     );
 }
 
-/// `session_hover_timeout` 等于上界（10 年）时校验应通过。
 #[test]
 fn config_accepts_session_hover_timeout_at_max() {
     let mut config = GarrisonConfig::default_config();
@@ -629,11 +565,8 @@ fn config_accepts_session_hover_timeout_at_max() {
     );
 }
 
-// ========================================================================
 // frontend_separation 配置测试
-// ========================================================================
 
-/// `GarrisonConfig::default()` 的 `frontend_separation` 为 false。
 #[serial]
 #[test]
 fn config_default_frontend_separation_is_false() {
@@ -641,7 +574,6 @@ fn config_default_frontend_separation_is_false() {
     assert!(!config.frontend_separation);
 }
 
-/// `GARRISON_FRONTEND_SEPARATION=true` 环境变量覆盖配置为 true。
 #[test]
 #[serial]
 fn env_overrides_frontend_separation() {
@@ -650,7 +582,6 @@ fn env_overrides_frontend_separation() {
     assert!(config.frontend_separation);
 }
 
-/// `frontend_separation=true` 时 `validate()` 不报错。
 #[serial]
 #[test]
 fn validate_accepts_frontend_separation_true() {
@@ -659,11 +590,8 @@ fn validate_accepts_frontend_separation_true() {
     assert!(config.validate().is_ok());
 }
 
-// ========================================================================
 // toml 文件覆盖测试
-// ========================================================================
 
-/// 验证 toml 覆盖默认值，其他字段保持默认。
 #[test]
 #[serial]
 fn toml_overrides_token_style() {
@@ -674,7 +602,6 @@ fn toml_overrides_token_style() {
     assert!(config.throw_on_not_login);
 }
 
-/// 验证 toml 多字段覆盖。
 #[test]
 #[serial]
 fn toml_overrides_multiple_fields() {
@@ -696,7 +623,6 @@ jwt_secret = "test-secret-0123456789abcdefghij"
     assert!(config.is_read_header);
 }
 
-/// 验证无 toml 文件时返回默认配置。
 #[test]
 #[serial]
 fn no_file_returns_default() {
@@ -706,7 +632,6 @@ fn no_file_returns_default() {
 }
 
 #[serial]
-/// 验证 toml 解析错误返回 Config 错误。
 #[test]
 fn invalid_toml_returns_config_error() {
     let temp = write_temp_toml("this is not = valid = toml =");
@@ -716,7 +641,6 @@ fn invalid_toml_returns_config_error() {
 }
 
 #[serial]
-/// 验证 toml 中的非法值在 validate 阶段被拒绝。
 #[test]
 fn toml_invalid_token_style_rejected() {
     let temp = write_temp_toml(r#"token_style = "unknown""#);
@@ -725,11 +649,8 @@ fn toml_invalid_token_style_rejected() {
     assert!(matches!(result, Err(GarrisonError::Config(_))));
 }
 
-// ========================================================================
 // 环境变量覆盖测试
-// ========================================================================
 
-/// 验证环境变量优先级高于 toml 配置。
 #[test]
 #[serial]
 fn env_overrides_toml() {
@@ -748,7 +669,6 @@ jwt_secret = "test-secret-0123456789abcdefghij""#,
     assert_eq!(config.token_style, "jwt");
 }
 
-/// 验证布尔环境变量解析。
 #[test]
 #[serial]
 fn env_boolean_parsing() {
@@ -763,7 +683,6 @@ fn env_boolean_parsing() {
     assert!(!config.throw_on_not_login);
 }
 
-/// 验证环境变量非法值抛错。
 #[test]
 #[serial]
 fn env_invalid_value_errors() {
@@ -772,7 +691,6 @@ fn env_invalid_value_errors() {
     assert!(result.is_err());
 }
 
-/// 验证完整加载流程 load()：默认值 + toml + 环境变量。
 #[test]
 #[serial]
 fn load_full_pipeline() {
@@ -784,11 +702,8 @@ fn load_full_pipeline() {
     assert_eq!(config.token_style, "uuid");
 }
 
-// ========================================================================
 // 热更新测试
-// ========================================================================
 
-/// 验证 watch() 返回 receiver，update() 广播新值。
 #[test]
 fn watch_and_update_broadcasts() {
     let config = GarrisonConfig::default_config();
@@ -800,7 +715,6 @@ fn watch_and_update_broadcasts() {
     assert_eq!(new_config.timeout, 3600);
 }
 
-/// 验证 update() 闭包可以修改多个字段。
 #[test]
 #[cfg_attr(not(feature = "protocol-zeroize"), allow(clippy::useless_conversion))]
 fn update_modifies_multiple_fields() {
@@ -822,7 +736,6 @@ fn update_modifies_multiple_fields() {
     assert!(!new_config.throw_on_not_login);
 }
 
-/// 验证 update() 中非法值被拒绝（不广播）。
 #[test]
 fn update_rejects_invalid_value() {
     let config = GarrisonConfig::default_config();
@@ -835,7 +748,6 @@ fn update_rejects_invalid_value() {
     assert_eq!(current.token_style, "uuid");
 }
 
-/// 验证 update() 中 timeout = -1 被拒绝。
 #[test]
 fn update_rejects_negative_timeout() {
     let config = GarrisonConfig::default_config();
@@ -848,10 +760,7 @@ fn update_rejects_negative_timeout() {
     assert_eq!(current.timeout, DEFAULT_TIMEOUT);
 }
 
-/// 验证无 watcher 的实例 update() 是 no-op。
-///
-/// 不再手动罗列全部字段构造 `GarrisonConfig`（新增字段即编译失败），
-/// 改为 `default_config()` 后移除 watcher（字段对本 crate 子模块可见）。
+/// default_config() 后移除 watcher 构造"未启用 watcher"实例（不罗列全部字段，新增字段即编译失败）。
 #[test]
 fn update_without_watcher_is_noop() {
     let mut config = GarrisonConfig::default_config();
@@ -861,11 +770,8 @@ fn update_without_watcher_is_noop() {
     assert!(config.watch().is_none());
 }
 
-// ========================================================================
 // 序列化测试
-// ========================================================================
 
-/// 验证序列化为 toml 往返一致。
 #[test]
 fn serialize_deserialize_toml_roundtrip() {
     let mut config = GarrisonConfig::default_config();
@@ -881,7 +787,6 @@ fn serialize_deserialize_toml_roundtrip() {
     assert_eq!(parsed.token_style, "jwt");
 }
 
-/// 验证序列化为 json 往返一致。
 #[test]
 fn serialize_deserialize_json_roundtrip() {
     let mut config = GarrisonConfig::default_config();
@@ -897,7 +802,6 @@ fn serialize_deserialize_json_roundtrip() {
     assert!(!parsed.is_read_cookie);
 }
 
-/// 验证 watcher 字段不被序列化。
 #[test]
 fn watcher_not_serialized() {
     let config = GarrisonConfig::default_config();
@@ -906,11 +810,8 @@ fn watcher_not_serialized() {
     assert!(!json_str.contains("sender"));
 }
 
-// ========================================================================
 // 环境变量覆盖错误路径测试（confers 处理，错误类型为 Config）
-// ========================================================================
 
-/// 验证 GARRISON_IS_READ_COOKIE 非法布尔值时 load 抛错。
 #[test]
 #[serial]
 fn env_invalid_is_read_cookie_errors() {
@@ -920,7 +821,6 @@ fn env_invalid_is_read_cookie_errors() {
     assert!(matches!(result, Err(GarrisonError::Config(_))));
 }
 
-/// 验证 GARRISON_IS_READ_HEADER 非法布尔值时 load 抛错。
 #[test]
 #[serial]
 fn env_invalid_is_read_header_errors() {
@@ -930,7 +830,6 @@ fn env_invalid_is_read_header_errors() {
     assert!(matches!(result, Err(GarrisonError::Config(_))));
 }
 
-/// 验证 GARRISON_IS_WRITE_HEADER 非法布尔值时 load 抛错。
 #[test]
 #[serial]
 fn env_invalid_is_write_header_errors() {
@@ -940,7 +839,6 @@ fn env_invalid_is_write_header_errors() {
     assert!(matches!(result, Err(GarrisonError::Config(_))));
 }
 
-/// 验证 GARRISON_THROW_ON_NOT_LOGIN 非法布尔值时 load 抛错。
 #[test]
 #[serial]
 fn env_invalid_throw_on_not_login_errors() {
@@ -950,7 +848,6 @@ fn env_invalid_throw_on_not_login_errors() {
     assert!(matches!(result, Err(GarrisonError::Config(_))));
 }
 
-/// 验证 GARRISON_ACTIVE_TIMEOUT 非数字时 load 抛错。
 #[test]
 #[serial]
 fn env_invalid_active_timeout_errors() {
@@ -959,7 +856,6 @@ fn env_invalid_active_timeout_errors() {
     assert!(result.is_err());
 }
 
-/// 验证 GARRISON_TOKEN_STYLE 非法值导致 load 校验失败。
 #[test]
 #[serial]
 fn env_invalid_token_style_fails_validation() {
@@ -973,7 +869,6 @@ fn env_invalid_token_style_fails_validation() {
     );
 }
 
-/// 验证 GARRISON_TIMEOUT 负值导致 load 校验失败。
 #[test]
 #[serial]
 fn env_negative_timeout_fails_validation() {
@@ -987,11 +882,8 @@ fn env_negative_timeout_fails_validation() {
     );
 }
 
-// ========================================================================
 // 字段环境变量覆盖测试
-// ========================================================================
 
-/// 验证 `GARRISON_JWT_ALGORITHM` 环境变量覆盖 jwt_algorithm 字段。
 #[test]
 #[serial]
 fn env_overrides_jwt_algorithm() {
@@ -1003,7 +895,6 @@ fn env_overrides_jwt_algorithm() {
     assert_eq!(config.jwt_algorithm, "HS512");
 }
 
-/// 验证 `GARRISON_SIGN_WINDOW_SECONDS` 环境变量覆盖 sign_window_seconds 字段。
 #[test]
 #[serial]
 fn env_overrides_sign_window_seconds() {
@@ -1015,7 +906,6 @@ fn env_overrides_sign_window_seconds() {
     assert_eq!(config.sign_window_seconds, 600);
 }
 
-/// 验证 `GARRISON_SSO_TICKET_TTL_SECONDS` 环境变量覆盖 sso_ticket_ttl_seconds 字段。
 #[test]
 #[serial]
 fn env_overrides_sso_ticket_ttl_seconds() {
@@ -1027,7 +917,6 @@ fn env_overrides_sso_ticket_ttl_seconds() {
     assert_eq!(config.sso_ticket_ttl_seconds, 120);
 }
 
-/// 验证 `GARRISON_SIGN_WINDOW_SECONDS` 非数字时 load 抛错。
 #[test]
 #[serial]
 fn env_overrides_sign_window_seconds_invalid() {
@@ -1042,7 +931,6 @@ fn env_overrides_sign_window_seconds_invalid() {
     );
 }
 
-/// 验证 `GARRISON_SSO_TICKET_TTL_SECONDS` 非数字时 load 抛错。
 #[test]
 #[serial]
 fn env_overrides_sso_ticket_ttl_seconds_invalid() {
@@ -1057,16 +945,8 @@ fn env_overrides_sso_ticket_ttl_seconds_invalid() {
     );
 }
 
-// ========================================================================
 // tenant_isolation 配置段测试
-// ========================================================================
 
-/// `GarrisonConfig` 反序列化 JSON 含 `tenant_isolation` 段时，
-/// 字段正确填充。
-///
-/// 验证：`{"tenant_isolation": {"enabled": true, "resolver": "header"}}` 反序列化后
-/// `config.tenant_isolation.enabled == true`
-/// `config.tenant_isolation.resolver == TenantResolverKind::Header`
 #[cfg(feature = "tenant-isolation")]
 #[test]
 fn garrison_config_includes_tenant_isolation_section() {
@@ -1088,8 +968,6 @@ fn garrison_config_includes_tenant_isolation_section() {
     );
 }
 
-/// `default_config()` 的 `tenant_isolation` 默认禁用，
-/// resolver 默认为 `Header`。
 #[cfg(feature = "tenant-isolation")]
 #[test]
 fn tenant_isolation_config_defaults_to_disabled() {
@@ -1105,7 +983,6 @@ fn tenant_isolation_config_defaults_to_disabled() {
     );
 }
 
-/// `TenantResolverKind` 支持全部三种变体反序列化。
 #[cfg(feature = "tenant-isolation")]
 #[test]
 fn tenant_resolver_kind_supports_all_variants() {
@@ -1121,18 +998,14 @@ fn tenant_resolver_kind_supports_all_variants() {
     }
 }
 
-// ========================================================================
 // auto_renewal_threshold 配置测试
-// ========================================================================
 
-/// `GarrisonConfig::default()` 的 `auto_renewal_threshold` 为 -1（不启用）。
 #[test]
 fn config_default_auto_renewal_is_negative_one() {
     let config = GarrisonConfig::default_config();
     assert_eq!(config.auto_renewal_threshold, -1);
 }
 
-/// `auto_renewal_threshold = 101` 时 `validate()` 返回 Err。
 #[test]
 fn validate_rejects_threshold_above_100() {
     let mut config = GarrisonConfig::default_config();
@@ -1152,7 +1025,6 @@ fn validate_rejects_threshold_above_100() {
     }
 }
 
-/// `auto_renewal_threshold = -2` 时 `validate()` 返回 Err。
 #[test]
 fn validate_rejects_threshold_below_negative_one() {
     let mut config = GarrisonConfig::default_config();
@@ -1160,7 +1032,6 @@ fn validate_rejects_threshold_below_negative_one() {
     assert!(config.validate().is_err());
 }
 
-/// 边界值 -1、0、100 均通过校验。
 #[test]
 fn validate_accepts_threshold_boundaries() {
     for &threshold in &[-1i64, 0, 100] {
@@ -1174,7 +1045,6 @@ fn validate_accepts_threshold_boundaries() {
     }
 }
 
-/// `GARRISON_AUTO_RENEWAL_THRESHOLD=20` 环境变量覆盖配置为 20。
 #[test]
 #[serial]
 fn env_overrides_auto_renewal_threshold() {
@@ -1183,11 +1053,8 @@ fn env_overrides_auto_renewal_threshold() {
     assert_eq!(config.auto_renewal_threshold, 20);
 }
 
-// ========================================================================
-// token_map_cleanup_interval_secs 配置测试（4 个）
-// ========================================================================
+// token_map_cleanup_interval_secs 配置测试
 
-/// `default_config()` 的 `token_map_cleanup_interval_secs` 为 300（5 分钟）。
 #[test]
 fn token_map_cleanup_interval_default_is_300() {
     let config = GarrisonConfig::default_config();
@@ -1201,7 +1068,6 @@ fn token_map_cleanup_interval_default_is_300() {
     );
 }
 
-/// 手动设置自定义值（如 600）后字段值生效且通过 `validate()` 校验。
 #[test]
 fn token_map_cleanup_interval_custom_value() {
     let mut config = GarrisonConfig::default_config();
@@ -1213,7 +1079,6 @@ fn token_map_cleanup_interval_custom_value() {
     );
 }
 
-/// 设置 -1 表示禁用后台清理 task（与 `interval_secs <= 0` 行为一致）。
 #[test]
 fn token_map_cleanup_interval_negative_disables() {
     let mut config = GarrisonConfig::default_config();
@@ -1232,10 +1097,7 @@ fn token_map_cleanup_interval_negative_disables() {
     );
 }
 
-/// 环境变量 `GARRISON_TOKEN_MAP_CLEANUP_INTERVAL_SECS` 覆盖默认值。
-///
-/// 注：env var 名按代码库惯例与字段名严格对应（如 `sign_window_seconds` ↔ `GARRISON_SIGN_WINDOW_SECONDS`），
-/// 故 `token_map_cleanup_interval_secs` ↔ `GARRISON_TOKEN_MAP_CLEANUP_INTERVAL_SECS`。
+/// env 名按仓库惯例与字段名严格对应（`token_map_cleanup_interval_secs` ↔ `GARRISON_TOKEN_MAP_CLEANUP_INTERVAL_SECS`）。
 #[test]
 #[serial]
 fn token_map_cleanup_interval_env_var_overrides() {
@@ -1250,11 +1112,8 @@ fn token_map_cleanup_interval_env_var_overrides() {
     );
 }
 
-// ========================================================================
 // login_token_map_persist_interval_secs 配置测试
-// ========================================================================
 
-/// `default_config()` 的 `login_token_map_persist_interval_secs` 为 0（同步写入）。
 #[cfg(feature = "session-extra")]
 #[test]
 fn login_token_map_persist_interval_default_is_zero() {
@@ -1269,7 +1128,6 @@ fn login_token_map_persist_interval_default_is_zero() {
     );
 }
 
-/// `GARRISON_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS=10` 环境变量覆盖默认值。
 #[cfg(feature = "session-extra")]
 #[test]
 #[serial]
@@ -1285,11 +1143,8 @@ fn login_token_map_persist_interval_env_var_overrides() {
     );
 }
 
-// ========================================================================
 // anon_session_timeout 配置测试
-// ========================================================================
 
-/// `default_config()` 的 `anon_session_timeout` 为 1800（30 分钟）。
 #[cfg(feature = "session-extra")]
 #[test]
 fn anon_session_timeout_default_is_1800() {
@@ -1304,7 +1159,6 @@ fn anon_session_timeout_default_is_1800() {
     );
 }
 
-/// `GARRISON_ANON_SESSION_TIMEOUT=3600` 环境变量覆盖默认值。
 #[cfg(feature = "session-extra")]
 #[test]
 #[serial]
@@ -1317,32 +1171,26 @@ fn anon_session_timeout_env_var_overrides() {
     );
 }
 
-// ========================================================================
 // 并发登录控制配置测试
-// ========================================================================
 
-/// `GarrisonConfig::default()` 的 `is_concurrent` 为 true。
 #[test]
 fn config_default_is_concurrent_true() {
     let config = GarrisonConfig::default_config();
     assert!(config.is_concurrent, "默认允许并发登录");
 }
 
-/// `GarrisonConfig::default()` 的 `is_share` 为 false。
 #[test]
 fn config_default_is_share_false() {
     let config = GarrisonConfig::default_config();
     assert!(!config.is_share, "默认不共享 token");
 }
 
-/// `GarrisonConfig::default()` 的 `max_login_count` 为 0（不限制）。
 #[test]
 fn config_default_max_login_count_zero() {
     let config = GarrisonConfig::default_config();
     assert_eq!(config.max_login_count, 0, "默认不限制登录数量");
 }
 
-/// `is_share=true` 但 `is_concurrent=false` 时 `validate()` 返回 Err。
 #[test]
 fn validate_rejects_share_without_concurrent() {
     let mut config = GarrisonConfig::default_config();
@@ -1363,7 +1211,6 @@ fn validate_rejects_share_without_concurrent() {
     }
 }
 
-/// `is_share=true` 且 `is_concurrent=true` 时校验通过。
 #[test]
 fn validate_accepts_share_with_concurrent() {
     let mut config = GarrisonConfig::default_config();
@@ -1372,7 +1219,6 @@ fn validate_accepts_share_with_concurrent() {
     assert!(config.validate().is_ok());
 }
 
-/// `GARRISON_IS_CONCURRENT=false` 环境变量覆盖配置。
 #[test]
 #[serial]
 fn env_overrides_is_concurrent() {
@@ -1381,7 +1227,6 @@ fn env_overrides_is_concurrent() {
     assert!(!config.is_concurrent);
 }
 
-/// `GARRISON_MAX_LOGIN_COUNT=3` 环境变量覆盖配置。
 #[test]
 #[serial]
 fn env_overrides_max_login_count() {
@@ -1390,11 +1235,8 @@ fn env_overrides_max_login_count() {
     assert_eq!(config.max_login_count, 3);
 }
 
-// ========================================================================
 // is_read_body 配置测试
-// ========================================================================
 
-/// `default_config()` 的 `is_read_body` 为 false。
 #[test]
 fn config_default_is_read_body_is_false() {
     let config = GarrisonConfig::default_config();
@@ -1405,7 +1247,6 @@ fn config_default_is_read_body_is_false() {
     );
 }
 
-/// `GARRISON_IS_READ_BODY=true` 环境变量覆盖配置为 true。
 #[test]
 #[serial]
 fn env_overrides_is_read_body() {
@@ -1417,11 +1258,8 @@ fn env_overrides_is_read_body() {
     );
 }
 
-// ========================================================================
-// device_binding_mode 配置测试（4 个，spec R-device-binding-001）
-// ========================================================================
+// device_binding_mode 配置测试
 
-/// `default_config()` 的 `device_binding_mode` 为 "disabled"。
 #[test]
 fn test_device_binding_mode_default() {
     let config = GarrisonConfig::default_config();
@@ -1431,7 +1269,6 @@ fn test_device_binding_mode_default() {
     );
 }
 
-/// 自定义值 "strict" 通过 `validate()` 校验。
 #[test]
 fn test_device_binding_mode_custom() {
     let mut config = GarrisonConfig::default_config();
@@ -1442,7 +1279,6 @@ fn test_device_binding_mode_custom() {
     );
 }
 
-/// 无效值 "invalid" 校验失败返回 `Err`。
 #[test]
 fn test_device_binding_mode_invalid() {
     let mut config = GarrisonConfig::default_config();
@@ -1462,7 +1298,6 @@ fn test_device_binding_mode_invalid() {
     }
 }
 
-/// 环境变量 `GARRISON_DEVICE_BINDING_MODE=loose` 覆盖配置值。
 #[test]
 #[serial]
 fn test_device_binding_mode_env_override() {
@@ -1474,11 +1309,8 @@ fn test_device_binding_mode_env_override() {
     );
 }
 
-// ========================================================================
-// validate() redis_url 非空校验测试（3 个）
-// ========================================================================
+// validate() redis_url 非空校验测试
 
-/// 验证 `rate_limit_backend=Redis` 且 `redis_url` 为空时 `validate()` 返回 Err。
 #[cfg(feature = "rate-limit-redis")]
 #[test]
 fn validate_rejects_empty_redis_url() {
@@ -1494,7 +1326,6 @@ fn validate_rejects_empty_redis_url() {
     );
 }
 
-/// 验证 `rate_limit_backend=Redis` 且 `redis_url` 非空时 `validate()` 通过。
 #[cfg(feature = "rate-limit-redis")]
 #[test]
 fn validate_accepts_non_empty_redis_url() {
@@ -1505,7 +1336,6 @@ fn validate_accepts_non_empty_redis_url() {
     assert!(config.validate().is_ok(), "非空 redis_url 应通过 validate");
 }
 
-/// 验证 `rate_limit_backend=Memory` 时 `validate()` 不检查 redis_url。
 #[cfg(feature = "rate-limit-redis")]
 #[test]
 fn validate_memory_backend_skips_redis_url_check() {
@@ -1514,11 +1344,8 @@ fn validate_memory_backend_skips_redis_url_check() {
     assert!(config.validate().is_ok(), "Memory 后端应通过 validate");
 }
 
-// ========================================================================
-// 环境变量覆盖测试（6 个 serial）
-// ========================================================================
+// 环境变量覆盖测试
 
-/// `GARRISON_CORS_ALLOWED_ORIGINS` 覆盖 CORS 允许的源列表。
 #[cfg(feature = "web-cors")]
 #[test]
 #[serial]
@@ -1534,7 +1361,6 @@ fn env_overrides_cors_allowed_origins() {
     );
 }
 
-/// `GARRISON_CORS_ALLOWED_ORIGINS` 过滤空值（连续逗号）。
 #[cfg(feature = "web-cors")]
 #[test]
 #[serial]
@@ -1551,7 +1377,6 @@ fn env_cors_origins_filters_empty_values() {
     );
 }
 
-/// `GARRISON_CSRF_ENABLED=true` 覆盖 CSRF 启用状态。
 #[cfg(feature = "web-csrf")]
 #[test]
 #[serial]
@@ -1564,9 +1389,7 @@ fn env_overrides_csrf_enabled() {
     );
 }
 
-/// `GARRISON_CSRF_ENABLED` 仅接受 true/false（大小写不敏感）。
-///
-/// "TRUE"/"False" 合法生效；fail-closed 对齐 `GARRISON_RATE_LIMIT_BACKEND`。
+/// `GARRISON_CSRF_ENABLED` 仅接受 true/false（大小写不敏感，fail-closed 对齐 `GARRISON_RATE_LIMIT_BACKEND`）。
 #[cfg(feature = "web-csrf")]
 #[test]
 #[serial]
@@ -1581,10 +1404,7 @@ fn env_csrf_enabled_accepts_true_false_case_insensitive() {
     }
 }
 
-/// `GARRISON_CSRF_ENABLED` 非 true/false 值返回 Config 硬错误（fail-closed）。
-///
-/// "1"/"yes"/"on" 等 truthy 习惯值此前会静默禁用 CSRF 防护（安全控制
-/// 不允许歧义取值），现对齐限流后端覆盖的硬错误语义。
+/// 非 true/false 值返回 Config 硬错误（fail-closed）："1"/"yes"/"on" 等 truthy 习惯值不得静默禁用 CSRF 防护。
 #[cfg(feature = "web-csrf")]
 #[test]
 #[serial]
@@ -1601,9 +1421,7 @@ fn env_csrf_enabled_invalid_value_fails_load() {
     }
 }
 
-// ========================================================================
-// config-security-rules 安全规则集（静态-配置与部署-1）
-// ========================================================================
+// config-security-rules 安全规则集
 
 /// feature 开启时弱密钥配置经 validate() 被拒（规则路径复用 JWT 强度+黑名单）。
 #[cfg(feature = "config-security-rules")]
@@ -1616,14 +1434,14 @@ fn security_rules_rejects_weak_jwt_secret() {
     let err = config
         .validate()
         .expect_err("弱密钥应被 config-security-rules 拒绝");
+    let display = err.to_string();
     assert!(
-        err.to_string().contains("config-jwt-secret-weak"),
-        "实际: {}",
-        err
+        display.contains("jwt_secret") && display.contains("blacklist"),
+        "弱密钥 Display 应含密钥字段与命中原因，实际: {}",
+        display
     );
 }
 
-/// feature 开启时加固配置通过 validate()（强密钥 + 显式 origin 白名单）。
 #[cfg(all(feature = "config-security-rules", feature = "web-cors"))]
 #[test]
 fn security_rules_accepts_hardened_config() {
@@ -1635,8 +1453,7 @@ fn security_rules_accepts_hardened_config() {
     assert!(config.validate().is_ok(), "加固配置应通过安全规则校验");
 }
 
-/// feature 开启时通配 origin 且未开 credentials：不拒绝（公开只读 API 是
-/// 合法场景）但必须落 warn（显性提示任意源可读响应）。
+/// 通配 origin 未开 credentials：不拒绝（公开只读 API 合法）但必须落 warn（显性提示任意源可读响应）。
 #[cfg(all(feature = "config-security-rules", feature = "web-cors"))]
 #[test]
 fn security_rules_warns_wildcard_origins_without_credentials() {
@@ -1658,8 +1475,7 @@ fn security_rules_warns_wildcard_origins_without_credentials() {
     });
 }
 
-/// feature 关闭时安全规则集不生效（零行为变化）：同样的通配 origin 配置
-/// 不产生规则集 warn——两条 cfg 侧测试分别锁定两个 feature 形态的行为。
+/// feature 关闭时安全规则集不生效（零行为变化）：同样配置不产生 warn——与开启侧测试分别锁定两个 feature 形态。
 #[cfg(all(not(feature = "config-security-rules"), feature = "web-cors"))]
 #[test]
 fn security_rules_disabled_no_rule_warnings() {
@@ -1676,7 +1492,6 @@ fn security_rules_disabled_no_rule_warnings() {
     });
 }
 
-/// `GARRISON_RATE_LIMIT_BACKEND=redis` 覆盖限流后端为 Redis。
 #[cfg(feature = "rate-limit-redis")]
 #[test]
 #[serial]
@@ -1694,7 +1509,6 @@ fn env_overrides_rate_limit_backend_to_redis() {
     }
 }
 
-/// `GARRISON_RATE_LIMIT_BACKEND=memory` 覆盖限流后端为 Memory。
 #[cfg(feature = "rate-limit-redis")]
 #[test]
 #[serial]
@@ -1708,7 +1522,6 @@ fn env_overrides_rate_limit_backend_to_memory() {
     );
 }
 
-/// 仅设置 `GARRISON_REDIS_URL`（不设 backend）不改变 Memory 后端。
 #[cfg(feature = "rate-limit-redis")]
 #[test]
 #[serial]
@@ -1725,7 +1538,6 @@ fn env_redis_url_alone_does_not_change_memory_backend() {
     );
 }
 
-/// `GARRISON_RATE_LIMIT_BACKEND` 无效值返回 Config 错误（失败必须显性化）。
 #[cfg(feature = "rate-limit-redis")]
 #[test]
 #[serial]
@@ -1746,11 +1558,8 @@ fn env_rate_limit_backend_invalid_value_returns_error() {
     }
 }
 
-// ========================================================================
 // 并发登录策略枚举配置测试
-// ========================================================================
 
-/// `GarrisonConfig::default()` 的 `replaced_login_exit_mode` 为 `OldDevice`。
 #[test]
 fn config_default_replaced_login_exit_mode_is_old_device() {
     let config = GarrisonConfig::default_config();
@@ -1761,7 +1570,6 @@ fn config_default_replaced_login_exit_mode_is_old_device() {
     );
 }
 
-/// `GarrisonConfig::default()` 的 `overflow_logout_mode` 为 `Logout`。
 #[test]
 fn config_default_overflow_logout_mode_is_logout() {
     let config = GarrisonConfig::default_config();
@@ -1772,7 +1580,6 @@ fn config_default_overflow_logout_mode_is_logout() {
     );
 }
 
-/// `ReplacedLoginExitMode` 序列化为 snake_case 字符串 "old_device"/"new_device"。
 #[test]
 fn replaced_login_exit_mode_serde_snake_case() {
     let old_json =
@@ -1790,7 +1597,6 @@ fn replaced_login_exit_mode_serde_snake_case() {
     assert_eq!(new, ReplacedLoginExitMode::NewDevice);
 }
 
-/// `OverflowLogoutMode` 序列化为 snake_case 字符串 "logout"/"kickout"/"replaced"。
 #[test]
 fn overflow_logout_mode_serde_snake_case() {
     assert_eq!(
@@ -1820,7 +1626,6 @@ fn overflow_logout_mode_serde_snake_case() {
     );
 }
 
-/// `GARRISON_REPLACED_LOGIN_EXIT_MODE=new_device` 环境变量覆盖配置。
 #[test]
 #[serial]
 fn env_overrides_replaced_login_exit_mode() {
@@ -1836,7 +1641,6 @@ fn env_overrides_replaced_login_exit_mode() {
     );
 }
 
-/// `GARRISON_OVERFLOW_LOGOUT_MODE=kickout` 环境变量覆盖配置。
 #[test]
 #[serial]
 fn env_overrides_overflow_logout_mode() {
@@ -1849,11 +1653,8 @@ fn env_overrides_overflow_logout_mode() {
     );
 }
 
-// ========================================================================
 // recent_reuse_behaviour / refresh_grace 配置测试
-// ========================================================================
 
-/// `default_config()` 的 `recent_reuse_behaviour` 为 `TheftDetected`。
 #[test]
 fn default_recent_reuse_behaviour_is_theft_detected() {
     let config = GarrisonConfig::default_config();
@@ -1864,7 +1665,6 @@ fn default_recent_reuse_behaviour_is_theft_detected() {
     );
 }
 
-/// `RecentReuseBehaviour` 序列化为 snake_case 字符串。
 #[test]
 fn recent_reuse_behaviour_serde_snake_case() {
     assert_eq!(
@@ -1887,7 +1687,6 @@ fn recent_reuse_behaviour_serde_snake_case() {
     assert!(serde_json::from_str::<RecentReuseBehaviour>(r#""permissive""#).is_err());
 }
 
-/// `GARRISON_RECENT_REUSE_BEHAVIOUR=unauthorised` 环境变量覆盖配置。
 #[test]
 #[serial]
 fn env_overrides_recent_reuse_behaviour() {
@@ -1903,7 +1702,6 @@ fn env_overrides_recent_reuse_behaviour() {
     );
 }
 
-/// `GARRISON_RECENT_REUSE_BEHAVIOUR` 非法值启动期 fail-fast。
 #[test]
 #[serial]
 fn env_invalid_recent_reuse_behaviour_errors() {
@@ -1916,7 +1714,6 @@ fn env_invalid_recent_reuse_behaviour_errors() {
     assert!(matches!(result, Err(GarrisonError::Config(_))));
 }
 
-/// `default_config()` 的宽限窗口默认关闭（0 秒 / 1 次）。
 #[test]
 fn default_refresh_grace_window_is_disabled() {
     let config = GarrisonConfig::default_config();
@@ -1930,7 +1727,6 @@ fn default_refresh_grace_window_is_disabled() {
     );
 }
 
-/// `refresh_grace_period_secs` 为负数时校验失败。
 #[test]
 fn negative_refresh_grace_period_fails_validation() {
     let mut config = GarrisonConfig::default_config();
@@ -1943,7 +1739,6 @@ fn negative_refresh_grace_period_fails_validation() {
     );
 }
 
-/// `refresh_grace_max_uses = 0` 时校验失败（关闭窗口应置 period_secs = 0）。
 #[test]
 fn zero_refresh_grace_max_uses_fails_validation() {
     let mut config = GarrisonConfig::default_config();
@@ -1956,7 +1751,6 @@ fn zero_refresh_grace_max_uses_fails_validation() {
     );
 }
 
-/// `GARRISON_REFRESH_GRACE_PERIOD_SECS` 环境变量覆盖配置。
 #[test]
 #[serial]
 fn env_overrides_refresh_grace_period_secs() {
@@ -1968,11 +1762,8 @@ fn env_overrides_refresh_grace_period_secs() {
     );
 }
 
-// ========================================================================
 // audit_mask_mode 配置测试
-// ========================================================================
 
-/// `default_config()` 的 `audit_mask_mode` 为 `Partial`。
 #[test]
 fn default_audit_mask_mode_is_partial() {
     let config = GarrisonConfig::default_config();
@@ -1983,7 +1774,6 @@ fn default_audit_mask_mode_is_partial() {
     );
 }
 
-/// `AuditMaskMode` 序列化为 snake_case 字符串 "full"/"partial"。
 #[test]
 fn audit_mask_mode_serde_snake_case() {
     assert_eq!(
@@ -2004,7 +1794,6 @@ fn audit_mask_mode_serde_snake_case() {
     );
 }
 
-/// `GARRISON_AUDIT_MASK_MODE=full` 环境变量覆盖配置为 Full。
 #[test]
 #[serial]
 fn env_overrides_audit_mask_mode() {
@@ -2017,11 +1806,8 @@ fn env_overrides_audit_mask_mode() {
     );
 }
 
-// ========================================================================
 // anomalous-detector-dual validate() 校验测试
-// ========================================================================
 
-/// `anomalous_analyzer_interval_secs < 60` 时 validate() 返回 Err。
 #[cfg(feature = "anomalous-detector-dual")]
 #[test]
 fn validate_rejects_anomalous_interval_below_60() {
@@ -2035,7 +1821,6 @@ fn validate_rejects_anomalous_interval_below_60() {
     );
 }
 
-/// `anomalous_analyzer_interval_secs = 60` 时 validate() 通过（边界值）。
 #[cfg(feature = "anomalous-detector-dual")]
 #[test]
 fn validate_accepts_anomalous_interval_at_60() {
@@ -2044,7 +1829,6 @@ fn validate_accepts_anomalous_interval_at_60() {
     assert!(config.validate().is_ok(), "interval=60 应通过 validate");
 }
 
-/// `anomalous_analyzer_burst_threshold = 0` 时 validate() 返回 Err。
 #[cfg(feature = "anomalous-detector-dual")]
 #[test]
 fn validate_rejects_zero_burst_threshold() {
@@ -2060,7 +1844,6 @@ fn validate_rejects_zero_burst_threshold() {
 
 // === 安全审查 load() 安全防护集成测试 ===
 
-/// 验证 `load` 拒绝空路径。
 #[test]
 fn load_rejects_empty_path() {
     let err = GarrisonConfig::load(Some("")).unwrap_err();
@@ -2071,10 +1854,7 @@ fn load_rejects_empty_path() {
     );
 }
 
-/// 验证 `load` 拒绝包含 `..` 的路径遍历路径。
-///
-/// 文件加载迁入 confers `FileSource` 后由上游 `check_path_components`
-/// 拒绝 ParentDir（行为不变，错误文案为 confers 泛化格式）。
+/// `..` 路径遍历由 confers `check_path_components` 拒绝 ParentDir（错误文案为 confers 泛化格式）。
 #[test]
 fn load_rejects_path_traversal() {
     let err = GarrisonConfig::load(Some("../etc/passwd")).unwrap_err();
@@ -2085,11 +1865,7 @@ fn load_rejects_path_traversal() {
     );
 }
 
-/// 验证 `load` 拒绝 URL 编码的路径遍历 `%2e%2e`。
-///
-/// 文件加载迁入 confers `FileSource` 后，上游在路径验证前置扫描 URL 编码
-/// 遍历模式（防御纵深：fs API 虽不解码 `%2e`，但下游代理/网关可能解码），
-/// `%2e%2e` 被主动拒绝而非按字面路径处理。
+/// URL 编码遍历 `%2e%2e` 被上游路径验证前置扫描拒绝（防御纵深：fs 虽不解码，下游代理/网关可能解码）。
 #[test]
 fn load_url_encoded_traversal_returns_enoent() {
     let err = GarrisonConfig::load(Some("%2e%2e/etc/passwd")).unwrap_err();
@@ -2100,7 +1876,6 @@ fn load_url_encoded_traversal_returns_enoent() {
     );
 }
 
-/// 验证 `load` 拒绝超大配置文件（10MB 上限）。
 #[test]
 fn load_rejects_oversized_config() {
     let dir = tempfile::tempdir().expect("创建临时目录失败");
@@ -2117,7 +1892,6 @@ fn load_rejects_oversized_config() {
     );
 }
 
-/// 验证 `load` 拒绝字符设备（is_file 检查）。
 #[cfg(unix)]
 #[test]
 fn load_rejects_special_file() {
@@ -2130,14 +1904,8 @@ fn load_rejects_special_file() {
     );
 }
 
-/// 验证 `load` 拒绝目录（is_file 检查）。
-///
-/// 跨平台行为差异：
-/// - Linux/macOS：`File::open(dir)` 成功，由 `metadata.is_file()` 返回 false 触发 "不是普通文件"
-/// - Windows：`File::open(dir)` 直接返回 `ERROR_ACCESS_DENIED`，触发 "打开配置文件失败"
-///
+/// load 拒绝目录：Linux/macOS 由 `metadata.is_file()` 返回 false 触发，Windows `File::open` 直接 ERROR_ACCESS_DENIED——两条路径都达到拒绝目标，测试同时接受。
 #[serial]
-/// 两种路径都达到了"目录被拒绝"的安全目标，测试应同时接受。
 #[test]
 fn load_rejects_directory() {
     let dir = tempfile::tempdir().expect("创建临时目录失败");
@@ -2150,9 +1918,7 @@ fn load_rejects_directory() {
     );
 }
 
-// ========================================================================
 // JWT 非对称配置扩展（RS256/ES256/EdDSA）
-// ========================================================================
 
 /// 测试专用 RSA 2048 私钥（PKCS#8，非真实凭证）。
 // nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
@@ -2186,7 +1952,6 @@ dzWfBsm+KAfTJuqbV7VnJL3G
 -----END PRIVATE KEY-----
 ";
 
-/// RS256 + RSA 私钥 PEM：合法配置通过校验。
 #[test]
 fn validate_accepts_rs256_with_rsa_pem() {
     let config = GarrisonConfig {
@@ -2198,7 +1963,6 @@ fn validate_accepts_rs256_with_rsa_pem() {
     assert!(config.validate().is_ok(), "RS256 + rsa pem 应通过校验");
 }
 
-/// RS256 缺 RSA 私钥 PEM：拒绝。
 #[test]
 fn validate_rejects_rs256_without_rsa_pem() {
     let config = GarrisonConfig {
@@ -2211,7 +1975,6 @@ fn validate_rejects_rs256_without_rsa_pem() {
     assert!(err.to_string().contains("config-jwt-key-missing"));
 }
 
-/// 同时配置两类私钥 PEM：拒绝（防配置歧义）。
 #[test]
 fn validate_rejects_multiple_key_types() {
     let config = GarrisonConfig {
@@ -2224,7 +1987,6 @@ fn validate_rejects_multiple_key_types() {
     assert!(err.to_string().contains("config-jwt-key-multiple-types"));
 }
 
-/// HS 系算法配置任何非对称私钥：拒绝。
 #[test]
 fn validate_rejects_asymmetric_key_for_hs() {
     let config = GarrisonConfig {
@@ -2237,7 +1999,6 @@ fn validate_rejects_asymmetric_key_for_hs() {
     assert!(err.to_string().contains("config-jwt-key-unexpected-for-hs"));
 }
 
-/// 非对称私钥字段 Debug 输出脱敏。
 #[test]
 fn debug_redacts_asymmetric_pem_fields() {
     let config = GarrisonConfig {
@@ -2249,12 +2010,9 @@ fn debug_redacts_asymmetric_pem_fields() {
     assert!(debug.contains("<redacted>"));
 }
 
-// ============================================================================
-// password_hasher 配置段（T030）
-// ============================================================================
+// password_hasher 配置段
 
-/// 默认值锁定：argon2id + OWASP 建议档（19456/2/1）+ bcrypt 12 + 风险接受位关闭，
-/// 且默认配置整体校验通过。
+/// 默认值即 OWASP 建议档（argon2id 19456/2/1、bcrypt 12、风险接受位关闭）且整体校验通过。
 #[test]
 fn password_hasher_defaults_are_owasp_recommended() {
     let config = GarrisonConfig::default();
@@ -2272,7 +2030,6 @@ fn password_hasher_defaults_are_owasp_recommended() {
     );
 }
 
-/// TOML 配置节反序列化（serde(default) 补全缺省字段）。
 #[test]
 fn password_hasher_toml_section_roundtrip() {
     let toml = r#"
@@ -2288,7 +2045,6 @@ bcrypt_cost = 14
     assert!(!config.password_hasher.allow_weak_argon2_params);
 }
 
-/// 非法算法名：拒绝。
 #[test]
 fn validate_rejects_unknown_password_hash_algorithm() {
     let mut config = GarrisonConfig::default();
@@ -2302,7 +2058,6 @@ fn validate_rejects_unknown_password_hash_algorithm() {
     );
 }
 
-/// argon2id m_cost 低于 19456 下限且未显式风险接受：拒绝。
 #[test]
 fn validate_rejects_argon2_m_below_floor_without_risk_acceptance() {
     let mut config = GarrisonConfig::default();
@@ -2378,7 +2133,6 @@ fn validate_rejects_bcrypt_cost_out_of_range() {
     assert!(config.validate().is_ok());
 }
 
-/// `build_hasher` 工厂：argon2id 按配置参数产出（PHC 前缀断言 m/t/p）。
 #[cfg(feature = "account-credential")]
 #[test]
 fn build_hasher_argon2id_uses_configured_params() {
@@ -2398,7 +2152,6 @@ fn build_hasher_argon2id_uses_configured_params() {
     );
 }
 
-/// `build_hasher` 工厂：bcrypt 按配置 cost 产出（$2b$ 前缀携带 cost）。
 #[cfg(feature = "account-credential")]
 #[test]
 fn build_hasher_bcrypt_uses_configured_cost() {
@@ -2417,7 +2170,6 @@ fn build_hasher_bcrypt_uses_configured_cost() {
     );
 }
 
-/// `build_hasher` 工厂：非法算法名 fail-fast（与 validate 同语义）。
 #[cfg(feature = "account-credential")]
 #[test]
 fn build_hasher_rejects_unknown_algorithm() {
@@ -2437,12 +2189,9 @@ fn build_hasher_rejects_unknown_algorithm() {
     );
 }
 
-// ============================================================================
-// argon2 并发令牌池（R02 内存 DoS 防护）
-// ============================================================================
+// argon2 并发令牌池（内存 DoS 防护）
 
-/// argon2_pool_size 默认 1（secure-by-default：默认配置即受并发内存上界防护），
-/// 且默认配置整体校验通过。
+/// 默认 1（secure-by-default：默认配置即受并发内存上界防护）且整体校验通过。
 #[test]
 fn argon2_pool_size_default_is_one() {
     let config = GarrisonConfig::default();
@@ -2458,8 +2207,7 @@ fn argon2_pool_size_default_is_one() {
     );
 }
 
-/// argon2_pool_size 区间校验 [1, 256]：0（零 permit 永久饥饿）与 257
-/// （256 × 19 MiB ≈ 4.8 GiB 误配上界之外）拒绝，1/256 边界放行。
+/// 区间 [1, 256]：0（零 permit 永久饥饿）与 257（误配上界之外）拒绝，1/256 边界放行。
 #[test]
 fn argon2_pool_size_validation_bounds() {
     for size in [0u32, 257] {
@@ -2486,8 +2234,7 @@ fn argon2_pool_size_validation_bounds() {
     }
 }
 
-/// 环境变量嵌套映射：`GARRISON_PASSWORD_HASHER__ARGON2_POOL_SIZE=8` 经 load() 生效
-/// （双下划线折叠为嵌套路径，与既有嵌套段同机制）。
+/// 环境变量嵌套映射生效（双下划线折叠为嵌套路径，与既有嵌套段同机制）。
 #[test]
 #[serial]
 fn argon2_pool_size_env_mapping() {
@@ -2502,7 +2249,6 @@ fn argon2_pool_size_env_mapping() {
     );
 }
 
-/// `build_hasher` 池装配：argon2id 分支按 `argon2_pool_size` 配置装配并发令牌池。
 #[cfg(feature = "account-credential")]
 #[test]
 fn build_hasher_argon2_wires_pool_size() {
@@ -2515,10 +2261,7 @@ fn build_hasher_argon2_wires_pool_size() {
     assert_eq!(gate.available_permits(), 3, "permit 数应等于配置池大小");
 }
 
-/// bcrypt 决策锁定：bcrypt 分支不装配并发令牌池（gate 为 None）。
-///
-/// 依据：bcrypt 单次执行工作区 KB 级，池化无内存防护收益；CPU DoS 由限流与
-/// cost 区间校验承担。该决策以测试固化，防止后续无意接入池语义。
+/// bcrypt 分支不装配并发令牌池（gate 为 None）：工作区 KB 级池化无内存防护收益，CPU DoS 由限流与 cost 校验承担；以测试固化防后续无意接入。
 #[cfg(feature = "account-credential")]
 #[test]
 fn build_hasher_bcrypt_has_no_pool() {
@@ -2534,9 +2277,7 @@ fn build_hasher_bcrypt_has_no_pool() {
     );
 }
 
-// ========================================================================
 // 弃用配置键注册表：加载期自动迁移 + 1.0 版本门
-// ========================================================================
 
 /// 进程内日志捕获 writer（fmt Layer 的 MakeWriter，收集格式化行）。
 #[derive(Clone)]
@@ -2564,9 +2305,7 @@ impl std::io::Write for DeprecationLogCaptureWriter {
     }
 }
 
-/// 在捕获 tracing 事件的上下文中执行 `f`（守卫覆盖 `f` 全程，返回后恢复）。
-/// 日志行通过回调参数交由断言读取；`DefaultGuard` 在 default-features=false
-/// 构建下无公开类型路径，故以闭包作用域持有。
+/// 在捕获 tracing 事件的上下文中执行 `f`（守卫覆盖全程，返回后恢复）；日志行经回调由断言读取（`DefaultGuard` 在 default-features=false 下无公开类型路径，故以闭包作用域持有）。
 fn with_captured_deprecation_logs(f: impl FnOnce(&std::sync::Mutex<Vec<String>>)) {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
@@ -2608,7 +2347,6 @@ fn fixture_verbatim_rename() -> deprecation::Deprecation {
     }
 }
 
-/// 命中可自动映射键：旧值经 map_fn 转换后写入新键，旧键从树中移除。
 #[test]
 fn auto_mapped_key_moves_value_through_map_fn_to_new_key() {
     let mut tree = serde_json::json!({ "timeout_seconds": 120 });
@@ -2630,7 +2368,6 @@ fn auto_mapped_key_moves_value_through_map_fn_to_new_key() {
     );
 }
 
-/// 命中 auto_map 且无 map_fn：旧值原样搬迁到新键（同类型改名）。
 #[test]
 fn auto_mapped_key_without_map_fn_moves_value_verbatim() {
     let mut tree = serde_json::json!({ "token_name_legacy": "legacy_token" });
@@ -2645,7 +2382,6 @@ fn auto_mapped_key_without_map_fn_moves_value_verbatim() {
     assert!(tree.get("token_name_legacy").is_none());
 }
 
-/// 新键已被显式配置时不覆盖（新键优先），旧键仍移除。
 #[test]
 fn auto_map_does_not_overwrite_new_key_already_present() {
     let mut tree = serde_json::json!({ "token_name_legacy": "legacy", "token_name": "current" });
@@ -2664,7 +2400,6 @@ fn auto_map_does_not_overwrite_new_key_already_present() {
     assert!(tree.get("token_name_legacy").is_none(), "旧键仍应移除");
 }
 
-/// 嵌套段键（点号路径）同样支持自动映射。
 #[test]
 fn nested_section_keys_auto_map_through_map_fn() {
     let dep = deprecation::Deprecation {
@@ -2687,7 +2422,7 @@ fn nested_section_keys_auto_map_through_map_fn() {
     assert!(tree["password_hasher"].get("bcrypt_cost_legacy").is_none());
 }
 
-/// 迁移 warn 日志必须含 since 版本与新键名（R-cfg-dep-001 日志捕获断言）。
+/// 迁移 warn 必须含 since 版本与新键名。
 #[test]
 fn warn_log_contains_since_version_and_new_key_name() {
     with_captured_deprecation_logs(|logs| {
@@ -2715,7 +2450,6 @@ fn warn_log_contains_since_version_and_new_key_name() {
     });
 }
 
-/// 无命中时树不变、零告警（热路径零开销的行为面）。
 #[test]
 fn no_deprecated_key_hit_leaves_tree_untouched() {
     with_captured_deprecation_logs(|logs| {
@@ -2737,7 +2471,6 @@ fn no_deprecated_key_hit_leaves_tree_untouched() {
     });
 }
 
-/// 加载路径接线：toml 中的弃用键在加载后迁移到新配置字段（值经 map_fn 转换）。
 #[test]
 #[serial]
 fn load_auto_migrates_deprecated_toml_key() {
@@ -2754,7 +2487,6 @@ fn load_auto_migrates_deprecated_toml_key() {
     );
 }
 
-/// 加载路径接线：环境变量中的弃用键同样迁移。
 #[test]
 #[serial]
 fn load_auto_migrates_deprecated_env_key() {
@@ -2765,7 +2497,6 @@ fn load_auto_migrates_deprecated_env_key() {
     assert_eq!(config.timeout, 7200);
 }
 
-/// 注册表非空但配置无弃用键：加载行为与无注册表完全一致。
 #[test]
 #[serial]
 fn load_without_deprecated_keys_leaves_config_intact() {
@@ -2779,7 +2510,6 @@ fn load_without_deprecated_keys_leaves_config_intact() {
     assert_eq!(config.timeout, 3600);
 }
 
-/// 注册表不变式：键唯一且按注册顺序可线性扫描（未来补录条目时防止重复注册）。
 #[test]
 fn deprecation_registry_keys_are_unique() {
     let registry = deprecation::deprecations();
@@ -2801,7 +2531,6 @@ fn fixture_removed_key() -> deprecation::Deprecation {
     }
 }
 
-/// 不可映射键在 <1.0.0 命中：warn 后放行（Ok，树不变——旧键保留随 serde 忽略）。
 #[test]
 fn unmappable_key_before_1_0_warns_and_passes() {
     with_captured_deprecation_logs(|logs| {
@@ -2826,7 +2555,6 @@ fn unmappable_key_before_1_0_warns_and_passes() {
     });
 }
 
-/// 不可映射键在 ≥1.0.0 命中：GarrisonError 显性报错，消息含键名与迁移指引。
 #[test]
 fn unmappable_key_at_1_0_is_hard_error_with_key_name_and_guidance() {
     let mut tree = serde_json::json!({ "legacy_feature_flag": true });
@@ -2848,7 +2576,6 @@ fn unmappable_key_at_1_0_is_hard_error_with_key_name_and_guidance() {
     );
 }
 
-/// 可自动映射键在 ≥1.0.0 命中：同样报错（1.0 起不再代迁）。
 #[test]
 fn mappable_key_at_1_0_is_hard_error() {
     let mut tree = serde_json::json!({ "timeout_seconds": 120 });
@@ -2866,7 +2593,6 @@ fn mappable_key_at_1_0_is_hard_error() {
     );
 }
 
-/// 1.0.0 的 pre-release（如 1.0.0-rc.1）仍在宽限窗口内（< 1.0.0 本体）。
 #[test]
 fn version_1_0_0_prerelease_is_still_within_grace_window() {
     let mut tree = serde_json::json!({ "timeout_seconds": 120 });
@@ -2880,7 +2606,6 @@ fn version_1_0_0_prerelease_is_still_within_grace_window() {
     assert_eq!(tree["timeout"], serde_json::json!(7200));
 }
 
-/// 当前版本不可解析且存在命中：fail-closed 报错。
 #[test]
 fn unparsable_current_version_fails_closed() {
     let mut tree = serde_json::json!({ "timeout_seconds": 120 });
@@ -2898,7 +2623,6 @@ fn unparsable_current_version_fails_closed() {
     );
 }
 
-/// map_fn 拒绝迁移该值：计入错误（静默丢弃即静默失效）。
 #[test]
 fn map_fn_rejection_is_hard_error() {
     let mut tree = serde_json::json!({ "timeout_seconds": "not-a-number" });
@@ -2916,8 +2640,7 @@ fn map_fn_rejection_is_hard_error() {
     );
 }
 
-/// 加载路径：≥1.0.0 时弃用键使 load 整体返回 GarrisonError::Config（错误
-/// 含键名与迁移指引，且发生在 validate 之前）。
+/// ≥1.0.0 时弃用键使 load 返回 Config（错误含键名与迁移指引，发生在 validate 之前）。
 #[test]
 #[serial]
 fn load_rejects_deprecated_key_at_1_0() {
@@ -2939,7 +2662,6 @@ fn load_rejects_deprecated_key_at_1_0() {
     }
 }
 
-/// 加载路径：map_fn 拒绝迁移的值使 load 整体失败（错误显性，值不静默丢弃）。
 #[test]
 #[serial]
 fn load_rejects_unmigratable_value() {
@@ -2961,8 +2683,7 @@ fn load_rejects_unmigratable_value() {
     }
 }
 
-/// 生产注册表真实条目 `waf_config`（<1.0 命中）：warn 含键名与 since 版本，
-/// 放行且树不变（旧键随 serde 忽略——但不再静默）。
+/// 生产注册表 `waf_config`（<1.0）：warn 含键名与 since 版本，放行且树不变（不再静默）。
 #[test]
 fn registered_waf_config_passes_with_warn_before_1_0() {
     with_captured_deprecation_logs(|logs| {
@@ -2987,7 +2708,6 @@ fn registered_waf_config_passes_with_warn_before_1_0() {
     });
 }
 
-/// 生产注册表真实条目 `waf_config`（≥1.0 命中）：硬错误，消息含键名与移除指引。
 #[test]
 fn registered_waf_config_is_hard_error_at_1_0() {
     let mut tree = serde_json::json!({ "waf_config": { "enabled": true } });
@@ -3005,8 +2725,7 @@ fn registered_waf_config_is_hard_error_at_1_0() {
     );
 }
 
-/// 端到端：toml `[waf_config]` 段经生产注册表 + 生产版本（0.9.0-rc.2，<1.0）
-/// 加载——warn 显性化且加载成功（旧行为是无任何提示的静默忽略）。
+/// 端到端：toml `[waf_config]` 经生产注册表 + 生产版本（<1.0）加载——warn 显性化且成功。
 #[test]
 #[serial]
 fn load_production_registry_warns_on_waf_config_section() {
@@ -3023,7 +2742,6 @@ fn load_production_registry_warns_on_waf_config_section() {
     });
 }
 
-/// 端到端：同一 toml 在注入 1.0.0 版本时加载整体失败（宽限窗口关闭）。
 #[test]
 #[serial]
 fn load_production_registry_rejects_waf_config_at_1_0() {
@@ -3045,19 +2763,15 @@ fn load_production_registry_rejects_waf_config_at_1_0() {
     }
 }
 
-// ========================================================================
 // jwks_retention_secs 配置测试
-// ========================================================================
 
-/// `default_config()` 的 `jwks_retention_secs` 为 7200（2× access token TTL）。
 #[test]
 fn jwks_retention_default_is_two_access_token_ttls() {
     let config = GarrisonConfig::default_config();
     assert_eq!(config.jwks_retention_secs, 7200);
 }
 
-/// `jwks_retention_secs = 0` 为误配：validate 显性拒绝（0 等价于轮换瞬间
-/// 退役旧钥，存量 token 验证立即中断）。
+/// retention=0 为误配必须显性拒绝（0 等价轮换瞬间退役旧钥，存量 token 验证立即中断）。
 #[test]
 fn jwks_retention_zero_fails_validation() {
     let mut config = GarrisonConfig::default_config();
@@ -3070,7 +2784,6 @@ fn jwks_retention_zero_fails_validation() {
     );
 }
 
-/// 正值 retention 通过校验。
 #[test]
 fn jwks_retention_positive_passes_validation() {
     let mut config = GarrisonConfig::default_config();
@@ -3078,11 +2791,8 @@ fn jwks_retention_positive_passes_validation() {
     config.validate().expect("正值 retention 必须通过校验");
 }
 
-// ============================================================================
 // MFA 编排基座：per-client chain 三态与 fail-closed 校验
-// ============================================================================
 
-/// default_config() 的 mfa 段：全局链为空、无 per-client 覆盖（不强制 MFA）。
 #[test]
 fn mfa_config_defaults_empty() {
     let config = GarrisonConfig::default_config();
@@ -3098,7 +2808,6 @@ fn mfa_config_defaults_empty() {
     assert!(config.validate().is_ok(), "默认 mfa 配置应通过校验");
 }
 
-/// 全局链引用未知 factor → validate 返回 Config 错误（fail-closed）。
 #[test]
 fn mfa_global_chain_unknown_factor_fails_validation() {
     let mut config = GarrisonConfig::default_config();
@@ -3111,7 +2820,6 @@ fn mfa_global_chain_unknown_factor_fails_validation() {
     );
 }
 
-/// per-client 链引用未知 factor → validate 返回 Config 错误（fail-closed）。
 #[test]
 fn mfa_per_client_chain_unknown_factor_fails_validation() {
     let mut config = GarrisonConfig::default_config();
@@ -3127,7 +2835,6 @@ fn mfa_per_client_chain_unknown_factor_fails_validation() {
     );
 }
 
-/// 已知 factor（otp / webauthn）的全局与 per-client 链均通过校验。
 #[test]
 fn mfa_known_factors_pass_validation() {
     let mut config = GarrisonConfig::default_config();
@@ -3143,12 +2850,8 @@ fn mfa_known_factors_pass_validation() {
     assert!(config.validate().is_ok(), "已知 factor 应通过校验");
 }
 
-// ========================================================================
-// seed_primary_amr / login_id_max_len 配置测试（渗透-认证绕过-3 /
-// 注入-login_id 无长度上限-2）
-// ========================================================================
+// seed_primary_amr / login_id_max_len 配置测试
 
-/// `default_config()`：seed_primary_amr 默认 true（保持既有播种契约）。
 #[test]
 fn config_default_seed_primary_amr_is_true() {
     let config = GarrisonConfig::default_config();
@@ -3158,7 +2861,6 @@ fn config_default_seed_primary_amr_is_true() {
     );
 }
 
-/// `default_config()`：login_id_max_len 默认 255。
 #[test]
 fn config_default_login_id_max_len_is_255() {
     let config = GarrisonConfig::default_config();
@@ -3166,7 +2868,6 @@ fn config_default_login_id_max_len_is_255() {
     assert_eq!(config.login_id_max_len, DEFAULT_LOGIN_ID_MAX_LEN);
 }
 
-/// `GARRISON_SEED_PRIMARY_AMR=false` 环境变量覆盖生效。
 #[serial]
 #[test]
 fn config_env_override_seed_primary_amr_false() {
@@ -3175,7 +2876,6 @@ fn config_env_override_seed_primary_amr_false() {
     assert!(!config.seed_primary_amr, "env 覆盖 false 应生效");
 }
 
-/// `GARRISON_SEED_PRIMARY_AMR` 非布尔值 → 加载期类型校验拒绝（fail-closed）。
 #[serial]
 #[test]
 fn config_env_seed_primary_amr_invalid_type_rejected() {
@@ -3184,12 +2884,8 @@ fn config_env_seed_primary_amr_invalid_type_rejected() {
     assert!(result.is_err(), "非布尔 seed_primary_amr 应在加载期拒绝");
 }
 
-// ========================================================================
-// require_tenant_bound_jwt 配置测试（渗透-租户隔离严格收口：存量无 tid
-// Stateless token 在租户上下文内显性拒绝的开关）
-// ========================================================================
+// require_tenant_bound_jwt 配置测试
 
-/// `default_config()`：require_tenant_bound_jwt 默认 false（保持存量 token 兼容）。
 #[test]
 fn config_default_require_tenant_bound_jwt_is_false() {
     let config = GarrisonConfig::default_config();
@@ -3199,7 +2895,6 @@ fn config_default_require_tenant_bound_jwt_is_false() {
     );
 }
 
-/// `GARRISON_REQUIRE_TENANT_BOUND_JWT=true` 环境变量覆盖生效。
 #[serial]
 #[test]
 fn config_env_override_require_tenant_bound_jwt_true() {
@@ -3211,7 +2906,6 @@ fn config_env_override_require_tenant_bound_jwt_true() {
     assert!(config.require_tenant_bound_jwt, "env 覆盖 true 应生效");
 }
 
-/// `GARRISON_REQUIRE_TENANT_BOUND_JWT` 非布尔值 → 加载期类型校验拒绝（fail-closed）。
 #[serial]
 #[test]
 fn config_env_require_tenant_bound_jwt_invalid_type_rejected() {
@@ -3226,12 +2920,8 @@ fn config_env_require_tenant_bound_jwt_invalid_type_rejected() {
     );
 }
 
-// ========================================================================
-// require_session_tenant_binding 配置测试（棘轮：会话侧租户绑定严格收口开关，
-// 与 require_tenant_bound_jwt 覆盖 Simple/Mixin 与 Stateless 两半）
-// ========================================================================
+// require_session_tenant_binding 配置测试（与 require_tenant_bound_jwt 互补：覆盖 Simple/Mixin 与 Stateless 两半）
 
-/// `default_config()`：require_session_tenant_binding 默认 false（存量无绑定会话兼容）。
 #[test]
 fn config_default_require_session_tenant_binding_is_false() {
     let config = GarrisonConfig::default_config();
@@ -3241,7 +2931,6 @@ fn config_default_require_session_tenant_binding_is_false() {
     );
 }
 
-/// `GARRISON_REQUIRE_SESSION_TENANT_BINDING=true` 环境变量覆盖生效。
 #[serial]
 #[test]
 fn config_env_override_require_session_tenant_binding_true() {
@@ -3256,7 +2945,6 @@ fn config_env_override_require_session_tenant_binding_true() {
     );
 }
 
-/// `GARRISON_REQUIRE_SESSION_TENANT_BINDING` 非布尔值 → 加载期类型校验拒绝（fail-closed）。
 #[serial]
 #[test]
 fn config_env_require_session_tenant_binding_invalid_type_rejected() {
@@ -3271,7 +2959,6 @@ fn config_env_require_session_tenant_binding_invalid_type_rejected() {
     );
 }
 
-/// `GARRISON_LOGIN_ID_MAX_LEN=128` 环境变量覆盖生效。
 #[serial]
 #[test]
 fn config_env_override_login_id_max_len() {
@@ -3280,7 +2967,6 @@ fn config_env_override_login_id_max_len() {
     assert_eq!(config.login_id_max_len, 128);
 }
 
-/// `GARRISON_LOGIN_ID_MAX_LEN=0` 合法（0 = 框架层不限制）。
 #[serial]
 #[test]
 fn config_env_login_id_max_len_zero_means_unlimited() {
@@ -3289,7 +2975,6 @@ fn config_env_login_id_max_len_zero_means_unlimited() {
     assert_eq!(config.login_id_max_len, 0);
 }
 
-/// `GARRISON_LOGIN_ID_MAX_LEN` 非整数值 → 加载期类型校验拒绝。
 #[serial]
 #[test]
 fn config_env_login_id_max_len_invalid_type_rejected() {

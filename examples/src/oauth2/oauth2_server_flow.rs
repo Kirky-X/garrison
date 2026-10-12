@@ -56,9 +56,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
     let store = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
 
-    // ================================================================
-    // 步骤 1：注册 OAuth2 客户端
-    // ================================================================
     println!("--- 步骤 1：注册 OAuth2 客户端 ---");
 
     let client = OAuth2Client::new(
@@ -99,9 +96,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let introspect_handler = Arc::new(IntrospectHandler::new(store.clone(), token_handler.clone()));
     let revoke_handler = Arc::new(RevokeHandler::new(store.clone(), token_handler.clone()));
 
-    // ================================================================
-    // 步骤 2：授权码流程（Authorization Code + PKCE）
-    // ================================================================
     println!("--- 步骤 2：授权码流程（PKCE S256）---");
 
     // 2a. 客户端生成 PKCE code_verifier + code_challenge
@@ -142,9 +136,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("预期 Redirect 响应".into()),
     };
 
-    // ================================================================
-    // 步骤 3：授权码交换 Token
-    // ================================================================
     println!("\n--- 步骤 3：授权码交换 Token ---");
 
     let token_req = TokenRequest {
@@ -174,9 +165,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         println!("    scope: {}", scope);
     }
 
-    // ================================================================
-    // 步骤 4：Token 内省（RFC 7662）
-    // ================================================================
     println!("\n--- 步骤 4：Token 内省（RFC 7662）---");
 
     let introspect_req = IntrospectRequest {
@@ -196,9 +184,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     assert!(introspect_resp.active, "有效 token 内省应返回 active=true");
 
-    // ================================================================
-    // 步骤 5：Token 吊销（RFC 7009）
-    // ================================================================
     println!("\n--- 步骤 5：Token 吊销（RFC 7009）---");
 
     let revoke_req = RevokeRequest {
@@ -215,9 +200,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert!(!introspect_after.active, "吊销后内省应返回 active=false");
     println!("    ✓ 吊销后内省验证：active=false");
 
-    // ================================================================
-    // 步骤 6：Client Credentials 流程（服务间调用）
-    // ================================================================
     println!("\n--- 步骤 6：Client Credentials 流程（服务间调用）---");
 
     let cc_req = TokenRequest {
@@ -242,9 +224,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("    ✓ 无 refresh_token（client_credentials 规范行为）");
 
-    // ================================================================
-    // 步骤 7：Password 流程（遗留兼容）
-    // ================================================================
     println!("\n--- 步骤 7：Password 流程（遗留兼容）---");
 
     let pw_req = TokenRequest {
@@ -272,9 +251,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert!(bad_result.is_err(), "错误密码应返回错误");
     println!("    ✓ 错误密码拒绝（统一返回 OAuth2 error，防用户枚举）");
 
-    // ================================================================
-    // 步骤 8：授权码一次性使用验证
-    // ================================================================
     println!("\n--- 步骤 8：安全验证 ---");
 
     let replay_req = TokenRequest {

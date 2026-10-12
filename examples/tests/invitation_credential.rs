@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! invitation_credential 示例测试（protocol-invitation feature）。
-//!
-//! 验证 run() 完整执行（内部已包含 issue/verify/consume/revoke 断言）。
+//! invitation_credential 示例测试（protocol-invitation feature）：验证 run() 完整执行（内部已包含 issue/verify/consume/revoke 断言）。
 
 #![cfg(feature = "protocol-invitation")]
 

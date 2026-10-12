@@ -1,34 +1,15 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 数学验证码提供商（基础 CAPTCHA 实现）。
+//! 数学验证码提供商（基础 CAPTCHA 实现）：`MathCaptchaProvider` 生成 `"a ± b = ?"` 形式的数学挑战题（随机数用
+//! `rand::rng()`，ChaCha12 CSPRNG；选 `-` 但 `a < b` 时回退 `+` 确保结果非负），答案存入 DAO（key = `captcha:math:{challenge_id}`）。
 //!
-//! [`MathCaptchaProvider`](crate::strategy::firewall::captcha_provider::MathCaptchaProvider) 生成 `"a ± b = ?"` 形式的数学挑战题，
-//! 将答案存入 DAO（key = `captcha:math:{challenge_id}`），验证后一次性删除防止复用。
+//! 一次性使用与暴力破解防护：`verify` 用 `dao.get_and_delete`（GETDEL 原子语义，消除 get→compare→delete 的 TOCTOU，
+//! 并发同 challenge_id 仅有一个能取到值）取出答案，匹配后 challenge 已删除，防止复用；不匹配时用 `dao.incr` 原子递增尝试计数器
+//! （key = `captcha:attempts:{challenge_id}`，消除读改写竞态），超过 `max_attempts`（默认 5）后废弃 challenge 防穷举，未超限则回写允许重试。
+//! 不匹配或 key 不存在返回 `Ok(false)` 不报错；GETDEL 先删、未超限时后回写，窗口内并发请求取到 `None` 为安全方向失败，不会双通过。
 //!
-//! # 算法
-//!
-//! 1. 随机生成两个 1-20 的整数 `a` 和 `b`（用 `rand::rng()`，ChaCha12 CSPRNG）。
-//! 2. 随机选择运算符 `+` 或 `-`；若选 `-` 但 `a < b`（结果为负），回退到 `+` 确保结果非负。
-//! 3. 生成 `challenge_id = UUID v4`，计算答案，存入 DAO（TTL = `self.ttl`）。
-//! 4. 返回 `(challenge_id, "a op b = ?")`。
-//!
-//! # 一次性使用 + 暴力破解防护
-//!
-//! - `verify` 用 `dao.get_and_delete`（GETDEL 原子语义，与 SSO ticket 防回放同款）
-//! 取出答案，并发同 challenge_id 的 verify 仅有一个能取到值，
-//! 消除 get→compare→delete 的 TOCTOU（一次性语义并发下不再被双通过）。
-//! - `verify` 匹配成功后 challenge 已被原子删除，防止同一 challenge_id 被复用。
-//! - `verify` 匹配失败时用 `dao.incr` 原子递增尝试计数器
-//! （key = `captcha:attempts:{challenge_id}`，消除 get→add→set 读改写竞态），
-//! 超过 `max_attempts`（默认 5）后废弃 challenge（不再回写），防止暴力穷举；
-//! 未超限则回写 challenge 允许重试。
-//! - 不匹配或 key 不存在返回 `Ok(false)`，不报错。
-//!
-//! # 与 [`CaptchaChallenge`](crate::strategy::firewall::CaptchaChallenge) trait 的区分
-//!
-//! `CaptchaChallenge` 绑定 `FirewallContext`（按 IP/login_id 定位期望答案），
-//! `MathCaptchaProvider` 用 challenge_id 定位，不依赖上下文，是独立的验证码生成/验证组件。
+//! 与 `CaptchaChallenge` trait 的区分：后者绑定 `FirewallContext`（按 IP/login_id 定位期望答案）；本组件用 challenge_id 定位，不依赖上下文。
 
 use crate::constants::DaoKeyPrefix;
 use crate::dao::GarrisonDao;
@@ -94,9 +75,7 @@ impl MathCaptchaProvider {
         }
     }
 
-    /// 生成一道数学挑战题，返回 `(challenge_id, 题目字符串)`。
-    ///
-    /// 题目格式为 `"a op b = ?"`（如 `"3 + 5 = ?"`），答案存入 DAO 供 [`verify`](Self::verify) 比对。
+    /// 生成一道数学挑战题，返回 `(challenge_id, 题目字符串)`；题目格式 `"a op b = ?"`（如 `"3 + 5 = ?"`），答案存入 DAO 供 [`verify`](Self::verify) 比对。
     pub async fn generate(&self) -> GarrisonResult<(String, String)> {
         let mut rng = rand::rng();
         let a: i32 = rng.random_range(1..=20);
@@ -114,25 +93,16 @@ impl MathCaptchaProvider {
         Ok((challenge_id, question))
     }
 
-    /// 验证用户提交的答案。
-    ///
-    /// - 用 `dao.get_and_delete`（GETDEL 原子）取出存储答案：并发同 challenge_id
-    ///   的 verify 仅有一个取到值，保证一次性使用语义（消除 get→delete TOCTOU）。
-    /// - 匹配则 challenge 已删除（一次性使用，防止复用）。
-    /// - 不匹配时用 `dao.incr` 原子递增尝试计数器（消除 get→add→set 竞态），
-    ///   超过 `max_attempts` 后废弃 challenge（防暴力穷举）；
-    ///   未超限则回写 challenge（TTL 重置），允许继续重试。
-    /// - challenge_id 不存在（已被消费/过期）返回 `Ok(false)`。
+    /// 验证用户提交的答案：`get_and_delete`（GETDEL 原子）取出存储答案，匹配则 challenge 已删除（一次性使用，防复用）；
+    /// 不匹配时 `dao.incr` 原子递增尝试计数器，超过 `max_attempts` 后废弃 challenge（防暴力穷举），未超限则回写（TTL 重置）允许重试。
+    /// challenge_id 不存在（已被消费/过期）或答案不匹配返回 `Ok(false)`。
     ///
     /// # 并发说明
     ///
-    /// GETDEL 先删、错误答案未超限时后回写，两者之间存在短暂窗口：
-    /// 并发请求在该窗口内会取到 `None` 返回 `Ok(false)`（安全方向失败），
-    /// 不会出现双通过。
+    /// GETDEL 先删、错误答案未超限时后回写，两者之间存在短暂窗口：并发请求在该窗口内会取到 `None` 返回 `Ok(false)`（安全方向失败），不会出现双通过。
     pub async fn verify(&self, challenge_id: &str, answer: &str) -> GarrisonResult<bool> {
         let key = format!("{}math:{}", DaoKeyPrefix::Captcha, challenge_id);
-        // 原子 GETDEL：取值同时删除，消除 get→compare→delete 的 TOCTOU
-        // （并发同 challenge_id 仅一个调用取到答案，一次性保证不被并发绕过）
+        // 原子 GETDEL：取值同时删除，消除 get→compare→delete 的 TOCTOU（并发同一 challenge_id 仅一个调用取到答案）
         let stored = self.dao.get_and_delete(&key).await?;
         let stored = match stored {
             Some(s) => s,
@@ -153,8 +123,7 @@ impl MathCaptchaProvider {
             return Ok(true);
         }
 
-        // 错误答案：dao.incr 原子递增尝试计数器
-        // （替代 get→parse→add→set 读改写，并发下不会少记、可超 max_attempts）
+        // 错误答案：dao.incr 原子递增尝试计数器（替代 get→parse→add→set 读改写，并发下不会少记、可超 max_attempts）
         let new_count = self.dao.incr(&attempts_key, self.ttl).await?;
 
         if new_count >= self.max_attempts as u64 {
@@ -175,8 +144,7 @@ impl MathCaptchaProvider {
             return Ok(false);
         }
 
-        // 未超限：回写 challenge 允许重试（TTL 重置为 self.ttl）。
-        // 回写与 GETDEL 之间的窗口内并发请求取到 None → 安全方向失败。
+        // 未超限：回写 challenge 允许重试（TTL 重置）；回写与 GETDEL 之间的窗口内并发请求取到 None → 安全方向失败。
         self.dao.set(&key, &stored, self.ttl).await?;
 
         Ok(false)

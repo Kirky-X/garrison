@@ -4,19 +4,11 @@
 //! BackendEmbedded — 进程内认证后端实现。
 //!
 //! 委托全局 `GarrisonManager` 单例，通过 `with_current_token` 将显式 token 参数
-//! 转换为 task_local 上下文，适配 `GarrisonLogicDefault` 的子 trait 方法签名。
+//! 转换为 task_local 上下文，适配 `GarrisonLogicDefault` 的方法签名。
 //!
-//! # 设计
-//!
-//! - **零字段 struct**：GarrisonManager 使用全局单例（`GARRISON_MANAGER`），
-//!   BackendEmbedded 无需持有任何引用
-//! - **token 适配**：AuthBackend 方法接受显式 token 参数，
-//!   GarrisonLogicDefault 方法从 task_local `CURRENT_TOKEN` 获取 token，
-//!   通过 `with_current_token` 桥接两种模式
-//! - **bool 适配**：`check_safe`/`check_disable` 在 GarrisonLogicDefault 中返回
-//!   `Result<()>`（Ok=通过，Err=未通过），AuthBackend 要求 `Result<bool>`，
-//!   适配时区分业务错误（NotSafe/DisableService）与系统错误；会话无效
-//!   （伪造/过期/被踢 token）的 `Session` 错误原样透传（fail-closed，不并入 bool）
+//! 设计要点：零字段 struct（manager 是全局单例，无需持有引用）；`check_safe` /
+//! `check_disable` 的 bool 适配只映射业务错误（NotSafe / DisableService），会话无效
+//! （伪造/过期/被踢）的 `Session` 错误原样透传（fail-closed，不并入 bool）。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::manager::GarrisonManager;
@@ -29,18 +21,17 @@ use async_trait::async_trait;
 use super::types::{LoginParams, SessionData, TokenInfo};
 use super::AuthBackend;
 
-/// 进程内认证后端，委托全局 GarrisonManager 单例。
+/// 进程内认证后端（零字段 struct，委托全局 GarrisonManager 单例）。
 ///
-/// 通过 `BackendEmbedded::new()` 构造，可作为 `Arc<dyn AuthBackend>` 使用。
-/// 所有方法通过 `GarrisonManager::logic()` 获取 `GarrisonLogicDefault`，
-/// 再委托到对应的子 trait 方法。
+/// 所有方法经 `GarrisonManager::logic()` 获取 `GarrisonLogicDefault`，再委托到
+/// 对应的子 trait 方法。
 pub struct BackendEmbedded;
 
 impl BackendEmbedded {
     /// 创建 BackendEmbedded 实例。
     ///
-    /// GarrisonManager 必须已通过 `GarrisonManager::builder().build().await` 初始化，
-    /// 否则所有方法调用返回 `GarrisonError::Session`。
+    /// GarrisonManager 必须已通过 `builder().build().await` 初始化，否则所有方法
+    /// 调用返回 `GarrisonError::Session`。
     pub fn new() -> Self {
         Self
     }
@@ -335,11 +326,9 @@ mod tests {
         assert!(!backend.check_disable(&token).await.unwrap());
     }
 
-    // ========================================================================
-    // 会话前置校验（GAR-02 / R2-1 回归）：无效 token 显性拒绝，不再宽松 bool
-    // ========================================================================
+    // 会话前置校验回归：无效 token 显性拒绝，不再宽松 bool
 
-    /// `check_safe` 伪造 token → 显性 `Err(Session)`（GAR-02：原行为恒返回 true）。
+    /// `check_safe` 伪造 token → 显性 `Err(Session)`，不再恒返回 true。
     #[tokio::test]
     #[serial]
     async fn test_check_safe_forged_token_returns_session_error() {
@@ -354,8 +343,7 @@ mod tests {
         );
     }
 
-    /// `check_safe` kickout 后旧 token → 显性 `Err(Session)`（GAR-02：已撤销会话
-    /// 不再被放行）。
+    /// `check_safe` kickout 后旧 token → 显性 `Err(Session)`（已撤销会话不再放行）。
     #[tokio::test]
     #[serial]
     async fn test_check_safe_kicked_out_token_returns_session_error() {
@@ -374,8 +362,8 @@ mod tests {
         );
     }
 
-    /// `check_disable` 伪造 token → 显性 `Err(Session)` 而非 Ok(false)（R2-1：
-    /// 「token 无效」不再与「未封禁」合并为同一 bool）。
+    /// `check_disable` 伪造 token → 显性 `Err(Session)` 而非 `Ok(false)`（「token
+    /// 无效」不再与「未封禁」合并为同一 bool）。
     #[tokio::test]
     #[serial]
     async fn test_check_disable_forged_token_returns_session_error() {
@@ -390,7 +378,7 @@ mod tests {
         );
     }
 
-    /// `check_disable` kickout 后旧 token → 显性 `Err(Session)` 而非 Ok(false)（R2-1）。
+    /// `check_disable` kickout 后旧 token → 显性 `Err(Session)` 而非 `Ok(false)`。
     #[tokio::test]
     #[serial]
     async fn test_check_disable_kicked_out_token_returns_session_error() {
@@ -417,7 +405,7 @@ mod tests {
             .login("user1", &LoginParams::default())
             .await
             .unwrap();
-        // A6: 需预先创建 target Account-Session，否则 target_account_exists 校验先返回 InvalidParam
+        // 需预先创建 target Account-Session，否则 target_account_exists 校验先返回 InvalidParam
         let _ = backend
             .login("user2", &LoginParams::default())
             .await
@@ -464,9 +452,7 @@ mod tests {
         assert!(backend.check_login(&token).await.unwrap());
     }
 
-    // ========================================================================
     // Tracing #[instrument] span 覆盖验证
-    // ========================================================================
 
     use std::sync::Mutex;
     use tracing::span::Attributes;
@@ -552,9 +538,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // 覆盖率补充：Default + check_role/check_safe/check_api_key
-    // ========================================================================
 
     /// `BackendEmbedded::default()` 返回新实例。
     #[test]

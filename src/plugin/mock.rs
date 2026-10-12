@@ -1,11 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 插件层测试 mock 实现。
-//!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `OkPlugin` / `ErrPlugin` 两个 GarrisonPlugin mock（通过 `inventory` 编译期注册），
-//! 供 `plugin::tests` 钩子调用与插件管理测试复用。
+//! 插件层测试 mock（仅 `#[cfg(test)]` 编译）：`OkPlugin` / `ErrPlugin` 经 `inventory` 注册，供 `plugin::tests` 复用。
 
 use super::{GarrisonPlugin, GarrisonPluginEntry};
 use crate::error::{GarrisonError, GarrisonResult};
@@ -70,7 +66,6 @@ pub fn err_plugin_factory() -> Arc<dyn GarrisonPlugin> {
     Arc::new(ErrPlugin)
 }
 
-// 注册测试插件到 inventory
 inventory::submit! {
     GarrisonPluginEntry { factory: ok_plugin_factory }
 }

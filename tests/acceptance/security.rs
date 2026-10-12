@@ -1,31 +1,26 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 安全域验收。
-//! TOTP 时间窗口 / HTTP Basic / HTTP Digest（含 nc 重放防护）/ 密码策略规则矩阵 /
-//! HIBP 泄露密码检查 / 敏感数据脱敏 / XSS 过滤 / 输入消毒 / 常量时间比较，
+//! 安全域验收：TOTP 时间窗口 / HTTP Basic / HTTP Digest（含 nc 重放防护）/ 密码策略
+//! 规则矩阵 / HIBP 泄露密码检查 / 敏感数据脱敏 / XSS 过滤 / 输入消毒 / 常量时间比较，
 //! 「正常 + 异常」成对覆盖。
 //!
-//! 各场景按 feature 门控（均在 `full` 内）；HIBP 场景因 `full` 未含
-//! `policy-hibp`以 feature 互补方式组织：`full` 下运行 feature 关闭的显性 Err
-//! 断言，`--features full,policy-hibp` 下运行真实 HIBP API 三场景（2026-09 起
-//! 验收层禁止 mock：泄露/干净密码查询打真实 api.pwnedpasswords.com，
-//! k-anonymity 只上传 5 hex 前缀无隐私风险；离线环境 `[SKIP]`）。
+//! 各场景按 feature 门控（均在 `full` 内）；HIBP 场景 feature 互补组织：`full` 下运行
+//! feature 关闭的显性 Err 断言，`--features full,policy-hibp` 下运行真实 HIBP API 三
+//! 场景（打真实 api.pwnedpasswords.com，k-anonymity 只上传 5 hex 前缀无隐私风险；
+//! 离线环境 `[SKIP]`）。
 //!
-//! server 层依赖 resilience.rs 的
-//! `start_test_server`（InMemoryAuthBackend，无全局状态）与 `start_garrison_server`
-//! （BackendEmbedded + 全局单例，需 `#[serial]`）。
+//! server 层依赖 resilience.rs 的 `start_test_server`（InMemoryAuthBackend，无全局状态）
+//! 与 `start_garrison_server`（BackendEmbedded + 全局单例，需 `#[serial]`）。
 //!
 //! # API / 行为偏差记录
 //!
-//! - HIBP 端点 **可注入**：`NistComplianceRule::check_hibp_with_base(password, base_url)`
-//!   接受自定义 base URL（rules.rs）；真实场景传官方
-//!   `https://api.pwnedpasswords.com/range`（与默认 `check_hibp` 同源）。
+//! - HIBP 端点可注入：`NistComplianceRule::check_hibp_with_base(password, base_url)` 接受
+//!   自定义 base URL；真实场景传官方 `https://api.pwnedpasswords.com/range`。
 //! - HIBP 网络错误为 **fail-open**（`HibpVerdict.service_available=false` 显性标记 +
-//!   warn 日志，proposal 澄清 C-2 的设计决策），并非任务描述的 fail-closed；
-//!   断言实现语义并在报告中说明。
-//! - 密码策略集无强制字符集/复杂度规则（NIST SP 800-63B 不推荐），「字符集不满足」
-//!   经 `RegexRule` 自定义约束表达。
+//!   warn 日志），并非 fail-closed；断言实现语义。
+//! - 密码策略集无强制字符集/复杂度规则（NIST SP 800-63B 不推荐），「字符集不满足」经
+//!   `RegexRule` 自定义约束表达。
 
 use crate::relay::SendRelayRetry;
 use crate::resilience::{start_garrison_server, start_test_server, tenant_client};

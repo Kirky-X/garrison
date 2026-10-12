@@ -1,12 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! strategy_firewall 示例测试（cache-memory + web-axum feature）。
-//!
-//! 验证 run() 完整执行（内部已包含权限/角色校验与 Fail Loud 断言）。
-//!
-//! 注意：strategy_firewall 调用 `GarrisonManager::builder()` 注入全局单例，
-//! 多测试并行会竞争全局状态，必须用 #[serial] 串行执行。
+//! strategy_firewall 示例测试（cache-memory + web-axum feature）：验证 run() 完整执行（内部已包含
+//! 权限/角色校验与 Fail Loud 断言）；调用 `GarrisonManager::builder()` 注入全局单例，多测试并行
+//! 竞争全局状态，必须 #[serial] 串行执行。
 
 #![cfg(all(feature = "cache-memory", feature = "web-axum"))]
 

@@ -1,17 +1,13 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 统一集成测试基建。
-//!
-//! [`GarrisonTestHarness`] 一次 `init()` 完成 `GarrisonManager` 全局单例装配：
-//! 默认 `InMemoryDao` + 可编程 [`MockInterface`]，可选注入 [`MockClock`]、
-//! `GarrisonPluginManager`、`GarrisonListenerManager`。
+//! 统一集成测试基建：`GarrisonTestHarness` 一次 `init()` 完成 `GarrisonManager` 全局单例装配
+//! （默认 `InMemoryDao` + 可编程 `MockInterface`，可选注入 `MockClock`、插件/监听器管理器）。
 //!
 //! # 串行约束
 //!
-//! `GarrisonManager` 是进程级全局单例。使用 harness 的测试**必须**标注 `#[serial]`
-//! （仓库既有惯例，见 `src/account/metrics.rs:242`）；漏标时并发 `init()` 会显性返回
-//! `GarrisonError::Config`，而不是静默共享到别人的单例状态。
+//! `GarrisonManager` 是进程级全局单例。使用 harness 的测试**必须**标注 `#[serial]`；漏标时
+//! 并发 `init()` 会显性返回 `GarrisonError::Config`，而不是静默共享到别人的单例状态。
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -44,10 +40,8 @@ struct InterfaceState {
     failure: Option<Arc<dyn Fn() -> GarrisonError + Send + Sync + 'static>>,
 }
 
-/// 可编程 `GarrisonInterface` 测试替身。
-///
-/// 产品侧不提供 `GarrisonInterface` 实现（该 trait 设计为业务方回调），`src/` 内的
-/// 同名 mock 均为 `#[cfg(test)]` 私有且不支持编程式应答与错误注入，故 tests/ 自带一份。
+/// 可编程 `GarrisonInterface` 测试替身（产品侧无该 trait 实现且 src/ 内 mock 不支持
+/// 编程式应答与错误注入，故 tests/ 自带一份）。
 pub struct MockInterface {
     state: Mutex<InterfaceState>,
 }
@@ -82,10 +76,8 @@ impl MockInterface {
         self
     }
 
-    /// 注入错误：此后两个列表查询均返回该闭包产生的 `Err`。
-    ///
-    /// 以闭包而非 `GarrisonError` 值注入，因为 `GarrisonError` 未实现 `Clone`，
-    /// 而错误注入需要可重复触发。
+    /// 注入错误：此后两个列表查询均返回该闭包产生的 `Err`（用闭包而非值，因 `GarrisonError`
+    /// 未实现 `Clone` 而错误注入需可重复触发）。
     pub fn fail_with<F>(&self, factory: F) -> &Self
     where
         F: Fn() -> GarrisonError + Send + Sync + 'static,
@@ -125,11 +117,8 @@ impl GarrisonInterface for MockInterface {
     }
 }
 
-/// 在指定租户上下文中执行 future。
-///
-/// `tenant-isolation` feature 启用时，权限 / 角色查询路径是 fail-closed 的：
-/// 未进入 `TENANT.scope` 会返回 `ctx-tenant-context-missing`（`src/context/tenant.rs:118`）。
-/// 需要权限 / 角色断言的验收测试应把被测调用包进本函数。
+/// 在指定租户上下文中执行 future（`tenant-isolation` 下权限 / 角色查询 fail-closed：
+/// 未进入 `TENANT.scope` 会返回 `ctx-tenant-context-missing`；权限断言测试须包进本函数）。
 pub async fn with_tenant<R>(tenant_id: i64, future: impl std::future::Future<Output = R>) -> R {
     TENANT
         .scope(
@@ -183,8 +172,7 @@ fn harness_logic_factory(
         .lock()
         .clone()
         .ok_or_else(|| GarrisonError::Config("harness-clock-handoff-empty".to_string()))?;
-    // GarrisonManager::builder().build() 总是在 ctx 中携带 disable_repository；
-    // 缺失属于测试装配错误，fail loud。
+    // GarrisonManager::builder().build() 总是在 ctx 中携带 disable_repository，缺失属于测试装配错误，fail loud。
     let disable_repository = ctx
         .disable_repository
         .clone()
@@ -392,11 +380,9 @@ impl Harness {
 
     /// 清空全局单例并释放占用。
     ///
-    /// # 错误
-    /// `testing` feature 未启用时返回 `GarrisonError::NotImplemented`：清空单例的
-    /// `GarrisonManager::reset_for_test()` 是 `#[cfg(any(test, feature = "testing"))]`
-    /// 可见，外部测试 crate 只能依赖 `build()` 的覆盖式写入（既见于
-    /// `tests/acceptance_criteria.rs:97`）。此处显性失败而非静默不动作。
+    /// `testing` feature 未启用时返回 `GarrisonError::NotImplemented`：外部测试 crate
+    /// 无法调用 `#[cfg(any(test, feature = "testing"))]` 门控的 `reset_for_test()`，
+    /// 此处显性失败而非静默不动作。
     pub fn reset(self) -> GarrisonResult<()> {
         #[cfg(feature = "testing")]
         GarrisonManager::reset_for_test();
@@ -416,8 +402,7 @@ impl Harness {
 /// Web 服务器共用测试配置：`throw_on_not_login = false`。
 ///
 /// 默认 `true` 时未登录会在 `check_login`（全局管理器配置）以 `Session` 错误中断 → 500；
-/// 置 `false` 后返回 `Ok(false)` → interceptor 抛 `NotLogin` → 401
-/// （与仓库既有集成测试 `make_config()` 惯例一致）。router 与全局管理器
+/// 置 `false` 后返回 `Ok(false)` → interceptor 抛 `NotLogin` → 401。router 与全局管理器
 /// 应使用同一份实例，保证 token 提取与登录态判定语义一致。
 pub fn web_test_config() -> Arc<GarrisonConfig> {
     let mut config = GarrisonConfig::default_config();
@@ -435,9 +420,8 @@ enum ShutdownHandle {
 
 /// 已启动的测试服务器句柄：实际绑定地址 + 优雅关停。
 ///
-/// 三框架经 [`spawn_axum`] / [`spawn_actix`] / [`spawn_warp`] 同构：均绑定
-/// `127.0.0.1:0` 随机端口，注册 `Annotation::CheckLogin` 保护的 GET `/protected`，
-/// 未登录统一返回 401 + `error_code`/`message` JSON（三框架一致）。
+/// 三框架同构：均绑定 `127.0.0.1:0` 随机端口，注册 `Annotation::CheckLogin` 保护的
+/// GET `/protected`，未登录统一返回 401 + `error_code`/`message` JSON。
 pub struct SpawnedServer {
     addr: std::net::SocketAddr,
     shutdown: ShutdownHandle,
@@ -460,10 +444,9 @@ impl SpawnedServer {
     }
 }
 
-/// 启动 axum 测试服务器：`/protected` 受 `Annotation::CheckLogin` 保护。
+/// 启动 axum 测试服务器：`/protected` 受 `Annotation::CheckLogin` 保护，绑定 `127.0.0.1:0` 随机端口。
 ///
-/// 绑定 `127.0.0.1:0` 取随机端口；`GarrisonRouter` middleware 对未登录请求
-/// 返回统一 401 JSON（`error_code`/`message`，与 actix/warp 一致）。
+/// `GarrisonRouter` middleware 对未登录请求返回统一 401 JSON（`error_code`/`message`，三框架一致）。
 #[cfg(feature = "web-axum")]
 pub async fn spawn_axum() -> SpawnedServer {
     use garrison::annotation::Annotation;
@@ -487,14 +470,12 @@ pub async fn spawn_axum() -> SpawnedServer {
     }
 }
 
-/// 启动 actix-web 测试服务器：`/protected` 受 `Annotation::CheckLogin` 保护。
+/// 启动 actix-web 测试服务器：`/protected` 受 `Annotation::CheckLogin` 保护，绑定 `127.0.0.1:0`。
 ///
-/// 绑定 `127.0.0.1:0` 取随机端口；`GarrisonRouter::into_middleware()` 对未登录请求
-/// 返回统一 401 JSON（`error_code`/`message`，与 axum/warp 一致）。
-///
-/// actix-web 有自己的运行时（且本依赖 `default-features = false` 无 macros），
-/// 故在专属 `std::thread` 里以 `actix_web::rt::System::block_on` 驱动 `HttpServer`，
-/// 绑定后回传实际地址与服务器句柄；主测试仍在 tokio 运行时以 `reqwest` 访问。
+/// actix-web 有自己的运行时（且本依赖 `default-features = false` 无 macros），故在专属
+/// `std::thread` 里以 `actix_web::rt::System::block_on` 驱动 `HttpServer`，主测试仍在
+/// tokio 运行时以 `reqwest` 访问；`GarrisonRouter::into_middleware()` 对未登录请求返回
+/// 统一 401 JSON（与其他两框架一致）。
 #[cfg(feature = "web-actix")]
 pub async fn spawn_actix() -> SpawnedServer {
     use actix_web::{web, App, HttpServer};
@@ -506,8 +487,7 @@ pub async fn spawn_actix() -> SpawnedServer {
     std::thread::spawn(move || {
         let system = actix_web::rt::System::new();
         let _ = system.block_on(async move {
-            // `HttpServer::new` 工厂按 worker 调用；`GarrisonMiddleware` 未实现 Clone，
-            // 故在工厂内重建（规则表内部均为 Arc 共享，重建成本低）。
+            // `HttpServer::new` 工厂按 worker 调用；`GarrisonMiddleware` 未实现 Clone，故在工厂内重建。
             let http = HttpServer::new(|| {
                 let middleware = GarrisonRouter::new(web_test_config())
                     .route_protected("/protected", Annotation::CheckLogin)
@@ -520,8 +500,7 @@ pub async fn spawn_actix() -> SpawnedServer {
             .expect("actix 测试服务器应能绑定临时端口");
             let addr = http.addrs()[0];
             let server = http.run();
-            // actix-server 2.9：`Server` 不再提供 `stop`/`Clone`，
-            // 经 `handle()` 取 `ServerHandle`（Clone + Send）回传给主测试线程。
+            // actix-server 2.9 起 `Server` 无 `stop`/`Clone`，经 `handle()` 取 `ServerHandle` 回传。
             let handle = server.handle();
             tx.send((addr, handle))
                 .expect("应能回传 actix 地址与服务器句柄");
@@ -541,10 +520,9 @@ pub async fn spawn_actix() -> SpawnedServer {
     }
 }
 
-/// 启动 warp 测试服务器：`/protected` 受 `check_login` filter 保护。
+/// 启动 warp 测试服务器：`/protected` 受 `check_login` filter 保护，绑定 `127.0.0.1:0`。
 ///
-/// 绑定 `127.0.0.1:0` 取随机端口；`.recover(garrison_recover)` 把拒绝链映射为
-/// 统一 401 JSON（`error_code`/`message`，与 axum/actix 一致）。
+/// `.recover(garrison_recover)` 把拒绝链映射为统一 401 JSON（`error_code`/`message`，三框架一致）。
 #[cfg(feature = "web-warp")]
 pub async fn spawn_warp() -> SpawnedServer {
     use garrison::web_warp::{check_login, garrison_recover};

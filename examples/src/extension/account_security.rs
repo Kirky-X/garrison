@@ -5,10 +5,7 @@
 //!
 //! 对应模块：`src/account/`（各 `account-*` feature 开启时可用）。
 //!
-//! 流程：
-//! 1. PasswordPolicyEngine：注册规则 + 校验密码
-//! 2. UserLockoutConfig：配置锁定策略
-//! 3. FlowBuilder：声明式认证流程编排
+//! 流程：PasswordPolicyEngine 注册规则 + 校验密码、UserLockoutConfig 锁定策略、FlowBuilder 声明式认证流程编排。
 //!
 //! 运行方式：
 //! ```sh
@@ -30,7 +27,6 @@ fn demo_password_policy() {
 
     println!("[1] 密码策略引擎 (PasswordPolicyEngine):");
 
-    // 注册规则
     let rules: Vec<Box<dyn PasswordPolicyRule>> = vec![
         Box::new(LengthRule::new(8, 128)),
         Box::new(BlacklistRule::new(vec![
@@ -182,9 +178,7 @@ fn demo_auth_flow() {
     println!("[3] 认证流程 DSL 示例跳过（需启用 account-authflow feature）\n");
 }
 
-/// 运行账号安全引擎示例。
-///
-/// 演示密码策略校验、账号锁定配置、认证流程编排。
+/// 运行账号安全引擎示例：密码策略校验、账号锁定配置、认证流程编排。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 账号安全引擎示例 ===\n");
 

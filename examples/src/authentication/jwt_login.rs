@@ -8,16 +8,12 @@
 //! cargo run -p garrison-examples --bin jwt_login --features protocol-jwt
 //! ```
 //!
-//! 本示例不依赖 `GarrisonManager` 全局单例，仅展示 `JwtHandler` 的独立用法。
-//! 若需将 JWT 接入 Garrison 会话体系，使用 `GarrisonUtil::login_by_token(token)` 将
-//! 外部签发的 JWT 关联到 Garrison 会话。
+//! 本示例不依赖 `GarrisonManager` 全局单例，仅展示 `JwtHandler` 的独立用法；
+//! 若需将 JWT 接入 Garrison 会话体系，使用 `GarrisonUtil::login_by_token(token)` 将外部签发的 JWT 关联到 Garrison 会话。
 
 use garrison::protocol::jwt::JwtHandler;
 
-/// 运行 JWT 登录示例。
-///
-/// 演示 JwtHandler 的 sign 签发、verify 校验、refresh 刷新，
-/// 以及过期/非法 token 的错误处理。
+/// 运行 JWT 登录示例：演示 sign 签发、verify 校验、refresh 刷新与过期/非法 token 的错误处理。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison JWT 登录示例 ===\n");
 

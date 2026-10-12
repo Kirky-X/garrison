@@ -3,8 +3,7 @@
 
 //! `DistributedLimiter` 适配器，用 `GarrisonDao::incr` 实现原子计数。
 //!
-//! `incr(key, amount)` 通过循环 `dao.incr(key, 0)` amount 次实现。
-//! `incr_with_ttl(key, amount, ttl)` 通过循环 `dao.incr(key, ttl_secs)` amount 次实现。
+//! `incr(key, amount)` / `incr_with_ttl(key, amount, ttl)` 通过循环 `dao.incr` amount 次实现。
 //! `atomic_check_and_incr` 优先调用 `dao.eval_lua` 执行 Lua 脚本（Redis 后端原子），
 //! 非 Redis 后端降级为 `incr` + 阈值判断。
 //!
@@ -27,29 +26,21 @@ use std::time::Duration;
 
 use super::errors::map_to_limiter_err;
 
-/// `DistributedLimiter` 适配器，用 `GarrisonDao::incr` 实现原子计数。
-///
-/// `incr(key, amount)` 通过循环 `dao.incr(key, 0)` amount 次实现。
-/// `incr_with_ttl(key, amount, ttl)` 通过循环 `dao.incr(key, ttl_secs)` amount 次实现。
+/// `DistributedLimiter` 适配器，用 `GarrisonDao::incr` 实现计数（`incr` / `incr_with_ttl`
+/// 循环 `dao.incr` amount 次实现，原子性声明见模块文档）。
 pub struct GarrisonDaoDistributedLimiter {
     pub(super) dao: Arc<dyn GarrisonDao>,
     /// [`Limiter::allow`] 对全局计数器 `_global` 使用的阈值（超过则拒绝）。
     ///
-    /// 默认 `u64::MAX`（等效不限制、仅计数），（观测模式）；
-    /// 通过 [`Self::with_global_threshold`] 设置真实阈值后才会产生拒绝。
+    /// 默认 `u64::MAX`（等效不限制、仅计数，观测模式）；经 [`Self::with_global_threshold`]
+    /// 设置真实阈值后才会产生拒绝。
     global_threshold: u64,
 }
 
 impl GarrisonDaoDistributedLimiter {
-    /// 创建适配器实例。
+    /// 创建适配器实例（此构造下 [`Limiter::allow`] 等效不限制：阈值 `u64::MAX`，仅计数不拒绝）。
     ///
-    /// # 参数
-    /// - `dao`: 内部 DAO 实现。
-    ///
-    /// # 注意
-    /// 此构造下 [`Limiter::allow`] 等效不限制（阈值 `u64::MAX`，仅计数不拒绝）。
-    /// 需要真实限流请改用 [`Self::with_global_threshold`] 或直接使用
-    /// [`Self::atomic_check_and_incr`]。
+    /// 需要真实限流请改用 [`Self::with_global_threshold`] 或直接使用 [`Self::atomic_check_and_incr`]。
     pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self {
             dao,
@@ -59,12 +50,7 @@ impl GarrisonDaoDistributedLimiter {
 
     /// 创建带全局阈值的适配器实例。
     ///
-    /// [`Limiter::allow`] 递增 `_global` 后与 `threshold` 比较，超过返回
-    /// `Ok(false)`（真实拒绝），未超过返回 `Ok(true)`。
-    ///
-    /// # 参数
-    /// - `dao`: 内部 DAO 实现。
-    /// - `threshold`: 允许的最大全局计数（超过则拒绝）。
+    /// [`Limiter::allow`] 递增 `_global` 后与 `threshold` 比较，超过返回 `Ok(false)`（真实拒绝），未超过返回 `Ok(true)`。
     pub fn with_global_threshold(dao: Arc<dyn GarrisonDao>, threshold: u64) -> Self {
         Self {
             dao,
@@ -74,19 +60,10 @@ impl GarrisonDaoDistributedLimiter {
 
     /// 原子 check-and-increment（Lua 脚本实现）。
     ///
-    /// 原子递增计数器并检查是否超过阈值：
-    /// 1. 调用 `eval_lua` 执行 INCR + EXPIRE Lua 脚本（Redis 后端原子操作）
-    /// 2. 若返回计数 > 阈值，拒绝（计数已递增，TTL 后自动重置）
-    /// 3. 若 `eval_lua` 返回 `NotImplemented`（非 Redis 后端），降级到 `incr` + 阈值判断
-    ///
-    /// # 参数
-    /// - `key`: 计数器键。
-    /// - `threshold`: 允许的最大计数（超过则拒绝）。
-    /// - `ttl`: 计数器窗口 TTL（首次创建时设置）。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 允许（计数 <= 阈值）。
-    /// - `Ok(false)`: 拒绝（计数 > 阈值）。
+    /// 原子递增计数器并检查是否超过阈值：调用 `eval_lua` 执行 INCR + EXPIRE Lua 脚本
+    /// （Redis 后端原子操作）；返回计数 > 阈值则拒绝（计数已递增，TTL 后自动重置）；
+    /// `eval_lua` 返回 `NotImplemented`（非 Redis 后端）时降级到 `incr` + 阈值判断。
+    /// 返回 `Ok(true)` 允许（计数 <= 阈值），`Ok(false)` 拒绝（计数 > 阈值）。
     pub async fn atomic_check_and_incr(
         &self,
         key: &str,
@@ -118,12 +95,11 @@ impl GarrisonDaoDistributedLimiter {
             Err(GarrisonError::NotImplemented(_)) => {
                 // 降级：非 Redis 后端，用 incr + 阈值判断。
                 //
-                // TOCTOU 竞态声明：此降级路径「incr → 比较阈值」整体不原子——
-                // `dao.incr` 仅单次调用原子（且无原子 incr 的后端默认实现为
-                // get→update 组合，自身标注 TOCTOU），并发下多个调用方可能都
-                // 观察到 count <= threshold 而超额放行。精确限流必须依赖
-                // eval_lua（Redis）或后端原子 CAS 实现；此路径仅为 best-effort
-                // 降级，不应作为精确配额依据。
+                // TOCTOU 竞态声明：此降级路径「incr → 比较阈值」整体不原子——`dao.incr` 仅单次
+                // 调用原子（无原子 incr 的后端默认实现为 get→update 组合，自身即标注 TOCTOU），
+                // 并发下多个调用方可能都观察到 count <= threshold 而超额放行。精确限流必须依赖
+                // eval_lua（Redis）或后端原子 CAS 实现；此路径仅为 best-effort 降级，
+                // 不应作为精确配额依据。
                 let count = self
                     .dao
                     .incr(key, ttl.as_secs())
@@ -135,32 +111,18 @@ impl GarrisonDaoDistributedLimiter {
         }
     }
 
-    /// `limiteron::oxcache_lua` 由 limiteron 的 `lua-script` feature 门控，
-    ///  garrison 侧仅 `firewall-ratelimit` 传递启用（`Cargo.toml` `[features]`），
-    /// 故本方法随该 feature 编译；策略层（同 feature 门控）是唯一调用方。
+    /// `limiteron::oxcache_lua` 由 limiteron 的 `lua-script` feature 门控，garrison 侧仅
+    /// `firewall-ratelimit` 传递启用（`Cargo.toml` `[features]`），故本方法随该 feature
+    /// 编译；策略层（同 feature 门控）是唯一调用方。
     #[cfg(feature = "firewall-ratelimit")]
-    /// 滑动窗口判定（镜像 limiteron `RedisDistributedLimiter::allow_sliding_window`
-    /// 的脚本契约，供 garrison 防火墙限流策略直连滑窗判定）。
-    ///
-    /// 以 `limiteron::oxcache_lua::SLIDING_WINDOW_SCRIPT` 经
-    /// [`GarrisonDao::eval_lua`] 执行原子 read-filter-check-write：
-    /// `KEYS=[窗口键, {窗口键}:seq]`（hash tag 共置，Redis Cluster 同 slot）、
-    /// `ARGV=[window_ms, max_requests]`，返回 `{allowed, count, reset_time}`
-    /// （时钟源在脚本内）。`eval_lua` 返回 `NotImplemented`（非 Redis 后端，
-    /// 如 oxcache）时错误**透传**，由调用方（策略层）决定降级路径——
-    /// 本方法不做内部降级，避免第二份滑动窗口实现。
-    ///
-    /// # 参数
-    /// - `key`: 窗口键（调用方构造，如 `rl:ip:{ip}`）。
-    /// - `window_ms`: 窗口大小（毫秒）。
-    /// - `max_requests`: 窗口内最大请求数（达到即拦截）。
-    ///
-    /// # 返回
-    /// `(allowed, current_count, reset_time)`。
-    ///
-    /// # 错误
-    /// - `ConfigError`：key 为空或响应形状不符。
-    /// - 透传 `eval_lua` 的错误（含 `NotImplemented`）。
+    /// 滑动窗口判定（镜像 limiteron `RedisDistributedLimiter::allow_sliding_window` 的脚本
+    /// 契约，供 garrison 防火墙限流策略直连滑窗判定）：以
+    /// `limiteron::oxcache_lua::SLIDING_WINDOW_SCRIPT` 经 [`GarrisonDao::eval_lua`] 执行
+    /// 原子 read-filter-check-write：`KEYS=[窗口键, {窗口键}:seq]`（hash tag 共置，Redis
+    /// Cluster 同 slot）、`ARGV=[window_ms, max_requests]`，返回 `{allowed, count, reset_time}`
+    /// （时钟源在脚本内）。`eval_lua` 返回 `NotImplemented`（非 Redis 后端，如 oxcache）时错误
+    /// **透传**，由调用方（策略层）决定降级路径——本方法不做内部降级，避免第二份滑动窗口实现。
+    /// 错误：`ConfigError`（key 为空或响应形状不符），或透传 `eval_lua` 的错误（含 `NotImplemented`）。
     pub async fn allow_sliding_window(
         &self,
         key: &str,
@@ -204,8 +166,8 @@ impl GarrisonDaoDistributedLimiter {
 impl Limiter for GarrisonDaoDistributedLimiter {
     /// 递增全局计数器 `_global` 并与阈值比较。
     ///
-    /// - `new` 构造（阈值 `u64::MAX`）：仅计数，恒返回 `Ok(true)`（观测模式）。
-    /// - `with_global_threshold` 构造：`count > threshold` 时返回 `Ok(false)`（真实拒绝）。
+    /// `new` 构造（阈值 `u64::MAX`）仅计数、恒返回 `Ok(true)`（观测模式）；
+    /// `with_global_threshold` 构造在 `count > threshold` 时返回 `Ok(false)`（真实拒绝）。
     async fn allow(&self, cost: u64) -> Result<bool, LimiteronError> {
         // Limiter trait 的 allow 无 key 参数，用固定 key 计数
         let count = self.incr("_global", cost).await?;
@@ -217,12 +179,9 @@ impl Limiter for GarrisonDaoDistributedLimiter {
 impl DistributedLimiter for GarrisonDaoDistributedLimiter {
     /// 递增计数器 `amount` 次（每次 +1）。
     ///
-    /// # 非原子性声明
-    ///
-    /// `GarrisonDao::incr` 每次仅递增 1 且无 `INCRBY` 语义，本方法在
-    /// `amount > 1` 时循环调用 DAO：单次调用原子，但整体递增**非原子**，
-    /// 并发交错可使返回计数偏离单次 `INCRBY` 语义。精确批量递增需后端提供
-    /// 批量接口或使用 [`Self::atomic_check_and_incr`]（Redis Lua）。
+    /// `GarrisonDao::incr` 每次仅递增 1 且无 `INCRBY` 语义：单次调用原子，但 `amount > 1`
+    /// 时整体递增**非原子**，并发交错可使返回计数偏离单次 `INCRBY` 语义。精确批量递增需后端
+    /// 批量接口或 [`Self::atomic_check_and_incr`]（Redis Lua）。
     async fn incr(&self, key: &str, amount: u64) -> Result<u64, LimiteronError> {
         let mut count = 0u64;
         for _ in 0..amount {
@@ -236,16 +195,9 @@ impl DistributedLimiter for GarrisonDaoDistributedLimiter {
 
     /// 递增计数器 `amount` 次（每次 +1，首次创建 key 时设置 TTL）。
     ///
-    /// # 非原子性声明
-    ///
-    /// 与 [`Self::incr`] 相同，`amount > 1` 时循环调用 DAO，整体递增非原子。
-    ///
-    /// # TTL 语义
-    ///
-    /// 按 `GarrisonDao::incr` 契约，`ttl_secs` 仅在 key 首次创建时生效，已存在
-    /// 的 key 不重置 TTL。循环中每次都传 `ttl_secs`：仅第一次调用实际创建 key
-    /// 并设置 TTL，后续调用 TTL 参数被后端忽略（这是循环实现下的预期行为，
-    /// 并非双重刷新）。
+    /// 非原子性与 [`Self::incr`] 相同。TTL 语义：按 `GarrisonDao::incr` 契约，`ttl_secs`
+    /// 仅在 key 首次创建时生效，已存在的 key 不重置 TTL；循环中每次都传 `ttl_secs` 是循环
+    /// 实现下的预期行为，并非双重刷新。
     async fn incr_with_ttl(
         &self,
         key: &str,
@@ -336,7 +288,7 @@ mod tests {
         assert_eq!(limiter.get_count("noexist").await.unwrap(), 0);
     }
 
-    // --- unwrap_or(0) 静默吞错修复测试 ---
+    // --- 脏数据显性化测试 ---
 
     /// DistributedLimiter::get_count 遇到脏数据时返回错误（非静默用 0）。
     #[tokio::test]
@@ -361,11 +313,8 @@ mod tests {
     // Redis Lua 脚本原子化限速（check-and-increment）测试
     // ------------------------------------------------------------------------
 
-    /// 并发 100 次 atomic_check_and_incr（阈值 10）结果精确为 10 通过 + 90 拒绝。
-    ///
-    /// 验证 GarrisonDaoDistributedLimiter::atomic_check_and_incr 通过 eval_lua 实现
-    /// 原子 check-and-increment：100 个并发任务同时调用，仅前 10 个通过（count <= 10），
-    /// 后 90 个被拒绝（count > 10）。
+    /// 并发 100 次 atomic_check_and_incr（阈值 10）结果精确为 10 通过 + 90 拒绝：
+    /// 验证经 eval_lua 的原子 check-and-increment，仅前 10 个任务通过（count <= 10），后 90 个被拒。
     #[tokio::test(flavor = "multi_thread")]
     async fn t010_atomic_check_and_incr_concurrent_threshold() {
         use std::sync::atomic::{AtomicU64, Ordering};

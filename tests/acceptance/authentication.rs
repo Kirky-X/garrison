@@ -1,14 +1,12 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! authentication 域验收。
-//! 登录 / 登出 / 切换 / 续期 / 顶替 / 踢出 / 过期 / 封禁 / 锁定，
+//! authentication 域验收：登录 / 登出 / 切换 / 续期 / 顶替 / 踢出 / 过期 / 封禁 / 锁定，
 //! 「正常 + 异常」成对覆盖。
 //!
-//! 会话级场景经 `GarrisonTestHarness`（全局单例）+ `#[serial]`；
-//! 密码场景（010）使用独立 `GarrisonLogicDefault` 实例 + 真实 SQLite 迁移
-//! （镜像 integration/login_password.rs 的已知良好装配）；封禁（011）经
-//! `DefaultDisableRepository`；锁定（012）经 `UserLockoutStrategy`。
+//! 会话级场景经 `GarrisonTestHarness`（全局单例）+ `#[serial]`；密码场景（010）使用独立
+//! `GarrisonLogicDefault` 实例 + 真实 SQLite 迁移；封禁（011）经 `DefaultDisableRepository`；
+//! 锁定（012）经 `UserLockoutStrategy`。
 
 use crate::common::harness::GarrisonTestHarness;
 use garrison::stp::context::{get_renewed_token, with_renewed_token_scope};
@@ -531,13 +529,12 @@ async fn acc_auth_012_lockout_blocks_after_repeated_failures() {
 // e2e 移植场景
 // ------------------------------------------------------------------------
 
-/// （异常）：switch-to 默认安全拒绝——未注入自定义
-/// `SwitchToGuard` 时默认 `DenyAllSwitchToGuard` fail-closed 拒绝所有身份切换
-/// （`NotPermission`），且被拒切换无副作用（token 仍绑定原主体并保持有效）。
+/// （异常）：switch-to 默认安全拒绝——未注入自定义 `SwitchToGuard` 时默认
+/// `DenyAllSwitchToGuard` fail-closed 拒绝所有身份切换（`NotPermission`），且被拒切换
+/// 无副作用（token 仍绑定原主体并保持有效）。
 ///
-/// 对应 e2e 原用例（switch-to 部分）：经 HTTP 断言 `error_code="NOT_PERMISSION"`；
-/// 本场景在逻辑层直接断言 `BackendEmbedded::switch_to` 的 `NotPermission`
-/// 错误并补充无副作用断言（不可弱化，语义等价）。
+/// 由 e2e 动作层移植而来（原经 HTTP 断言 `error_code="NOT_PERMISSION"`），本场景在逻辑层
+/// 直接断言并补充无副作用断言，不可弱化，语义等价。
 #[tokio::test]
 #[serial]
 async fn acc_auth_017_switch_to_default_deny_all_guard_rejects() {
@@ -572,13 +569,9 @@ async fn acc_auth_017_switch_to_default_deny_all_guard_rejects() {
     );
 }
 
-/// （正常）：refresh 链 50 次——连续 `renew_to_equivalent` 50 次
-/// 每次产出新 token（新旧互异）、链路不中断，最终 token 有效且首 token 已失效。
-///
-/// 对应 e2e 原用例经 HTTP `/api/v1/auth/refresh` 断言 status 200 + 新 token；
-/// 本场景在逻辑层直接调用 `BackendEmbedded::renew_to_equivalent`（refresh
-/// 端点的同一下游实现，见 src/server/sdforge_routes.rs `auth_refresh`），
-/// 保留「链不中断 / 新旧互异 / 终态有效」全部语义。
+/// （正常）：refresh 链 50 次——连续 `renew_to_equivalent` 50 次每次产出新 token
+/// （新旧互异）、链路不中断，最终 token 有效且首 token 已失效；由 e2e 的 HTTP refresh
+/// 断言移植，改在逻辑层直接调用同一端点下游实现，保留链不中断 / 新旧互异 / 终态有效语义。
 #[tokio::test]
 #[serial]
 async fn acc_auth_018_refresh_chain_50_times_keeps_valid() {
@@ -616,12 +609,9 @@ async fn acc_auth_018_refresh_chain_50_times_keeps_valid() {
     assert_token_invalid!(first_check, "refresh 链后首个 token 应已失效");
 }
 
-/// （异常）： 连续登录失败封禁——5 次失败触发锁定
-/// （Linear 策略 base=1800s → 锁定时长 ≈ 30 分钟），LockoutState 字段正确
-/// （failure_count=5、locked_until>0、锁定时长落在 ±60s 窗口），且可构造
-/// `DisableService` 错误（until=Some(now+30min)，HTTP status=403）。
-///
-/// 对应（登录失败锁定账户）验收标准，断言语义原样保留。
+/// （异常）： 连续登录失败封禁——5 次失败触发锁定（Linear 策略 base=1800s →
+/// 锁定时长 ≈ 30 分钟），LockoutState 字段正确（failure_count=5、locked_until>0、
+/// 锁定时长落在 ±60s 窗口），且可构造 `DisableService` 错误（until=Some(now+30min)，HTTP status=403）。
 #[tokio::test]
 #[serial]
 #[cfg(feature = "account-lockout")]
@@ -697,14 +687,12 @@ async fn acc_auth_019_bw_ac_010_login_failure_locks_account() {
     assert_eq!(status, 403, "DisableService 的 HTTP status 应为 403");
 }
 
-/// （正常）：安全默认值——新登录 token 未经二级认证
-/// `check_safe=false`、未被封禁 `check_disable=false`；无效 token（伪造/kickout
-/// 后旧 token）显性返回 `Session` 错误（与 check-login 的 SESSION_ERROR 语义对齐），
-/// 不再与「未封禁/未认证」合并为宽松 false。
+/// （正常）：安全默认值——新登录 token 未经二级认证 `check_safe=false`、未被封禁
+/// `check_disable=false`；无效 token（伪造/kickout 后的旧 token）显性返回 `Session`
+/// 错误，不再宽松合并为 false。
 ///
-/// 对应 e2e 原用例（check-disable 部分）：经 HTTP 断言 `data=false`；本场景经
-/// `BackendEmbedded::check_safe` / `check_disable`（端点同一下游）直接断言布尔值
-/// 与错误变体（GAR-02 / R2-1 回归）。
+/// 由 e2e check-disable 用例移植：改经 `BackendEmbedded::check_safe` / `check_disable`
+/// 直接断言布尔值与错误变体（GAR-02 / R2-1 回归）。
 #[tokio::test]
 #[serial]
 async fn acc_auth_016_safe_disable_defaults_false() {
@@ -751,12 +739,10 @@ async fn acc_auth_016_safe_disable_defaults_false() {
 
 // ------------------------------------------------------------------------
 // 密码凭据域
-// （ 已覆盖的「防枚举统一错误」语义在 021 中标注去重）
 // ------------------------------------------------------------------------
 
-/// 测试用 listener：根据 login_id 区分 user_not_found (9999) 与 wrong_password
-/// (1001)。实现层 reason 统一为 "invalid_credentials"，
-/// listener 无法仅凭 reason 区分两类失败，需借助 login_id（测试场景固定）。
+/// 测试用 listener：根据 login_id 区分 user_not_found (9999) 与 wrong_password (1001)，
+/// 实现层 reason 统一为 "invalid_credentials"，listener 只能借助 login_id 区分（测试场景固定）。
 #[cfg(all(feature = "account-credential", feature = "listener"))]
 struct PasswordLoginListener;
 
@@ -807,9 +793,8 @@ fn reset_listener_counters() {
     LOGIN_FAILURE_WRONG_PASSWORD.store(0, Ordering::SeqCst);
 }
 
-/// （正常+异常）：`Argon2Hasher` / `BcryptHasher` hash → verify
-/// roundtrip——相同密码匹配、不同密码不匹配、跨算法不互认、`PasswordVerifier`
-/// 自动识别算法（原 argon2/bcrypt/cross_algorithm/password_verifier 四测试合并）。
+/// （正常+异常）：`Argon2Hasher` / `BcryptHasher` hash → verify roundtrip——相同密码
+/// 匹配、不同密码不匹配、跨算法不互认、`PasswordVerifier` 自动识别算法。
 #[cfg(all(
     feature = "account-credential",
     feature = "db-sqlite",
@@ -882,8 +867,7 @@ async fn acc_auth_020_password_hashers_roundtrip_and_auto_detect() {
     );
 }
 
-/// 构造注入 Argon2Hasher + DbnexusUserRepository + ListenerManager 的
-/// `GarrisonLogicDefault`（镜像 的 SQLite 装配与旧 login_password.rs）。
+/// 构造注入 Argon2Hasher + DbnexusUserRepository + ListenerManager 的 `GarrisonLogicDefault`。
 #[cfg(all(
     feature = "account-credential",
     feature = "db-sqlite",
@@ -974,11 +958,9 @@ fn test_password_config() -> garrison::config::GarrisonConfig {
     config
 }
 
-/// （正常+异常）：`login_with_password` 端到端——用户存在 + 密码匹配
-/// 签发非空 token（成功语义以正确密码能通过登录的锚点为准）；用户不存在 /
-/// 密码错误统一返回 `InvalidParam("stp-invalid-password")`（防枚举），
-/// 且 listener 广播 `LoginFailure` 事件各 1 次（本场景增量覆盖：
-/// 原 login_password.rs 的 user_not_found / wrong_password 事件计数断言）。
+/// （正常+异常）：`login_with_password` 端到端——用户存在 + 密码匹配签发非空 token；
+/// 用户不存在 / 密码错误统一返回 `InvalidParam("stp-invalid-password")`（防枚举），且
+/// listener 各广播 1 次 `LoginFailure` 事件。
 #[cfg(all(
     feature = "account-credential",
     feature = "db-sqlite",

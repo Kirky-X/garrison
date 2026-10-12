@@ -3,9 +3,7 @@
 
 //! 上下文层测试 mock 实现。
 //!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `MockResponse`（模拟 `GarrisonResponse` trait），
-//! 供 `context::tests` 默认方法行为测试复用。
+//! 仅 `cfg(test)` 下编译，提供模拟 `GarrisonResponse` trait 的 `MockResponse` 供测试复用。
 
 use crate::context::GarrisonResponse;
 use crate::error::GarrisonResult;

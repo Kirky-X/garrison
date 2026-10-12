@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! oauth2_flow 示例测试（protocol-oauth2 feature）。
-//!
-//! 验证 run() 完整执行（内部已包含授权 URL 与 token 交换断言）。
+//! oauth2_flow 示例测试（protocol-oauth2 feature）：验证 run() 完整执行（内部已包含授权 URL 与 token 交换断言）。
 
 #![cfg(feature = "protocol-oauth2")]
 

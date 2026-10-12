@@ -1,12 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 邮箱验证码凭证子模块。
-//! 提供 `EmailCodeCredential`（实现 `Credential` trait）+
+//! 邮箱验证码凭证子模块：`EmailCodeCredential`（实现 `Credential` trait）+
 //! `EmailCodeCredentialBuilder`（实现 `CredentialBuilder`，注入验证码服务），
 //! 复用 `secure::email::EmailVerificationService` 的校验逻辑。
-//!
-//! ## secret_data 格式
 //!
 //! `CredentialModel.secret_data` 存储如下 JSON：
 //!
@@ -14,17 +11,11 @@
 //! {"email":"user@example.com"}
 //! ```
 //!
-//! 邮箱验证码是"动态发送"凭证：真实验证码不落 `secret_data`（TOTP 静态 secret
-//! 模式不适用），而是经 `EmailVerificationService::send_code` 写入 KV
-//! （`email:code:{addr}`，带 TTL）。`verify(input)` 委托
-//! `EmailVerificationService::verify_code(email, input)` 完成校验与一次性消费。
+//! 属「动态发送」凭证：真实验证码不落 `secret_data`，而由 `EmailVerificationService::send_code` 写入
+//! KV（`email:code:{addr}`，带 TTL）；`verify(input)` 委托 `verify_code(email, input)` 完成校验与一次性消费。
 //!
-//! ## verify 错误语义
-//!
-//! - `Ok(true)`：校验通过（验证码正确，KV 状态已清除）
-//! - `Ok(false)`：码错误 / 码不存在或已过期（普通校验失败）
-//! - `Err(EmailVerifyMaxAttempts)`：尝试超限通道已锁定（安全事件，透传）
-//! - `Err(_)`：DAO 故障等校验过程错误（透传）
+//! verify 错误语义：`Ok(false)` 为码错误/不存在/已过期（普通校验失败）；`Err(EmailVerifyMaxAttempts)`
+//! 为尝试超限通道锁定（安全事件透传）；其余 `Err` 为 DAO 故障等过程错误（透传）。
 
 use super::{Credential, CredentialModel, CredentialType};
 use crate::error::{GarrisonError, GarrisonResult};
@@ -82,19 +73,12 @@ pub struct EmailCodeCredential {
 }
 
 impl EmailCodeCredential {
-    /// 创建邮箱验证码凭证。
-    ///
-    /// # 参数
-    /// - `model`: 凭证存储模型（`secret_data` 字段应为 `{"email":"..."}` JSON）
-    /// - `service`: 邮箱验证码服务（业务方构造，持有 DAO/限速器/发送器）
+    /// 创建邮箱验证码凭证（`model.secret_data` 应为 `{"email":"..."}` JSON；`service` 持 DAO/限速器/发送器）。
     pub fn new(model: CredentialModel, service: Arc<EmailVerificationService>) -> Self {
         Self { model, service }
     }
 
-    /// 读取凭证绑定的邮箱地址（解析 `secret_data`）。
-    ///
-    /// # 错误
-    /// - `secret_data` JSON 解析失败：`GarrisonError::InvalidParam`
+    /// 读取凭证绑定的邮箱地址（解析 `secret_data`）；JSON 解析失败返回 `InvalidParam`。
     pub fn email(&self) -> GarrisonResult<String> {
         Ok(EmailSecretData::from_json(&self.model.secret_data)?.email)
     }
@@ -129,16 +113,12 @@ impl Credential for EmailCodeCredential {
 
 /// 邮箱验证码凭证构造器（实现 `CredentialBuilder`，注入 [`EmailVerificationService`]）。
 ///
-/// 业务方在调用 `AuthExecutor::execute_with_full` 时作为 `builder` 参数传入，
-/// 使 `AuthStep::Mfa(Some("email-code"))` 步骤可以按 `"email-code"` 类型构造凭证。
-///
-/// 仅在 `account-authflow` feature 启用时编译（避免 feature 链穿透，
-/// 见 `executor.rs` SocialProviderResolver 同款设计约束）。
+/// 业务方在 `AuthExecutor::execute_with_full` 时作为 `builder` 参数传入，使
+/// `AuthStep::Mfa(Some("email-code"))` 步骤可按类型构造凭证；仅在 `account-authflow` feature 下编译
+/// （避免 feature 链穿透，见 `executor.rs` SocialProviderResolver 同款设计约束）。
 pub struct EmailCodeCredentialBuilder {
-    /// 字段仅在 `account-authflow` 下被 `CredentialBuilder::build` 读取；
-    /// 无 authflow 的组合（如 production 的 account-password-reset 链拉入
-    /// account-credential）下为构造保持完整性而保留（`#[allow(dead_code)]`
-    /// 消除组合差告警）。
+    /// 仅在 `account-authflow` 下被 `CredentialBuilder::build` 读取；无 authflow 的组合下为构造完整性
+    /// 保留（`#[allow(dead_code)]` 消除组合差告警）。
     #[cfg_attr(not(feature = "account-authflow"), allow(dead_code))]
     service: Arc<EmailVerificationService>,
 }

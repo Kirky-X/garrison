@@ -3,17 +3,12 @@
 
 //! `GarrisonManagerBuilder`：可组合的初始化入口。
 //!
-//! 本模块将原 [`GarrisonManager::builder()`](crate::manager::GarrisonManager) 的 4 个职责
-//!（构造 5 个内部 manager / 装配 `GarrisonLogicDefault` / 注入全局单例 / 启动后台 task）
-//! 拆解为链式 setter + `build()` / `build_explicit()` 两个构造入口：
-//!
-//! - [`build`](GarrisonManagerBuilder::build)：构造 logic + 注入全局单例 + 启动后台 task
-//!   （task handle 归单例，`GarrisonUtil` 静态 API 可用）。
-//! - `build_explicit`（`manager-explicit` feature）：构造 logic + 包装为 `Manager` +
-//!   启动后台 task（task handle 归 `Manager`，Drop 时 abort，不触碰全局单例）。
-//!
-//! 后台 task handle 由 `TaskHandles` 统一持有，归属构造方（`build` → 单例，
-//! `build_explicit` → `Manager`），Drop 时自动 abort，无单例泄漏。
+//! 构造 `GarrisonLogicDefault` / 装配依赖 / 注入全局单例 / 启动后台 task 四个职责经链式
+//! setter + 两个构造入口完成：`build` 构造 logic + 注入全局单例 + 启动后台 task（handle
+//! 归单例，`GarrisonUtil` 静态 API 可用）；`build_explicit`（`manager-explicit` feature）
+//! 构造 logic + 包装为 `Manager` + 启动后台 task（handle 归 `Manager`，Drop 时 abort，
+//! 不触碰全局单例）。后台 task handle 由 `TaskHandles` 统一持有，归属构造方（`build` →
+//! 单例，`build_explicit` → `Manager`），Drop 时自动 abort，无单例泄漏。
 
 use crate::account::disable::{DefaultDisableRepository, DisableRepository};
 use crate::config::GarrisonConfig;
@@ -104,11 +99,10 @@ impl Default for GarrisonManagerBuilder {
 
 /// `build()` 全局串行锁。
 ///
-/// `build()` 对 `GARRISON_MANAGER` 单例的更新由多个独立锁保护的字段组成
-/// （logic / strategy 两次 `ArcSwapOption::store` + cleanup/anomalous handle 写入），
-/// 字段间非原子：两个并发 `build()` 可能交错执行，产生 `(logic_B, strategy_A)` 错配对，
-/// 或 A 的 analyzer shutdown_tx 被 B 误取走 drop，提前杀死对方刚启动的后台任务。
-/// 以进程级 `Mutex` 串行化单例写入段，保证分步写入对并发调用方原子可见。
+/// 单例更新由多个独立锁保护的字段组成（logic / strategy 两次 `ArcSwapOption::store` +
+/// cleanup/anomalous handle 写入），字段间非原子：两个并发 `build()` 可能交错执行，产生
+/// `(logic_B, strategy_A)` 错配对，或 A 的 analyzer shutdown_tx 被 B 误取走 drop，提前杀死
+/// 对方刚启动的后台任务。以进程级 `Mutex` 串行化单例写入段，保证分步写入对并发调用方原子可见。
 static BUILD_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
 impl GarrisonManagerBuilder {
@@ -197,19 +191,14 @@ impl GarrisonManagerBuilder {
 
     /// 构造 logic + 注入全局单例 + 启动后台 task。
     ///
-    /// task handle 归 `GARRISON_MANAGER` 单例，`GarrisonUtil` 静态 API 可用。
+    /// task handle 归 `GARRISON_MANAGER` 单例，`GarrisonUtil` 静态 API 可用。单例写入段
+    /// （logic / strategy / task handle）由进程级 `BUILD_LOCK` 串行化：并发 `build()`
+    /// 按获取锁顺序依次完成各自的"写入 + 换 task"，后一次 build 覆盖前一次，不会字段
+    /// 交错错配或误杀对方后台任务；允许重复 build（便于测试），单例只保留最后一次
+    /// build 的组件。
     ///
-    /// # 并发安全
-    ///
-    /// 单例写入段（logic / strategy / task handle）由进程级 `BUILD_LOCK` 串行化：
-    /// 并发调用 `build()` 时按获取锁顺序依次完成各自的"写入 + 换 task"，后一次
-    /// build 覆盖前一次，不会出现字段交错错配或误杀对方后台任务。
-    /// 允许重复 build（便于测试），但单例最终只保留最后一次 build 的组件。
-    ///
-    /// # 错误
-    /// - 必填字段缺失（dao/config/interface 任一为 None）：`GarrisonError::Config`
-    /// - 配置非法：透传 `config.validate()` 的错误
-    /// - factory 构造失败：透传 factory 返回的 `GarrisonError`
+    /// 错误：必填字段缺失（dao/config/interface 任一为 None）→ `GarrisonError::Config`；
+    /// 配置非法透传 `config.validate()` 错误；factory 构造失败透传 factory 错误。
     pub async fn build(self) -> GarrisonResult<()> {
         // 串行化对全局单例的写入段（锁内无 await，不跨 .await 持锁）
         let _build_guard = BUILD_LOCK.lock();
@@ -248,24 +237,17 @@ impl GarrisonManagerBuilder {
     /// 构造 logic + 包装为 [`Manager`] + 启动后台 task。
     ///
     /// **不写入 `GARRISON_MANAGER` 全局单例**，task handle 归返回的 `Manager` 持有，
-    /// `Manager` Drop 时 abort 所有后台 task。用于多实例 / 测试隔离场景。
+    /// Drop 时 abort 所有后台 task，用于多实例 / 测试隔离。与 [`Manager::new`](crate::manager::explicit::Manager::new)
+    /// 的区别：`build_explicit` 完整构造 logic + 启动后台 task；`Manager::new` 仅包装
+    /// 已构造的 logic，不启动 task。
     ///
-    /// 与 [`Manager::new`](crate::manager::explicit::Manager::new) 的区别：
-    /// `build_explicit` 完整构造 logic + 启动后台 task（task_handles 非空，Drop 时 abort）；
-    /// `Manager::new` 仅包装已构造的 logic，不启动 task（task_handles 为空）。
+    /// GarrisonUtil 限制：本路径不写全局单例，`GarrisonUtil` 静态 API（`login` /
+    /// `logout` / `check_login` 等，委托 [`GarrisonManager::logic`]）返回
+    /// `GarrisonError::Session("manager-not-init")`，调用方应通过返回的 `Manager`
+    /// 实例方法操作，而非静态 API。
     ///
-    /// # GarrisonUtil 限制
-    ///
-    /// `build_explicit()` 不写入全局单例，因此 `GarrisonUtil` 静态 API
-    /// （`login` / `logout` / `check_login` 等，委托 [`GarrisonManager::logic`]）
-    /// 在此路径下返回 `GarrisonError::Session("manager-not-init")`。
-    /// 调用方应通过返回的 `Manager` 实例方法（如 `manager.logic.login(...)`）操作，
-    /// 而非 `GarrisonUtil` 静态 API。
-    ///
-    /// # 错误
-    /// - 必填字段缺失（dao/config/interface 任一为 None）：`GarrisonError::Config`
-    /// - 配置非法：透传 `config.validate()` 的错误
-    /// - factory 构造失败：透传 factory 返回的 `GarrisonError`
+    /// 错误：必填字段缺失 → `GarrisonError::Config`；配置非法透传 `config.validate()`
+    /// 错误；factory 构造失败透传 factory 错误。
     #[cfg(feature = "manager-explicit")]
     pub async fn build_explicit(self) -> GarrisonResult<Manager> {
         let (logic, task_handles) = self.build_logic()?;
@@ -278,7 +260,7 @@ impl GarrisonManagerBuilder {
     /// 构造 logic + 启动 cleanup_task 与 anomalous_analyzer_task。
     /// 此方法不触碰全局单例，由 `build` / `build_explicit` 决定注入目标。
     fn build_logic(self) -> GarrisonResult<(Arc<GarrisonLogicDefault>, TaskHandles)> {
-        // 1. fail-closed：必填字段缺失即返回，不构造任何 manager 或 task
+        // fail-closed：必填字段缺失即返回，不构造任何 manager 或 task
         let dao = self
             .dao
             .ok_or_else(|| GarrisonError::Config("builder-dao-missing".to_string()))?;
@@ -291,12 +273,11 @@ impl GarrisonManagerBuilder {
 
         config.validate()?;
 
-        // 3. 构造 session（处理 active_timeout = -1 的兜底语义）
+        // 构造 session（active_timeout = -1 表示不启用 activity 超时，用 timeout 兜底）
         let timeout = u64::try_from(config.timeout).map_err(|_| {
             GarrisonError::Config(format!("manager-timeout-overflow::{}", config.timeout))
         })?;
         let active_timeout = if config.active_timeout < 0 {
-            // -1 表示不启用 activity 超时，使用 timeout 兜底（保留既有语义）
             timeout
         } else {
             u64::try_from(config.active_timeout).map_err(|_| {
@@ -314,24 +295,24 @@ impl GarrisonManagerBuilder {
             remember_me_timeout,
         ));
 
-        // 4. auto-wire：构造 5 个 manager（builder 字段为 Some 用注入值，None 用默认实现）
-        // 4.1 PermissionChecker（委托 interface 查询权限/角色数据）
+        // auto-wire：构造各 manager（builder 字段为 Some 用注入值，None 用默认实现）
+        // PermissionChecker：委托 interface 查询权限/角色数据
         let permission_checker: Arc<dyn PermissionChecker> = match self.permission_checker {
             Some(pc) => pc,
             None => Arc::new(PermissionCheckerDefault::new(interface.clone())),
         };
-        // 4.2 PluginManager（通过 inventory 收集编译期注册的插件）
+        // PluginManager：通过 inventory 收集编译期注册的插件
         let plugin_manager = match self.plugin_manager {
             Some(pm) => pm,
             None => Arc::new(GarrisonPluginManager::new()),
         };
-        // 4.3 ListenerManager（通过 inventory 收集编译期注册的监听器，需 listener feature）
+        // ListenerManager：通过 inventory 收集编译期注册的监听器，需 listener feature
         #[cfg(feature = "listener")]
         let listener_manager = match self.listener_manager {
             Some(lm) => lm,
             None => Arc::new(GarrisonListenerManager::new()),
         };
-        // 4.4 AuthLogic（委托 session + token_handler 实现登录/校验）
+        // AuthLogic：委托 session + token_handler 实现登录/校验
         let token_handler: Arc<dyn crate::core::token::Token> =
             Arc::from(TokenStyleFactory::new_with_jwt_keys(
                 &config.token_style,
@@ -349,14 +330,13 @@ impl GarrisonManagerBuilder {
             ),
         };
 
-        // 5. 构造 firewall，注入 permission_checker + plugin_manager
+        // 构造 firewall，注入 permission_checker + plugin_manager
         let firewall_builder = GarrisonPermissionStrategyDefault::new(interface)
             .with_permission_checker(permission_checker.clone())
             .with_plugin_manager(plugin_manager.clone());
 
-        // firewall-* feature 启用时自动装配防火墙 hook（避免 dead-code）。
-        // 通过 `GarrisonFirewallCheckHookDefault` 注入共享 DAO 的限流器，
-        // 使 login 流水线的 5 个 hook（含暴力破解/频率/geo/异常检测）真正生效。
+        // firewall-* feature 启用时自动装配防火墙 hook（避免 dead-code）：经
+        // `GarrisonFirewallCheckHookDefault` 注入共享 DAO 的限流器，使 login 流水线的 5 个 hook（含暴力破解/频率/geo/异常检测）真正生效。
         #[cfg(feature = "firewall")]
         let firewall_builder = {
             use crate::strategy::hooks::GarrisonFirewallCheckHookDefault;
@@ -367,13 +347,13 @@ impl GarrisonManagerBuilder {
 
         let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(firewall_builder);
 
-        // 6. 构造 disable_repository（委托同一 DAO 实例持久化封禁条目）
+        // 构造 disable_repository（委托同一 DAO 实例持久化封禁条目）
         let disable_repo = match self.disable_repository {
             Some(dr) => dr,
             None => Arc::new(DefaultDisableRepository::new(dao.clone())),
         };
 
-        // 7. three-tier-cache feature 启用时构造 UserCacheService（复用 dao + firewall）
+        // three-tier-cache feature 启用时构造 UserCacheService（复用 dao + firewall）
         #[cfg(feature = "three-tier-cache")]
         let user_cache_service = match self.user_cache_service {
             Some(ucs) => ucs,
@@ -386,7 +366,7 @@ impl GarrisonManagerBuilder {
             )?),
         };
 
-        // 8. 构造 factory context（持有 5 个 manager 引用）
+        // 构造 factory context（持有各 manager 引用）
         #[cfg(feature = "listener")]
         let factory_ctx = GarrisonLogicFactoryContext {
             plugin_manager: Some(plugin_manager.clone()),
@@ -407,7 +387,7 @@ impl GarrisonManagerBuilder {
             user_cache_service: Some(user_cache_service.clone()),
         };
 
-        // 9. clone listener_manager 和 dao 给 analyzer，读取 config 值（均在 move 之前）
+        // clone listener_manager 和 dao 给 analyzer，读取 config 值（均在 move 之前）
         #[cfg(feature = "anomalous-detector-dual")]
         let (
             analyzer_listener_manager,
@@ -421,7 +401,7 @@ impl GarrisonManagerBuilder {
             config.anomalous_analyzer_burst_threshold,
         );
 
-        // 10. 通过 factory 构造 logic（builder 字段优先，否则 inventory 默认，最后 builder 链兜底）
+        // 通过 factory 构造 logic（builder 字段优先，否则 inventory 默认，最后 builder 链兜底）
         let factory_entry = self.factory.or_else(default_factory_selector);
         let logic: Arc<GarrisonLogicDefault> = match factory_entry {
             Some(entry) => (entry.factory)(
@@ -445,11 +425,11 @@ impl GarrisonManagerBuilder {
             ),
         };
 
-        // 11. 启动后台 cleanup task（interval_secs <= 0 时返回 None，不启动）
+        // 启动后台 cleanup task（interval_secs <= 0 时不启动）
         let cleanup_handle =
             spawn_cleanup_task(session, config.token_map_cleanup_interval_secs).map(Arc::new);
 
-        // 12. 启动异常登录分析器 task（anomalous-detector-dual feature）
+        // 启动异常登录分析器 task（anomalous-detector-dual feature）
         #[cfg(feature = "anomalous-detector-dual")]
         let (anomalous_handle, anomalous_shutdown) = {
             let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -472,7 +452,7 @@ impl GarrisonManagerBuilder {
             (analyzer_handle, shutdown_tx)
         };
 
-        // 13. 装配 task handle 集合，交由构造方持有
+        // 装配 task handle 集合，交由构造方持有
         let task_handles = TaskHandles {
             cleanup: cleanup_handle,
             #[cfg(feature = "anomalous-detector-dual")]
@@ -486,7 +466,7 @@ impl GarrisonManagerBuilder {
 
     /// 兜底路径：无 factory entry 时直接通过 builder 链构造 `GarrisonLogicDefault`。
     ///
-    /// 提取为独立私有函数，便于 单元测试兜底逻辑本身（不依赖 inventory 全局状态）。
+    /// 提取为独立私有函数，便于单元测试兜底逻辑本身（不依赖 inventory 全局状态）。
     #[allow(clippy::too_many_arguments)]
     #[cfg_attr(
         not(any(feature = "listener", feature = "three-tier-cache")),

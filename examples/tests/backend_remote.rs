@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! backend_remote 示例测试。
-//!
-//! 验证 run() 完整执行（内部对 Network 错误做了预期处理，不会 panic）。
+//! backend_remote 示例测试：验证 run() 完整执行（内部对 Network 错误做了预期处理，不会 panic）。
 
 #![cfg(feature = "backend-remote")]
 

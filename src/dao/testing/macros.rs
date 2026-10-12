@@ -1,14 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! [`crate::dao_conformance_tests!`] 宏展开器。
-//!
-//! 参考 oauth2-proxy `NewSessionStoreFunc` + `RunSessionStoreTests` 与 dex 的
-//! per-backend subTest 表：后端名 + `make` 异步构造闭包 + `caps` 能力层清单
-//! 展开为每层一个 `#[tokio::test(flavor = "multi_thread")]` 测试，能力跳过在
-//! 宏展开期完成（未声明的层不生成测试）。可选 `serial: true` 展开
-//! `#[::serial_test::serial]`（仅测试构建可用），`ignore: "..."` 展开
-//! `#[ignore = "..."]`（值为字符串字面量）。
+//! [`crate::dao_conformance_tests!`] 宏展开器（参考 oauth2-proxy `RunSessionStoreTests` / dex 的 per-backend subTest 表）：
+//! 后端名 + `make` 异步构造闭包 + `caps` 能力层清单展开为每层一个 `#[tokio::test(flavor = "multi_thread")]` 测试，
+//! 未声明的层不生成测试；可选 `serial: true` 展开 `#[serial_test::serial]`，`ignore: "..."` 展开 `#[ignore = "..."]`。
 
 /// 后端实例化宏（导出至 crate root：`crate::dao_conformance_tests!`）。
 ///
@@ -24,8 +19,7 @@
 /// }
 /// ```
 ///
-/// `make` 在每个测试内被调用一次（每测试全新空实例）；构造失败 panic
-///（fail-loud）。`caps` 中的未知层触发 `compile_error!`。
+/// `make` 在每个测试内调用一次（每测试全新空实例），构造失败 panic（fail-loud）；`caps` 未知层触发 `compile_error!`。
 #[macro_export]
 macro_rules! dao_conformance_tests {
     (backend: $backend:ident, make: $make:expr, caps: [$($cap:ident),+ $(,)?] $(,)?) => {
@@ -51,10 +45,8 @@ macro_rules! dao_conformance_tests {
     };
 }
 
-/// 生成 `mod <backend>`，内部逐层分派（`#[doc(hidden)]`）。
-///
-/// `attrs` 以单个 token tree（`[...]`）原子捕获再透传，避免 meta 与 cap
-/// 两级重复在展开期被强制同步（macro-rules 无独立重复变量）。
+/// 生成 `mod <backend>` 并逐层分派（`#[doc(hidden)]`）：`attrs` 以单个 token tree（`[...]`）原子捕获再透传，
+/// 避免 meta 与 cap 两级重复在展开期被强制同步（macro-rules 无独立重复变量）。
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __dao_conformance_backend {

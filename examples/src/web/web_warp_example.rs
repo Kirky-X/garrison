@@ -37,7 +37,6 @@ pub struct InMemoryDao {
 }
 
 impl InMemoryDao {
-    /// 创建 InMemoryDao 实例。
     pub fn new() -> Self {
         Self {
             store: Mutex::new(HashMap::new()),
@@ -125,9 +124,7 @@ pub struct MyInterface {
 }
 
 impl MyInterface {
-    /// 创建 MyInterface 实例。
-    ///
-    /// 预置数据：login_id=1001 持有 `["data:read"]` 权限 + `["admin"]` 角色。
+    /// 预置 login_id=1001 持有 data:read 权限 + admin 角色。
     pub fn new() -> Self {
         let mut permissions = HashMap::new();
         permissions.insert("1001".to_string(), vec!["data:read".to_string()]);
@@ -158,9 +155,7 @@ impl GarrisonInterface for MyInterface {
 // setup / build_routes / handle_rejection / run
 // ============================================================================
 
-/// 初始化全局 GarrisonManager（注入 InMemoryDao + MyInterface），并登录获取 token。
-///
-/// 返回 `(config, token)`，config 用于构建 warp Filter，token 用于测试请求。
+/// 初始化全局 GarrisonManager（注入 InMemoryDao + MyInterface）并登录获取 token，返回 (config, token)。
 pub async fn setup() -> (Arc<GarrisonConfig>, String) {
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let mut config = GarrisonConfig::default_config();
@@ -183,16 +178,8 @@ pub async fn setup() -> (Arc<GarrisonConfig>, String) {
     (config, token)
 }
 
-/// 构建 warp 路由 Filter（使用 GarrisonRouter + into_filter 路由级守卫）。
-///
-/// 注册的路由规则：
-/// - `/api/protected` → `CheckLogin`
-/// - `/api/admin` → `CheckRole("admin")`
-/// - `/api/data` → `CheckPermission("data:read")`
-/// - `/public` → 无守卫规则（放行）
-///
-/// 守卫 Filter 检查请求路径是否匹配已注册规则，匹配则执行 interceptor 鉴权。
-/// 未注册路径直接放行（仍经过后续路由匹配）。
+/// 构建 warp 路由 Filter：`GarrisonRouter` + `into_filter` 守卫。
+/// 守卫 Filter 仅对已注册路径执行 interceptor 鉴权，未注册路径直接放行（仍经过后续路由匹配）。
 pub fn build_routes(
     config: Arc<GarrisonConfig>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
@@ -232,9 +219,7 @@ pub fn build_routes(
         .map(|_, reply| reply)
 }
 
-/// rejection 恢复处理器：将 GarrisonRejection 转换为 JSON 错误响应。
-///
-/// 返回包含错误消息和正确状态码的 JSON 响应。非 GarrisonRejection 的 rejection 原样传递。
+/// rejection 恢复处理器：`GarrisonRejection` → JSON 错误响应，其他 rejection 原样传递。
 pub async fn handle_rejection(
     err: warp::Rejection,
 ) -> Result<impl warp::reply::Reply, warp::Rejection> {

@@ -1,35 +1,20 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 社交登录协议插件模块。
+//! 社交登录协议插件模块：`SocialLoginProvider` trait 抽象第三方平台（微信/支付宝），统一 `get_authorization_url` / `exchange_token` / `get_user_info` 三个 OAuth2 流程方法。
 //!
-//! 提供 `SocialLoginProvider` trait 抽象社交登录第三方平台（微信/支付宝），
-//! 统一 `get_authorization_url` / `exchange_token` / `get_user_info` 三个 OAuth2 流程方法。
-//!
-//! ## 子模块
-//!
-//! - `wechat`：微信扫码登录（`WechatProvider`，需 `social-wechat` feature）
-//! - `alipay`：支付宝授权登录（`AlipayProvider`，需 `social-alipay` feature）
-//!
-//! ## 与 OAuth2 模块的关系
-//!
-//! `protocol::oauth2` 提供通用 OAuth2 客户端（Authorization Code / Client Credentials / Password），
-//! 本模块针对社交平台特化（微信/支付宝的自定义 API 签名、用户信息格式）。
+//! 与 `protocol::oauth2`（通用 OAuth2 客户端）不同，本模块针对社交平台特化（自定义 API 签名、用户信息格式）；
+//! 子模块 `wechat`（`social-wechat`）与 `alipay`（`social-alipay`）按 feature 编译。
 
 use crate::error::GarrisonResult;
 use async_trait::async_trait;
 use serde_json::Value;
 
-// ============================================================================
 // provider_names：内置社交平台名称常量
-// ============================================================================
 
 /// 内置社交登录平台名称常量。
 ///
-/// `SocialUserInfo.provider` 字段使用 `String` 而非枚举，允许外部 crate 自定义 provider
-/// 注册到 `SocialLoginService`。本模块为内置 provider（wechat/alipay/wechat_mini_app）
-/// 提供标准化的名称常量，外部 crate 应使用自己的常量（如 `pub const HUAWEI: &str = "huawei"`）
-/// 以避免与内置 provider 冲突。
+/// `SocialUserInfo.provider` 为 `String` 而非枚举，允许外部 crate 自定义 provider；外部 crate 应使用自己的常量（如 `pub const HUAWEI: &str = "huawei"`）避免与内置 provider 冲突。
 pub mod provider_names {
     /// 微信开放平台扫码登录。
     pub const WECHAT: &str = "wechat";
@@ -39,23 +24,15 @@ pub mod provider_names {
     pub const WECHAT_MINI_APP: &str = "wechat_mini_app";
 }
 
-// ============================================================================
 // SocialUserInfo：社交用户信息
-// ============================================================================
 
-/// 社交用户信息。
+/// 社交用户信息（`exchange_token` / `get_user_info` 方法的返回类型）。
 ///
-/// `exchange_token` / `get_user_info` 方法的返回类型，承载第三方平台返回的用户字段。
+/// `provider` 为 `String` 非枚举，允许外部 crate 自定义 provider 标识；内置 provider 用 [`provider_names`] 常量。
 ///
-/// `provider` 字段为 `String` 类型（非枚举），允许外部 crate 自定义 provider 标识。
-/// 内置 provider 用 [`provider_names`] 模块的常量（`"wechat"` / `"alipay"` / `"wechat_mini_app"`）。
+/// # Debug 脱敏
 ///
-/// # Debug 脱敏（安全修复）
-///
-/// 本类型手动实现 `Debug`（不派生）：`raw` 字段承载第三方平台原始响应 JSON，
-/// 可能含 `access_token` / `session_key` / PII，派生 `Debug` 会在日志、
-/// tracing span 或错误上下文中明文输出。`Debug` 输出对 `raw` 仅打印
-/// `<redacted: N bytes>` 摘要（N 为序列化字节数），其余字段原样输出。
+/// 手动实现 `Debug`（不派生）：`raw` 可能含 `access_token` / `session_key` / PII，故仅打印 `<redacted: N bytes>` 摘要，其余字段原样输出。
 #[derive(Clone)]
 pub struct SocialUserInfo {
     /// 用户来源平台标识（字符串，外部 crate 可自定义）。
@@ -68,17 +45,13 @@ pub struct SocialUserInfo {
     pub avatar: Option<String>,
     /// 跨应用统一 ID（微信 unionid / 华为 unionID，用于同一开发者主体下多应用账号打通）。
     pub union_id: Option<String>,
-    /// 第三方平台原始响应 JSON（调试用，不应依赖其结构）。
-    ///
-    /// 内置 provider 已剥离 `access_token` / `session_key` 等敏感凭据字段
-    ///（见 `wechat::strip_sensitive_fields`），但仍可能含 PII——禁止原样
-    /// 打印/持久化。
+    /// 第三方平台原始响应 JSON（调试用，不应依赖其结构）：内置 provider 已剥离 `access_token` / `session_key`（见 `wechat::strip_sensitive_fields`），但仍可能含 PII，禁止原样打印/持久化。
     pub raw: Value,
 }
 
 impl std::fmt::Debug for SocialUserInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // 安全修复：raw 不进 Debug 输出，仅以字节数摘要标注（脱敏）。
+        // raw 不进 Debug 输出，仅以字节数摘要标注。
         f.debug_struct("SocialUserInfo")
             .field("provider", &self.provider)
             .field("provider_user_id", &self.provider_user_id)
@@ -96,53 +69,31 @@ impl std::fmt::Debug for SocialUserInfo {
     }
 }
 
-// ============================================================================
 // 子模块声明
-// ============================================================================
 
-/// 微信扫码登录 provider。
-///
-/// 启用 `social-wechat` feature 时编译。
+/// 微信扫码登录 provider（`social-wechat` feature）。
 #[cfg(feature = "social-wechat")]
 pub mod wechat;
 
-/// 支付宝授权登录 provider。
-///
-/// 启用 `social-alipay` feature 时编译。
+/// 支付宝授权登录 provider（`social-alipay` feature）。
 #[cfg(feature = "social-alipay")]
 pub mod alipay;
 
-// ============================================================================
 // urlencoding：社交登录 URL 编码工具（公共模块）
-// ============================================================================
 
-/// 社交登录 URL 编码工具。
-///
-/// 提供对查询参数值的百分号编码，保留 RFC 3986 unreserved 字符。
-/// 各 social provider（wechat/alipay）与外部 crate 自定义 provider 共用，
-/// 避免每个 provider 重复实现编码逻辑。
+/// 社交登录 URL 编码工具（各 social provider 与外部 crate 共用，避免重复实现）。
 pub mod urlencoding;
 
-/// 社交登录 provider 名称校验工具。
-///
-/// 提供 [`validation::is_valid_provider_name`] 函数，校验 provider 标识符格式合法性。
-/// 供 garrison 内部与外部 crate（如 sinnan）共用，确保校验规则单一来源（DIP）。
+/// 社交登录 provider 名称校验工具，供 garrison 与外部 crate（如 sinnan）共用（DIP：规则单一来源）。
 pub mod validation;
 
-// ============================================================================
 // SocialBindingService（feature = "db-sqlite"）
-// ============================================================================
 
-/// 社交账号绑定服务。
-///
-/// 提供 `find_or_create` 语义：首次社交登录时自动创建绑定关系并生成新 `login_id`，
-/// 后续登录返回已有 `login_id`（幂等）。
+/// 社交账号绑定服务：`find_or_create` 首次社交登录创建绑定并生成新 `login_id`，后续返回已有值（幂等）。
 ///
 /// # 设计
 ///
-/// struct 仅持有 `dao: Arc<dyn GarrisonDao>`，SQL 操作通过
-/// `GarrisonDaoDbnexus`（KV + SQL 统一实现）委托执行，
-/// 业务层不再直接持有 `DbPool`。
+/// 仅持有 `dao: Arc<dyn GarrisonDao>`，SQL 经 `GarrisonDaoDbnexus`（KV + SQL 统一实现）委托执行，业务层不直接持有 `DbPool`。
 ///
 /// # 表结构
 ///
@@ -166,93 +117,49 @@ pub struct SocialBindingService {
     pub dao: std::sync::Arc<dyn crate::dao::GarrisonDao>,
 }
 
-/// `SocialBindingService` 实现模块（任意 db 后端 feature）。
-///
-/// mod.rs 接口隔离：impl 块不允许留在 `mod.rs`。
+/// `SocialBindingService` 实现（接口隔离：impl 不放 `mod.rs`）。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub(crate) mod service;
 
-/// `SocialLoginService` 注册中心模块。
-///
-/// 提供 `SocialLoginService` 类型，外部 crate 可注册自定义 `SocialLoginProvider` 实现
-/// （如华为 Account Kit），实现扩展点架构。
+/// `SocialLoginService` 注册中心：外部 crate 可注册自定义 `SocialLoginProvider`（如华为 Account Kit）。
 pub mod registry;
 
-// ============================================================================
-// re-export：社交登录错误码常量（架构修复：消除跨 crate 模块路径耦合）
-// ============================================================================
+// re-export：社交登录错误码常量
 //
-// 外部 crate（如 sinnan）通过 `garrison::protocol::social::ERR_SOCIAL_PROVIDER_*`
-// 直接引用常量，无需深入 `registry` 子模块路径。
-// 这符合接口隔离：mod.rs 暴露公共 API，隐藏内部模块结构。
+// 外部 crate（如 sinnan）经 `garrison::protocol::social::ERR_SOCIAL_PROVIDER_*` 直接引用，
+// 无需深入 `registry` 子模块路径（接口隔离：mod.rs 暴露公共 API）。
 
-/// 社交登录 provider 未注册错误码（re-export 自 `registry` 模块）。
-///
-/// 消费方用此常量做 `starts_with` 匹配，避免硬编码字符串契约。
+/// 社交登录 provider 未注册错误码（消费方用 `starts_with` 匹配，避免硬编码字符串契约）。
 pub use registry::ERR_SOCIAL_PROVIDER_NOT_REGISTERED;
 
-/// 社交登录 provider 名称格式非法错误码（re-export 自 `registry` 模块）。
+/// 社交登录 provider 名称格式非法错误码。
 pub use registry::ERR_SOCIAL_PROVIDER_NAME_INVALID;
 
-// ============================================================================
 // SocialLoginProvider trait：社交登录抽象
-// ============================================================================
 
-/// 社交登录服务提供方 trait。
-///
-/// 定义三个异步方法覆盖 OAuth2 授权码流程：
-/// - `get_authorization_url`：拼接授权页 URL（用户跳转到第三方平台授权）
-/// - `exchange_token`：用授权码换取 access_token + provider_user_id（仅完成 code → access_token 一步，nickname/avatar 为 None，调用方需再调 `get_user_info`）
-/// - `get_user_info`：用 access_token 获取用户信息（用于已缓存 token 的场景）
-///
-/// # 实现
-///
-/// - `WechatProvider`（`social-wechat` feature）
-/// - `AlipayProvider`（`social-alipay` feature）
+/// 社交登录服务提供方 trait，三个异步方法覆盖 OAuth2 授权码流程；实现见 `WechatProvider`（`social-wechat`）与 `AlipayProvider`（`social-alipay`）。
 #[async_trait]
 pub trait SocialLoginProvider: Send + Sync {
-    /// 拼接第三方平台授权页 URL。
-    ///
-    /// # 参数
-    /// - `state`: OAuth2 state 参数（CSRF 防护，调用方生成随机串并缓存校验）
-    /// - `redirect_uri`: 授权回调 URL（需在第三方平台配置白名单）
+    /// 拼接第三方平台授权页 URL；`state` 为 CSRF 防护（调用方生成随机串并缓存校验），`redirect_uri` 需在第三方平台配置白名单。
     async fn get_authorization_url(
         &self,
         state: &str,
         redirect_uri: &str,
     ) -> GarrisonResult<String>;
 
-    /// 用授权码换取用户信息。
+    /// 用授权码换取用户信息（含 `provider_user_id` + nickname + avatar，必要时内部调用 `get_user_info`）。
     ///
-    /// 用授权码换取完整用户信息（含 provider_user_id + nickname + avatar）。
-    ///
-    /// 实现必须返回完整 `SocialUserInfo`（必要时内部调用 `get_user_info`）。
-    /// `social_callback` handler 直接使用返回的 `provider_user_id` 创建绑定，
-    /// 若 `provider_user_id` 为空会导致 500（fail-closed）。
+    /// 授权码 `code` 为第三方平台回调 query 参数、一次性消费（`state` 校验一致性，防 CSRF）。
     ///
     /// # 实现者契约（必须遵守）
     ///
-    /// - **`provider_user_id` 非空**：实现者必须在 `provider_user_id` 为空串
-    /// （响应缺失该字段或值为空）时返回明确的 `Err`（如
-    /// `GarrisonError::Network`），**不得**以空字符串作为
-    /// `provider_user_id` 返回 `Ok`——空串会绕过绑定幂等性约束并最终引发
-    /// handler 500。推荐做法：提取字段时用
-    /// `.filter(|s| !s.is_empty())` 后再 `ok_or_else` 转换为错误
-    /// （参考 `wechat::WechatProvider::exchange_token`）。
-    /// - **`raw` 不得含敏感凭据**：返回前剥离 `access_token` / `session_key`
-    /// 等凭据字段（参考 `wechat::strip_sensitive_fields`）。
-    ///
-    /// # 参数
-    /// - `code`: 授权码（第三方平台回调时附在 query 参数，一次性消费）
-    /// - `state`: OAuth2 state 参数（校验一致性，防 CSRF）
+    /// - **`provider_user_id` 非空**：为空串（字段缺失或为空）时必须返回 `Err`（如 `GarrisonError::Network`），
+    ///   不得返回空串 `Ok`——`social_callback` handler 直接用该值创建绑定，空串会绕过绑定幂等约束并引发 500。
+    ///   推荐 `.filter(|s| !s.is_empty())` 后 `ok_or_else`（参考 `wechat::WechatProvider::exchange_token`）。
+    /// - **`raw` 不得含敏感凭据**：返回前剥离 `access_token` / `session_key`（参考 `wechat::strip_sensitive_fields`）。
     async fn exchange_token(&self, code: &str, state: &str) -> GarrisonResult<SocialUserInfo>;
 
-    /// 用 access_token 获取用户信息。
-    ///
-    /// 用于已缓存 access_token 的场景（避免重复授权）。
-    ///
-    /// # 参数
-    /// - `access_token`: 第三方平台访问令牌
+    /// 用 access_token 获取用户信息（用于已缓存 token、避免重复授权的场景）。
     async fn get_user_info(&self, access_token: &str) -> GarrisonResult<SocialUserInfo>;
 }
 

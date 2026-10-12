@@ -3,17 +3,16 @@
 
 //! 请求标识（request id）task-local 上下文。
 //!
-//! 机制与 [`crate::stp`] 的 `CURRENT_TOKEN` task-local 同源：tokio
-//! `task_local!`，由各 Web 框架中间件（axum / actix-web / warp）在请求入口
-//! 设置，请求结束自动清除；统一错误响应体（[`crate::error::GarrisonError::to_json_body`]）
-//! 从 [`current`] 读取并携带 `request_id` 字段，实现错误与请求的关联回传。
+//! 机制与 [`crate::stp`] 的 `CURRENT_TOKEN` task-local 同源：tokio `task_local!`，由各 Web 框架
+//! 中间件（axum / actix-web / warp）在请求入口设置、请求结束自动清除；统一错误响应体
+//! （[`crate::error::GarrisonError::to_json_body`]）从 [`current`] 读取并携带 `request_id` 字段，
+//! 实现错误与请求的关联回传。
 //!
 //! # 入站校验（不可信输入）
 //!
-//! 入站 `X-Request-ID` 仅在满足「非空、长度 ≤ [`MAX_INBOUND_LEN`]、全部为
-//! 可见 ASCII（`0x21..=0x7E`）」时原样传播；否则丢弃并重新生成 UUID v4。
-//! 可见 ASCII 边界同时排除空格与 DEL，可阻断 CRLF / header 注入与日志注入
-//! （`\r` / `\n` / `\t` 均落在 `0x21..=0x7E` 之外）。
+//! 入站 `X-Request-ID` 仅在非空、长度 ≤ [`MAX_INBOUND_LEN`]、全部为可见 ASCII（`0x21..=0x7E`）
+//! 时原样传播，否则丢弃并重新生成 UUID v4。可见 ASCII 边界排除空格与 DEL，
+//! 可阻断 CRLF / header 注入与日志注入（`\r` / `\n` / `\t` 均落在 `0x21..=0x7E` 之外）。
 
 use std::future::Future;
 use std::sync::Arc;
@@ -21,10 +20,8 @@ use std::sync::Arc;
 /// `X-Request-ID` 请求/响应头名（固定常量，非配置项）。
 pub const REQUEST_ID_HEADER: &str = "X-Request-ID";
 
-/// `Retry-After` 响应头名（固定常量，非配置项）。
-///
-/// 值统一为 delta-seconds（整数秒，下限 1），不做 HTTP-date 双格式
-/// （limiteron 快照的 `reset_secs` 本身即秒数）。
+/// `Retry-After` 响应头名（固定常量，非配置项）；值统一为 delta-seconds（整数秒，下限 1），
+/// 不做 HTTP-date 双格式（limiteron 快照的 `reset_secs` 本身即秒数）。
 pub const RETRY_AFTER_HEADER: &str = "Retry-After";
 
 /// 统一错误响应体中携带 request id 的字段名。
@@ -33,12 +30,8 @@ pub const REQUEST_ID_BODY_FIELD: &str = "request_id";
 /// 入站 request id 长度上限（字节）。
 pub const MAX_INBOUND_LEN: usize = 128;
 
-/// request id 传播载体。
-///
-/// axum 中间件将其注入 `request.extensions()`（handler 经
-/// `Extension<RequestId>` 读取），actix-web 中间件注入
-/// `req.extensions_mut()`。warp 无 request extensions 机制，经 task-local
-/// 传播。
+/// request id 传播载体：axum 中间件注入 `request.extensions()`（handler 经 `Extension<RequestId>` 读取），
+/// actix-web 注入 `req.extensions_mut()`；warp 无 request extensions 机制，经 task-local 传播。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestId(pub Arc<str>);
 
@@ -46,9 +39,7 @@ tokio::task_local! {
     static REQUEST_ID: Arc<str>;
 }
 
-/// 读取当前请求的 request id。
-///
-/// 未在 [`scope`] 内（非 HTTP 请求路径、测试直接调用）返回 `None`。
+/// 读取当前请求的 request id；未在 [`scope`] 内（非 HTTP 请求路径、测试直接调用）返回 `None`。
 pub fn current() -> Option<Arc<str>> {
     REQUEST_ID.try_with(Arc::clone).ok()
 }
@@ -66,18 +57,14 @@ pub fn generate() -> Arc<str> {
     Arc::from(uuid::Uuid::new_v4().to_string().as_str())
 }
 
-/// 校验入站 request id 是否可原样传播。
+/// 校验入站 request id 是否可原样传播：非空、长度 ≤ [`MAX_INBOUND_LEN`]、全部字节为可见 ASCII。
 ///
-/// 规则：非空、长度 ≤ [`MAX_INBOUND_LEN`]、全部字节为可见 ASCII
-/// （`0x21..=0x7E`）。入站 id 是不可信输入，非法即拒绝（由
-/// [`propagate_or_generate`] 重新生成），绝不做转义后保留。
+/// 入站 id 是不可信输入，非法即拒绝（由 [`propagate_or_generate`] 重新生成），绝不做转义后保留。
 pub fn is_valid_inbound_request_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= MAX_INBOUND_LEN && id.bytes().all(|b| (0x21..=0x7E).contains(&b))
 }
 
-/// 入站 request id 合法则原样传播，否则丢弃并重新生成 UUID v4。
-///
-/// 判定为确定性逻辑（显式代码），模型不参与决策。
+/// 入站 request id 合法则原样传播，否则丢弃并重新生成 UUID v4；判定为显式代码，模型不参与决策。
 pub fn propagate_or_generate(inbound: Option<&str>) -> Arc<str> {
     match inbound {
         Some(id) if is_valid_inbound_request_id(id) => Arc::from(id),
@@ -85,12 +72,9 @@ pub fn propagate_or_generate(inbound: Option<&str>) -> Arc<str> {
     }
 }
 
-/// 将当前 request id 注入统一错误响应体（`{"request_id": "..."}`）。
-///
-/// 未在 [`scope`] 内时 no-op（响应体省略 `request_id` 字段，omitempty 语义）。
-/// 供 warp 后置回填与测试共用；axum / actix 的错误体在前置渲染路径
-/// （[`crate::error::GarrisonError::to_json_body`]）内读取 task-local，
-/// 三框架终态输出形状一致。
+/// 将当前 request id 注入统一错误响应体（`{"request_id": "..."}`）；未在 [`scope`] 内时 no-op
+/// （响应体省略该字段，omitempty 语义）。供 warp 后置回填与测试共用；axum / actix 的错误体在
+/// 前置渲染路径（[`crate::error::GarrisonError::to_json_body`]）内读取 task-local，三框架终态输出形状一致。
 pub fn inject_request_id_into_error_body(body: &mut serde_json::Value) {
     if let Some(id) = current() {
         if let Some(obj) = body.as_object_mut() {

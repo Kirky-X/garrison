@@ -1,13 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! OAuth2 客户端实现。
-//!
-//! `OAuth2Client` 持有 OAuth2 协议所需的配置信息与可复用的 `reqwest::Client`，
-//! 实现 Authorization Code / Client Credentials / Password / Refresh Token 四种授权流程，
-//! 以及 Token Introspection (RFC 7662)。
-//!
-//! 仅在启用 `protocol-oauth2` 特性时编译。
+//! OAuth2 客户端实现（`protocol-oauth2` feature）：`OAuth2Client` 持有配置与可复用 `reqwest::Client`，
+//! 实现 Authorization Code / Client Credentials / Password / Refresh Token 四种授权流程及 Token Introspection (RFC 7662)。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -18,32 +13,12 @@ use std::time::Duration;
 
 use super::{TokenIntrospectionResponse, TokenResponse};
 
-/// HTTP 客户端安全默认配置（E1）。
-///
-/// 统一所有 OAuth2/OIDC 出站 HTTP 请求的连接与读超时，防止恶意或慢速 IdP
-/// 拖垮服务端连接池（slowloris 类攻击）。
-///
-/// - `connect_timeout = 10s`：DNS + TCP + TLS 握手上限
-/// - `read_timeout = 30s`：单次响应读取上限（覆盖 token endpoint / JWKS / userinfo）
-///
-/// `reqwest::Client` 内部连接池由 reqwest 默认配置管理（pool_idle_timeout=90s 等），
-/// 此处只追加超时阈值，不重写其他 builder 项。
-///
-/// # 公开范围
-///
-/// `pub(crate)` 仅供 `protocol::oauth2` 与 `protocol::oauth2::keycloak` 复用
-/// （`keycloak-oidc` feature 强依赖 `protocol-oauth2`）。
-/// `protocol::sso::oidc` 因 feature 隔离（`protocol-sso` 不依赖 `protocol-oauth2`）
-/// 自行维护等价 helper，避免引入跨 feature 强耦合。
+/// HTTP 客户端安全默认配置（E1）：connect_timeout=10s、read_timeout=30s，防慢速 IdP 拖垮连接池（slowloris）；
+/// `pub(crate)` 供 `protocol::oauth2` 与 keycloak 复用，`protocol::sso::oidc` 因 feature 隔离自行维护等价 helper。
 pub(crate) const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const HTTP_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// 构造带超时配置的 `reqwest::Client`（E1 修复）。
-///
-/// 三处 `reqwest::Client::builder().build()` 统一委托此函数，确保超时配置不漏配。
-///
-/// # 错误
-/// - `GarrisonError::Network`: reqwest builder 失败（如 TLS 后端不可用）。
+/// 构造带超时配置的 `reqwest::Client`（E1 修复），三处 builder 统一委托此函数确保超时不漏配；builder 失败返回 `Network`。
 pub(crate) fn build_safe_http_client() -> GarrisonResult<reqwest::Client> {
     reqwest::Client::builder()
         .connect_timeout(HTTP_CONNECT_TIMEOUT)
@@ -52,20 +27,10 @@ pub(crate) fn build_safe_http_client() -> GarrisonResult<reqwest::Client> {
         .map_err(|e| GarrisonError::Network(format!("oauth2-http-client-build::{}", e)))
 }
 
-/// HTTP 响应体大小上限（E2）：4 MiB。
-///
-/// 超出此上限的响应体直接返回 `GarrisonError::Network`，防止恶意 IdP 通过超大 JSON
-/// 触发 OOM 或反序列化放大攻击。4 MiB 足以容纳标准 JWT/JWKS/userinfo 响应
-/// （典型 JWKS < 10 KiB，userinfo < 4 KiB）。
+/// HTTP 响应体大小上限（E2）：4 MiB，防止恶意 IdP 通过超大 JSON 触发 OOM / 反序列化放大（4 MiB 足以容纳标准 JWT/JWKS/userinfo 响应）。
 pub(crate) const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
-/// 读取响应体并强制大小上限（E2 修复）。
-///
-/// 使用 `resp.chunk()` 流式累积，超过 [`MAX_BODY_BYTES`] 立即中断返回 Err。
-/// 替代 `resp.bytes()` / `resp.json()` / `resp.text()` 的无界读取。
-///
-/// # 错误
-/// - `GarrisonError::Network`: 响应体超过 `MAX_BODY_BYTES` 或底层读取失败。
+/// 读取响应体并强制大小上限（E2 修复）：超限或读取失败返回 `GarrisonError::Network`。
 pub(crate) async fn read_limited_bytes(resp: reqwest::Response) -> GarrisonResult<Vec<u8>> {
     let mut buf: Vec<u8> = Vec::new();
     let mut resp = resp;
@@ -86,27 +51,19 @@ pub(crate) async fn read_limited_bytes(resp: reqwest::Response) -> GarrisonResul
     Ok(buf)
 }
 
-/// URL 编码字符集。
-///
-/// 与原自实现 `encode` 行为等价：保留 `A-Z a-z 0-9 - _ . ~`，
-/// 其他字符按 `%HH` 编码。基于 `NON_ALPHANUMERIC` 移除 `- _ . ~` 四个保留字符得到。
+/// URL 编码字符集：保留 `A-Z a-z 0-9 - _ . ~`（基于 `NON_ALPHANUMERIC` 移除四个保留字符），行为与原自实现一致。
 const URLENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'-')
     .remove(b'_')
     .remove(b'.')
     .remove(b'~');
 
-/// 对字符串进行 URL 百分号编码（保留 `A-Z a-z 0-9 - _ . ~`）。
-///
-/// 与原自实现模块行为完全等价，内部委托 `percent-encoding` crate。
+/// URL 百分号编码（保留 `A-Z a-z 0-9 - _ . ~`）。
 fn url_encode(s: &str) -> String {
     utf8_percent_encode(s, URLENCODE_SET).to_string()
 }
 
-/// OAuth2 客户端。
-///
-/// 持有 OAuth2 协议所需的配置信息与可复用的 `reqwest::Client`。
-/// 实现 `Send + Sync`，可在多线程环境共享。
+/// OAuth2 客户端：持有配置与可复用 `reqwest::Client`，可多线程共享。
 pub struct OAuth2Client {
     /// 客户端 ID。
     client_id: String,
@@ -120,32 +77,18 @@ pub struct OAuth2Client {
     token_url: String,
     /// 用户信息端点 URL（可选）。
     user_info_url: Option<String>,
-    /// Token Introspection 端点 URL（可选）。
-    /// 为 `None` 时由 `introspect_url()` 从 `token_url` 推导（`/token` → `/introspect`）。
+    /// Token Introspection 端点 URL（可选；None 时由 `introspect_url()` 从 `token_url` 推导）。
     introspect_url: Option<String>,
     /// 可复用的 HTTP 客户端。
     http: reqwest::Client,
-    /// Scope 注册表（可选，仅在启用 `oauth2-scope-handler` feature 时存在）。
-    /// 注入后，`get_password_token` / `get_client_credentials_token` / `refresh_access_token`
-    /// 在发送 HTTP 请求前委托 `validate_scope` 校验。
+    /// Scope 注册表（仅 `oauth2-scope-handler` feature）；注入后 token 请求前委托 `validate_scope` 校验。
     #[cfg(feature = "oauth2-scope-handler")]
     scope_registry: Option<std::sync::Arc<super::scope::ScopeRegistry>>,
 }
 
 impl OAuth2Client {
-    /// 创建新的 OAuth2 客户端。
-    ///
-    /// # 参数
-    /// - `client_id`: 客户端 ID，不可为空。
-    /// - `client_secret`: 客户端密钥。
-    /// - `redirect_uri`: 回调地址，必须为 https 或 localhost/127.0.0.1。
-    /// - `auth_url`: 授权端点 URL。
-    /// - `token_url`: 令牌端点 URL。
-    ///
-    /// # 错误
-    /// - `GarrisonError::Config`: client_id 为空。
-    /// - `GarrisonError::InvalidParam`: redirect_uri 非 https 且非 localhost/127.0.0.1。
-    /// - `GarrisonError::Network`: reqwest::Client 构建失败。
+    /// 创建新的 OAuth2 客户端：client_id 为空返回 `Config`；redirect_uri / auth_url / token_url 非 https
+    /// 且非 localhost/127.0.0.1 返回 `InvalidParam`；reqwest 构建失败返回 `Network`。
     pub fn new(
         client_id: impl Into<String>,
         client_secret: impl Into<String>,
@@ -178,32 +121,9 @@ impl OAuth2Client {
         })
     }
 
-    /// 校验 redirect_uri scheme。
-    ///
-    /// 仅允许以下两种：
-    /// - `https://` 任意 host
-    /// - `http://localhost` 或 `http://127.0.0.1`（开发环境例外，任意端口）
-    ///
-    /// 其他 scheme（如 `http://evil.com`）返回 `InvalidParam`，避免授权码经明文 HTTP
-    /// 回调到公网域名被中间人截获。
-    ///
-    /// # 安全说明
-    ///
-    /// 此函数仅校验 **传输层安全**（HTTPS or localhost），不做精确域名匹配。
-    /// 精确 redirect_uri 匹配（与客户端注册的回调地址比对）是**授权服务器的职责**，
-    /// 非客户端库的职责。使用本库构建授权服务器时，必须在此校验之上自行实现：
-    ///
-    /// 1. 精确字符串匹配（非前缀/子域名匹配）
-    /// 2. 防止路径遍历（如 `https://app.com/../evil`）
-    /// 3. 防止参数注入（如 `https://app.com/callback?redirect=evil`）
-    /// 4. 防止 fragment 泄漏（如 `https://app.com/callback#code=xxx`）
-    ///
-    /// # 参数
-    /// - `redirect_uri`: 回调地址字符串。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: redirect_uri 无 `://`、scheme 非 https/http、
-    ///   或 http 但 host 非 localhost/127.0.0.1。
+    /// 校验 redirect_uri scheme（防授权码明文回调被中间人截获）：仅允许 `https://` 任意 host 或
+    /// `http://localhost` / `http://127.0.0.1`（开发例外）；精确 redirect_uri 匹配、前缀/子域名绕过、
+    /// 路径遍历与参数注入防护属授权服务器职责。
     fn validate_redirect_uri(redirect_uri: &str) -> GarrisonResult<()> {
         let Some(scheme_end) = redirect_uri.find("://") else {
             return Err(GarrisonError::InvalidParam(format!(
@@ -233,43 +153,26 @@ impl OAuth2Client {
         )))
     }
 
-    /// 校验请求端点 URL scheme（安全审计修复：端点明文传输防护）。
-    ///
-    /// token/introspection 端点会携带 `client_secret` 与 authorization code，
-    /// 明文 http 可被中间人窃取。规则与 [`Self::validate_redirect_uri`] 一致：
-    /// `https://` 任意 host；`http://localhost` / `http://127.0.0.1`（开发环境）。
+    /// 校验请求端点 URL scheme（token/introspection 端点携带 `client_secret` 与 authorization code，明文 http 可被中间人窃取）；规则同 [`Self::validate_redirect_uri`]。
     fn validate_endpoint_url(url: &str, field: &str) -> GarrisonResult<()> {
         Self::validate_redirect_uri(url).map_err(|_| {
             GarrisonError::InvalidParam(format!("url-scheme-https-required::{}::{}", field, url))
         })
     }
 
-    /// 设置用户信息端点 URL。
-    ///
-    /// 本客户端不在内部请求该端点（URL 仅供调用方消费），scheme 校验由使用方负责；
-    /// 客户端自身发起的端点（auth/token/introspection）在构造或请求时强制校验。
+    /// 设置用户信息端点 URL（本客户端不内部请求该端点，scheme 校验由使用方负责）。
     pub fn with_user_info_url(mut self, url: impl Into<String>) -> Self {
         self.user_info_url = Some(url.into());
         self
     }
 
-    /// 设置 Token Introspection 端点 URL。
-    ///
-    /// 不设置时，[`introspect_token`](Self::introspect_token) 从 `token_url` 推导：
-    /// `token_url` 末尾为 `/token` → 替换为 `/introspect`；否则在 `token_url` 末尾追加 `/introspect`。
-    ///
-    /// # 参数
-    /// - `url`: 完整的 introspection 端点 URL（如 `https://auth.example.com/oauth2/introspect`）。
+    /// 设置 Token Introspection 端点 URL（不设置时由 `introspect_url()` 从 `token_url` 推导）。
     pub fn with_introspect_url(mut self, url: impl Into<String>) -> Self {
         self.introspect_url = Some(url.into());
         self
     }
 
-    /// 注入 ScopeRegistry，启用 token 请求前的 scope 校验。
-    ///
-    /// 仅在启用 `oauth2-scope-handler` feature 时可用。
-    /// 注入后，`get_password_token` / `get_client_credentials_token` / `refresh_access_token`
-    /// 在发送 HTTP 请求前委托 `ScopeRegistry::validate` 校验 scope。
+    /// 注入 ScopeRegistry（仅 `oauth2-scope-handler` feature）：token 请求前委托 `ScopeRegistry::validate` 校验 scope。
     #[cfg(feature = "oauth2-scope-handler")]
     pub fn with_scope_registry(
         mut self,
@@ -279,21 +182,8 @@ impl OAuth2Client {
         self
     }
 
-    /// 校验 scope。
-    ///
-    /// - 若 `scope_registry` 未注入 → 跳过校验（Ok(())）。
-    /// - 若 `scope` 为 None → 跳过校验（Ok(())）。
-    /// - 若 `ScopeRegistry::validate` 返回 `Ok(false)` → 返回 `OAuth2("scope validation failed: ...")`。
-    /// - 若 `ScopeRegistry::validate` 返回 `Err` → 向上传播。
-    ///
-    /// # 参数
-    /// - `scope`: OAuth2 请求中的 scope 参数（可能为 None）。
-    ///
-    /// # 关于 login_id
-    /// OAuth2 客户端流程在 token 请求时通常尚未解析出 login_id（password 流需先认证、
-    /// client_credentials 流无用户、refresh_token 流需先解码 refresh_token）。
-    /// 此处传入 `login_id = 0` 占位，handler 实现可按需通过其他上下文查询真实 login_id。
-    /// 详见 `scope` 模块文档说明。
+    /// 校验 scope：未注入 registry 或 scope 为 None 跳过；handler 返回 `Ok(false)` 报 OAuth2 错误；
+    /// token 请求时尚无 login_id，传 `login_id = 0` 占位。
     #[cfg(feature = "oauth2-scope-handler")]
     async fn validate_scope(&self, scope: Option<&str>) -> GarrisonResult<()> {
         if let (Some(registry), Some(s)) = (&self.scope_registry, scope) {
@@ -323,15 +213,8 @@ impl OAuth2Client {
         self.user_info_url.as_deref()
     }
 
-    /// 生成 PKCE code_challenge。
-    ///
-    /// 计算方式：`code_challenge = base64url_no_pad(sha256(code_verifier))`
-    ///
-    /// # 参数
-    /// - `code_verifier`: 43-128 字符，仅包含 `[A-Z]/[a-z]/[0-9]/-./_/~`
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: 长度不在 43-128 范围内或含非法字符。
+    /// 生成 PKCE code_challenge：`base64url_no_pad(sha256(code_verifier))`；code_verifier 须为 43-128 字符
+    /// 且仅含 `[A-Z]/[a-z]/[0-9]/-./_/~`（RFC 7636 §4.1），否则返回 `InvalidParam`。
     ///
     /// # 示例
     /// RFC 7636 Appendix B 测试向量：
@@ -343,14 +226,14 @@ impl OAuth2Client {
     /// assert_eq!(challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
     /// ```
     pub fn generate_pkce_challenge(code_verifier: &str) -> GarrisonResult<String> {
-        // 1. 验证长度 43-128（RFC 7636 §4.1）
+        // 长度 43-128（RFC 7636 §4.1）
         if code_verifier.len() < 43 || code_verifier.len() > 128 {
             return Err(GarrisonError::InvalidParam(format!(
                 "oauth2-pkce-length-invalid::{}",
                 code_verifier.len()
             )));
         }
-        // 2. 验证字符集 [A-Z]/[a-z]/[0-9]/-./_/~（RFC 7636 §4.1）
+        // 字符集 [A-Z]/[a-z]/[0-9]/-./_/~（RFC 7636 §4.1）
         if !code_verifier
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' || c == '~')
@@ -359,26 +242,16 @@ impl OAuth2Client {
                 "oauth2-pkce-chars-invalid".to_string(),
             ));
         }
-        // 3. S256: SHA-256 → base64url 无填充
+        // S256：SHA-256 → base64url 无填充
         let mut hasher = Sha256::new();
         hasher.update(code_verifier.as_bytes());
         let digest = hasher.finalize();
         Ok(URL_SAFE_NO_PAD.encode(digest))
     }
 
-    /// 构造带 PKCE 的授权 URL。
+    /// 构造带 PKCE 的授权 URL：返回 `(authorization_url, code_challenge)`，在 [`Self::get_auth_url_with_pkce`] 基础上追加 `code_challenge` 与 `code_challenge_method=S256` 参数。
     ///
-    /// 在 [`get_auth_url_with_pkce`](Self::get_auth_url_with_pkce) 基础上追加 `code_challenge` 与 `code_challenge_method=S256` 参数。
-    ///
-    /// # 参数
-    /// - `state`: CSRF 防护随机串。
-    /// - `code_verifier`: PKCE code_verifier（43-128 字符，合法字符集见 [`generate_pkce_challenge`](Self::generate_pkce_challenge)）。
-    ///
-    /// # 返回
-    /// `(authorization_url, code_challenge)` 元组。`code_challenge` 供调用方与后续 token 交换时关联使用。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: `code_verifier` 不合法（透传自 `generate_pkce_challenge`）。
+    /// `code_verifier` 不合法时透传 `GarrisonError::InvalidParam`（来自 `generate_pkce_challenge`）。
     pub fn get_auth_url_with_pkce(
         &self,
         state: &str,
@@ -396,28 +269,8 @@ impl OAuth2Client {
         Ok((url, code_challenge))
     }
 
-    /// 使用授权码 + PKCE 换取令牌。
-    ///
-    /// 在 `exchange_code_with_pkce` 基础上，POST 请求体追加 `code_verifier` 字段。
-    /// 授权服务器重新计算 `SHA256(code_verifier)` 并与授权请求中的 `code_challenge` 比对，验证客户端身份。
-    ///
-    /// # CSRF 防护（state 校验）
-    ///
-    /// 调用方传入 `expected_state`（构造授权 URL 时生成的 state）和 `actual_state`（回调 URL 中
-    /// 授权服务器返回的 state），方法内部自动比对。若不匹配则返回 `GarrisonError::OAuth2`，
-    /// 阻断 CSRF 攻击。
-    ///
-    /// # 参数
-    /// - `code`: 授权码。
-    /// - `expected_state`: 预期 state（构造授权 URL 时生成的 state）。
-    /// - `actual_state`: 实际 state（回调 URL 中授权服务器返回的 state）。
-    /// - `code_verifier`: PKCE code_verifier（需与构造授权 URL 时传入的 verifier 一致）。
-    ///
-    /// # 错误
-    /// - `GarrisonError::OAuth2`: `expected_state` 与 `actual_state` 不匹配（CSRF 攻击防护）。
-    /// - `GarrisonError::InvalidParam`: `code_verifier` 不合法（客户端预校验，透传自 `generate_pkce_challenge`）。
-    /// - `GarrisonError::OAuth2`: token 端点返回非 2xx 或 JSON 解析失败。
-    /// - `GarrisonError::Network`: reqwest 请求失败。
+    /// 使用授权码 + PKCE 换取令牌：POST 请求体追加 `code_verifier`（授权服务器重算 SHA256 比对
+    /// `code_challenge` 验证客户端身份）；内部比对 expected_state 与 actual_state（CSRF 防护），不匹配返回 `OAuth2`。
     pub async fn exchange_code_with_pkce(
         &self,
         code: &str,
@@ -425,12 +278,11 @@ impl OAuth2Client {
         actual_state: &str,
         code_verifier: &str,
     ) -> GarrisonResult<TokenResponse> {
-        // CSRF 防护：state 缺失（空串）fail-closed 拒绝——双空相等若放行，
-        // 调用方未生成 state / 回调被剥离 state 的 CSRF 注入将静默通过
+        // CSRF 防护：state 缺失（空串）fail-closed 拒绝（双空相等若放行，未生成 state / 回调被剥离 state 的 CSRF 注入将静默通过）
         if expected_state.is_empty() || actual_state.is_empty() {
             return Err(GarrisonError::OAuth2("oauth2-state-missing".to_string()));
         }
-        // CSRF 防护：校验 state 参数
+        // 校验 state 匹配
         if expected_state != actual_state {
             return Err(GarrisonError::OAuth2("oauth2-state-mismatch".to_string()));
         }
@@ -467,13 +319,7 @@ impl OAuth2Client {
         self.post_token_request(&params).await
     }
 
-    /// 获取 Password 模式令牌。
-    ///
-    /// POST 请求 `token_url` 提交 `grant_type=password`、`username`、`password`、
-    /// `client_id`、`client_secret`，可选 `scope`。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: username 为空。
+    /// 获取 Password 模式令牌：POST 提交 `grant_type=password`、username、password、client_id、client_secret，可选 scope；username 为空返回 `InvalidParam`。
     pub async fn get_password_token(
         &self,
         username: &str,
@@ -500,19 +346,8 @@ impl OAuth2Client {
         self.post_token_request(&params).await
     }
 
-    /// 使用 refresh_token 换取新的 access_token。
-    ///
-    /// POST 请求 `token_url` 提交 `grant_type=refresh_token`、`refresh_token`、
-    /// `client_id`、`client_secret`，可选 `scope`（用于缩小/扩大授权范围）。
-    ///
-    /// # 参数
-    /// - `refresh_token`: 之前获取的刷新令牌，不可为空。
-    /// - `scope`: 可选，请求的 scope（可不同于原始授权范围）。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: refresh_token 为空。
-    /// - `GarrisonError::OAuth2`: token_endpoint 返回非 2xx 或 JSON 解析失败。
-    /// - `GarrisonError::Network`: reqwest 请求失败（DNS/连接超时等）。
+    /// 使用 refresh_token 换取新 access_token：POST 提交 `grant_type=refresh_token`、refresh_token、client_id、client_secret，
+    /// 可选 scope（缩小/扩大授权范围）；refresh_token 为空返回 `InvalidParam`，端点非 2xx / JSON 失败返回 `OAuth2`，请求失败返回 `Network`。
     pub async fn refresh_access_token(
         &self,
         refresh_token: &str,
@@ -566,24 +401,9 @@ impl OAuth2Client {
         Ok(token)
     }
 
-    /// 查询 token 状态。
+    /// 查询 token 状态：POST introspection 端点（`application/x-www-form-urlencoded` 提交 token + client_id + client_secret），返回 [`TokenIntrospectionResponse`]（`active` 字段表示 token 是否有效）。
     ///
-    /// 向授权服务器的 introspection 端点 POST 请求，请求体以
-    /// `application/x-www-form-urlencoded` 格式提交 `token` + `client_id` + `client_secret`，
-    /// 响应解析为 [`TokenIntrospectionResponse`]。
-    ///
-    /// # 不缓存
-    /// 每次调用都请求授权服务器，业务方如需缓存可自行封装。
-    ///
-    /// # 参数
-    /// - `token`: 待查询的 access_token 或 refresh_token。
-    ///
-    /// # 返回
-    /// `TokenIntrospectionResponse`，其中 `active` 字段表示 token 是否有效。
-    ///
-    /// # 错误
-    /// - `GarrisonError::OAuth2`: 服务器返回非 2xx 或 JSON 解析失败。
-    /// - `GarrisonError::Network`: reqwest 请求失败（DNS/连接超时/服务器不可达等）。
+    /// 不缓存：每次调用都请求授权服务器；错误返回 `OAuth2`（非 2xx / JSON 失败）或 `Network`。
     pub async fn introspect_token(
         &self,
         token: &str,
@@ -605,9 +425,7 @@ impl OAuth2Client {
 
         let status = resp.status();
         if !status.is_success() {
-            // 安全加固：错误消息只记录 HTTP status + url，不包含响应体或请求参数
-            // （与 post_token_request 同类修复：响应体可能被恶意服务器回显请求参数，
-            // 导致 client_secret 泄露到日志/上层调用方）
+            // 安全加固：错误消息只记 HTTP status + url，不含响应体/请求参数（防恶意服务器回显泄露 client_secret）
             return Err(GarrisonError::OAuth2(format!(
                 "introspect endpoint returned {} for {}",
                 status.as_u16(),
@@ -623,13 +441,9 @@ impl OAuth2Client {
         Ok(response)
     }
 
-    /// 推导 introspection 端点 URL。
-    ///
-    /// - 若 [`with_introspect_url`](Self::with_introspect_url) 已设置 → 使用该 URL。
-    /// - 否则若 `token_url` 以 `/token` 结尾 → 仅替换**末尾**这段为 `/introspect`
-    ///   （不能全局 `replace`：路径中段出现 `/token` 时会把所有出现处都替换，
-    ///   产生畸形端点，如 `/v2/oauth2/token/rotate/token` → `/v2/oauth2/introspect/rotate/introspect`）。
-    /// - 否则在 `token_url` 末尾追加 `/introspect`。
+    /// 推导 introspection 端点 URL：已设置 [`with_introspect_url`](Self::with_introspect_url) 则用之；
+    /// `token_url` 以 `/token` 结尾时仅替换末尾该段（不能全局 replace：中段 `/token` 也会被替换，
+    /// 如 `/v2/oauth2/token/rotate/token` → 畸形端点）；否则末尾追加 `/introspect`。
     fn introspect_url(&self) -> String {
         if let Some(url) = &self.introspect_url {
             url.clone()
@@ -653,19 +467,19 @@ impl Drop for OAuth2Client {
 mod tests {
     use super::{url_encode, *};
 
-    /// URL 编码保留安全字符（与原自实现 `encode` 行为等价）。
+    /// URL 编码保留安全字符。
     #[test]
     fn url_encode_preserves_safe_chars() {
         assert_eq!(url_encode("abc-_.~"), "abc-_.~");
     }
 
-    /// URL 编码特殊字符（与原自实现 `encode` 行为等价）。
+    /// URL 编码特殊字符。
     #[test]
     fn url_encode_encodes_special_chars() {
         assert_eq!(url_encode("a b/c:d"), "a%20b%2Fc%3Ad");
     }
 
-    /// URLENCODE_SET 应保留 `- _ . ~` 四个字符（行为等价回归保护）。
+    /// URLENCODE_SET 保留 `- _ . ~` 四个 unreserved 字符（RFC 3986 §2.3）。
     #[test]
     fn urlencode_set_preserves_unreserved_chars() {
         // unreserved 字符集（RFC 3986 §2.3）：A-Z a-z 0-9 - _ . ~
@@ -716,13 +530,10 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // introspect_url 推导（仅替换末尾 /token 段，防中段 /token 全局替换产生畸形端点）
-    // ========================================================================
 
     /// token_url 路径中段含 `/token` 时，只应替换末尾那段
-    /// （strip_suffix 而非全局 replace：`/token/rotate/token` → `/token/rotate/introspect`，
-    /// 全局替换会得到 `/introspect/rotate/introspect` 畸形端点）。
+    /// （strip_suffix 而非全局 replace 会得到畸形端点）。
     #[test]
     fn introspect_url_replaces_only_trailing_token_segment() {
         let client = OAuth2Client::new(
@@ -791,14 +602,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // E1: reqwest 客户端超时配置
-    // ========================================================================
 
-    /// E1 单元测试：`build_safe_http_client()` 返回有效的 Client 实例。
-    ///
-    /// 验证 builder 配置可编译且不报错。reqwest 不暴露 timeout 设置项的运行时
-    /// 内省 API，因此超时行为由 `e1_read_timeout_triggers_on_slow_server` 行为测试覆盖。
+    /// E1 单元测试：`build_safe_http_client()` 返回有效的 Client 实例（超时行为由 `e1_read_timeout_triggers_on_slow_server` 行为测试覆盖）。
     #[test]
     fn e1_build_safe_http_client_returns_valid_client() {
         let client = build_safe_http_client();
@@ -812,10 +618,7 @@ mod tests {
         assert_eq!(HTTP_READ_TIMEOUT, Duration::from_secs(30));
     }
 
-    /// E1 行为测试：read_timeout=30s 触发于慢速 token endpoint。
-    ///
-    /// 使用 wiremock 模拟延迟 35s 的响应，验证请求在 ~30s 内失败（而非挂起）。
-    /// 标记 `#[ignore]` 避免拖慢 CI（按需 `cargo test -- --ignored` 运行）。
+    /// E1 行为测试：read_timeout=30s 触发于慢速 token endpoint（wiremock 延迟 35s，请求应在 ~30s 内失败）；`#[ignore]` 避免拖慢 CI。
     #[tokio::test]
     #[ignore = "慢测试（~30s），按需运行：cargo test e1_read_timeout_triggers -- --ignored"]
     async fn e1_read_timeout_triggers_on_slow_server() {
@@ -849,9 +652,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // E2: 响应体大小限制（4 MiB）
-    // ========================================================================
 
     /// E2 单元测试：MAX_BODY_BYTES 常量值为 4 MiB。
     #[test]
@@ -859,9 +660,7 @@ mod tests {
         assert_eq!(MAX_BODY_BYTES, 4 * 1024 * 1024);
     }
 
-    /// E2 行为测试：超过 4 MiB 的响应被 `read_limited_bytes` 拒绝。
-    ///
-    /// 使用 wiremock 返回 5 MiB 响应体，验证 helper 返回 Err。
+    /// E2 行为测试：超过 4 MiB 的响应被 `read_limited_bytes` 拒绝（wiremock 返回 5 MiB）。
     #[tokio::test]
     async fn e2_read_limited_bytes_rejects_oversized_response() {
         use wiremock::matchers::{method, path};
@@ -892,9 +691,7 @@ mod tests {
         );
     }
 
-    /// E2 行为测试：刚好 4 MiB 的响应被 `read_limited_bytes` 接受。
-    ///
-    /// 边界值测试：恰好等于上限的响应应通过（`>` 而非 `>=` 判定）。
+    /// E2 行为测试：恰好 4 MiB 的响应被接受（边界值，`>` 而非 `>=` 判定）。
     #[tokio::test]
     async fn e2_read_limited_bytes_accepts_exact_limit() {
         use wiremock::matchers::{method, path};
@@ -920,9 +717,7 @@ mod tests {
         assert_eq!(result.unwrap().len(), MAX_BODY_BYTES);
     }
 
-    /// E2 行为测试：小响应正常读取。
-    ///
-    /// 回归保护：常规 < 1 KiB 响应不应被错误拒绝。
+    /// E2 行为测试：小响应（< 1 KiB）正常读取（回归保护，不应被错误拒绝）。
     #[tokio::test]
     async fn e2_read_limited_bytes_accepts_small_response() {
         use wiremock::matchers::{method, path};
@@ -945,9 +740,7 @@ mod tests {
         assert_eq!(bytes, b"hello world");
     }
 
-    /// E2 集成测试：OAuth2Client::post_token_request 拒绝超大 token 响应。
-    ///
-    /// 端到端验证：wiremock 返回 5 MiB JSON，OAuth2Client::exchange_code_with_pkce 返回 Err。
+    /// E2 集成测试：`OAuth2Client::exchange_code_with_pkce` 端到端拒绝 5 MiB token 响应。
     #[tokio::test]
     async fn e2_oauth2_client_rejects_oversized_token_response() {
         use wiremock::matchers::{body_string_contains, method, path};
@@ -981,9 +774,7 @@ mod tests {
         assert!(result.is_err(), "超大 token 响应必须被拒绝");
     }
 
-    // ========================================================================
-    // 端点 scheme 校验（安全审计修复：端点明文传输防护）
-    // ========================================================================
+    // 端点 scheme 校验（端点明文传输防护）
 
     /// 构造期拒绝公网明文 http token 端点（client_secret 明文传输风险）。
     #[test]
@@ -1048,8 +839,7 @@ mod tests {
         );
     }
 
-    /// introspect_token 运行时拒绝明文 introspection 端点
-    /// （with_introspect_url 是 builder 不 panic，在请求前拦截）。
+    /// introspect_token 运行时拒绝明文 introspection 端点（builder 不 panic，在请求前拦截）。
     #[tokio::test]
     async fn introspect_token_rejects_plaintext_introspect_url() {
         let client = OAuth2Client::new(
@@ -1075,9 +865,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // validate_redirect_uri 边界测试
-    // ========================================================================
 
     /// validate_redirect_uri 无 scheme 返回 InvalidParam。
     #[test]
@@ -1139,9 +927,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // generate_pkce_challenge 边界测试
-    // ========================================================================
 
     /// generate_pkce_challenge 长度 < 43 返回 InvalidParam。
     #[test]

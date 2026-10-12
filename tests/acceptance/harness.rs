@@ -1,11 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! harness 自检测试。
-//!
-//! 验证 `common::harness` 的 [`GarrisonTestHarness`] / [`MockInterface`] / [`with_tenant`]。
-//! `GarrisonManager` 为进程级全局单例，全部用例以 `#[serial]` 串行。
-//!
+//! harness 自检测试：验证 `common::harness` 的 `GarrisonTestHarness` / `MockInterface` /
+//! `with_tenant`。`GarrisonManager` 为进程级全局单例，全部用例以 `#[serial]` 串行。
 
 use crate::common::harness::{with_tenant, GarrisonTestHarness, MockInterface};
 use garrison::error::GarrisonError;

@@ -1,19 +1,12 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 内网 API Key 认证失败锁定（GAR-25）。
+//! 内网 API Key 认证失败锁定：同一源 IP 连续失败（缺失 / 错误 / 重复 `X-API-Key`）达到阈值后，
+//! 窗口期内一律 429 + `Retry-After`（fail-closed）；任一次成功认证即清零。
 //!
-//! 同一源 IP 的连续认证失败（缺失 / 错误 / 重复 `X-API-Key`）达到阈值后，
-//! 窗口期内一律返回 429 + `Retry-After`（fail-closed）；任一次成功认证即清零。
-//!
-//! # 设计
-//!
-//! - 纯内存 `DashMap`（与 [`crate::server::middleware::RateLimitState`] 同一取舍：
-//!   不引入 Redis 依赖）；进程重启即重置。跨实例的全局封禁应启用
-//!   `firewall-bruteforce` / `ban-sync` feature（见 `src/server` 模块文档）。
-//! - `threshold = 0` 显式禁用锁定（不记账、不判定）。
-//! - `max_entries` 上限防内存耗尽：超限时先清过期窗口，仍超限则淘汰
-//!   window_start 最旧的记录（本记录不淘汰，保证当前请求语义正确）。
+//! 纯内存 `DashMap`（与 `RateLimitState` 同一取舍：不引入 Redis），进程重启即重置；跨实例全局
+//! 封禁应启用 `firewall-bruteforce` / `ban-sync`。`threshold = 0` 显式禁用锁定；`max_entries`
+//! 超限时先清过期窗口，仍超限则淘汰 `window_start` 最旧记录（不淘汰当前记录，保证本次语义正确）。
 
 use dashmap::DashMap;
 use std::time::{Duration, Instant};
@@ -27,8 +20,7 @@ struct FailureRecord {
     window_start: Instant,
 }
 
-/// `record_failure` 的结果：携带是否触发锁定与建议的 Retry-After 秒数，
-/// 供调用方在同一次响应中直接生效（第 N 次失败即锁定，不等下一次请求）。
+/// `record_failure` 的结果：第 N 次失败即触发锁定，调用方可在同一次响应中直接生效。
 #[derive(Debug, Clone, Copy)]
 pub struct FailureOutcome {
     /// 记账后的连续失败次数。
@@ -55,11 +47,7 @@ pub struct ApiKeyLockout {
 const DEFAULT_MAX_ENTRIES: usize = 100_000;
 
 impl ApiKeyLockout {
-    /// 创建锁定状态。
-    ///
-    /// # 参数
-    /// - `threshold`：连续失败阈值；`0` 禁用锁定
-    /// - `window_secs`：窗口时长（秒）
+    /// 创建锁定状态；`threshold = 0` 禁用锁定，`window_secs` 为窗口时长（秒）。
     pub fn new(threshold: u32, window_secs: u64) -> Self {
         Self {
             records: DashMap::with_capacity(64),
@@ -74,10 +62,7 @@ impl ApiKeyLockout {
         self.threshold
     }
 
-    /// 判定源 IP 是否处于锁定中。
-    ///
-    /// 锁定中返回 `Some(retry_after_secs)`（建议等待秒数，下限 1）；
-    /// 窗口已过期的残留记录在此顺带清除。
+    /// 判定源 IP 是否处于锁定中：锁定中返回 `Some(retry_after_secs)`（建议等待秒数，下限 1）；窗口已过期的残留记录在此顺带清除。
     pub fn check_locked(&self, source: &str) -> Option<u64> {
         if self.threshold == 0 {
             return None;
@@ -96,9 +81,7 @@ impl ApiKeyLockout {
         }
     }
 
-    /// 记账一次认证失败（缺失 / 错误 / 重复 `X-API-Key`）。
-    ///
-    /// 窗口已过期时重新开窗（计数从 1 开始）；达到阈值即返回 `locked=true`。
+    /// 记账一次认证失败（缺失 / 错误 / 重复 `X-API-Key`）；窗口已过期时重新开窗（计数从 1 开始），达到阈值即返回 `locked=true`。
     pub fn record_failure(&self, source: &str) -> FailureOutcome {
         if self.threshold == 0 {
             return FailureOutcome {
@@ -135,11 +118,7 @@ impl ApiKeyLockout {
         self.records.remove(source);
     }
 
-    /// 条目超限清理：先移除窗口已过期的记录；仍超限则淘汰 window_start
-    /// 最旧的一条（跳过 `current`，避免丢失本次记账）。
-    ///
-    /// 与 RateLimitState 的 LRU 淘汰同一纪律：迭代不持 entry 写锁
-    /// （DashMap iter 会锁各分片，跨 guard 持锁迭代会死锁）。
+    /// 条目超限清理：先移除窗口已过期的记录；仍超限则淘汰 `window_start` 最旧的一条（跳过 `current`，避免丢失本次记账）；迭代不持 entry 写锁（DashMap iter 会锁各分片，跨 guard 持锁迭代会死锁）。
     fn evict_if_over_capacity(&self, current: &str) {
         if self.records.len() <= self.max_entries {
             return;

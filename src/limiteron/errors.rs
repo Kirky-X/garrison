@@ -11,12 +11,7 @@ use limiteron::error::{LimiteronError, StorageError};
 
 /// 将 `GarrisonError` 映射为 `StorageError`。
 ///
-/// # 错误链保留
-///
-/// `StorageError::QueryError` 仅携带 `String`（无 source 字段），无法结构化
-/// 包装原错误。为弥补直接 `format!("{}", e)` 丢失类型信息的问题（调用方无法
-/// 按变体匹配/调试困难），消息前缀附上原错误的 `Debug` 表示（含变体名与负载），
-/// 后接 `Display` 文本（i18n 翻译），错误源类型与内容均可从消息恢复。
+/// `StorageError::QueryError` 仅携带 `String`（无 source 字段），消息用 `Debug` 变体名前缀拼接 `Display` 文本，保留错误源类型与内容。
 pub(super) fn map_to_storage_err(e: GarrisonError) -> StorageError {
     StorageError::QueryError(format!("garrison-error[{:?}]::{}", e, e))
 }

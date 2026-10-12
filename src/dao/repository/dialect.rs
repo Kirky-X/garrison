@@ -1,24 +1,16 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! SQL 方言适配（backend-agnostic 辅助函数，自 `repository/mod.rs` 迁出）。
+//! SQL 方言适配（backend-agnostic 辅助函数）。
 //!
 //! mod 接口隔离收口：实现函数不写在 `mod.rs`，此处承载占位符方言转换
-//! （SQLite `?` / PostgreSQL `$1,$2`）与 backend-agnostic Statement 构造；
+//!（SQLite `?` / PostgreSQL `$1,$2`）与 backend-agnostic Statement 构造；
 //! 公共路径经 `repository::{convert_placeholders, make_statement}` re-export 保持不变。
 
-/// 转换 SQL 占位符为指定后端的方言。
+/// 转换 SQL 占位符为指定后端的方言：Postgres 后端将第 n 个 `?` 替换为 `$n`，其他后端保留 `?`。
 ///
-/// - `DbBackend::Sqlite`：保留 `?` 占位符
-/// - `DbBackend::Postgres`：将第 n 个 `?` 替换为 `$n`
-/// - 其他后端：保留 `?`（由调用方确保兼容性）
-///
-/// # 跳过的上下文
-///
-/// 以下上下文中的 `?` 不被替换（避免参数序号错位）：
-/// - 单引号字符串字面量（含 `''` 转义）
-/// - `--` 行注释（至行尾）
-/// - `/* */` 块注释（支持嵌套，与 PostgreSQL 语义一致）
+/// 字符串字面量（含 `''` 转义）、`--` 行注释、`/* */` 块注释（支持嵌套，与 PostgreSQL 语义一致）
+/// 中的 `?` 不被替换，避免参数序号错位。
 ///
 /// # 示例
 ///
@@ -121,11 +113,9 @@ fn copy_string_literal(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, out
     }
 }
 
-/// 构造 backend-agnostic 的 [`dbnexus::sea_orm::Statement`]，根据 conn 的 backend 自动转换占位符。
-///
+/// 构造 backend-agnostic 的 [`dbnexus::sea_orm::Statement`]，按 conn 的 backend 自动转换占位符；
 /// 封装 [`convert_placeholders`] + [`dbnexus::sea_orm::Statement::from_sql_and_values`]，
-/// 让 Repository 实现无需关心后端差异——传入 `?` 占位符的 SQL 即可，
-/// Postgres backend 会自动转换为 `$1`, `$2`, ...
+/// Repository 实现只需传入 `?` 占位符的 SQL，Postgres backend 自动转换为 `$1`, `$2`, ...。
 ///
 /// # 示例
 ///
@@ -151,11 +141,8 @@ pub fn make_statement(
 mod tests {
     use super::*;
 
-    // ========================================================================
-    // convert_placeholders 测试（依据 P3 重构决策）
-    // ========================================================================
+    // convert_placeholders 测试
 
-    /// SQLite 后端保留 `?` 占位符不变。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_sqlite_keeps_question_mark() {
@@ -165,7 +152,6 @@ mod tests {
         assert_eq!(result, "WHERE id = ? AND name = ?");
     }
 
-    /// PostgreSQL 后端将 `?` 替换为 `$1`, `$2`, ...
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_postgres_replaces_with_dollar_n() {
@@ -175,7 +161,6 @@ mod tests {
         assert_eq!(result, "WHERE id = $1 AND name = $2");
     }
 
-    /// 单个占位符也能正确转换。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_postgres_single_placeholder() {
@@ -185,7 +170,6 @@ mod tests {
         assert_eq!(result, "WHERE id = $1");
     }
 
-    /// 无占位符的 SQL 不受影响。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_no_placeholder_unchanged() {
@@ -195,7 +179,6 @@ mod tests {
         assert_eq!(convert_placeholders(sql, DbBackend::Sqlite), "SELECT 1");
     }
 
-    /// 多个占位符（5 个）能正确编号。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_postgres_five_placeholders() {
@@ -205,10 +188,8 @@ mod tests {
         assert_eq!(result, "VALUES ($1, $2, $3, $4, $5)");
     }
 
-    /// Postgres 后端跳过单引号字符串字面量内的 `?`，引号外仍替换为 `$n`。
-    ///
-    /// 场景：SQL 注释/字面量中的 `?`（如 `note = '?'`）不应被当作占位符替换，
-    /// 否则参数序号错位导致后续 `$n` 与绑定参数不匹配。
+    /// SQL 注释/字面量中的 `?`（如 `note = '?'`）不是占位符；
+    /// 不跳过会导致参数序号错位、后续 `$n` 与绑定参数不匹配。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_skips_question_mark_inside_string_literal() {
@@ -221,10 +202,8 @@ mod tests {
         );
     }
 
-    /// Postgres 后端处理连续 `''` 转义单引号后仍正确替换占位符。
-    ///
-    /// 场景：SQL 字面量 `''` 表示一个字面单引号字符（不结束字符串），
-    /// 因此 `'' AS empty` 之后 `?` 仍在字符串外，应被替换为 `$1`。
+    /// SQL 字面量中 `''` 表示一个字面单引号字符（不结束字符串），
+    /// `'' AS empty` 之后的 `?` 仍在字符串外，应被替换为 `$1`。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_handles_escaped_single_quote() {
@@ -237,12 +216,8 @@ mod tests {
         );
     }
 
-    /// 覆盖 SQL 字符串字面量内的 `''` 转义分支。
-    ///
-    /// 场景：SQL 标准中字符串字面量内的 `''` 表示一个字面单引号字符
-    /// （不结束字符串），如 `'a''b'` 表示字符串 `a'b`。状态机应保持
-    /// `in_string=true`，使转义后的 `?` 在字符串外被替换为 `$1`。
-    /// 仅覆盖独立 `''`（空字符串字面量），未触发字符串内转义分支。
+    /// `'a''b'` 中的 `''` 为 SQL 标准字面量转义（不结束字符串），
+    /// 转义后的 `?` 仍在字符串外，应被替换为 `$1`。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_handles_escaped_quote_inside_string_literal() {
@@ -255,10 +230,7 @@ mod tests {
         );
     }
 
-    /// `--` 行注释内的 `?` 不被替换，注释后的 `?` 正常编号。
-    ///
-    /// 场景：`SELECT ? -- comment with ?` 若注释内 `?` 被替换，
-    /// 会导致参数序号错位（绑定值与占位符不匹配）。
+    /// 行注释内的 `?` 若被替换会导致参数序号错位（绑定值与占位符不匹配）。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_skips_question_mark_in_line_comment() {
@@ -271,7 +243,6 @@ mod tests {
         );
     }
 
-    /// `/* */` 块注释内的 `?` 不被替换。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_skips_question_mark_in_block_comment() {
@@ -284,7 +255,6 @@ mod tests {
         );
     }
 
-    /// 嵌套块注释（PostgreSQL 语义）内层的 `?` 也不替换。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_handles_nested_block_comments() {
@@ -297,7 +267,6 @@ mod tests {
         );
     }
 
-    /// 字符串字面量内的 `--` / `/*` 不应被误判为注释开始。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_comment_markers_inside_string_are_literal() {
@@ -310,12 +279,10 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // make_statement 测试（依据 P3 重构决策）
-    // ========================================================================
+    // make_statement 测试
 
-    /// Mock 连接，仅用于测试 `make_statement` 的 backend 检测逻辑。
-    /// 其他方法未实现（`make_statement` 仅调用 `get_database_backend`）。
+    /// Mock 连接，仅测试 `make_statement` 的 backend 检测逻辑
+    /// （只实现 `get_database_backend`，其余方法返回 `DbErr::Custom`）。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     struct MockConn {
         backend: dbnexus::sea_orm::DbBackend,
@@ -365,7 +332,6 @@ mod tests {
         }
     }
 
-    /// SQLite backend：`make_statement` 保留 `?` 占位符。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn make_statement_sqlite_uses_question_mark() {
@@ -383,7 +349,6 @@ mod tests {
         assert_eq!(stmt.sql, "WHERE id = ? AND name = ?");
     }
 
-    /// Postgres backend：`make_statement` 将 `?` 替换为 `$1`, `$2`。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn make_statement_postgres_uses_dollar_n() {

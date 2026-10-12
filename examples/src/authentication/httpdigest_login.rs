@@ -15,8 +15,7 @@ use garrison::secure::httpdigest::HttpDigestAuth;
 
 /// 运行 HTTP Digest 认证示例。
 ///
-/// 演示 HttpDigestAuth 构造、WWW-Authenticate 质询头生成、
-/// compute_ha1 预计算摘要、validate 校验客户端 Authorization header。
+/// 演示构造、WWW-Authenticate 质询头生成、compute_ha1 预计算摘要、validate 校验客户端 Authorization header。
 pub fn run() -> GarrisonResult<()> {
     println!("=== Garrison HTTP Digest 认证示例 ===\n");
 
@@ -48,8 +47,7 @@ pub fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     // 3. 模拟客户端构造 Authorization header 并由服务端 validate
     // ----------------------------------------------------------------
-    // 客户端从质询头提取 nonce（base64(timestamp:uuid) 格式），
-    // 使用 HA1 + nonce + method + uri 计算 response。
+    // 客户端从质询头提取 nonce（base64(timestamp:uuid) 格式），用 HA1 + nonce + method + uri 计算 response。
     let nonce = extract_nonce_from_challenge(&challenge).ok_or_else(|| {
         garrison::error::GarrisonError::Internal("failed to extract nonce".into())
     })?;
@@ -58,14 +56,14 @@ pub fn run() -> GarrisonResult<()> {
     let method = "GET";
     let uri = "/protected/resource";
 
-    // 计算 HA2 = H(method:uri)（使用 SHA256）
+    // 计算 HA2 = H(method:uri) 与 response = H(HA1:nonce:nc:cnonce:qop:HA2)（SHA256）
     use sha2::Digest;
     let ha2_input = format!("{}:{}", method, uri);
     let mut h2 = sha2::Sha256::new();
     h2.update(ha2_input.as_bytes());
     let ha2_hex: String = h2.finalize().iter().map(|b| format!("{:02x}", b)).collect();
 
-    // 计算 response = H(HA1:nonce:nc:cnonce:qop:HA2)
+    // response = H(HA1:nonce:nc:cnonce:qop:HA2)
     let resp_input = format!("{}:{}:{}:{}:auth:{}", ha1, nonce, nc, cnonce, ha2_hex);
     let mut h = sha2::Sha256::new();
     h.update(resp_input.as_bytes());
@@ -107,7 +105,7 @@ pub fn run() -> GarrisonResult<()> {
     let method_int = "POST";
     let uri_int = "/api/data";
 
-    // HA2 = H(method:uri:H(body))
+    // auth-int 模式：HA2 = H(method:uri:H(body))，response qop 为 auth-int
     let body_hash = {
         let mut bh = sha2::Sha256::new();
         bh.update(body);

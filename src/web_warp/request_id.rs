@@ -1,22 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! X-Request-ID 中间件（warp）：提取 / 生成 / 回传请求标识。
-//!
-//! # warp 机制差异（与 axum / actix 对比，详见 ADR-0004）
-//!
-//! warp 的 `wrap_fn` 只能组合 Filter，无法用自有 future 包住内层 filter 的
-//! 执行——handler（错误体渲染）必然运行在 request id task-local scope 之外。
-//! 因此 warp 路径采用后置回填：
-//!
-//! 1. `and_then` 内生成 / 校验 id，`scope` 包住**后置处理**；
-//! 2. 后置处理设置 `X-Request-ID` 响应头；对 4xx/5xx 且 JSON 响应体，
-//!    收集 bytes 解析为 JSON 后经 [`inject_request_id_into_error_body`]
-//!    注入 `request_id` 字段再重组（axum / actix 为前置渲染直接读取，
-//!    三框架终态输出形状一致）；
-//! 3. 以 tracing span（`request_id` 字段）instrument。
-//!
-//! 成功响应与非 JSON 错误响应零缓冲透传（仅补 `X-Request-ID` 头）。
+//! X-Request-ID 中间件（warp）：warp 的 `wrap_fn` 只能组合 Filter、无法用自有 future 包住内层 filter 执行，
+//! handler（错误体渲染）必在 request id task-local scope 之外，故采用后置回填——`and_then` 内生成/校验 id，
+//! `scope` 包住后置处理：设置 `X-Request-ID` 头，对 4xx/5xx 的 JSON 体经 [`inject_request_id_into_error_body`]
+//! 注入 `request_id` 再重组（axum/actix 为前置渲染，三框架终态形状一致，详见 ADR-0004）；
+//! 成功与非 JSON 错误响应零缓冲透传（仅补 `X-Request-ID` 头）。
 //!
 //! # 用法
 //!
@@ -41,10 +30,7 @@ use warp::Filter;
 /// `x-request-id` 头名（小写静态形式）。
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
-/// request id 包装 Filter：组合到任意 `Extract = (impl Reply,)` 的路由外层。
-///
-/// 经 `warp::wrap_fn(with_request_id)` 挂载（签名与 `wrap_fn` 的
-/// `Fn(T) -> U` 约束兼容）。
+/// request id 包装 Filter：经 `warp::wrap_fn(with_request_id)` 组合到任意 `Extract = (impl Reply,)` 的路由外层。
 pub fn with_request_id<T, R>(
     route: T,
 ) -> impl Filter<Extract = (Response,), Error = warp::Rejection> + Clone
@@ -72,8 +58,7 @@ async fn post_process(id: Arc<str>, mut response: Response) -> Response {
     if let Ok(value) = HeaderValue::from_str(id.as_ref()) {
         response.headers_mut().insert(X_REQUEST_ID, value);
     }
-    // 结构化日志：请求完成事件携带 request_id（scope 内发出；debug 级避免与
-    // server::audit_log_middleware 的每请求 info 访问日志重复）
+    // 完成事件携带 request_id（scope 内发出）；debug 级避免与 audit_log_middleware 的每请求 info 日志重复
     tracing::debug!(
         request_id = %id,
         status = response.status().as_u16(),
@@ -95,8 +80,7 @@ async fn post_process(id: Arc<str>, mut response: Response) -> Response {
     let bytes = match BodyExt::collect(body).await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            // 失败显性化：原始 body 已消费不可恢复，仅替换 body 为统一错误体；
-            // 原状态码与响应头（含 Retry-After / X-Request-ID）保留透传，不吞语义
+            // 失败显性化：原 body 已消费不可恢复，替换为统一错误体；原状态码与响应头（含 Retry-After / X-Request-ID）保留透传
             tracing::error!(error = %e, "warp request_id: error body collect failed");
             let fallback =
                 crate::error::GarrisonError::Internal("warp-body-collect-failed::".to_string());
@@ -109,8 +93,7 @@ async fn post_process(id: Arc<str>, mut response: Response) -> Response {
         },
     };
 
-    // 防御护栏：超大错误体跳过回填、原样透传（与 axum IntoResponse 4KB 截断
-    // 阈值一致；统一错误体本身远小于该阈值，超限只可能是业务自建体）
+    // 防御护栏：超大错误体跳过回填、原样透传（阈值与 axum IntoResponse 4KB 截断一致；统一错误体远小于该值）
     if bytes.len() > MAX_INJECT_BODY_SIZE {
         return pass_through_original(parts, bytes.to_vec());
     }
@@ -136,8 +119,7 @@ async fn post_process(id: Arc<str>, mut response: Response) -> Response {
 /// 统一体回填的 body 大小上限（与 axum IntoResponse 的 4KB 截断阈值一致）。
 const MAX_INJECT_BODY_SIZE: usize = 4096;
 
-/// 防御路径透传：body 未改动，状态码与原始响应头整体回填（单一 Content-Type
-/// 无重复头，Retry-After / X-Request-ID 原值保留）。
+/// 防御路径透传：body 未改动，状态码与原始响应头整体回填（单一 Content-Type，Retry-After / X-Request-ID 原值保留）。
 fn pass_through_original(parts: warp::http::response::Parts, body: Vec<u8>) -> Response {
     let mut rebuilt = warp::reply::Reply::into_response(body);
     *rebuilt.status_mut() = parts.status;
@@ -190,8 +172,7 @@ mod tests {
         assert_eq!(value, "warp-corr-001");
     }
 
-    /// 超长入站值（> 128 字节，http 层可构造的唯一非法类）重新生成合法 UUID。
-    /// CRLF / 非 ASCII 的注入防护由 http 框架头解析与
+    /// 超长入站值（> 128 字节）被丢弃并重生成 UUID；CRLF / 非 ASCII 注入防护由框架头解析与
     /// `context::request_id::propagate_or_generate` 纯函数测试覆盖。
     #[tokio::test]
     async fn invalid_inbound_id_regenerated() {
@@ -337,11 +318,8 @@ mod tests {
         }
     }
 
-    /// 初始化线程局部捕获订阅者并重建 callsite interest 缓存。
-    ///
-    /// tracing 的 interest 缓存是进程级全局态：并行运行的非订阅者测试可能抢先
-    /// 首次注册事件 callsite 并缓存 `Interest::never`（事件被宏直接剔除，与本
-    /// 线程订阅者无关），故 set_default 后必须显式重建，捕获缺失时重试。
+    /// 初始化线程局部捕获订阅者并重建 callsite interest 缓存：interest 缓存是进程级全局态，
+    /// 并行运行的非订阅者测试可能抢先注册事件并缓存 `Interest::never`（事件被宏剔除），故必须显式重建。
     fn init_capture(
         logs: &std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
     ) -> tracing::subscriber::DefaultGuard {
@@ -352,8 +330,7 @@ mod tests {
         guard
     }
 
-    /// tracing 捕获断言：完成事件为 debug 级（避免与 audit_log_middleware 的
-    /// info 访问日志重复）且携带 request_id 字段。
+    /// tracing 捕获断言：完成事件为 debug 级（避免与 audit_log_middleware 的 info 日志重复）且携带 request_id 字段。
     #[tokio::test]
     #[serial]
     async fn tracing_event_carries_request_id_field() {

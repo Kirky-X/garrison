@@ -2,19 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! MFA/step-up 编排基座。
-//!
-//! 核心组件：[`MfaLogic`] trait（二级认证与账号禁用校验契约）、会话因子
-//! 账本（[`AmrEntry`] → RFC 8176 amr / auth_time claim 映射）、per-client
-//! MFA chain 三态（[`validate_mfa_chains`]）、新鲜度断言、
-//! [`RequiredActionProvider`] 三段式（TOTP / WebAuthn）、恢复码管理器
-//! （mfa-recovery feature）与 MFA remember cookie。
+//! 核心组件：`MfaLogic` trait、会话因子账本（`AmrEntry` → RFC 8176 amr / auth_time）、per-client MFA chain 三态、新鲜度断言、`RequiredActionProvider` 三段式（TOTP / WebAuthn）、恢复码管理器与 MFA remember cookie。
 
 use super::current_token;
 use super::GarrisonLogicDefault;
 #[cfg(feature = "protocol-jwt")]
 use crate::config::GarrisonConfig;
-// 仅 mfa-recovery 的 key 构造（code_key/misuse_key）使用；不门控会在
-// 关闭 mfa-recovery 的 feature 组合下产生 unused_imports 告警。
+// 仅 mfa-recovery 的 key 构造（code_key/misuse_key）使用，门控避免关闭该 feature 时 unused_imports 告警
 #[cfg(feature = "mfa-recovery")]
 use crate::constants::DaoKeyPrefix;
 #[cfg(feature = "protocol-jwt")]
@@ -23,39 +17,16 @@ use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
-// 仅 mfa-recovery（RecoveryCodeManager）在非测试代码使用；webauthn 全流程
-// 穿透测试的 Arc 在该测试函数内部局部导入（其门控为 all(test, db-sqlite)，
-// 与非测试面不同，顶层导入无法同时满足两个目标）。
+// 仅 mfa-recovery（RecoveryCodeManager）在非测试代码使用；webauthn 全流程测试在函数内局部导入（门控 all(test, db-sqlite)，与非测试面不同）。
 #[cfg(feature = "mfa-recovery")]
 use std::sync::Arc;
 
-/// MFA 逻辑 trait，定义二级认证与账号禁用校验契约。
-///
-/// 对应 `StpLogic` 的 `checkSafe` / `checkDisable` 部分。
-///
-/// # 默认实现
-///
-/// - [`check_safe`](Self::check_safe)：先执行会话前置校验
-/// （[`check_session_precondition`](Self::check_session_precondition)），再调用
-/// `is_safe("default")`，未通过时返回 `Err(NotSafe("SAFE_EXPIRED"))`；未覆写
-/// `is_safe` 且会话有效时返回 `Ok(())`（视为已通过）。
-/// - [`check_disable`](Self::check_disable)：先执行会话前置校验，再由覆写方查询
-/// 当前 login_id 是否在禁用列表中；未覆写时返回 `Ok(())`（未实现禁用账号库）。
+/// MFA 逻辑 trait，定义二级认证与账号禁用校验契约（对应 `StpLogic` 的 checkSafe / checkDisable 部分）。
+/// 默认实现：`check_safe` 先过会话前置校验再查 `is_safe("default")`，未通过返回 `NotSafe("SAFE_EXPIRED")`；`check_disable` 过前置校验后返回 `Ok(())`，由覆写方查询禁用列表。
 #[async_trait]
 pub trait MfaLogic: SessionLogic {
-    /// 二级认证族检查（`check_safe` / `check_disable`）共用的会话前置校验。
-    ///
-    /// # 语义（先验会话，后判 safe/disable；fail-closed）
-    ///
-    /// - 上下文携带 token 时：必须通过与 `check_login` 同等的校验（token 存在、
-    ///   会话未过期未被踢、token 签名有效）；无效/已撤销 token 返回
-    ///   `Err(GarrisonError::Session)`，与 check-login 的 SESSION_ERROR 语义对齐，
-    ///   不再与「未启用二级认证 / 未封禁」合并为宽松结果。
-    /// - 上下文无 token（如 authflow 编排等非 HTTP 上下文）：不属二级认证检查的
-    ///   职责，跳过本前置校验（返回 `Ok(())`），由后续 safe/disable 判定决定结果。
-    ///
-    /// `check_safe` 与 `check_disable` 的默认实现及 `GarrisonLogicDefault` 覆写
-    /// 均在进入各自判定前调用本方法，trait 定制者与 HTTP 端点同时受益。
+    /// 二级认证族检查（`check_safe` / `check_disable`）共用的会话前置校验（先验会话后判 safe/disable，fail-closed）。
+    /// 上下文带 token 时须通过与 `check_login` 同等校验，无效/已撤销 token 返回 `Session`（不并入宽松结果）；无 token 的非 HTTP 上下文跳过（`Ok(())`）。
     async fn check_session_precondition(&self) -> GarrisonResult<()> {
         if current_token().is_ok() && !self.check_login().await? {
             return Err(GarrisonError::Session(
@@ -65,23 +36,8 @@ pub trait MfaLogic: SessionLogic {
         Ok(())
     }
 
-    /// 检查二级认证（MFA）状态。
-    ///
-    /// 默认实现先执行会话前置校验（[`check_session_precondition`](Self::check_session_precondition)，
-    /// 无效/已撤销 token → `Err(GarrisonError::Session)`），再调用 `is_safe("default")`
-    /// 检查 "default" service 的二级认证状态：
-    /// - `Ok(true)` → 返回 `Ok(())`
-    /// - `Ok(false)` → 返回 `Err(Self::not_safe("SAFE_EXPIRED"))`
-    /// - `Err(e)` → 透传错误
-    ///
-    /// 未覆写 `is_safe` 的实现者（如未启用 `safe-auth`/`security-extra` feature 时），
-    /// `is_safe` 默认返回 `Ok(true)`，因此有效会话的 `check_safe` 返回 `Ok(())`
-    /// （未配置 MFA 的有效会话视为已通过二级认证）。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 已通过二级认证或未启用 MFA（会话有效时）。
-    /// - `Err(GarrisonError::Session)`: 会话无效（token 不存在/已过期/被踢）。
-    /// - `Err(GarrisonError::NotSafe)`: 未通过二级认证（service 未开启或已过期）。
+    /// 检查二级认证（MFA）状态：先过会话前置与 `check_mfa_chain`，再查 `is_safe("default")`——false 返回 `NotSafe("SAFE_EXPIRED")`。
+    /// 未覆写 `is_safe` 时默认 `Ok(true)`（有效会话视为已通过，即未启用 MFA 不拦截）；会话无效返回 `Session`。
     async fn check_safe(&self) -> GarrisonResult<()> {
         self.check_session_precondition().await?;
         self.check_mfa_chain(None).await?;
@@ -91,100 +47,34 @@ pub trait MfaLogic: SessionLogic {
         Ok(())
     }
 
-    /// 校验 per-client MFA 强制链覆盖（MFA 编排的 gate 入口）。
-    ///
-    /// 配置了强制链（`mfa.global_chain` / per-client 覆盖）时，当前会话的
-    /// 因子账本必须覆盖全部强制 factor（otp/webauthn → 同名 amr），否则返回
-    /// `NotSafe { reason: "MFA_CHAIN_INCOMPLETE::<factor>" }`。
-    /// [`check_safe`](Self::check_safe) 默认先执行本检查再走 safe-service
-    /// 逻辑——authflow 的 Mfa 步骤与 `/auth/check-safe` 端点经此路径自动
-    /// 获得链强制；challenge 的产出与完成由
-    /// [`RequiredActionProvider`]
-    /// 承载（业务侧编排 provider 并经
-    /// [`GarrisonSession::append_amr_entry`](crate::session::GarrisonSession::append_amr_entry)
-    /// 升级账本）。
-    ///
-    /// # 参数
-    /// - `client_id`: 请求上下文中的客户端标识；`None` 时按全局默认链判定。
-    ///
-    /// # 默认实现
-    /// `Ok(())`（未覆写的实现者无链强制）。
+    /// 校验 per-client MFA 强制链覆盖（gate 入口）：因子账本未覆盖全部强制 factor（otp/webauthn → 同名 amr）时返回 `NotSafe { reason: "MFA_CHAIN_INCOMPLETE::<factor>" }`。
+    /// `check_safe` 默认先执行本检查；`client_id` 为 `None` 按全局默认链判定，未覆写默认为 `Ok(())`。
     async fn check_mfa_chain(&self, _client_id: Option<&str>) -> GarrisonResult<()> {
         Ok(())
     }
 
-    /// 检查账号是否被禁用。
-    ///
-    /// trait 默认实现先执行会话前置校验（[`check_session_precondition`](Self::check_session_precondition)，
-    /// 无效/已撤销 token → `Err(GarrisonError::Session)`），随后返回 `Ok(())`
-    /// （未实现禁用账号库）；业务方覆写以查询当前 login_id 是否在禁用列表中。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 账号未禁用 / 未实现禁用库（会话有效时）。
-    /// - `Err(GarrisonError::Session)`: 会话无效（token 不存在/已过期/被踢）。
-    /// - `Err(GarrisonError::DisableService)`: 账号已封禁（推荐使用专用异常）。
+    /// 检查账号是否被禁用：先过会话前置校验，默认返回 `Ok(())`（未实现禁用库）；业务方覆写查询当前 login_id，封禁时用 `DisableService`。
     async fn check_disable(&self) -> GarrisonResult<()> {
         self.check_session_precondition().await?;
         Ok(())
     }
 
-    /// 开启指定 service 的二级认证（瞬态标记）。
-    ///
-    /// 在当前 TokenSession 的 `safe_services` 中记录 service → 过期时间戳。
-    /// 调用后 `is_safe(service)` 在过期前返回 `true`。
-    ///
-    /// # 参数
-    /// - `service`: 服务名称（如 "default" / "payment"）。
-    /// - `duration_secs`: 有效时长（秒）；过期后 `is_safe` 返回 `false`。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 成功开启。
-    /// - `Err`: 未登录或 session 不存在。
-    ///
-    /// # 默认实现
-    /// 返回 `Ok(())`（no-op）。
-    /// `safe-auth` feature 启用时由 `GarrisonLogicDefault` 覆写为真实实现；
-    /// 未启用时二级认证标记能力不可用，此默认实现维持接口完整。
+    /// 开启指定 service 的二级认证瞬态标记（默认 no-op `Ok(())`）；`safe-auth` 启用时由 `GarrisonLogicDefault` 覆写为真实实现。
     async fn open_safe(&self, _service: &str, _duration_secs: u64) -> GarrisonResult<()> {
         Ok(())
     }
 
-    /// 检查指定 service 是否处于二级认证有效期内。
-    ///
-    /// # 参数
-    /// - `service`: 服务名称。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: service 已开启且未过期。
-    /// - `Ok(false)`: service 未开启或已过期。
-    ///
-    /// # 默认实现
-    /// 返回 `Ok(true)`（默认视为已通过二级认证）。
-    /// `safe-auth` feature 启用时由 `GarrisonLogicDefault` 覆写为真实实现。
+    /// 检查指定 service 是否处于二级认证有效期内：默认返回 `Ok(true)`（视为已通过）；`safe-auth` 启用时由 `GarrisonLogicDefault` 覆写为真实实现。
     async fn is_safe(&self, _service: &str) -> GarrisonResult<bool> {
         Ok(true)
     }
 
-    /// 关闭指定 service 的二级认证（移除瞬态标记）。
-    ///
-    /// # 参数
-    /// - `service`: 服务名称。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 成功关闭（或 service 本就未开启，幂等）。
-    /// - `Err`: 未登录或 session 不存在。
-    ///
-    /// # 默认实现
-    /// 返回 `Ok(())`（no-op）。
-    /// `safe-auth` feature 启用时由 `GarrisonLogicDefault` 覆写为真实实现；
-    /// 未启用时二级认证标记能力不可用，此默认实现维持接口完整。
+    /// 关闭指定 service 的二级认证瞬态标记（默认 no-op，幂等）；`safe-auth` 启用时由 `GarrisonLogicDefault` 覆写为真实实现。
     async fn close_safe(&self, _service: &str) -> GarrisonResult<()> {
         Ok(())
     }
 
-    /// 构造账号被封禁异常。
-    ///
-    /// 业务方在自定义 `check_disable` 实现中调用此关联函数抛出专用异常：
+    /// 构造账号封禁异常（`service` 封禁服务名，`until` 定时解封时间、None 永久），供业务方在自定义 `check_disable` 中抛出：
     ///
     /// ```ignore
     /// async fn check_disable(&self) -> GarrisonResult<()> {
@@ -194,10 +84,6 @@ pub trait MfaLogic: SessionLogic {
     /// Ok(())
     /// }
     /// ```
-    ///
-    /// # 参数
-    /// - `service`: 被封禁的服务名（如 "default" / "oidc"）。
-    /// - `until`: 定时解封时间；`None` 表示永久封禁。
     fn disable_service(
         service: &str,
         until: Option<chrono::DateTime<chrono::Utc>>,
@@ -208,9 +94,7 @@ pub trait MfaLogic: SessionLogic {
         }
     }
 
-    /// 构造未完成二次认证异常。
-    ///
-    /// 业务方在自定义 `check_safe` 实现中调用此关联函数抛出专用异常：
+    /// 构造未完成二次认证异常（`reason` 为原因标识，如 "MFA_TOTP_REQUIRED"），供业务方在自定义 `check_safe` 中抛出：
     ///
     /// ```ignore
     /// async fn check_safe(&self) -> GarrisonResult<()> {
@@ -220,9 +104,6 @@ pub trait MfaLogic: SessionLogic {
     /// Ok(())
     /// }
     /// ```
-    ///
-    /// # 参数
-    /// - `reason`: 未完成认证的原因标识（如 "MFA_TOTP_REQUIRED" / "WEBAUTHN_REQUIRED"）。
     fn not_safe(reason: &str) -> GarrisonError {
         GarrisonError::NotSafe {
             reason: reason.to_string(),
@@ -230,23 +111,12 @@ pub trait MfaLogic: SessionLogic {
     }
 }
 
-// ============================================================================
 // MFA 编排基座：因子账本
-// ============================================================================
 
 /// chain 可引用的 factor 词汇表（强制集合语义；pwd 是主因子不参与 chain）。
 pub const KNOWN_CHAIN_FACTORS: &[&str] = &["otp", "webauthn"];
 
-/// 校验 MFA chain 配置：引用词汇表之外的 factor 时返回 `GarrisonError::Config`
-/// （fail-closed，启动期拒绝，不降级放行）。
-///
-/// # 参数
-/// - `global_chain`: 全局默认链。
-/// - `per_client_chains`: per-client 覆盖表（空集覆盖 = 显式禁用，合法）。
-///
-/// # 错误
-/// - 任一链引用 [`KNOWN_CHAIN_FACTORS`] 之外的 factor：
-///   `GarrisonError::Config("config-mfa-chain-factor-unknown::{factor}")`
+/// 校验 MFA chain 配置：引用 [`KNOWN_CHAIN_FACTORS`] 之外的 factor 时 fail-closed 返回 `Config("config-mfa-chain-factor-unknown::{factor}")`（启动期拒绝，不降级放行）；per_client_chains 空集覆盖 = 显式禁用，合法。
 pub fn validate_mfa_chains(
     global_chain: &[String],
     per_client_chains: &std::collections::HashMap<String, Vec<String>>,
@@ -270,10 +140,7 @@ pub fn validate_mfa_chains(
     Ok(())
 }
 
-/// chain factor → amr method 映射（gate 校验用）。
-///
-/// 词汇表外的 factor 返回 `None`：启动校验（`validate_mfa_chains`）会拒绝
-/// 其入配置，此处兜底按未满足处理（fail-closed，不静默放行）。
+/// chain factor → amr method 映射（gate 校验用）；词汇表外返回 `None`，兜底按未满足处理（fail-closed，启动校验 `validate_mfa_chains` 会先拒绝其入配置）。
 pub fn chain_factor_amr(factor: &str) -> Option<&'static str> {
     match factor {
         "otp" => Some("otp"),
@@ -282,13 +149,7 @@ pub fn chain_factor_amr(factor: &str) -> Option<&'static str> {
     }
 }
 
-/// 强制链覆盖判定：返回账本未满足的首个强制 factor。
-///
-/// - [`MfaChainDecision::None`] → `None`（无强制，一律满足）；
-/// - [`MfaChainDecision::Require`] → 首个在账本中没有对应 amr 条目的 factor
-///   （词汇表外 factor 恒视为未满足）。
-///
-/// 供 gate 路径（`check_mfa_chain`）把三态决策落到会话账本上。
+/// 强制链覆盖判定：`Require` 时返回账本未满足的首个 factor（词汇表外恒视为未满足），`None` 决策返回 `None`。
 pub fn first_unmet_chain_factor(
     decision: &MfaChainDecision,
     ledger: &[AmrEntry],
@@ -314,11 +175,7 @@ pub enum MfaChainDecision {
     Require(Vec<String>),
 }
 
-/// 解析 per-client MFA chain 三态：
-///
-/// - `None`（覆盖表无该 client）→ 回退全局默认链（空则 [`MfaChainDecision::None`]）；
-/// - `Some(空集)` → 显式禁用：即使全局有默认链也不强制（[`MfaChainDecision::None`]）；
-/// - `Some(非空)` → 强制该集合（[`MfaChainDecision::Require`]）。
+/// 解析 per-client MFA chain 三态：覆盖表无该 client → 回退全局默认链（空则 `None`）；`Some(空集)` → 显式禁用（即使全局有链也不强制）；`Some(非空)` → `Require`。
 pub fn resolve_mfa_chain(
     per_client: Option<&Vec<String>>,
     global_chain: &[String],
@@ -336,9 +193,7 @@ pub fn resolve_mfa_chain(
     }
 }
 
-// ============================================================================
 // 新鲜度断言与 Required Action 三段式（evaluate → challenge → process）
-// ============================================================================
 
 /// step-up 新鲜度门槛：auth_time 窗口与最低 AAL 要求。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -369,10 +224,7 @@ pub enum FreshnessVerdict {
     Stale,
 }
 
-/// 新鲜度断言（step-up 判定核心）。
-///
-/// 新鲜 = `auth_time` 存在且 `now - auth_time <= max_age_secs` **且**
-/// 账本最高 AAL ≥ `min_aal`。任一不满足 → [`FreshnessVerdict::Stale`]。
+/// 新鲜度断言（step-up 判定核心）：`auth_time` 存在且 `now - auth_time <= max_age_secs` 且账本最高 AAL ≥ `min_aal` 才新鲜，任一不满足返回 [`FreshnessVerdict::Stale`]。
 pub fn assert_freshness(input: &FreshnessInput, threshold: &MfaFreshness) -> FreshnessVerdict {
     let Some(auth_time) = input.auth_time else {
         return FreshnessVerdict::Stale;
@@ -386,10 +238,7 @@ pub fn assert_freshness(input: &FreshnessInput, threshold: &MfaFreshness) -> Fre
     FreshnessVerdict::Fresh
 }
 
-/// step-up 总判定：新鲜度断言 + MFA remember cookie 豁免。
-///
-/// 有效 remember cookie（HMAC/JWT 绑定 stage + credential_id + exp）视为
-/// 「本设备近期已完成该 stage」，压过过期会话的重复 challenge。
+/// step-up 总判定：有效 remember cookie（HMAC/JWT 绑定 stage + credential_id + exp）视为本设备近期已完成该 stage，豁免重复 challenge；否则按新鲜度断言。
 pub fn stepup_required(
     input: &FreshnessInput,
     threshold: &MfaFreshness,
@@ -445,24 +294,13 @@ pub enum ProcessOutcome {
     Rejected,
 }
 
-/// Required Action provider 三段式契约（evaluate → challenge → process）。
-///
-/// 对齐 authentik `AuthenticatorValidateStageView` 的
-/// 「判定 → 出挑战 → 验响应」编排，拆为三个独立步骤：
-/// - [`evaluate`](Self::evaluate)：该动作对当前会话是否必需（新鲜度/AAL 门槛）；
-/// - [`challenge`](Self::challenge)：产出客户端可响应的挑战；
-/// - [`process`](Self::process)：校验响应；成功后由调用方经
-///   [`complete_required_action`] 升级账本（provider 不直接持有会话）。
+/// Required Action provider 三段式契约（evaluate 判定 → challenge 出挑战 → process 验响应），对齐 authentik `AuthenticatorValidateStageView` 编排；成功后由调用方经 [`complete_required_action`] 升级账本（provider 不直接持有会话）。
 #[async_trait]
 pub trait RequiredActionProvider: Send + Sync {
     /// 动作唯一标识（如 `"otp"` / `"webauthn"`）。
     fn action_id(&self) -> &'static str;
 
-    /// 判定该动作对当前会话是否必需。
-    ///
-    /// # 参数
-    /// - `ctx`: 会话快照。
-    /// - `threshold`: step-up 新鲜度门槛。
+    /// 判定该动作对当前会话是否必需（新鲜度 / AAL 门槛）。
     async fn evaluate(
         &self,
         ctx: &RequiredActionContext,
@@ -475,12 +313,7 @@ pub trait RequiredActionProvider: Send + Sync {
         ctx: &RequiredActionContext,
     ) -> GarrisonResult<RequiredActionChallenge>;
 
-    /// 校验客户端响应。
-    ///
-    /// # 参数
-    /// - `ctx`: 会话快照。
-    /// - `response`: 客户端提交的验证材料（验证码 / authenticator 断言）。
-    /// - `dao`: DAO（重放防护等原子记录用）。
+    /// 校验客户端响应（验证码 / authenticator 断言）。
     async fn process(
         &self,
         ctx: &RequiredActionContext,
@@ -489,10 +322,7 @@ pub trait RequiredActionProvider: Send + Sync {
     ) -> GarrisonResult<ProcessOutcome>;
 }
 
-/// process 验证成功后的账本升级（编排收口：provider 只判结果，会话写入在此）。
-///
-/// `Verified` → 追加 `AmrEntry{method, aal, completed_at}`；`Rejected` → no-op
-/// （账本不变）。
+/// process 成功后的账本升级（编排收口：provider 只判结果，会话写入在此）：`Verified` 追加 `AmrEntry{method, aal, completed_at}`，`Rejected` no-op。
 pub async fn complete_required_action(
     session: &crate::session::GarrisonSession,
     token: &str,
@@ -507,10 +337,7 @@ pub async fn complete_required_action(
         .await
 }
 
-/// 签发路径允许写入账本的 amr method 词汇表（RFC 8176 已登记值）。
-///
-/// 账本条目 `method` 只接受本表内的值：账本是 amr claim 的权威来源，
-/// 词汇表外的值入账会让签发载荷携带未登记的认证方法引用。
+/// 签发路径允许写入账本的 amr method 词汇表（RFC 8176 已登记值）：账本是 amr claim 权威来源，词汇表外的值入账会让签发载荷携带未登记的认证方法引用。
 pub const AMR_METHODS: &[&str] = &["pwd", "otp", "webauthn"];
 
 /// 主登录因子对应的 amr method（本框架 `login` 即主认证，约定为密码认证）。
@@ -519,14 +346,8 @@ pub const PRIMARY_FACTOR_AMR: &str = "pwd";
 /// 主登录因子授予的认证保证等级（密码单因子 = AAL 1）。
 pub const PRIMARY_FACTOR_AAL: u8 = 1;
 
-/// 因子账本条目：一次完成的认证步骤在会话内的权威记录。
-///
-/// - `method`：RFC 8176 amr 值（[`AMR_METHODS`] 词汇表内）
-/// - `aal`：该步骤授予的认证保证等级（1..=3）
-/// - `completed_at`：完成时刻（Unix 秒）
-///
-/// 账本随 [`crate::session::TokenSession`] 持久化，签发 token 时映射为
-/// RFC 8176 `amr` claim（完成顺序去重）与 OIDC `auth_time` claim。
+/// 因子账本条目：`method` 为 RFC 8176 amr 值（[`AMR_METHODS`] 内）、`aal` 为认证保证等级（1..=3）、`completed_at` 完成时刻（Unix 秒）。
+/// 随 [`crate::session::TokenSession`] 持久化，签发 token 时映射为 RFC 8176 `amr` claim（完成顺序去重）与 OIDC `auth_time` claim。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AmrEntry {
     /// 认证方法（RFC 8176 amr 值）。
@@ -538,11 +359,7 @@ pub struct AmrEntry {
 }
 
 impl AmrEntry {
-    /// 构造账本条目并校验词汇表 / AAL 边界。
-    ///
-    /// # 错误
-    /// - `method` 不在 [`AMR_METHODS`]：`GarrisonError::InvalidParam`
-    /// - `aal` 不在 1..=3：`GarrisonError::InvalidParam`
+    /// 构造账本条目并校验词汇表 / AAL 边界；`method` 不在 [`AMR_METHODS`] 或 `aal` 不在 1..=3 返回 `InvalidParam`。
     pub fn new(method: impl Into<String>, aal: u8, completed_at: i64) -> GarrisonResult<Self> {
         let method = method.into();
         if !AMR_METHODS.contains(&method.as_str()) {
@@ -564,12 +381,8 @@ impl AmrEntry {
     }
 }
 
-/// 主登录签发的 claim 映射输入（主因子 amr + 认证时刻的单一口径）。
-///
-/// stp `generate_token` 与 `AuthLogic` 的 login 共用：主登录即密码认证，
-/// 签发载荷携带 `amr=["pwd"]` 与 `auth_time=签发时刻`（与会话账本播种同源）。
-/// 续签/换签路径不得使用本函数——应从会话账本映射（[`amr_claim`] +
-/// `TokenSession.auth_time`），保证 token claim 与账本一致不凭空消失。
+/// 主登录签发的 claim 映射输入（主因子 amr + 认证时刻单一口径）：stp `generate_token` 与 `AuthLogic::login` 共用，签发载荷携 `amr=["pwd"]` 与 `auth_time=签发时刻`（与会话账本播种同源）。
+/// 续签/换签路径不得使用本函数——应从会话账本映射（[`amr_claim`] + `TokenSession.auth_time`），保证 token claim 与账本一致不凭空消失。
 pub fn primary_issuance_claims(now: i64) -> (Vec<String>, Option<i64>) {
     (vec![PRIMARY_FACTOR_AMR.to_string()], Some(now))
 }
@@ -592,15 +405,10 @@ pub fn ledger_max_aal(entries: &[AmrEntry]) -> u8 {
     entries.iter().map(|e| e.aal).max().unwrap_or(0)
 }
 
-// ============================================================================
 // TOTP Required Action provider（复用既有 TOTP 设施）
-// ============================================================================
 
-/// TOTP Required Action provider：evaluate 依新鲜度门槛判定、challenge 产出
-/// 静态提示、process 委托 [`TotpHandler::validate_and_consume`](crate::secure::totp::TotpHandler::validate_and_consume)（DAO 原子防重放）。
-///
-/// secret 由集成方按 login_id 查询凭证库后构造 provider（或为其注入查询回调）；
-/// 本基座只承载三段式编排，不做凭证存储。
+/// TOTP Required Action provider：evaluate 按新鲜度门槛判定、challenge 产出静态提示、process 委托 [`TotpHandler::validate_and_consume`](crate::secure::totp::TotpHandler::validate_and_consume)（DAO 原子防重放）。
+/// secret 由集成方按 login_id 查凭证库后构造 provider；本基座只承载编排，不做凭证存储。
 #[cfg(feature = "secure-totp")]
 pub struct TotpRequiredActionProvider {
     /// Base32 编码的 TOTP 密钥。
@@ -609,10 +417,7 @@ pub struct TotpRequiredActionProvider {
 
 #[cfg(feature = "secure-totp")]
 impl TotpRequiredActionProvider {
-    /// 构造 provider。
-    ///
-    /// # 参数
-    /// - `secret_base32`: Base32 编码的 TOTP 密钥（与凭证库 `secret_data` 同口径）。
+    /// 构造 provider（`secret_base32` 与凭证库 `secret_data` 同口径）。
     pub fn new(secret_base32: impl Into<String>) -> Self {
         Self {
             secret_base32: secret_base32.into(),
@@ -624,8 +429,7 @@ impl TotpRequiredActionProvider {
         self.handler()?.generate(now)
     }
 
-    /// 从 Base32 密钥构造 [`TotpHandler`]（默认 step=30 / digits=6，与
-    /// [`crate::account::credential::totp::TotpCredential`] 默认口径一致）。
+    /// 从 Base32 密钥构造 [`TotpHandler`]（step=30 / digits=6，与 [`crate::account::credential::totp::TotpCredential`] 默认口径一致）。
     fn handler(&self) -> GarrisonResult<crate::secure::totp::TotpHandler> {
         let secret = crate::secure::totp::TotpHandler::secret_from_base32(&self.secret_base32)?;
         crate::secure::totp::TotpHandler::new(secret, 30, 6)
@@ -678,17 +482,9 @@ impl RequiredActionProvider for TotpRequiredActionProvider {
     }
 }
 
-// ============================================================================
 // WebAuthn Required Action provider（protocol-webauthn feature）
-// ============================================================================
 
-/// WebAuthn 二次认证 Required Action provider。
-///
-/// `process` 调 R07 service 认证仪式（经 [`webauthn_factor`] 进程级注册表
-/// 取校验函数）：用户绑定由仪式自身承载——`start_authentication(tenant,
-/// user)` 将 tenant/user 写入 challenge payload，`finish` 从 payload 取出
-/// （不信任请求重传）。未注册校验函数时 `process` 显性报错（装配方漏接
-/// 线不静默降级为通过）。
+/// WebAuthn 二次认证 Required Action provider：`process` 经 [`webauthn_factor`] 进程级注册表取校验函数执行认证仪式（用户绑定写入 challenge payload，不信任请求重传）；未注册校验函数时显性报错（装配方漏接线不静默降级为通过）。
 #[cfg(feature = "protocol-webauthn")]
 pub struct WebauthnRequiredActionProvider;
 
@@ -707,12 +503,7 @@ impl RequiredActionProvider for WebauthnRequiredActionProvider {
         Ok(assert_freshness(&ctx.freshness_input(), threshold) == FreshnessVerdict::Stale)
     }
 
-    /// 挑战契约说明：WebAuthn 的真实协议挑战（server challenge →
-    /// authenticator assertion）不在此产出——trait 的 `challenge` 仅为
-    /// 客户端 UI 提示；真实挑战由编排方经 `webauthn_factor().service()`
-    /// 的 `start_authentication` 获取（用户绑定写于 challenge payload），
-    /// `process` 消费 assertion JSON。该分工对有状态挑战 provider（邮件
-    /// OTP 等）不适用，届时应扩展 trait 而非复用本形态。
+    /// WebAuthn 真实协议挑战（server challenge → authenticator assertion）不在此产出——本 trait 的 `challenge` 仅为客户端 UI 提示；真实挑战由编排方经 `webauthn_factor().service().start_authentication` 获取（用户绑定写于 challenge payload），`process` 消费 assertion JSON。有状态挑战 provider（邮件 OTP 等）应扩展 trait，不复用本形态。
     async fn challenge(
         &self,
         _ctx: &RequiredActionContext,
@@ -738,8 +529,7 @@ impl RequiredActionProvider for WebauthnRequiredActionProvider {
             GarrisonError::InvalidParam(format!("mfa-webauthn-assertion-parse::{e}"))
         })?;
         let auth = verifier.verify_second_factor(&assertion).await?;
-        // 仪式锁定的用户绑定必须与当前会话主体一致——跨用户 assertion
-        // （攻击者用自己的 passkey 完成他人 step-up）在此显性拒绝
+        // 仪式锁定的用户绑定必须与当前会话主体一致，跨用户 assertion（他人 passkey 完成他人 step-up）在此显性拒绝
         if auth.user_id != ctx.login_id {
             return Err(GarrisonError::InvalidParam(format!(
                 "mfa-webauthn-subject-mismatch::asserted-for={}::session={}",
@@ -758,10 +548,7 @@ impl RequiredActionProvider for WebauthnRequiredActionProvider {
 mod webauthn_provider_tests {
     use super::*;
 
-    /// 未注册校验函数时 process 显性报错（不静默降级为通过）。
-    ///
-    /// 注册表为进程级共享状态：与 `webauthn_factor::tests` 的注册测试经
-    /// `serial` 串行化，且本测试先重置保证前置条件自管（顺序无关）。
+    /// 未注册校验函数时 process fail-closed（不静默降级为通过）；注册表为进程级共享状态，serial 串行化且先重置保证前置条件自管。
     #[tokio::test(flavor = "multi_thread")]
     #[serial_test::serial]
     async fn process_without_registered_verifier_fails_closed() {
@@ -782,14 +569,8 @@ mod webauthn_provider_tests {
         );
     }
 
-    /// 全流程穿透：注册 factor（真实 service，注册向量绑定凭据）→
-    /// provider.process 提交真实认证向量 assertion →
-    /// `Verified{webauthn, aal:2}`。
-    ///
-    /// 既有覆盖分摊：fail-closed（无注册表）见上方用例；仪式分支语义
-    /// （重放/克隆/counter 推进/backup flags 落库）见
-    /// protocol::webauthn::tests——本用例补齐「装配注册 → 真实 assertion
-    /// 穿透 process」的单体闭环（T044「WebAuthn factor 全流程」）。
+    /// 全流程穿透：注册 factor（真实 service + 注册向量绑定凭据）→ provider.process 提交真实认证向量 assertion → `Verified{webauthn, aal:2}`。
+    /// 仪式分支语义（重放/克隆/counter/backup flags）见 protocol::webauthn::tests；本用例补齐「装配注册 → 真实 assertion 穿透 process」闭环。
     #[cfg(all(test, feature = "db-sqlite"))]
     #[tokio::test(flavor = "multi_thread")]
     #[serial_test::serial]
@@ -799,6 +580,7 @@ mod webauthn_provider_tests {
             domain_to_credential, seed_authentication, service_with_bound_vector_credential,
             test_config, AUTH_VECTOR_JSON,
         };
+        use std::sync::Arc;
 
         // 注册表为进程级共享状态：先重置保证前置条件自管（serial 串行化）
         webauthn_factor::reset_webauthn_factor_for_tests();
@@ -845,9 +627,7 @@ mod webauthn_provider_tests {
     }
 }
 
-// ============================================================================
 // 恢复码：批量一次性生成 / verify-consume 分离 / CAS 原子消费 / 误用容忍
-// ============================================================================
 #[cfg(feature = "mfa-recovery")]
 /// 恢复码 verify 结论。
 #[cfg(feature = "mfa-recovery")]
@@ -862,16 +642,9 @@ pub enum RecoveryVerify {
 }
 
 /// 恢复码管理器：verify（校验）与 consume（置已用）分离。
-///
-/// 存储布局（DAO，无新表）：
-/// - `mfa:recovery:{login_id}:{code}` → `"unused"` / `"used"`
-/// - `mfa:recovery:misuse:{login_id}` → 误用计数（原子 `incr`）
-///
-/// 并发竞态（verify 与 consume 之间、并发 consume 之间）由
-/// [`GarrisonDao::compare_and_swap`] 的 CAS 语义消除：置已用只在当前值为
-/// `"unused"` 时成功，双花不可能发生。
-// 与下方 impl 块同门控：struct 若独立于 feature 存在，关闭 mfa-recovery 时
-// 字段无任何读取点，会产生 dead_code 告警（clippy -D warnings 下为 error）。
+/// 存储：`mfa:recovery:{len}:{login_id}:{sha256(code)}` → "unused"/"used"，`mfa:recovery:misuse:{login_id}` 误用计数（原子 incr）。
+/// 并发双花由 [`GarrisonDao::compare_and_swap`] CAS 消除：置已用只在当前值为 "unused" 时成功。
+// 与 impl 块同门控：struct 独立于 feature 存在时字段无读取点，关闭 mfa-recovery 会产生 dead_code 告警（-D warnings 下为 error）。
 #[cfg(feature = "mfa-recovery")]
 pub struct RecoveryCodeManager {
     dao: Arc<dyn GarrisonDao>,
@@ -886,11 +659,7 @@ impl RecoveryCodeManager {
     /// 误用计数 key 后缀。
     const MISUSE_SUFFIX: &'static str = "misuse:";
 
-    /// 构造管理器。
-    ///
-    /// # 参数
-    /// - `dao`: DAO 抽象（CAS 消费与误用计数）。
-    /// - `misuse_tolerance`: 误用豁免额度（0 = 首次误用即锁定）。
+    /// 构造管理器（`misuse_tolerance` 误用豁免额度，0 = 首次误用即锁定）。
     pub fn new(dao: Arc<dyn GarrisonDao>, misuse_tolerance: u32) -> Self {
         Self {
             dao,
@@ -899,12 +668,7 @@ impl RecoveryCodeManager {
     }
 
     /// 恢复码存储 key：`mfa:recovery:{len}:{login_id}:{sha256(code)}`。
-    ///
-    /// 两个安全约束：
-    /// - **存哈希不存明文**（行业标准）：恢复码是可直接兑换登录的机密，
-    ///   DAO key 泄露（keys() 枚举/转储/运维工具）不得等于泄露可用凭证；
-    /// - **长度前缀分隔 login_id**：`user1` 与 `user1x` 的裸拼接存在前缀
-    ///   歧义（glob `user1*` 命中他人键位），长度前缀彻底隔离键空间。
+    /// 安全约束：只存哈希不存明文（恢复码可直接兑换登录，DAO key 泄露不得等于凭证泄露）；长度前缀隔离 login_id 键空间（防 `user1` 与 `user1x` 裸拼接的前缀歧义）。
     fn code_key(&self, login_id: &str, code: &str) -> String {
         let code_hash = Self::code_hash(code);
         format!(
@@ -941,17 +705,7 @@ impl RecoveryCodeManager {
         )
     }
 
-    /// 批量一次性生成恢复码（每码独立存储为未用状态）。
-    ///
-    /// 码取 UUID 简写形式的 10 个 hex 字符（5-5 分组），随机源为 OS CSPRNG。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `count`: 生成数量。
-    ///
-    /// # 错误
-    /// - `count == 0` 或超过单批上限（64）：`GarrisonError::InvalidParam`
-    /// - DAO 写入失败：透传
+    /// 批量一次性生成恢复码（每码独立存储为未用状态）：10 个 hex 字符（5-5 分组），随机源为 OS CSPRNG；`count == 0` 或超过单批上限 64 返回 `InvalidParam`，DAO 写入失败透传。
     pub async fn generate(&self, login_id: &str, count: usize) -> GarrisonResult<Vec<String>> {
         const MAX_BATCH: usize = 64;
         if count == 0 || count > MAX_BATCH {
@@ -981,23 +735,18 @@ impl RecoveryCodeManager {
         }
     }
 
-    /// 校验恢复码（不改状态；无效码计一次误用，超豁免即锁定）。
-    ///
-    /// 锁定后连 Valid 码也返回 [`RecoveryVerify::Locked`]（fail-closed）。
+    /// 校验恢复码（不改状态）：无效码计一次误用，超豁免即锁定；锁定后连 Valid 码也返回 `Locked`（fail-closed）。
     pub async fn verify(&self, login_id: &str, code: &str) -> GarrisonResult<RecoveryVerify> {
         if self.misuse_count(login_id).await? > self.misuse_tolerance as u64 {
             return Ok(RecoveryVerify::Locked);
         }
         match self.dao.get(&self.code_key(login_id, code)).await? {
             Some(state) if state == "unused" => Ok(RecoveryVerify::Valid),
-            // 已用码 = 已识别的重放：拒绝但不计误用（合法持有者可能重复提交；
-            // 消费由 CAS 保护，重放无收益）
+            // 已用码 = 已识别重放：拒绝但不计误用（合法持有者可能重复提交；消费由 CAS 保护，重放无收益）
             Some(_) => Ok(RecoveryVerify::Invalid),
             // 不存在的码 = 猜测攻击：计一次误用，超豁免即锁定
             None => {
-                // 误用计数带 24h TTL：定向 DoS（烧毁恢复码通道）与合法用户
-                // 手误的代价有界——超时自动解冻（管理端重置流程 out of scope，
-                // 运维处置：删除 `mfa:recovery:misuse:{login_id}` 键立即解冻）
+                // 误用计数带 24h TTL：定向 DoS（烧毁恢复码通道）与合法用户手误代价有界，超时自动解冻（运维可删 `mfa:recovery:misuse:{login_id}` 立即解冻）
                 const MISUSE_LOCK_TTL_SECS: u64 = 24 * 60 * 60;
                 let count = self
                     .dao
@@ -1012,15 +761,8 @@ impl RecoveryCodeManager {
         }
     }
 
-    /// 原子消费恢复码（CAS `unused` → `used`）。
-    ///
-    /// 并发消费同一码时仅一个成功；锁定状态直接拒绝（返回错误）。
-    ///
-    /// # 返回
-    /// - `Ok(true)`：消费成功。
-    /// - `Ok(false)`：码不存在或已被使用（消费失败，不计误用——并发
-    ///   竞争的落败方持有的是有效码，不是滥用）。
-    /// - `Err`：误用计数超限（锁定，fail-closed）或 DAO 失败。
+    /// 原子消费恢复码（CAS `unused` → `used`）：并发消费同一码仅一个成功，锁定状态直接拒绝。
+    /// `Ok(false)` 为码不存在或已被使用（不计误用——并发落败方持有的是有效码）；`Err` 为锁定（fail-closed）或 DAO 失败。
     pub async fn consume(&self, login_id: &str, code: &str) -> GarrisonResult<bool> {
         if self.misuse_count(login_id).await? > self.misuse_tolerance as u64 {
             return Err(GarrisonError::NotSafe {
@@ -1032,10 +774,7 @@ impl RecoveryCodeManager {
             .await
     }
 
-    /// 统计 login_id 名下未消费恢复码数量（管理用途）。
-    ///
-    /// 存储只落 `sha256(code)`（不存明文），故只能计数、不能反解码值；
-    /// 明文码仅在 [`generate`](Self::generate) 返回时对调用方出现一次。
+    /// 统计 login_id 名下未消费恢复码数量（管理用途）；存储只落 `sha256(code)`，只能计数、不能反解码值，明文码仅在 [`generate`](Self::generate) 返回时出现一次。
     pub async fn unconsumed_count(&self, login_id: &str) -> GarrisonResult<usize> {
         let pattern = format!(
             "{}{}{}:{}:*",
@@ -1056,23 +795,17 @@ impl RecoveryCodeManager {
     }
 }
 
-// ============================================================================
-// MFA remember cookie：JWT(HS256) 绑 stage + credential_id + exp，
+// MFA remember cookie：JWT(HS256) 绑 stage + login_id + credential_id + exp，
 // Set-Cookie 经单一构建点产出
-// ============================================================================
 
-/// MFA remember cookie 载荷（吸收 authentik MFA cookie 的三绑定语义）。
-///
-/// 绑定三元组：`stage`（编排阶段/动作上下文）+ `credential_id`
-/// （完成认证的因子凭证）+ `exp`（有效期上界）。签名密钥为部署级 secret，
-/// 客户端无法伪造或跨 stage / 跨 credential 重放。
+/// MFA remember cookie 载荷（吸收 authentik MFA cookie 的三绑定语义）：`stage`（其他 stage 不可复用）+ `login_id`（跨主体不可复用，防持有式豁免退化）+ `credential_id`（跨凭证不可复用）+ `exp`（Unix 秒）。
+/// 签名密钥为部署级 secret，客户端无法伪造或跨 stage / credential 重放。
 #[cfg(feature = "protocol-jwt")]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MfaRememberClaims {
     /// 编排阶段标识（绑定：其他 stage 不可复用）。
     pub stage: String,
-    /// 完成认证的主体（绑定：跨主体不通用——防持有式豁免退化为
-    /// 「同 credential 的任意主体可复用」）。
+    /// 完成认证的主体（绑定：跨主体不通用——防持有式豁免退化为「同 credential 的任意主体可复用」）。
     pub login_id: String,
     /// 完成认证的因子凭证 ID（绑定：跨 credential 不通用）。
     pub credential_id: String,
@@ -1084,11 +817,9 @@ pub struct MfaRememberClaims {
 #[cfg(feature = "protocol-jwt")]
 pub const MFA_REMEMBER_COOKIE_NAME: &str = "mfa_remember";
 
-/// 从部署级 secret 派生 remember cookie 独立签名子钥（HMAC 域分隔，零新依赖）。
+/// 从部署级 secret 派生 remember cookie 独立签名子钥（HKDF RFC 5869 域分隔；与 protocol-sign / protocol-httpdigest 惯例同习语，零新增依赖）。
 #[cfg(feature = "protocol-jwt")]
 fn mfa_remember_subkey(secret: &str) -> Vec<u8> {
-    // HKDF（RFC 5869）域分隔派生，与 protocol-sign / protocol-httpdigest
-    // 的部署级 secret 派生惯例同一习语（零新增依赖成本：hkdf 与 hmac 同源）
     use hkdf::Hkdf;
     let hk = Hkdf::<sha2::Sha256>::new(None, secret.as_bytes());
     let mut okm = [0u8; 32];
@@ -1097,26 +828,8 @@ fn mfa_remember_subkey(secret: &str) -> Vec<u8> {
     okm.to_vec()
 }
 
-/// 签发 MFA remember cookie 的 Set-Cookie 值。
-///
-/// 载荷 JWT（HS256，`exp = now + ttl_secs`）作为 cookie 值，属性（HttpOnly 恒定、
-/// SameSite 白名单与 None→Lax 降级、production `__Host-`/`__Secure-` 前缀、
-/// `Max-Age`）全部由单一构建点 [`build_set_cookie_value`] 产出，
-/// 本函数不自行拼接任何属性串。
-///
-/// 签名密钥为部署级 secret 经 HMAC 派生的独立子钥（RFC 8725 密钥分离：
-/// 与主 token 签发同源不同钥，一侧新增字段不会桥接另一侧）。
-///
-/// # 参数
-/// - `secret`: 部署级 secret（≥ 32 字节，与 [`crate::protocol::jwt::JwtHandler`] 同源）。
-/// - `config`: 配置（取 `cookie_same_site` / `cookie_secure`）。
-/// - `stage`: 编排阶段标识。
-/// - `credential_id`: 完成认证的因子凭证 ID。
-/// - `ttl_secs`: 有效期秒数（0 = 立即过期的会话级标记；负值由构建点拒绝）。
-///
-/// # 错误
-/// - 密钥为空/过短：`GarrisonError::Config`
-/// - ttl 为负 / cookie 属性非法：透传构建点错误
+/// 签发 MFA remember cookie 的 Set-Cookie 值：载荷 JWT（HS256，`exp = now + ttl_secs`）作为 cookie 值，属性（HttpOnly 恒定、SameSite 白名单与 None→Lax 降级、production `__Host-`/`__Secure-` 前缀、`Max-Age`）全部由单一构建点 [`build_set_cookie_value`] 产出，本函数不自行拼接属性串。
+/// 签名密钥为部署级 secret 经 HKDF 派生的独立子钥（RFC 8725 密钥分离：与主 token 同源不同钥）；密钥 < 32 字节或 ttl 负值/溢出报错，cookie 属性非法透传构建点错误。
 #[cfg(feature = "protocol-jwt")]
 pub fn issue_mfa_remember_cookie(
     secret: &str,
@@ -1156,12 +869,7 @@ pub fn issue_mfa_remember_cookie(
     build_set_cookie_value(&cookie, &jwt, config.cookie_secure)
 }
 
-/// 校验 MFA remember cookie 的 JWT 载荷（三元绑定 + exp，leeway=0）。
-///
-/// # 返回
-/// - `true`：签名有效、stage / credential_id 匹配且未过期——调用方可跳过
-///   重复 challenge。
-/// - `false`：签名无效 / stage 不符 / 跨 credential / 已过期（含 `exp` 缺失）。
+/// 校验 MFA remember cookie 的 JWT 载荷（三元绑定 + exp，leeway=0）：签名有效且 stage / login_id / credential_id 匹配且未过期才 true，否则 false（含 exp 缺失）。
 #[cfg(feature = "protocol-jwt")]
 pub fn verify_mfa_remember_cookie(
     secret: &str,
@@ -1189,33 +897,12 @@ pub fn verify_mfa_remember_cookie(
         && data.claims.credential_id == credential_id
         && data.claims.exp > now
 }
-// ============================================================================
 // GarrisonLogicDefault impl
-// ============================================================================
 
 #[async_trait]
 impl MfaLogic for GarrisonLogicDefault {
-    /// 检查二级认证（MFA）状态。
-    ///
-    /// `GarrisonLogicDefault` 覆写实现：
-    /// 先执行会话前置校验（[`MfaLogic::check_session_precondition`]，无效/已撤销
-    /// token → `Err(GarrisonError::Session)`），再调用 `is_safe("default")` 检查
-    /// "default" service 的二级认证状态。
-    ///
-    /// # 为什么覆写 trait default？
-    ///
-    /// `async_trait` 宏将 trait default 方法编译为泛型代码，`self` 类型为 `&Self`（泛型）。
-    /// 在泛型上下文中，编译器无法解析到 inherent method（safe.rs 中的 `is_safe`），
-    /// 只能解析到 trait default `is_safe`（返回 `Ok(true)`）。
-    /// 在 impl 块中，`self` 是 `&GarrisonLogicDefault`（具体类型），编译器能解析到
-    /// inherent method（当 `safe-auth` feature 启用时）。
-    ///
-    /// # 行为
-    /// - 无 `safe-auth` feature：`is_safe` 使用 trait default（`Ok(true)`）→ 返回 `Ok(())`
-    /// - 有 `safe-auth` feature：`is_safe` 使用 inherent method（检查 `safe_services`）
-    /// - `Ok(true)` → 返回 `Ok(())`
-    /// - `Ok(false)` → 返回 `Err(Self::not_safe("SAFE_EXPIRED"))`
-    /// - `Err(e)` → 透传错误
+    /// `GarrisonLogicDefault` 覆写：先过会话前置与链检查，再查 `is_safe("default")`（false → `NotSafe("SAFE_EXPIRED")`）。
+    /// 必须覆写的原因（编译期契约）：async_trait 的 trait default 在泛型上下文 `&Self` 无法解析 inherent `is_safe`（只会走 trait default `Ok(true)`）；impl 块中 `self` 是具体类型，`safe-auth` 启用时才能解析到 safe.rs 的 inherent 实现。
     async fn check_safe(&self) -> GarrisonResult<()> {
         self.check_session_precondition().await?;
         self.check_mfa_chain(None).await?;
@@ -1225,11 +912,7 @@ impl MfaLogic for GarrisonLogicDefault {
         Ok(())
     }
 
-    /// MFA 强制链 gate：三态解析 + 会话账本覆盖判定（fail-closed）。
-    ///
-    /// - 链决策为 `None`（禁用/继承为空）→ `Ok(())`（与未配置链时行为一致）；
-    /// - 链决策为 `Require` 时要求已登录（无 token / 无会话视为未满足），
-    ///   账本缺任一 factor → `NotSafe { MFA_CHAIN_INCOMPLETE::<factor> }`。
+    /// MFA 强制链 gate（fail-closed）：决策 `None`（禁用/继承为空）→ `Ok(())`；`Require` 时须已登录（无 token / 无会话视为未满足），账本缺任一 factor → `NotSafe { MFA_CHAIN_INCOMPLETE::<factor> }`。
     async fn check_mfa_chain(&self, client_id: Option<&str>) -> GarrisonResult<()> {
         let decision = crate::stp::mfa::resolve_mfa_chain(
             client_id.and_then(|id| self.config.mfa.per_client_chains.get(id)),
@@ -1255,26 +938,11 @@ impl MfaLogic for GarrisonLogicDefault {
         }
     }
 
-    /// 检查当前登录账号是否被封禁。
-    ///
-    /// `GarrisonLogicDefault` 覆写实现（先验会话，后判封禁；fail-closed）：
-    /// 1. 会话前置校验（[`MfaLogic::check_session_precondition`]）：携带 token 但
-    ///    会话无效（token 不存在/已过期/被踢）→ `Err(GarrisonError::Session)`——
-    ///    「token 无效」不再与「未封禁」合并为 `Ok(())`（渗透测试 R2-1 修复）
-    /// 2. 无当前 token（非 HTTP 编排上下文）→ 返回 `Ok(())`（无主体可判禁用）
-    /// 3. 与前置校验竞态时 TokenSession 缺失（防御分支）→ `Err(GarrisonError::Session)`
-    /// 4. 调用 `DisableRepository::is_disable(login_id, "default")`，未封禁 → `Ok(())`
-    /// 5. 已封禁 → 返回 `Err(Self::disable_service("default", until))`，
-    /// `until` 来自 `get_disable_time`（None=永久封禁，Some=定时解封）
-    ///
-    /// # 错误
-    /// - `GarrisonError::Session`: 会话无效（token 不存在/已过期/被踢）。
-    /// - `GarrisonError::DisableService`: 账号已封禁。
-    /// - DAO/反序列化失败：透传 `GarrisonError`。
+    /// 检查当前账号是否被封禁（先验会话后判封禁，fail-closed）：无效 token → `Session`（不再与「未封禁」合并为 `Ok(())`）；无 token 的非 HTTP 上下文 → `Ok(())`；与前置校验竞态时 session 缺失 → `Session`；`DisableRepository::is_disable` 命中 → `DisableService`（`until` 来自 `get_disable_time`，None 永久，Some 定时解封）。
     async fn check_disable(&self) -> GarrisonResult<()> {
         // 先验会话：无效 token 显性拒绝，不进入封禁判定
         self.check_session_precondition().await?;
-        // 获取当前 token（无 token 上下文时无主体可判禁用，维持既有 Ok 语义）
+        // 无 token 上下文时无主体可判禁用，维持既有 Ok 语义
         let token = match current_token() {
             Ok(t) => t,
             Err(_) => {
@@ -1309,22 +977,11 @@ impl MfaLogic for GarrisonLogicDefault {
     }
 }
 
-// ============================================================================
 // WebAuthn factor 接线点（protocol-webauthn feature）
-// ============================================================================
 
-/// WebAuthn 二次认证因子的凭据校验函数接线点。
-///
-/// 完整 MFA 编排（因子账本 / Required Action / 新鲜度断言）归 stp/mfa 的
-/// MFA 编排基座交付；本接线点只暴露「给 MFA 层一个可调用的 WebAuthn
-/// assertion 校验函数」这一最小缝：
-///
-/// - [`WebauthnFactorVerifier`](crate::stp::mfa::webauthn_factor::WebauthnFactorVerifier)：包装 [`WebauthnService`](crate::protocol::webauthn::service::WebauthnService) 的校验入口，
-///   把模块自有错误词汇表映射为 [`GarrisonError`]（`InvalidParam` 携带
-///   显性 detail，不静默吞错）；
-/// - [`register_webauthn_factor`](crate::stp::mfa::webauthn_factor::register_webauthn_factor) / [`webauthn_factor`]：进程级注册表，
-///   装配方注入一次，MFA 编排层按 `webauthn` 方法名取用（未注册返回
-///   `None`——编排层据此走「因子未配置」分支，不视为错误）。
+/// WebAuthn 二次认证因子的凭据校验接线点：本接线点只暴露「给 MFA 层一个可调用的 assertion 校验函数」的最小缝，完整 MFA 编排（因子账本 / Required Action / 新鲜度断言）归 stp/mfa 编排基座。
+/// [`WebauthnFactorVerifier`](crate::stp::mfa::webauthn_factor::WebauthnFactorVerifier) 包装 [`WebauthnService`](crate::protocol::webauthn::service::WebauthnService) 校验入口，把模块错误词汇映射为 [`GarrisonError`]（`InvalidParam` 携显性 detail，不静默吞错）。
+/// [`register_webauthn_factor`](crate::stp::mfa::webauthn_factor::register_webauthn_factor) / [`webauthn_factor`] 为进程级注册表，装配方注入一次，编排层按 `webauthn` 方法名取用（未注册返回 `None`，走「因子未配置」分支而非错误）。
 #[cfg(feature = "protocol-webauthn")]
 pub mod webauthn_factor {
     use super::*;
@@ -1345,12 +1002,8 @@ pub mod webauthn_factor {
             Self { service }
         }
 
-        /// 校验二次认证 assertion：走认证仪式全流程（challenge 一次性消费、
-        /// sign_count 单调性克隆检测、backup flags 更新落库）。
-        ///
-        /// 返回仪式锁定的用户绑定（`WebauthnAuthentication`，tenant/user
-        /// 取自 challenge 暂存而非请求重传）——调用方必须与当前会话主体
-        /// 比对，防「自己的 passkey 完成他人 step-up」的跨用户断言。
+        /// 校验二次认证 assertion：走认证仪式全流程（challenge 一次性消费、sign_count 单调性克隆检测、backup flags 更新落库）。
+        /// 返回仪式锁定的用户绑定（`WebauthnAuthentication`，tenant/user 取自 challenge 暂存），调用方必须与当前会话主体比对，防「自己的 passkey 完成他人 step-up」的跨用户断言。
         pub async fn verify_second_factor(
             &self,
             assertion: &webauthn_rs::prelude::PublicKeyCredential,
@@ -1524,9 +1177,7 @@ mod tests {
         mock.check_disable().await.unwrap();
     }
 
-    // ========================================================================
     // disable_service / not_safe 构造方法测试
-    // ========================================================================
 
     /// 验证 `disable_service` 构造正确的 `GarrisonError::DisableService` 变体。
     ///
@@ -1613,9 +1264,7 @@ mod tests {
         mock.close_safe("default").await.unwrap();
     }
 
-    // ========================================================================
     // check_safe 默认实现测试
-    // ========================================================================
 
     /// 不启用 safe-auth 时，MockMfa（只实现 trait defaults）的 check_safe 返回 Ok。
     ///
@@ -1645,10 +1294,8 @@ mod tests {
         assert!(mock.check_safe().await.is_ok(), "check_safe 应返回 Ok(())");
     }
 
-    // ========================================================================
     // check_safe 默认实现：is_safe 覆写场景测试
     // 覆盖 trait default check_safe（lines 42-47）的 false / Err 分支
-    // ========================================================================
 
     /// 可配置 is_safe 返回值的 mock，用于测试 check_safe trait default 的各分支。
     ///
@@ -1782,9 +1429,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // 会话前置校验测试（trait default 路径，GAR-02 / R2-1 回归）
-    // ========================================================================
 
     /// check_login 结果可配置的 mock：仅依赖 trait defaults，验证 check_safe /
     /// check_disable 在进入 safe/disable 判定前的会话前置校验行为。
@@ -1939,9 +1584,7 @@ mod tests {
         let _ = mock.get_login_id().await.unwrap();
     }
 
-    // ========================================================================
     // per-client MFA chain 三态
-    // ========================================================================
 
     /// per-client 缺失（None）回退全局默认链。
     #[test]
@@ -1999,9 +1642,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // MFA 编排基座：因子账本（AmrEntry / amr claim 映射）
-    // ========================================================================
 
     /// AmrEntry::new 接受词汇表内的 method 与 1..=3 的 aal。
     #[test]
@@ -2211,9 +1852,7 @@ mod tests {
         let _ = mock.get_login_id().await.unwrap();
     }
 
-    // ========================================================================
     // DisableRepository 集成测试（GarrisonLogicDefault.check_disable）
-    // ========================================================================
 
     mod t019_disable_integration {
         use super::*;
@@ -2488,17 +2127,10 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // 二级认证族会话前置校验（GarrisonLogicDefault 路径，GAR-02 / R2-1 回归）
-    // ========================================================================
 
-    /// check_safe / check_disable 的会话前置校验回归（渗透测试 GAR-02 / R2-1）。
-    ///
-    /// 语义基线：未配置 MFA 的有效会话视为已通过二级认证（保持不变）；
-    /// 修复旁路：伪造/已撤销 token 不再得到宽松结果，而是显性 `Err(Session)`
-    /// （与 check-login 的 SESSION_ERROR 语义对齐）。直接构造
-    /// `GarrisonLogicDefault`（不依赖全局 manager），安全前置校验在进入
-    /// safe/disable 判定前执行，security-extra 启用与否断言一致。
+    /// check_safe / check_disable 的会话前置校验回归（GAR-02 / R2-1）：未配置 MFA 的有效会话视为已通过（行为不变），伪造/已撤销 token 显性 `Err(Session)`（与 check-login 语义对齐，不再宽松）。
+    /// 直接构造 `GarrisonLogicDefault`（不依赖全局 manager），安全前置校验先于 safe/disable 判定执行，security-extra 启用与否断言一致。
     mod t_sec_session_precondition {
         use super::*;
         use crate::account::disable::DefaultDisableRepository;
@@ -2714,9 +2346,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // check_safe 默认实现集成测试（需要 safe-auth feature）
-    // ========================================================================
 
     /// 集成测试：验证 check_safe 默认实现与 GarrisonLogicDefault inherent method
     /// （open_safe / is_safe / close_safe）的交互。
@@ -2960,9 +2590,7 @@ mod tests {
             }
         }
     }
-    // ========================================================================
     // 新鲜度断言（auth_time / aal 门槛）与 Required Action 三段式
-    // ========================================================================
 
     use crate::stp::mfa::{
         assert_freshness, stepup_required, FreshnessInput, FreshnessVerdict, MfaFreshness,
@@ -3193,9 +2821,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // 恢复码：批量一次性生成 / verify-consume 分离 / CAS 原子消费 / 误用容忍
-    // ========================================================================
 
     // 仅恢复码测试（cfg(mfa-recovery)）使用；不门控会在关闭该 feature 的
     // 单测编译下产生 unused_imports 告警。
@@ -3316,9 +2942,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // MFA remember cookie：签发/校验（经单一构建点）
-    // ========================================================================
 
     /// 有效 cookie：签发 → 校验通过（可跳过重复 challenge），Set-Cookie 属性
     /// 全部来自 Set-Cookie 单一构建点（HttpOnly / SameSite / Path / Max-Age）。
@@ -3496,9 +3120,7 @@ mod tests {
         );
         assert!(!set_cookie.contains("SameSite=None"));
     }
-    // ========================================================================
     // MFA 强制链 gate 接线：check_mfa_chain + check_safe 前置链校验
-    // ========================================================================
 
     use crate::stp::mfa::{chain_factor_amr, first_unmet_chain_factor};
 

@@ -1,10 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 测试套件单元测试（从 `mod.rs` 迁移）。
-//!
-//! 注：原测试假定 `AuthRequest.login_id` 为 `i64`，但当前 API 已改为 `String`。
-//! 迁移时同步修正 MockAuthorizer 与测试数据以匹配 `String` 类型（非 DSL 变更）。
+//! 测试套件单元测试（MockAuthorizer 以 `login_id` 预设返回 Decision 或 Error）。
 
 use super::*;
 use crate::core::permission::{AuthRequest, Authorizer, Decision, DecisionReason};
@@ -12,10 +9,7 @@ use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 
-/// 测试用 MockAuthorizer，根据 `login_id` 预设返回 Decision 或 Error。
-///
-/// - `decisions`：login_id -> Decision 映射，命中则返回对应 Decision
-/// - `errors`：login_id 集合，命中则返回 `GarrisonError::Internal`
+/// 测试用 MockAuthorizer：`decisions` 命中返回对应 Decision，`errors` 命中返回 `GarrisonError::Internal`。
 struct MockAuthorizer {
     decisions: HashMap<String, Decision>,
     errors: HashSet<String>,

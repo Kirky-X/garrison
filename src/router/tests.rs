@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! router 模块测试（从 mod.rs 迁移）。
+//! `router` 模块测试。
 
 use super::mock::{MockDao, MockInterface};
 use super::*;
@@ -20,9 +20,7 @@ use serial_test::serial;
 use std::sync::Arc;
 use tower::ServiceExt;
 
-// ----------------------------------------------------------------
 // 辅助函数
-// ----------------------------------------------------------------
 
 /// 创建测试配置（throw_on_not_login=false 便于未登录返回 NotLogin→401）。
 fn make_config() -> GarrisonConfig {
@@ -98,9 +96,7 @@ fn make_router() -> GarrisonRouter {
         .route_protected("/public", || async { "public ok" }, Annotation::Ignore)
 }
 
-// ----------------------------------------------------------------
 // route_protected + build 基础测试
-// ----------------------------------------------------------------
 
 /// route_protected 注册规则后，build() 返回的 Router 可处理请求。
 #[tokio::test]
@@ -119,9 +115,7 @@ async fn route_protected_build_handles_request() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // 未登录 / 已登录测试
-// ----------------------------------------------------------------
 
 /// 未登录访问受保护路由 → 401。
 #[tokio::test]
@@ -169,9 +163,7 @@ async fn protected_with_invalid_token_returns_401() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // 权限/角色测试
-// ----------------------------------------------------------------
 
 /// 无权限访问 → 403。
 #[tokio::test]
@@ -245,9 +237,7 @@ async fn role_granted_returns_200() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // Ignore 注解测试
-// ----------------------------------------------------------------
 
 /// Ignore 注解允许匿名访问 → 200。
 #[tokio::test]
@@ -262,9 +252,7 @@ async fn ignore_allows_anonymous_access() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // middleware 自动从 header/cookie 提取 token
-// ----------------------------------------------------------------
 
 /// middleware 自动从 Authorization: Bearer header 提取 token。
 #[tokio::test]
@@ -343,9 +331,7 @@ async fn middleware_extracts_token_from_cookie() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // DefaultGarrisonInterceptor.pre_handle 测试
-// ----------------------------------------------------------------
 
 /// DefaultGarrisonInterceptor.pre_handle(CheckLogin) 已登录返回 Ok。
 #[tokio::test]
@@ -437,14 +423,9 @@ async fn default_interceptor_ignore_returns_ok() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // DefaultGarrisonInterceptor 其他注解变体测试（catch-all 分支）
-// ----------------------------------------------------------------
 
-/// DefaultGarrisonInterceptor.pre_handle 对逻辑组合注解（CheckOr / CheckAnd / CheckNot）
-/// 直接放行返回 Ok（实际组合逻辑由注解处理器在编译期或路由配置层处理）。
-///
-/// 覆盖 `match annotation { ... _ => Ok(()) }` 的 catch-all 分支。
+/// DefaultGarrisonInterceptor.pre_handle 对逻辑组合注解（CheckOr / CheckAnd / CheckNot）直接放行返回 Ok（组合逻辑由注解处理器在编译期或路由配置层处理）。
 #[tokio::test]
 #[serial]
 async fn default_interceptor_logical_combinator_annotations_returns_ok() {
@@ -467,14 +448,9 @@ async fn default_interceptor_logical_combinator_annotations_returns_ok() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // CheckSafe / CheckDisable / CheckBasicAuth / CheckDigestAuth / CheckSign 测试
-// ----------------------------------------------------------------
 
-/// DefaultGarrisonInterceptor.pre_handle(CheckSafe) 默认行为随 `safe-auth` feature 变化。
-///
-/// - 未启用 `safe-auth`：`is_safe` trait default 返回 `Ok(true)`，pre_handle 返回 `Ok`。
-/// - 启用 `safe-auth`：未登录时 `is_safe` 返回 `Ok(false)`，pre_handle 返回 `Err(NotSafe)`。
+/// pre_handle(CheckSafe) 行为随 `security-extra` feature 变化：未启用时 `is_safe` 默认 `Ok(true)` → Ok；启用时未登录 `Ok(false)` → Err(NotSafe)。
 #[tokio::test]
 #[serial]
 async fn default_interceptor_check_safe_returns_ok_by_default() {
@@ -580,8 +556,7 @@ async fn default_interceptor_check_basic_auth_error_message_contains_guidance() 
     GarrisonManager::reset_for_test();
 }
 
-/// DefaultGarrisonInterceptor.pre_handle(CheckAccessToken) 返回 NotImplemented
-///（无 OAuth2Handler 注册）。
+/// DefaultGarrisonInterceptor.pre_handle(CheckAccessToken) 无 OAuth2Handler 注册 → NotImplemented。
 #[tokio::test]
 #[serial]
 async fn default_interceptor_check_access_token_returns_not_implemented() {
@@ -598,8 +573,7 @@ async fn default_interceptor_check_access_token_returns_not_implemented() {
     GarrisonManager::reset_for_test();
 }
 
-/// DefaultGarrisonInterceptor.pre_handle(CheckClientToken) 返回 NotImplemented
-///（无 OAuth2Handler 注册）。
+/// DefaultGarrisonInterceptor.pre_handle(CheckClientToken) 无 OAuth2Handler 注册 → NotImplemented。
 #[tokio::test]
 #[serial]
 async fn default_interceptor_check_client_token_returns_not_implemented() {
@@ -635,14 +609,9 @@ async fn default_interceptor_check_access_token_error_contains_guidance() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // GarrisonRouter::with_interceptor / Default 测试
-// ----------------------------------------------------------------
 
-/// 自定义拦截器：记录调用次数，用于验证 with_interceptor 注入。
-///
-/// 计数器改为 `Arc<AtomicU32>`——拦截器被 move 进 `GarrisonRouter`
-/// 后测试仍可读取最终计数（原普通字段在 move 后无法访问，导致无法事后断言）。
+/// 自定义拦截器：`Arc<AtomicU32>` 计数——拦截器被 move 进 `GarrisonRouter` 后测试仍可读取最终计数。
 struct CountingInterceptor {
     count: std::sync::Arc<std::sync::atomic::AtomicU32>,
 }
@@ -667,13 +636,7 @@ impl GarrisonInterceptor for CountingInterceptor {
     }
 }
 
-/// 验证 `GarrisonRouter::with_interceptor` 注入自定义拦截器后，
-/// middleware 会调用自定义拦截器的 pre_handle。
-///
-/// 补请求后的计数递增断言——仅断言初始计数 0 无法发现
-/// `with_interceptor` 注入失败或拦截器未被调用的情况。
-///
-/// 覆盖 `with_interceptor` 方法体（设置 self.interceptor）。
+/// 验证 `with_interceptor` 注入自定义拦截器后，middleware 调用其 pre_handle 恰好一次。
 #[tokio::test]
 #[serial]
 async fn with_interceptor_uses_custom_interceptor() {
@@ -708,10 +671,7 @@ async fn with_interceptor_uses_custom_interceptor() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 `GarrisonRouter::default()` 使用 `GarrisonConfig::default_config()`
-/// 创建路由器，拦截器为 `DefaultGarrisonInterceptor`。
-///
-/// 覆盖 `impl Default for GarrisonRouter` 的 `default()` 方法。
+/// 验证 `GarrisonRouter::default()` 使用 `DefaultGarrisonInterceptor` 并能处理请求。
 #[tokio::test]
 #[serial]
 async fn default_router_handles_request() {
@@ -734,17 +694,9 @@ async fn default_router_handles_request() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // tenant_resolution_middleware 测试
-// ----------------------------------------------------------------
 
-/// tenant_resolution_middleware 从 `X-Tenant-Id` header
-/// 解析租户上下文，在 `TENANT` task_local scope 内执行下游 handler。
-///
-/// 验证：
-/// 1. 请求带 `X-Tenant-Id: 42` header
-/// 2. handler 内 `TENANT.try_get()` 返回 `Ok(ctx)` 且 `ctx.tenant_id == 42`
-/// 3. 响应 body 含 `tenant:42`
+/// tenant_resolution_middleware 从 `X-Tenant-Id` header 解析租户，在 `TENANT` task_local scope 内执行下游 handler。
 #[cfg(feature = "tenant-isolation")]
 #[serial]
 #[tokio::test]
@@ -790,10 +742,7 @@ async fn tenant_resolution_middleware_sets_tenant_context() {
     );
 }
 
-/// 缺失 `X-Tenant-Id` header 时 middleware 返回 400 Bad Request。
-///
-/// 验证：请求不带 `X-Tenant-Id` header，middleware 调用 `resolver.resolve()` 失败，
-/// 返回 `StatusCode::BAD_REQUEST`，不执行 handler。
+/// 缺失 `X-Tenant-Id` 时 `resolver.resolve()` 失败返回 400 Bad Request，不执行 handler。
 #[cfg(feature = "tenant-isolation")]
 #[serial]
 #[tokio::test]
@@ -830,9 +779,7 @@ async fn tenant_resolution_middleware_missing_header_returns_400() {
     );
 }
 
-// ----------------------------------------------------------------
 // CheckApiKey 注解分发测试
-// ----------------------------------------------------------------
 
 #[cfg(feature = "protocol-apikey")]
 /// CheckApiKey 注解：有效 API Key → 200。
@@ -987,12 +934,9 @@ async fn mode_annotation_is_noop_in_pre_handle() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // group 方法测试
-// ----------------------------------------------------------------
 
-/// group 为子路由附加前缀，
-/// RouteRule 同步包含完整前缀路径，middleware 据此执行鉴权。
+/// group 为子路由附加前缀，RouteRule 同步记录完整前缀路径，middleware 据此鉴权。
 #[tokio::test]
 #[serial]
 async fn group_applies_prefix_to_sub_routes() {
@@ -1045,9 +989,8 @@ async fn group_with_ignore_annotation_overrides_route_annotation() {
     GarrisonManager::reset_for_test();
 }
 
-/// group 注解非 Ignore 时保留路由自身注解。
-/// group 注解 CheckLogin + 路由注解 CheckRole("admin") → 路由保留 CheckRole("admin")。
-/// 验证：已登录但无 admin 角色的用户访问 → 403（若被覆盖为 CheckLogin 则应 200）。
+/// group 注解非 Ignore 时保留路由自身注解：group CheckLogin + 路由 CheckRole("admin")，
+/// 已登录但无 admin 角色访问应 403（若被覆盖为 CheckLogin 则应 200）。
 #[tokio::test]
 #[serial]
 async fn group_non_ignore_annotation_preserves_route_annotation() {
@@ -1078,11 +1021,8 @@ async fn group_non_ignore_annotation_preserves_route_annotation() {
     GarrisonManager::reset_for_test();
 }
 
-/// 嵌套 group 正确合并前缀
-/// /api + /v1 + /users = /api/v1/users
-///
-/// 注：group 注解非 Ignore 时保留路由自身注解。
-/// 此处两层 group 均使用 CheckLogin（非 Ignore），路由注解 CheckLogin 被保留。
+/// 嵌套 group 合并前缀（`/api` + `/v1` + `/users` = `/api/v1/users`）；group 注解非 Ignore 时
+/// 保留路由自身注解（此处两层均为 CheckLogin，路由注解被保留）。
 #[tokio::test]
 #[serial]
 async fn group_nested_merges_prefixes() {
@@ -1179,9 +1119,7 @@ async fn group_chained_calls_register_separate_prefixes() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // 续签 Token 写入响应测试
-// ----------------------------------------------------------------
 
 /// 模拟续签的拦截器：pre_handle 时设置 renewed token。
 struct RenewingInterceptor {
@@ -1398,8 +1336,7 @@ async fn clear_renewed_token_prevents_leak() {
     GarrisonManager::reset_for_test();
 }
 
-/// 续签 cookie 在 SameSite=None + 非 Secure 上下文下降级为 Lax
-/// （修复原续签写点直发 SameSite=None 的缺陷）。
+/// 续签 cookie 在 SameSite=None + 非 Secure 上下文下降级为 Lax。
 #[tokio::test]
 #[serial]
 async fn renewed_cookie_none_insecure_downgrades_to_lax() {
@@ -1444,7 +1381,7 @@ async fn renewed_cookie_none_insecure_downgrades_to_lax() {
     GarrisonManager::reset_for_test();
 }
 
-/// 续签 token 值含注入字符时不得写入 Set-Cookie（构建点注入防护补位）。
+/// 续签 token 值含注入字符时不写入 Set-Cookie（构建点注入防护）。
 #[tokio::test]
 #[serial]
 async fn renewed_cookie_with_injected_value_not_written() {

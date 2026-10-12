@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! GarrisonListenerManager 实现块（从 mod.rs 迁移）。
+//! GarrisonListenerManager 实现块（broadcast / dispatch_one 等）。
 
 use super::*;
 
@@ -12,8 +12,7 @@ impl GarrisonListenerManager {
         let listeners: Vec<Arc<dyn GarrisonListener>> = inventory::iter::<GarrisonListenerEntry>()
             .map(|entry| (entry.factory)())
             .collect();
-        // `type_name::<Arc<dyn GarrisonListener>>()` 对所有条目恒为同一字符串，
-        // 无任何 per-listener 信息，原逐条循环属死代码；改为输出监听器数量。
+        // 逐条日志对所有监听器恒为同一字符串（无 per-listener 信息），故只输出数量
         tracing::info!(
             "listener loaded: {} listener(s) registered",
             listeners.len()
@@ -36,25 +35,12 @@ impl GarrisonListenerManager {
         self.listeners.read().len()
     }
 
-    /// 广播事件到所有已注册监听器。
-    ///
-    /// 异步遍历所有监听器的 `on_event` 方法：
-    /// - 单个监听器返回 `Err` 仅记录 `tracing::warn!`，不中断广播，最终返回 `Ok(())`；
-    /// - 单个监听器 **panic** 同样被 `catch_unwind` 捕获并降级为 `tracing::warn!`
-    ///   （panic 不得传播出 `broadcast`，违背监听器隔离承诺），
-    ///   后续监听器继续收到事件。
-    ///
     /// 单事件派发循环体（Immediately / OnCommit 两档共用）。
     ///
-    /// 依序调用所有监听器的 `on_event`：
-    /// - 返回 `true`：所有监听器均成功（全部 `Ok`）；
-    /// - 返回 `false`：任一监听器返回 `Err` 或 **panic**（`catch_unwind` 捕获并
-    ///   降级为 `tracing::warn!`），不中断，后续监听器继续收到事件。
-    ///
-    /// panic 捕获在当前 task 内完成（非 spawn），`task_local` 上下文（如 `TENANT`）
-    /// 对监听器仍然可见。
-    ///
-    /// `on_event` 为 async，需 `.await`。
+    /// 返回 `true` 表示所有监听器均成功（全部 `Ok`）；监听器 `Err` 或 panic 均被
+    /// `catch_unwind` 捕获并降级为 `tracing::warn!`，不中断、不传播，后续监听器
+    /// 继续收到事件。panic 捕获在当前 task 内完成（非 spawn），`task_local` 上下文
+    /// （如 `TENANT`）对监听器仍然可见。
     pub(crate) async fn dispatch_one(&self, event: &GarrisonEvent) -> bool {
         use futures::FutureExt;
         use std::panic::AssertUnwindSafe;
@@ -89,23 +75,18 @@ impl GarrisonListenerManager {
 
     /// 广播事件到所有已注册监听器（Immediately 档）。
     ///
-    /// 事件产生即派发，不与数据库事务绑定；单个监听器失败仅记录
-    /// `tracing::warn!`，不中断、不返回计数。与 OnCommit 档
-    /// （`broadcast_after_commit`）共用同一监听器集合与隔离承诺。
-    ///
-    /// `on_event` 为 async，broadcast 需 `.await`。
+    /// 事件产生即派发，不与数据库事务绑定；单个监听器失败仅 `tracing::warn!`，
+    /// 不中断、不返回计数。与 OnCommit 档（`broadcast_after_commit`）共用同一
+    /// 监听器集合与隔离承诺。
     pub async fn broadcast(&self, event: &GarrisonEvent) {
         let _ = self.dispatch_one(event).await;
     }
 
-    /// 派发事件批次（OnCommit 档）：数据库事务 commit 成功后由
-    /// `GarrisonEventTx` 调用。
+    /// 派发事件批次（OnCommit 档）：数据库事务 commit 成功后由 `GarrisonEventTx`
+    /// 按 FIFO 顺序调用。
     ///
-    /// 按 FIFO 顺序逐个派发；与 Immediately 档共用 `dispatch_one` 的隔离承诺
-    /// （单个监听器 `Err`/panic 不中断，后续监听器与后续事件继续处理）。
-    /// 返回 [`DispatchOutcome`]：存在 `Err`/panic 的事件计入 `failed`
-    /// （审计链缺口显性化，panic 同样计入），且
-    /// `dispatched + failed == events.len()`。
+    /// 返回 [`DispatchOutcome`]：`Err`/panic 事件计入 `failed`（审计链缺口显性化），
+    /// `dispatched + failed == events.len()`；隔离承诺同 Immediately 档。
     pub async fn broadcast_after_commit(&self, events: &[GarrisonEvent]) -> DispatchOutcome {
         let mut outcome = DispatchOutcome::default();
         for event in events {

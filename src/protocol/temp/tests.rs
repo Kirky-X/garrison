@@ -53,11 +53,8 @@ impl GarrisonDao for MockDao {
         Ok(())
     }
 
-    /// 原子地 get + delete（测试支撑）。
-    ///
-    /// 在同一把 `tokio::sync::Mutex` 锁内完成 get + remove，
-    /// 保证并发调用同一 key 时仅一个返回 Some（进程内原子）。
-    /// 与 `GarrisonDaoOxcache` / 生产 `MockDao` 的 `parking_lot::Mutex` 实现等价。
+    /// 原子 get + delete（测试支撑）：同一把锁内完成 get + remove，并发调用同一
+    /// key 仅一个返回 Some（与 `GarrisonDaoOxcache` / 生产实现语义等价）。
     async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut data = self.data.lock().await;
         let value = data.get(key).cloned();
@@ -79,9 +76,7 @@ fn make_handler() -> TempCredentialHandler {
     TempCredentialHandler::new(dao)
 }
 
-// ========================================================================
 // TempCredentialHandler 构造测试
-// ========================================================================
 
 /// 构造 handler。
 #[test]
@@ -89,9 +84,7 @@ fn new_creates_handler() {
     let _handler = make_handler();
 }
 
-// ========================================================================
 // issue 测试
-// ========================================================================
 
 /// 成功签发，key 前缀正确。
 #[tokio::test]
@@ -154,9 +147,7 @@ async fn issue_empty_value_allowed() {
     assert_eq!(value, Some("".to_string()));
 }
 
-// ========================================================================
 // get 测试
-// ========================================================================
 
 /// 读取存在的凭据，多次读取不删除。
 #[tokio::test]
@@ -180,9 +171,7 @@ async fn get_nonexistent_returns_none() {
     assert_eq!(result, None);
 }
 
-// ========================================================================
 // revoke 测试
-// ========================================================================
 
 /// 撤销存在的凭据。
 #[tokio::test]
@@ -207,9 +196,7 @@ async fn revoke_nonexistent_returns_ok() {
     );
 }
 
-// ========================================================================
 // consume 测试
-// ========================================================================
 
 /// 成功消费存在的凭据。
 #[tokio::test]
@@ -254,18 +241,11 @@ async fn consume_after_revoke_returns_none() {
     assert_eq!(value, None);
 }
 
-// ========================================================================
 // consume TOCTOU 原子性测试
-// ========================================================================
 
-/// 并发 consume 同一 key 仅一个返回 Some（TOCTOU 修复验证）。
-///
-/// 场景：10 个并发任务同时 consume 同一 key，原 `get + delete` 两步操作下
-/// 可能多个任务都读到 value 然后才 delete，导致 double-spend。修复后
-/// `get_and_delete` 原子执行，仅一个任务返回 Some。
-///
-/// 参考：`dao::tests::mock_get_and_delete_concurrent_only_one_succeeds`
-/// 与 `dao::tests::oxcache_get_and_delete_concurrent_only_one_succeeds`。
+/// 并发 consume 同一 key 仅一个返回 Some：`get + delete` 两步存在 double-spend
+/// 窗口，原子 `get_and_delete` 消除之（参考 `dao::tests::mock_get_and_delete_concurrent_only_one_succeeds`
+/// 与 `dao::tests::oxcache_get_and_delete_concurrent_only_one_succeeds`）。
 #[tokio::test(flavor = "multi_thread")]
 async fn consume_concurrent_only_one_succeeds() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -300,10 +280,7 @@ async fn consume_concurrent_only_one_succeeds() {
     assert_eq!(none_count, 9, "其余 9 个返回 None");
 }
 
-/// 串行 consume 一次性语义验证（修复后回归）。
-///
-/// 验证修复 `get_and_delete` 后仍保持原有一次性语义：
-/// 第一次返回 Some，第二次及之后返回 None。
+/// 串行 consume 一次性语义：首次返回 Some，之后返回 None。
 #[tokio::test]
 async fn consume_atomic_still_one_time_use() {
     let handler = make_handler();
@@ -316,9 +293,7 @@ async fn consume_atomic_still_one_time_use() {
     assert_eq!(v3, None);
 }
 
-// ========================================================================
 // Key 命名空间隔离测试
-// ========================================================================
 
 /// temp key 与 apikey 命名空间隔离。
 #[tokio::test]
@@ -339,9 +314,7 @@ async fn temp_namespace_isolated() {
     assert_eq!(apikey_value, Some("apikey-value".to_string()));
 }
 
-// ========================================================================
 // DAO 错误路径测试（FailingDao：所有操作返回 Err，验证 handler 错误透传）
-// ========================================================================
 
 /// 总是失败的 DAO（用于 handler 错误路径测试：所有操作返回 `Dao` 错误）。
 struct FailingDao;
@@ -427,9 +400,7 @@ async fn consume_dao_error_propagates() {
     );
 }
 
-// ========================================================================
 // listener 集成测试（feature = "listener"）：consume 广播 TempCredentialConsumed
-// ========================================================================
 
 /// 捕获广播事件的监听器（验证 consume → TempCredentialConsumed 广播链路）。
 #[cfg(feature = "listener")]
@@ -512,9 +483,7 @@ async fn with_listener_manager_no_broadcast_when_value_none() {
     );
 }
 
-// ========================================================================
-// loom 竞态模型验证（T033）：一次性凭证原子消费
-// ========================================================================
+// loom 竞态模型验证：一次性凭证原子消费
 
 /// loom 模型专用 DAO：`loom::sync::Mutex<Option<String>>` 模拟原子 get_and_delete，
 /// 锁内取值即消费——loom 可穷举互斥区交错。async 方法体内零 await 点（未来恒

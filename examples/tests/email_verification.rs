@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! email_verification 示例测试（email-verification feature）。
-//!
-//! 验证 run() 完整执行（内部已包含 send_code/verify_code/限速/规范化断言）。
+//! email_verification 示例测试（email-verification feature）：验证 run() 完整执行（内部已包含 send_code/verify_code/限速/规范化断言）。
 
 #![cfg(feature = "email-verification")]
 

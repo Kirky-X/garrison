@@ -3,17 +3,7 @@
 
 //! 会话管理示例：演示 Account-Session 与 Token-Session 双模会话。
 //!
-//! 流程：
-//! 1. 创建 GarrisonSession（基于 oxcache DAO）
-//! 2. 创建会话（login）→ Token-Session + Account-Session 双模记录
-//! 3. 查询 Token-Session（get_token_session）
-//! 4. 查询 Account-Session（get_account_session）
-//! 5. 续期会话（renew）
-//! 6. 活跃续期（touch）
-//! 7. 会话临时存储（set/get）
-//! 8. 校验会话有效性（is_valid）
-//! 9. 登出单个 token（logout）
-//! 10. 登出整个账号（logout_by_login_id）
+//! 流程：创建 GarrisonSession → 双模会话记录 → 查询 / 续期 / 临时存储 / 有效性校验 → 登出（单 token / 整账号）。
 //!
 //! 运行方式：
 //! ```sh
@@ -25,10 +15,7 @@ use garrison::error::GarrisonResult;
 use garrison::session::GarrisonSession;
 use std::sync::Arc;
 
-/// 运行会话管理示例。
-///
-/// 演示 GarrisonSession 的 create / get_token_session / get_account_session /
-/// renew / touch / set / get / is_valid / logout / logout_by_login_id。
+/// 运行会话管理示例：GarrisonSession 的 create / get_token_session / get_account_session / renew / touch / set / get / is_valid / logout / logout_by_login_id。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 会话管理示例 ===\n");
 

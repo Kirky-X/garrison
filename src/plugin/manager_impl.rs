@@ -8,19 +8,14 @@ use super::*;
 impl GarrisonPluginManager {
     /// 创建插件管理器并收集所有已注册插件。
     ///
-    /// # panic 隔离
-    ///
-    /// 单个插件工厂 panic 被 `catch_unwind` 捕获并降级为 `tracing::warn!`，
-    /// 该插件被跳过，其余插件照常加载，应用启动不中断。与
-    /// `listener::manager_impl` 的监听器隔离语义一致。注意 release profile
-    /// 配置 `panic = "abort"` 时此隔离退化为进程终止（见 Cargo.toml 说明）。
+    /// 单个插件工厂 panic 被 `catch_unwind` 捕获、降级为 `tracing::warn!` 并跳过该插件，其余照常加载（与 `listener::manager_impl` 隔离语义一致）；
+    /// release profile `panic = "abort"` 时此隔离退化为进程终止（见 Cargo.toml）。
     pub fn new() -> Self {
         use std::iter::Iterator;
         use std::panic::{catch_unwind, AssertUnwindSafe};
         let plugins: Vec<Arc<dyn GarrisonPlugin>> = inventory::iter::<GarrisonPluginEntry>()
             .filter_map(|entry| {
-                // AssertUnwindSafe：工厂函数不承诺 UnwindSafe，
-                // 此处仅隔离 panic 不重入工厂，跨 catch_unwind 使用安全
+                // AssertUnwindSafe：工厂函数不承诺 UnwindSafe；仅隔离 panic 不重入工厂，跨 catch_unwind 使用安全
                 match catch_unwind(AssertUnwindSafe(|| (entry.factory)())) {
                     Ok(plugin) => Some(plugin),
                     Err(panic_payload) => {
@@ -46,9 +41,7 @@ impl GarrisonPluginManager {
         self.plugins.len()
     }
 
-    /// 调用所有插件的 `on_login` 钩子。
-    ///
-    /// 单个插件失败仅记录 `tracing::warn!`，不中断后续插件调用。
+    /// 调用所有插件的 `on_login` 钩子；单个插件失败仅记录 `tracing::warn!`，不中断后续调用。
     pub fn on_login(&self, login_id: &str, token: &str) {
         for plugin in &self.plugins {
             if let Err(e) = plugin.on_login(login_id, token) {
@@ -57,9 +50,7 @@ impl GarrisonPluginManager {
         }
     }
 
-    /// 调用所有插件的 `on_logout` 钩子。
-    ///
-    /// 单个插件失败仅记录 `tracing::warn!`，不中断后续插件调用。
+    /// 调用所有插件的 `on_logout` 钩子；单个插件失败仅记录 `tracing::warn!`，不中断后续调用。
     pub fn on_logout(&self, login_id: &str, token: &str) {
         for plugin in &self.plugins {
             if let Err(e) = plugin.on_logout(login_id, token) {
@@ -68,9 +59,7 @@ impl GarrisonPluginManager {
         }
     }
 
-    /// 调用所有插件的 `on_permission_check` 钩子。
-    ///
-    /// 单个插件失败仅记录 `tracing::warn!`，不中断后续插件调用。
+    /// 调用所有插件的 `on_permission_check` 钩子；单个插件失败仅记录 `tracing::warn!`，不中断后续调用。
     pub fn on_permission_check(&self, login_id: &str, permission: &str) {
         for plugin in &self.plugins {
             if let Err(e) = plugin.on_permission_check(login_id, permission) {

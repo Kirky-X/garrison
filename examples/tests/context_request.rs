@@ -1,11 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! context_request 示例测试（web-axum feature）。
-//!
-//! 验证 run() 完整执行（内部已包含 token 提取、Cookie 设置、Bearer 大小写断言）。
-//!
-//! 注意：context_request 不使用 GarrisonManager 全局单例，无需 #[serial]。
+//! context_request 示例测试（web-axum feature）：验证 run() 完整执行（内部已包含 token 提取、
+//! Cookie 设置、Bearer 大小写断言）；不使用 GarrisonManager 全局单例，无需 #[serial]。
 
 #![cfg(feature = "web-axum")]
 

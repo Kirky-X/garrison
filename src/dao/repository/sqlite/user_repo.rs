@@ -133,9 +133,7 @@ impl UserRepository for DbnexusUserRepository {
     ///
     /// # ⚠️ 安全说明
     ///
-    /// 返回 [`UserListRow`]（不含 `password_hash` 的投影）：SELECT 明确排除
-    /// `password_hash` 列，从类型上杜绝凭证数据经分页/浏览接口被序列化到
-    /// API 响应或日志。需要哈希的认证查询请使用 `find_by_id` / `find_by_username`。
+    /// 返回 [`UserListRow`]（SELECT 明确排除 `password_hash` 列），从类型上杜绝凭证数据经分页/浏览接口序列化到 API 响应或日志；需要哈希的认证查询用 `find_by_id` / `find_by_username`。
     async fn list(
         &self,
         tenant_id: i64,
@@ -268,9 +266,7 @@ mod tests {
         assert!(result.is_none(), "不存在的 ID 应返回 None");
     }
 
-    // ========================================================================
     // 导入哈希校验门接线
-    // ========================================================================
 
     /// create 拒绝参数越界的导入哈希：错误显性（含入口与越界阶段标识），
     /// 且不留下半成品行。
@@ -833,9 +829,7 @@ mod tests {
         assert!(cross.is_none(), "跨租户 find_by_username 应返回 None");
     }
 
-    // ========================================================================
     // DROP TABLE 错误路径测试：覆盖 map_err 闭包
-    // ========================================================================
 
     /// 删除 app_user 表后 find_by_id 应返回 Dao 错误。
     #[tokio::test(flavor = "multi_thread")]

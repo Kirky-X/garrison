@@ -1,16 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! `web_warp` 模块测试套件。
-//!
-//! 覆盖：
-//! - `impl Reply for GarrisonError`：错误码 → HTTP 状态码映射 + JSON content-type
-//! - `extract_token_from_headers`：Bearer/cookie 提取与优先级
-//! - `GarrisonRejection`：包装 `GarrisonError` 接入 warp 拒绝链
-//! - `GarrisonRouter`：构建器 + `into_filter` 守卫 Filter
-//! - `check_login` / `check_role` / `check_permission`：per-handler guard Filter
-//!
-//! 通过 `#[cfg(test)] mod tests;` 在 `mod.rs` 引入，仅测试编译。
+//! `web_warp` 模块测试套件（`#[cfg(test)] mod tests;` 引入）：覆盖 Reply for GarrisonError（状态码映射 + JSON）、
+//! extract_token_from_headers、GarrisonRejection、GarrisonRouter（构建器 + into_filter）、
+//! check_login/check_role/check_permission guard Filter。
 
 use super::mock::{MockDao, MockInterface};
 use super::*;
@@ -27,9 +20,7 @@ use warp::http::StatusCode;
 use warp::reply::Reply;
 use warp::Filter;
 
-// ========================================================================
 // Reply impl 测试
-// ========================================================================
 
 /// NotLogin → 401 响应。
 #[test]
@@ -102,9 +93,7 @@ fn reply_returns_json_content_type() {
     );
 }
 
-// ========================================================================
 // extract_token_from_headers 测试
-// ========================================================================
 
 /// 从 Authorization: Bearer 提取 token。
 #[test]
@@ -193,23 +182,18 @@ fn extract_token_skips_header_when_disabled() {
     assert_eq!(token, None);
 }
 
-// ========================================================================
 // GarrisonRejection 测试
-// ========================================================================
 
 /// GarrisonRejection 包装 GarrisonError。
 #[test]
 fn rejection_wraps_error() {
     let err = GarrisonError::NotLogin("test".to_string());
     let rej = GarrisonRejection(err);
-    // Reject trait 无方法可调用，仅验证类型可构造
-    // 通过 format! 验证内部错误可访问
+    // Reject trait 无方法可调用，仅验证类型可构造 + 内部错误可访问
     assert!(format!("{:?}", rej).contains("NotLogin"));
 }
 
-// ========================================================================
 // GarrisonRouter 测试
-// ========================================================================
 
 /// GarrisonRouter::new 初始化空规则。
 #[test]
@@ -252,13 +236,9 @@ fn router_default_impl() {
     assert!(router.rules.is_empty());
 }
 
-// ========================================================================
 // into_filter / check_login / check_role / check_permission Filter 测试
-// ========================================================================
 
-// ----------------------------------------------------------------
 // 辅助函数
-// ----------------------------------------------------------------
 
 /// 创建测试配置。
 fn make_config() -> GarrisonConfig {
@@ -291,9 +271,7 @@ async fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]
         .unwrap();
 }
 
-// ----------------------------------------------------------------
 // GarrisonRouter::into_filter 测试
-// ----------------------------------------------------------------
 
 /// 验证 into_filter 放行未注册路径（无鉴权规则 → Ok）。
 #[tokio::test]
@@ -377,10 +355,7 @@ async fn into_filter_blocks_permission_denied() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 `into_filter` 对 `Ignore` 路径无 token 也能通过。
-///
-/// `into_filter` 现在与 actix-web middleware 对齐，
-/// `Ignore` 注解的 `pre_handle` 直接返回 `Ok(())`，token 为可选。
+/// `into_filter` 对 `Ignore` 路径无 token 也能通过（与 actix-web middleware 对齐：`pre_handle` 直接 `Ok(())`，token 可选）。
 #[tokio::test]
 #[serial]
 async fn into_filter_allows_ignore_path_without_token() {
@@ -395,9 +370,7 @@ async fn into_filter_allows_ignore_path_without_token() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // check_login Filter 测试
-// ----------------------------------------------------------------
 
 /// 验证 check_login filter 在无 token 时返回 Rejection。
 #[tokio::test]
@@ -431,9 +404,7 @@ async fn check_login_filter_passes_with_valid_token() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // check_role Filter 测试
-// ----------------------------------------------------------------
 
 /// 验证 check_role filter 在无 token 时返回 Rejection。
 #[tokio::test]
@@ -490,9 +461,7 @@ async fn check_role_filter_passes_with_valid_role() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // check_permission Filter 测试
-// ----------------------------------------------------------------
 
 /// 验证 check_permission filter 在无 token 时返回 Rejection。
 #[tokio::test]
@@ -546,16 +515,10 @@ async fn check_permission_filter_passes_with_valid_permission() {
     GarrisonManager::reset_for_test();
 }
 
-// ========================================================================
 // GarrisonRejection → 三框架统一 JSON（garrison_recover）
-// ========================================================================
 
-/// 真实 `warp::serve` 挂 `.recover(garrison_recover)`（正常+异常场景）后，
-/// 未登录请求返回 401 + 统一 `error_code`/`message` JSON（与 axum/actix 一致），
-/// 有效 token 放行 200。
-///
-/// 修复前：warp 拒绝链不自动调用 `impl Reply`，未登录会退化为默认 400 非 JSON
-/// （`mod.rs` 旧文档「保证三框架一致」名不副实，第 6 项缺陷）。
+/// 真实 `warp::serve` 挂 `.recover(garrison_recover)`：未登录请求返回 401 + 统一 `error_code`/`message` JSON
+/// （与 axum/actix 一致），有效 token 放行 200；warp 拒绝链不自动调用 `impl Reply`，漏挂会退化为默认 400 非 JSON。
 #[tokio::test]
 #[serial]
 async fn warp_serve_unauthenticated_returns_unified_401_json() {

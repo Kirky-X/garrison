@@ -1,18 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 登录时角色层级 TC 预计算 + 权限并集缓存 接线测试（db-sqlite）。
-//!
-//! 对应文档意图（mdbook/src/permission-rbac.md「角色层级 hierarchy」）：
-//! 「0.5.0 新增 `role_hierarchy` 表（`child_role`/`parent_role`/`tenant_id`
-//! + TC 预计算），登录时缓存权限并集」。
-//!
-//! 验证 `login_inner` → `cache_role_union_on_login` 端到端：
-//! - 登录触发 `RoleHierarchyService::get_ancestors`（TC 闭包写入
-//!   `tenant:{tid}:role_closure`）
-//! - 并集（直接角色 ∪ 间接祖先）写入 `role:cache:{login_id}`
-//! - 租户上下文（`TENANT` task_local）参与闭包隔离
-//! - 无 SQL 后端 / 无角色 / 角色查询失败时 fail-open（登录不受影响）
+//! Session TC 预计算 + 权限并集缓存接线测试（db-sqlite）：验证 `login_inner` → `cache_role_union_on_login` 端到端。
+//! 断言 TC 闭包写 `tenant:{tid}:role_closure`、并集（直接角色 ∪ 间接祖先）写 `role:cache:{login_id}`、`TENANT` task_local 参与闭包隔离，以及无 SQL 后端 / 无角色 / 角色查询失败时 fail-open 不阻断登录。
 
 use crate::account::disable::DefaultDisableRepository;
 use crate::config::GarrisonConfig;
@@ -29,9 +19,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-// ============================================================================
 // 测试装配
-// ============================================================================
 
 /// 定位项目根目录的 migrations/sqlite/ 目录。
 fn project_migrations_dir() -> PathBuf {
@@ -142,12 +130,9 @@ async fn read_union(dao: &Arc<dyn GarrisonDao>, login_id: &str) -> Option<HashSe
     Some(serde_json::from_str(&raw).expect("并集缓存应为 JSON 集合"))
 }
 
-// ============================================================================
 // 正向：登录触发 TC 预计算 + 并集缓存
-// ============================================================================
 
-/// 登录应触发 TC 闭包缓存（`tenant:0:role_closure`）并集缓存（`role:cache:*`），
-/// 并集 = 直接角色 ∪ 直接祖先 ∪ 间接祖先。
+/// 登录触发 TC 闭包缓存（`tenant:0:role_closure`）与并集缓存（`role:cache:*`），并集 = 直接角色 ∪ 直接祖先 ∪ 间接祖先。
 #[tokio::test(flavor = "multi_thread")]
 async fn login_warms_tc_closure_and_union_cache() {
     let pool = setup_pool().await;
@@ -223,12 +208,9 @@ async fn login_union_cache_respects_tenant_context() {
     assert_eq!(union, expected, "租户 1 无继承边，并集应仅含直接角色 user");
 }
 
-// ============================================================================
 // fail-open：异常路径不阻断登录
-// ============================================================================
 
-/// DAO 无 SQL 后端（纯 KV MockDao）时：`query_role_hierarchy_edges` 默认
-/// NotImplemented → 跳过预热，登录仍成功。
+/// DAO 无 SQL 后端（纯 KV MockDao）时 `query_role_hierarchy_edges` 默认 NotImplemented → 跳过预热，登录仍成功。
 #[tokio::test(flavor = "multi_thread")]
 async fn login_without_sql_backend_fails_open() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());

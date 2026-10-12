@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! `PermissionCheckerDefault` 实现块（从 mod.rs 迁移）。
+//! `PermissionCheckerDefault` 实现块。
 
 use super::*;
 
@@ -15,13 +15,12 @@ impl PermissionCheckerDefault {
 #[async_trait]
 impl PermissionChecker for PermissionCheckerDefault {
     async fn has_permission(&self, login_id: &str, permission: &str) -> GarrisonResult<bool> {
-        // P2.4: NFC 规范化 permission 字符串，防止 Unicode 同形异义字攻击
-        // （NFD 与 NFC 形式视觉相同但字节不同，规范化后统一比较）
+        // NFC 规范化防 Unicode 同形异义字攻击（NFD/NFC 视觉相同但字节不同）。
         let normalized = permission.nfc().collect::<String>();
         if normalized.is_empty() {
             return Err(GarrisonError::InvalidParam("core-perm-empty::".to_string()));
         }
-        // P2.4: 长度校验（>256 字节返回 InvalidParam），防止 DoS
+        // 长度校验（>256 字节拒绝），防 DoS。
         if normalized.len() > 256 {
             return Err(GarrisonError::InvalidParam(format!(
                 "permission-name-too-long::{}",
@@ -33,13 +32,12 @@ impl PermissionChecker for PermissionCheckerDefault {
     }
 
     async fn has_role(&self, login_id: &str, role: &str) -> GarrisonResult<bool> {
-        // 与 has_permission 对齐——NFC 规范化 + 长度校验。
-        // 原实现直接字节比较且无规范化，NFD/NFC 视觉同形字符串可绕过角色校验。
+        // 与 has_permission 对齐（NFC 规范化 + 长度校验）：不规范化会被 NFD/NFC 视觉同形字符串绕过。
         let normalized = role.nfc().collect::<String>();
         if normalized.is_empty() {
             return Err(GarrisonError::InvalidParam("core-role-empty::".to_string()));
         }
-        // P2.4 对齐：长度校验（>256 字节返回 InvalidParam），防止 DoS
+        // 长度校验（>256 字节拒绝），防 DoS。
         if normalized.len() > 256 {
             return Err(GarrisonError::InvalidParam(format!(
                 "role-name-too-long::{}",
@@ -67,9 +65,8 @@ impl PermissionChecker for PermissionCheckerDefault {
                 normalized.len()
             )));
         }
-        // 租户感知数据源：interface 覆写 get_permission_list_in_tenant 时
-        // 按租户过滤（跨租户重名 login_id 不互染）；未覆写时默认实现
-        // 委托全局方法，行为与 has_permission 一致。
+        // 租户感知：interface 覆写 get_permission_list_in_tenant 时按租户过滤（跨租户重名
+        // login_id 不互染），未覆写时委托全局方法，行为与 has_permission 一致。
         let perms = self
             .interface
             .get_permission_list_in_tenant(tenant_id, login_id)
@@ -77,14 +74,10 @@ impl PermissionChecker for PermissionCheckerDefault {
         Ok(perms.iter().any(|p| p == &normalized))
     }
 
-    // check_permission / check_role 使用 trait 默认实现（委托 authorize / has_role），
-    // 保持与决策溯源路径一致。
+    // check_permission / check_role 用 trait 默认实现（委托 authorize / has_role），与决策溯源路径一致。
 
-    // 批量校验的错误处理。
-    // 返回类型保持 `bool`（trait 公开 API，变更会破坏所有实现方/调用方），
-    // 但接口错误**不再静默**：逐条 `tracing::warn!`（含 login_id / permission / 错误），
-    // 并按 fail-closed 降级为「不满足」。调用方仍无法从返回值区分「无权限」与「故障」
-    // ——需要该区分时请使用 `authorize()`（返回 GarrisonResult<Decision>）。
+    // 批量校验错误处理：返回 `bool` 是公开 API 契约，接口错误逐条 warn 并按 fail-closed 降级为
+    //「不满足」（无法从返回值区分故障与无权限，需区分时用 `authorize()`）。
     async fn has_any_permission(&self, login_id: &str, perms: &[&str]) -> bool {
         for perm in perms {
             match self.has_permission(login_id, perm).await {

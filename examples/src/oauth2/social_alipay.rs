@@ -15,9 +15,7 @@ use garrison::protocol::social::SocialLoginProvider;
 use garrison::{AlipayProvider, SocialLoginService};
 use std::sync::Arc;
 
-/// 运行支付宝社交登录示例。
-///
-/// 演示 AlipayProvider 构造 + SocialLoginService 注册中心使用。
+/// 运行支付宝社交登录示例：AlipayProvider 构造 + SocialLoginService 注册中心使用。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 支付宝社交登录示例 ===\n");
 
@@ -25,9 +23,7 @@ pub async fn run() -> GarrisonResult<()> {
     // 1. 构造 AlipayProvider
     // ----------------------------------------------------------------
     println!("[1] 构造 AlipayProvider:");
-    // 占位值，生产环境必须从环境变量/KMS 加载
-    // AlipayProvider::new 需要 RSA 私钥 PEM，此处使用占位值演示构造方式
-    // 占位值非合法 PEM，AlipayProvider::new 会返回 Err（预期行为）
+    // 占位值非合法 PEM，AlipayProvider::new 会返回 Err（预期行为）；生产环境必须从环境变量/KMS 加载真实 RSA 私钥
     let alipay_result = AlipayProvider::new("alipay_app_id", "<PLACEHOLDER_RSA_PRIVATE_KEY_PEM>");
     match &alipay_result {
         Ok(_provider) => {

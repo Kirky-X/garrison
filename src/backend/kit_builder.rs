@@ -46,7 +46,6 @@ impl AsyncAutoBuilder for BackendModule {
     ) -> Pin<Box<dyn Future<Output = Result<Self::Capability, Self::Error>> + Send + 'a>> {
         Box::pin(async move {
             // BackendEmbedded 是零字段 struct，new() 无参数
-            // 未来可从 kit.config() 读取配置注入依赖
             let backend = BackendEmbedded::new();
             Ok(Arc::new(backend) as Arc<dyn AuthBackend>)
         })

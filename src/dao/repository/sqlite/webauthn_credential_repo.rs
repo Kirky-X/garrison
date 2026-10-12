@@ -14,7 +14,7 @@ use dbnexus::sea_orm::{ConnectionTrait, QueryResult};
 use dbnexus::DbPool;
 
 impl DbnexusWebauthnCredentialRepository {
-    /// 创建实例。
+    /// 创建仓库实例。
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
@@ -93,9 +93,9 @@ impl WebauthnCredentialRepository for DbnexusWebauthnCredentialRepository {
             Ok(_) => Ok(WebauthnBindOutcome::Bound),
             Err(e) => {
                 // 唯一约束冲突（主键 tenant_id+credential_id）：回查归属返回
-                // AlreadyBound（同登录标识注册语义）；无法识别冲突 fail-loud 透传。
-                // 回查必须复用本调用已持有的连接——再取一条会话在并发/内存库
-                // 场景下可能拿到另一连接（看不到本事务上下文）或加剧池占用
+                // AlreadyBound；无法识别冲突 fail-loud 透传。回查必须复用本调用
+                // 已持有的连接——再取会话在并发/内存库下可能拿到另一连接，
+                // 看不到本事务上下文。
                 let msg = format!("{}", e);
                 if msg.contains("UNIQUE") || msg.contains("unique") || msg.contains("Duplicate") {
                     let lookup_sql = "SELECT tenant_id, user_id, credential_id, public_key, \
@@ -193,7 +193,7 @@ impl WebauthnCredentialRepository for DbnexusWebauthnCredentialRepository {
         );
         let now = chrono::Utc::now().timestamp();
         // 单调 CAS（sign_count 只进不退）：并发 finish 读到相同落库值时，
-        // 后写者不得把计数器回写倒退（克隆检测的落库基准不被倒退破坏）。
+        // 后写者不得把计数器回写倒退（克隆检测的落库基准不被破坏）；
         // `OR ? = 0` 豁免计数器不支持型认证器（恒 0，只刷新 backup flags）。
         let sql = "UPDATE app_webauthn_credential \
                    SET sign_count = ?, backup_eligible = ?, backup_state = ?, updated_at = ? \
@@ -220,7 +220,7 @@ impl WebauthnCredentialRepository for DbnexusWebauthnCredentialRepository {
         if result.rows_affected() == 0 {
             // 区分：行不存在（InvalidParam 既有语义） vs 计数回退（显性 Dao）。
             // 存在性探测复用本调用已持有的连接（嵌套会话在内存库多连接下
-            // 会读到空库，见 create 冲突回查同款约束）
+            // 会读到空库，同 create 冲突回查约束）
             let probe_sql = "SELECT COUNT(*) AS cnt FROM app_webauthn_credential \
                               WHERE tenant_id = ? AND credential_id = ?";
             let probe = make_statement(
@@ -278,7 +278,6 @@ mod tests {
     use super::*;
     use crate::dao::repository::WebauthnBindOutcome;
 
-    /// 构造凭据行。
     fn credential_row(
         tenant_id: i64,
         user_id: &str,
@@ -299,7 +298,6 @@ mod tests {
         }
     }
 
-    /// 绑定后按凭据 ID 可查回全字段（roundtrip）。
     #[tokio::test]
     async fn webauthn_bind_then_find_roundtrip() {
         let pool = setup_db().await;
@@ -317,8 +315,7 @@ mod tests {
         assert_eq!(found, row, "查回行应与写入行全字段一致");
     }
 
-    /// 同 credential_id 二次绑定（换 user）→ AlreadyBound{by_user_id}：
-    /// 数据库唯一约束兜底 ExcludeCredentials 之外的并发窗口。
+    /// 同 credential_id 二次绑定 → AlreadyBound{by_user_id}：数据库唯一约束兜底 ExcludeCredentials 之外的并发窗口。
     #[tokio::test]
     async fn webauthn_duplicate_credential_id_reports_owner() {
         let pool = setup_db().await;
@@ -341,7 +338,6 @@ mod tests {
         );
     }
 
-    /// list_by_user 租户隔离：同 user_id 跨 tenant 不串。
     #[tokio::test]
     async fn webauthn_list_by_user_tenant_isolated() {
         let pool = setup_db().await;
@@ -376,8 +372,7 @@ mod tests {
         );
     }
 
-    /// update_authenticator_state 落库 sign_count 与 backup flags；
-    /// 不存在的凭据显性报错（不静默）。
+    /// 不存在的凭据更新显性报错（不静默）。
     #[tokio::test]
     async fn webauthn_update_authenticator_state_reflects_and_missing_is_explicit() {
         let pool = setup_db().await;
@@ -410,7 +405,6 @@ mod tests {
         );
     }
 
-    /// delete 幂等：删除后查不到；二次删除 Ok(())。
     #[tokio::test]
     async fn webauthn_delete_is_idempotent() {
         let pool = setup_db().await;

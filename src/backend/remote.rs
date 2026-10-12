@@ -3,27 +3,19 @@
 
 //! BackendRemote — 远程认证后端实现。
 //!
-//! 通过 HTTP API 连接远程 Auth Server，将 AuthBackend 方法映射为 REST 请求。
-//!
-//! # 设计
-//!
-//! - **reqwest::Client**：支持 TLS/mTLS 配置，连接池复用
-//! - **统一 API 包装**：`ApiResponse<T>` 包装所有响应，成功时 `data` 有值，失败时 `error_code` + `message`
-//! - **X-API-Key 头**：每个请求携带 API Key 用于服务间认证
-//! - **base_url 校验**：构造期校验 scheme 必须为 `http://` 或
-//!   `https://`（`http://` 会以明文传输 X-API-Key，记录 `tracing::warn`）；
-//!   URL 拼接做斜杠规范化（base 尾斜杠与 path 头斜杠去重）
-//! - **错误映射**：网络错误 → `GarrisonError::Network`；
-//!   API 错误按 `error_code` 映射——已知业务码透传为对应类型错误
-//!   （`NOT_LOGIN`/`INVALID_TOKEN`/`TOKEN_REVOKED`/`EXPIRED_TOKEN` → NotLogin/InvalidToken/…，
-//!   `NOT_PERMISSION` → NotPermission，`NOT_ROLE` → NotRole，
-//!   `NOT_SAFE` → NotSafe，`DISABLE_SERVICE` → DisableService），
-//!   未知码 → `Network`（消息带 `backend-api-error::CODE::MESSAGE` 前缀约定，
-//!   与 `circuit-open::` 前缀模式一致）；服务端 `message` 全程保留
-//! - **embedded 语义对齐**：`check_safe` 将 `NOT_SAFE` 业务错误映射为
-//!   `Ok(false)`，`check_disable` 将 `DISABLE_SERVICE` 映射为 `Ok(true)`，
-//!   与 `BackendEmbedded` 的 bool 适配语义一致（远程 `DISABLE_SERVICE` 的解封时间
-//!   无法从响应恢复，`until` 置 `None`）
+//! 通过 HTTP API 连接远程 Auth Server，将 AuthBackend 方法映射为 REST 请求
+//! （端点映射见 `BackendRemote` 文档）。要点：
+//! - **reqwest::Client**：支持 TLS/mTLS，连接池复用；构造期校验 base_url scheme
+//!   必须为 `http://`/`https://`——每个请求都携带 X-API-Key，任意 scheme 会放大
+//!   凭据泄露面；`http://` 允许（内网/测试）但记录明文传输 `tracing::warn`
+//! - **统一 API 包装**：`ApiResponse<T>`，成功时 `data` 有值，失败时 `error_code` + `message`
+//! - **错误映射**：网络错误 → `Network`；已知业务码按类型透传
+//!   （NOT_LOGIN/INVALID_TOKEN/TOKEN_REVOKED/EXPIRED_TOKEN/NOT_PERMISSION/NOT_ROLE/
+//!   NOT_SAFE/DISABLE_SERVICE），未知码 → `Network`（消息带
+//!   `backend-api-error::CODE::MESSAGE` 前缀，与 `circuit-open::` 模式一致）；
+//!   服务端 `message` 全程保留
+//! - **embedded 语义对齐**：`NOT_SAFE` → `Ok(false)`，`DISABLE_SERVICE` → `Ok(true)`
+//!   （解封时间远程响应不可恢复，`until` 置 `None`）
 
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
@@ -69,14 +61,8 @@ pub struct BackendRemote {
 impl BackendRemote {
     /// 创建 BackendRemote 实例。
     ///
-    /// # 参数
-    /// - `base_url`：Auth Server 基础 URL（如 "https://auth-internal:8443"）
-    /// - `api_key`：服务间认证 API Key
-    /// - `timeout`：请求超时
-    ///
-    /// # 错误
-    /// - `base_url` scheme 非 `http://`/`https://`：返回 `GarrisonError::InvalidParam`
-    ///   （拒绝 `ftp://` 等任意 scheme；`http://` 允许但记录明文传输警告）
+    /// `base_url` scheme 非 `http://`/`https://` 时返回 `GarrisonError::InvalidParam`
+    /// （拒绝 `ftp://` 等任意 scheme；`http://` 允许但记录明文传输警告）。
     pub fn new(
         base_url: impl Into<String>,
         api_key: impl Into<String>,
@@ -104,13 +90,8 @@ impl BackendRemote {
         self
     }
 
-    /// 发送 POST 请求并解析响应为 `ApiResponse<T>`。
-    ///
-    /// 统一处理：
-    /// - 请求构建（URL + X-API-Key 头 + JSON body）
-    /// - 网络错误映射
-    /// - HTTP 状态码检查
-    /// - 响应反序列化
+    /// 发送 POST 请求并解析响应为 `ApiResponse<T>`（统一处理 URL + X-API-Key 头 +
+    /// JSON body 构造、网络错误映射、HTTP 状态码检查与响应反序列化）。
     async fn post<Req, T>(&self, path: &str, req: &Req) -> GarrisonResult<ApiResponse<T>>
     where
         Req: serde::Serialize,
@@ -164,9 +145,8 @@ impl BackendRemote {
             .map_err(|e| GarrisonError::Network(format!("backend-response-deser::{}", e)))
     }
 
-    /// 发送 POST 请求，解析 `ApiResponse<T>` 并提取 `data`。
+    /// 发送 POST 请求，解析 `ApiResponse<T>` 并提取 `data`（用于 login → String 等）。
     ///
-    /// 用于返回有数据的方法（login → String, check_login → bool 等）。
     /// API 错误经 [`api_error`] 按 `error_code` 映射为类型化错误（message 保留）。
     async fn post_and_extract<Req, T>(&self, path: &str, req: &Req) -> GarrisonResult<T>
     where
@@ -179,12 +159,10 @@ impl BackendRemote {
             .map_err(|(code, msg)| api_error(&code, &msg))
     }
 
-    /// 发送 POST 请求，检查 `error_code` 判断成功/失败（无 data 提取）。
+    /// 发送 POST 请求，检查 `error_code` 判断成功/失败（无 data 提取，用于返回 `()` 的方法）。
     ///
-    /// 用于返回 `()` 的方法（logout, check_permission, check_role 等）。
-    /// `ApiResponse<()>` 的 `data` 字段在 JSON 中为 `null`，无法通过 `into_result` 区分成功/失败，
-    /// 因此直接检查 `error_code` 是否存在。API 错误经 [`api_error`] 按 `error_code`
-    /// 映射为类型化错误（message 保留）。
+    /// `ApiResponse<()>` 的 `data` 在 JSON 中恒为 `null`，无法经 `into_result` 区分
+    /// 成功/失败，故直接检查 `error_code` 是否存在。
     async fn post_unit<Req>(&self, path: &str, req: &Req) -> GarrisonResult<()>
     where
         Req: serde::Serialize,
@@ -202,11 +180,9 @@ impl BackendRemote {
 
 /// 校验并规范化 base_url。
 ///
-/// - scheme 必须为 `http://` 或 `https://`（大小写不敏感），否则返回
-///   `GarrisonError::InvalidParam`——`BackendRemote` 每个请求都携带
-///   `X-API-Key`，任意 scheme 会放大凭据泄露面；
-/// - `http://` 允许（内网/测试场景）但记录明文传输 `tracing::warn`；
-/// - 返回去除尾斜杠后的 base_url（斜杠规范化在拼接时配合 [`build_url`]）。
+/// scheme 必须为 `http://` 或 `https://`（大小写不敏感），否则返回
+/// `InvalidParam`——每个请求都携带 `X-API-Key`，任意 scheme 会放大凭据泄露面；
+/// `http://` 允许但记录明文传输 `tracing::warn`；返回去尾斜杠的 base_url。
 fn validate_base_url(base_url: &str) -> GarrisonResult<String> {
     let trimmed = base_url.trim_end_matches('/');
     let lower = trimmed.to_ascii_lowercase();
@@ -216,7 +192,8 @@ fn validate_base_url(base_url: &str) -> GarrisonResult<String> {
     if lower.starts_with("http://") {
         tracing::warn!(
             base_url = %trimmed,
-            "BackendRemote base_url 使用明文 http://，X-API-Key 可能被网络路径窃听；生产环境应使用 https://"
+            "{}",
+            crate::i18n::translate_detail("logs-backend-remote-plaintext-http", &[])
         );
         return Ok(trimmed.to_string());
     }
@@ -240,12 +217,10 @@ fn build_url(base_url: &str, path: &str) -> String {
 
 /// 将远程 API 错误码映射为 `GarrisonError`。
 ///
-/// - 已知业务码透传为对应类型错误（与 `error.rs::parts_and_msg_key` 的错误码约定一致），
-///   调用方可按类型匹配（如 `check_safe` 匹配 `NotSafe`）；
-/// - 未知码 → `GarrisonError::Network`，消息带 `backend-api-error::CODE::MESSAGE`
-///   前缀约定（与 `circuit-open::` 前缀模式一致）；
-/// - 服务端 `message` 在所有路径保留（不再丢弃）。
-/// - 限制：`DISABLE_SERVICE` 的解封时间戳远程响应不可恢复，`until` 置 `None`。
+/// 已知业务码透传为对应类型错误（调用方可按类型匹配，如 `check_safe` 匹配
+/// `NotSafe`）；未知码 → `Network`，消息带 `backend-api-error::CODE::MESSAGE`
+/// 前缀约定（与 `circuit-open::` 模式一致）；服务端 `message` 在所有路径保留。
+/// 限制：`DISABLE_SERVICE` 的解封时间戳远程响应不可恢复，`until` 置 `None`。
 fn api_error(code: &str, message: &str) -> GarrisonError {
     let mapped = match code {
         "NOT_LOGIN" => GarrisonError::NotLogin(format!("remote::{}", message)),
@@ -312,8 +287,7 @@ impl AuthBackend for BackendRemote {
         let req = CheckLoginRequest {
             token: token.to_string(),
         };
-        // 与 BackendEmbedded 语义对齐——API 返回 NOT_SAFE 业务错误
-        // 表示「未完成二次认证」→ Ok(false)，其余错误向上抛
+        // 与 BackendEmbedded 语义对齐：NOT_SAFE 表示「未完成二次认证」→ Ok(false)，其余错误向上抛
         match self.post_and_extract("/api/v1/auth/check-safe", &req).await {
             Ok(safe) => Ok(safe),
             Err(GarrisonError::NotSafe { .. }) => Ok(false),
@@ -325,9 +299,8 @@ impl AuthBackend for BackendRemote {
         let req = CheckLoginRequest {
             token: token.to_string(),
         };
-        // 与 BackendEmbedded 语义对齐——API 返回 DISABLE_SERVICE 业务错误
-        // 表示「账号被封禁」→ Ok(true)，其余错误向上抛
-        // （解封时间戳无法从远程响应恢复，DisableService.until 置 None）
+        // 与 BackendEmbedded 语义对齐：DISABLE_SERVICE 表示「账号被封禁」→ Ok(true)，
+        // 其余错误向上抛（解封时间戳无法从远程响应恢复，until 置 None）
         match self
             .post_and_extract("/api/v1/auth/check-disable", &req)
             .await
@@ -451,11 +424,8 @@ impl BackendRemoteBuilder {
         self
     }
 
-    /// 构建 BackendRemote 实例。
-    ///
-    /// # 错误
-    /// - `base_url` scheme 非 `http://`/`https://`：返回 `GarrisonError::InvalidParam`
-    ///   （与 [`BackendRemote::new`] 相同的 scheme 校验）
+    /// 构建 BackendRemote 实例；`base_url` scheme 非 `http://`/`https://` 时返回
+    /// `GarrisonError::InvalidParam`（与 [`BackendRemote::new`] 相同的 scheme 校验）。
     pub fn build(self) -> GarrisonResult<BackendRemote> {
         let base_url = validate_base_url(&self.base_url)?;
         let mut builder = reqwest::Client::builder().timeout(self.timeout);
@@ -772,9 +742,7 @@ mod tests {
         assert_eq!(new_token, "new-token-456");
     }
 
-    // ========================================================================
     // 网络错误处理测试
-    // ========================================================================
 
     #[tokio::test]
     async fn test_network_error_connection_refused() {
@@ -824,9 +792,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ========================================================================
     // Builder 测试
-    // ========================================================================
 
     #[tokio::test]
     async fn test_builder_basic() {
@@ -886,9 +852,7 @@ mod tests {
         assert_eq!(token, "dyn-token");
     }
 
-    // ========================================================================
     // base_url scheme 校验与 URL 规范化测试
-    // ========================================================================
 
     #[tokio::test]
     async fn test_invalid_scheme_rejected_in_new_and_builder() {
@@ -928,9 +892,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // error_code → 类型化错误映射测试
-    // ========================================================================
 
     #[tokio::test]
     async fn test_check_safe_not_safe_maps_to_false() {

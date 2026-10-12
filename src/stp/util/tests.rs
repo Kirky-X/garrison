@@ -32,8 +32,7 @@ mod suite {
     // 测试 1：interval <= 0 返回 None 不启动 task
     // ----------------------------------------------------------------
 
-    /// 验证 interval < 0 时返回 None 不启动 task。
-    /// 同时验证 interval == 0 也返回 None（0 秒间隔无实际意义，与 < 0 一致）。
+    /// 验证 interval < 0 与 interval == 0 时都返回 None 不启动 task（0 秒间隔无实际意义，与 < 0 一致）。
     #[tokio::test]
     async fn spawn_cleanup_task_negative_interval_returns_none() {
         let (_dao, session) = make_session(3600, 86400);
@@ -49,10 +48,7 @@ mod suite {
     // 测试 2：interval > 0 启动 task 并执行清理
     // ----------------------------------------------------------------
 
-    /// 验证 interval > 0 时启动 task，且 task 定期执行 cleanup_expired_tokens。
-    ///
-    /// 策略：创建 TTL=1 秒的 token，启动间隔=1 秒的清理 task，
-    /// 等待 3 秒后验证 token 已从 login_token_map 中清理。
+    /// interval > 0 时启动 task 并定期执行 cleanup_expired_tokens：TTL=1 秒 token + 间隔=1 秒清理，等 3 秒后 token 已从 login_token_map 清理。
     #[tokio::test]
     async fn spawn_cleanup_task_positive_interval_starts_and_cleans() {
         let (_dao, session) = make_session(1, 86400);
@@ -84,9 +80,7 @@ mod suite {
     // 测试 3：task 可通过 abort 取消
     // ----------------------------------------------------------------
 
-    /// 验证 task 可通过 JoinHandle::abort() 取消。
-    ///
-    /// abort 后 await 应返回 Err(JoinError)，且 JoinError::is_cancelled() 为 true。
+    /// task 可经 JoinHandle::abort() 取消：abort 后 await 返回 Err(JoinError)，is_cancelled() 为 true。
     #[tokio::test]
     async fn spawn_cleanup_task_can_be_cancelled() {
         let (_dao, session) = make_session(3600, 86400);
@@ -113,9 +107,7 @@ mod suite {
     // 测试 4：清理失败只 warn 不中断 task
     // ----------------------------------------------------------------
 
-    /// DAO wrapper：get 始终返回错误，用于测试清理失败不中断 task。
-    ///
-    /// 通过 AtomicUsize 计数 get 调用次数，验证 task 在首次清理失败后仍继续运行。
+    /// DAO wrapper：get 恒返回错误；用 AtomicUsize 计数验证清理失败后 task 仍继续运行。
     struct FailingGetDao {
         get_call_count: Arc<AtomicUsize>,
     }
@@ -141,11 +133,7 @@ mod suite {
         crate::atomic_test_fallback!();
     }
 
-    /// 验证清理失败时 task 只记录 warn 不中断，继续运行下一个周期。
-    ///
-    /// 策略：使用 get 始终失败的 DAO，启动间隔=1 秒的清理 task。
-    /// 等待 1.5 秒后验证 get 被调用 >= 2 次（首次立即执行 + 1 秒后第二次），
-    /// 且 task 仍存活（is_finished() == false）。
+    /// 清理失败只记 warn 不中断：get 恒失败的 DAO + 间隔=1 秒 task，等 1.5 秒后 get 调用 >= 2 次且 task 未结束（is_finished() == false）。
     #[tokio::test]
     async fn spawn_cleanup_task_cleanup_failure_does_not_crash() {
         let get_call_count = Arc::new(AtomicUsize::new(0));
@@ -202,13 +190,8 @@ mod suite {
         handle.abort();
     }
 
-    // ============================================================
-    // AuthBackend 桥接测试
-    // ============================================================
-    //
-    // 测试 init_backend / get_backend / GarrisonUtil 委托逻辑。
-    // 所有涉及 CURRENT_BACKEND 全局状态的测试必须用 #[serial] 串行化，
-    // 并在测试前后调用 reset_backend_for_test() 重置状态。
+    // AuthBackend 桥接测试（init_backend / get_backend / GarrisonUtil 委托）
+    // 涉及 CURRENT_BACKEND 全局状态的测试必须 `#[serial]` 串行化，并在前后调用 reset_backend_for_test() 重置。
 
     /// Mock AuthBackend，记录方法调用次数。
     #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
@@ -376,10 +359,7 @@ mod suite {
     #[serial_test::serial]
     async fn t114_fallback_to_garrison_manager_when_not_initialized() {
         reset_backend_for_test();
-        // 本测试的前置条件是 GarrisonManager 未初始化；其他串行测试
-        // （如 stp::parameter 的 init_manager_with_perms）结束后会把全局
-        // manager 留在已初始化状态且 throw_on_not_login=false，此时未知
-        // token 返回 Ok(false) 而非 Err——故这里显式重置以保证顺序无关。
+        // 前置条件是 GarrisonManager 未初始化：其他串行测试（如 stp::parameter 的 init_manager_with_perms）会把全局 manager 留在已初始化状态（未知 token 返回 Ok(false)），故显式重置以保证顺序无关。
         crate::manager::GarrisonManager::reset_for_test();
         // 未调用 init_backend，应 fallback 到 GarrisonManager
         // GarrisonManager 未初始化时返回 GarrisonError::Session
@@ -432,15 +412,8 @@ mod suite {
         reset_backend_for_test();
     }
 
-    // ============================================================
     // Embedded 模式行为验证
-    // ============================================================
-    //
-    // 验证 init_backend(BackendEmbedded) 后，GarrisonUtil 委托链路：
-    // GarrisonUtil → CURRENT_BACKEND(BackendEmbedded) → GarrisonManager
-    //
-    // 由于 GarrisonManager 未初始化（单元测试环境），BackendEmbedded::check_login
-    // 会返回 GarrisonError::Session。这验证了委托链路正确连接。
+    // 链路 GarrisonUtil → CURRENT_BACKEND(BackendEmbedded) → GarrisonManager；单元测试环境未初始化，BackendEmbedded::check_login 返回 Session，验证链路正确连接。
 
     /// 验证 Embedded 模式下 GarrisonUtil 委托 BackendEmbedded → GarrisonManager。
     #[cfg(feature = "backend-embedded")]
@@ -465,12 +438,7 @@ mod suite {
         reset_backend_for_test();
     }
 
-    /// 验证 Embedded 模式下 fallback 路径与委托路径行为一致。
-    ///
-    /// fallback 路径（未 init_backend）：直接调用 GarrisonManager::logic()?.check_login()
-    /// 委托路径（init_backend(BackendEmbedded)）：BackendEmbedded::check_login() → GarrisonManager::logic()?.check_login()
-    ///
-    /// 两条路径都调用 GarrisonManager::logic()，未初始化时都返回 GarrisonError::Session。
+    /// Embedded 模式下 fallback 与委托路径行为一致：fallback（未 init_backend）直调 `GarrisonManager::logic()?.check_login()`，委托路径经 `BackendEmbedded::check_login()`，未初始化时都返回 `Session`。
     #[cfg(feature = "backend-embedded")]
     #[tokio::test]
     #[serial_test::serial]
@@ -505,12 +473,7 @@ mod suite {
         reset_backend_for_test();
     }
 
-    // ============================================================
-    // Remote 模式委托验证
-    // ============================================================
-    //
-    // 验证 init_backend(BackendRemote) 后，GarrisonUtil 委托 BackendRemote 发送 HTTP 请求。
-    // 使用 wiremock 启动 mock server，验证 HTTP 请求正确发送。
+    // Remote 模式委托验证（wiremock mock server 验证 HTTP 请求）
 
     /// 验证 Remote 模式下 GarrisonUtil::check_login 委托 BackendRemote 发送 HTTP 请求。
     #[cfg(feature = "backend-remote")]
@@ -609,13 +572,9 @@ mod suite {
         reset_backend_for_test();
     }
 
-    // ============================================================
     // 覆盖率补充：JwtMode / has_permission/has_role 错误路径 / 委托链路
-    // ============================================================
 
-    /// 验证 `JwtMode::default()` 返回 `Mixin`（推荐默认模式）。
-    ///
-    /// 覆盖 `#[default]` 标注的 `Mixin` 变体。
+    /// `JwtMode::default()` 返回 `Mixin`（`#[default]` 标注的变体）。
     #[serial]
     #[test]
     fn jwt_mode_default_is_mixin() {
@@ -651,10 +610,7 @@ mod suite {
         assert_eq!(JwtMode::Mixin.clone(), JwtMode::Mixin);
     }
 
-    /// 验证 `has_permission("")` 返回 `InvalidParam`（空字符串校验在本地完成，
-    /// 不需要初始化 GarrisonManager）。
-    ///
-    /// 覆盖 `has_permission` 中的本地参数校验路径。
+    /// `has_permission("")` 返回 `InvalidParam`（空串校验在本地完成，无需初始化 GarrisonManager）。
     #[serial]
     #[tokio::test]
     async fn has_permission_empty_returns_invalid_param() {
@@ -666,9 +622,7 @@ mod suite {
         );
     }
 
-    /// 验证 `has_role("")` 返回 `InvalidParam`。
-    ///
-    /// 覆盖 `has_role` 中的本地参数校验路径。
+    /// `has_role("")` 返回 `InvalidParam`（同上，本地校验）。
     #[serial]
     #[tokio::test]
     async fn has_role_empty_returns_invalid_param() {
@@ -680,10 +634,7 @@ mod suite {
         );
     }
 
-    /// 验证 `login_simple` 在未初始化 `GarrisonManager` 时返回 `Session` 错误。
-    ///
-    /// 覆盖 `login_simple` → `login` → `GarrisonManager::logic()?` 委托链路。
-    /// 在 backend-embedded feature 下，未 `init_backend()` 时 fallback 到 GarrisonManager 路径。
+    /// `login_simple` 未初始化时返回 `Session`（经 login → `GarrisonManager::logic()?`；backend-embedded 未 init_backend 时 fallback 同路径）。
     #[tokio::test]
     #[serial_test::serial]
     async fn login_simple_delegates_to_garrison_manager() {
@@ -699,9 +650,7 @@ mod suite {
         );
     }
 
-    /// 验证 `logout_by_login_id` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `logout_by_login_id` → `GarrisonManager::logic()?` 委托链路。
+    /// `logout_by_login_id` 未初始化时返回 `Session`（委托 `GarrisonManager::logic()?`）。
     #[tokio::test]
     #[serial_test::serial]
     async fn logout_by_login_id_delegates_to_garrison_manager() {
@@ -717,9 +666,7 @@ mod suite {
         );
     }
 
-    /// 验证 `kickout` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `kickout` → `GarrisonManager::logic()?` 委托链路。
+    /// `kickout` 未初始化时返回 `Session`（委托 `GarrisonManager::logic()?`）。
     #[tokio::test]
     #[serial_test::serial]
     async fn kickout_delegates_to_garrison_manager() {
@@ -735,9 +682,7 @@ mod suite {
         );
     }
 
-    /// 验证 `config()` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `config()` → `GarrisonManager::logic()?` 委托链路。
+    /// `config()` 未初始化时返回 `Session`（委托 `GarrisonManager::logic()?`）。
     #[tokio::test]
     #[serial_test::serial]
     async fn config_delegates_to_garrison_manager() {
@@ -753,10 +698,7 @@ mod suite {
         );
     }
 
-    /// 验证 `get_login_id_by_token` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `get_login_id_by_token` → `with_current_token` → `get_login_id`
-    /// → `GarrisonManager::logic()?` 委托链路。
+    /// `get_login_id_by_token` 未初始化时返回 `Session`（经 with_current_token → get_login_id → `GarrisonManager::logic()?`）。
     #[tokio::test]
     #[serial_test::serial]
     async fn get_login_id_by_token_delegates_to_garrison_manager() {
@@ -772,17 +714,11 @@ mod suite {
         );
     }
 
-    // ============================================================
     // 委托链路覆盖率补充：GarrisonUtil 各方法 → GarrisonManager::logic()?
-    // ============================================================
     //
-    // 以下测试验证未初始化 GarrisonManager 时，各 GarrisonUtil 静态方法
-    // 正确委托到 `GarrisonManager::logic()?` 并返回 `Session` 错误。
-    // 覆盖了 util.rs 中未被既有测试覆盖的委托路径。
+    // 未初始化时各静态方法委托 `GarrisonManager::logic()?` 并返回 `Session`。
 
-    /// 验证 `login(id, params)` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `login` → `GarrisonManager::logic()?` 委托链路（带 LoginParams 版本）。
+    /// `login(id, params)`（带 LoginParams 版本）未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn login_with_params_delegates_to_garrison_manager() {
@@ -798,9 +734,7 @@ mod suite {
         );
     }
 
-    /// 验证 `logout()` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `logout` → `GarrisonManager::logic()?` 委托链路。
+    /// `logout()` 未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn logout_delegates_to_garrison_manager() {
@@ -816,9 +750,7 @@ mod suite {
         );
     }
 
-    /// 验证 `kickout_by_token` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `kickout_by_token` → `GarrisonManager::logic()?` 委托链路。
+    /// `kickout_by_token` 未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn kickout_by_token_delegates_to_garrison_manager() {
@@ -834,9 +766,7 @@ mod suite {
         );
     }
 
-    /// 验证 `revoke_token` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `revoke_token` → `GarrisonManager::logic()?` 委托链路。
+    /// `revoke_token` 未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn revoke_token_delegates_to_garrison_manager() {
@@ -852,9 +782,7 @@ mod suite {
         );
     }
 
-    /// 验证 `check_login()` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_login` → `GarrisonManager::logic()?` 委托链路。
+    /// `check_login()` 未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn check_login_delegates_to_garrison_manager() {
@@ -870,9 +798,7 @@ mod suite {
         );
     }
 
-    /// 验证 `get_login_id()` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `get_login_id` → `GarrisonManager::logic()?` 委托链路。
+    /// `get_login_id()` 未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn get_login_id_delegates_to_garrison_manager() {
@@ -888,9 +814,7 @@ mod suite {
         );
     }
 
-    /// 验证 `check_permission` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_permission` → `GarrisonManager::logic()?` 委托链路。
+    /// `check_permission` 未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn check_permission_delegates_to_garrison_manager() {
@@ -906,9 +830,7 @@ mod suite {
         );
     }
 
-    /// 验证 `check_role` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_role` → `GarrisonManager::logic()?` 委托链路。
+    /// `check_role` 未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn check_role_delegates_to_garrison_manager() {
@@ -924,9 +846,7 @@ mod suite {
         );
     }
 
-    /// 验证 `has_permission`（非空字符串）在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `has_permission` 非空路径 → `GarrisonManager::logic()?` 委托链路。
+    /// `has_permission`（非空路径）未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn has_permission_non_empty_delegates_to_garrison_manager() {
@@ -942,9 +862,7 @@ mod suite {
         );
     }
 
-    /// 验证 `has_role`（非空字符串）在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `has_role` 非空路径 → `GarrisonManager::logic()?` 委托链路。
+    /// `has_role`（非空路径）未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn has_role_non_empty_delegates_to_garrison_manager() {
@@ -960,9 +878,7 @@ mod suite {
         );
     }
 
-    /// 验证 `get_permission_list` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `get_permission_list` → `GarrisonManager::logic()?` 委托链路。
+    /// `get_permission_list` 未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn get_permission_list_delegates_to_garrison_manager() {
@@ -978,9 +894,7 @@ mod suite {
         );
     }
 
-    /// 验证 `get_role_list` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `get_role_list` → `GarrisonManager::logic()?` 委托链路。
+    /// `get_role_list` 未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn get_role_list_delegates_to_garrison_manager() {
@@ -996,9 +910,7 @@ mod suite {
         );
     }
 
-    /// 验证 `check_access_token` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_access_token` → `GarrisonManager::logic()?` 委托链路。
+    /// `check_access_token` 未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn check_access_token_delegates_to_garrison_manager() {
@@ -1014,9 +926,7 @@ mod suite {
         );
     }
 
-    /// 验证 `check_client_token` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_client_token` → `GarrisonManager::logic()?` 委托链路。
+    /// `check_client_token` 未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn check_client_token_delegates_to_garrison_manager() {
@@ -1032,9 +942,7 @@ mod suite {
         );
     }
 
-    /// 验证 `check_temp_token` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_temp_token` → `GarrisonManager::logic()?` 委托链路。
+    /// `check_temp_token` 未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn check_temp_token_delegates_to_garrison_manager() {
@@ -1050,9 +958,7 @@ mod suite {
         );
     }
 
-    /// 验证 `check_safe` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_safe` → `GarrisonManager::logic()?` 委托链路（fallback 路径）。
+    /// `check_safe` 未初始化时返回 `Session`（fallback 路径）。
     #[tokio::test]
     #[serial_test::serial]
     async fn check_safe_delegates_to_garrison_manager() {
@@ -1068,9 +974,7 @@ mod suite {
         );
     }
 
-    /// 验证 `check_disable` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_disable` → `GarrisonManager::logic()?` 委托链路（fallback 路径）。
+    /// `check_disable` 未初始化时返回 `Session`（fallback 路径）。
     #[tokio::test]
     #[serial_test::serial]
     async fn check_disable_delegates_to_garrison_manager() {
@@ -1086,9 +990,7 @@ mod suite {
         );
     }
 
-    /// 验证 `check_api_key` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_api_key` → `GarrisonManager::logic()?` 委托链路（fallback 路径）。
+    /// `check_api_key` 未初始化时返回 `Session`（fallback 路径）。
     #[tokio::test]
     #[serial_test::serial]
     async fn check_api_key_delegates_to_garrison_manager() {
@@ -1104,9 +1006,7 @@ mod suite {
         );
     }
 
-    /// 验证 `login_by_token` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `login_by_token` → `GarrisonManager::logic()?` 委托链路。
+    /// `login_by_token` 未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn login_by_token_delegates_to_garrison_manager() {
@@ -1122,9 +1022,7 @@ mod suite {
         );
     }
 
-    /// 验证 `verify_token` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `verify_token` → `GarrisonManager::logic()?` 委托链路。
+    /// `verify_token` 未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn verify_token_delegates_to_garrison_manager() {
@@ -1140,9 +1038,7 @@ mod suite {
         );
     }
 
-    /// 验证 `refresh_token` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `refresh_token` → `GarrisonManager::logic()?` 委托链路。
+    /// `refresh_token` 未初始化时返回 `Session`。
     #[tokio::test]
     #[serial_test::serial]
     async fn refresh_token_delegates_to_garrison_manager() {
@@ -1158,18 +1054,12 @@ mod suite {
         );
     }
 
-    // ============================================================
     // 同步版本（*_sync）委托链路测试
-    // ============================================================
     //
-    // 验证 `*_sync` 方法在未初始化时返回 `Session` 错误。
-    // 使用 `flavor = "multi_thread"` 因为 `block_in_place` 要求
-    // multi_thread runtime 上下文。
+    // `*_sync` 未初始化时返回 `Session`；用例用 `flavor = "multi_thread"`（`block_in_place` 要求）。
 
     /// 验证 `check_login_sync` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_login_sync` → `block_in_place` → `check_login`
-    /// → `GarrisonManager::logic()?` 委托链路。
+    /// 经 block_in_place → check_login → `GarrisonManager::logic()?` 委托链路。
     #[tokio::test(flavor = "multi_thread")]
     #[serial_test::serial]
     async fn check_login_sync_delegates_to_garrison_manager() {
@@ -1185,10 +1075,7 @@ mod suite {
         );
     }
 
-    /// 验证 `check_permission_sync` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_permission_sync` → `block_in_place` → `check_permission`
-    /// → `GarrisonManager::logic()?` 委托链路。
+    /// `check_permission_sync` 未初始化时返回 `Session`（经 block_in_place → check_permission → `GarrisonManager::logic()?`）。
     #[tokio::test(flavor = "multi_thread")]
     #[serial_test::serial]
     async fn check_permission_sync_delegates_to_garrison_manager() {
@@ -1204,10 +1091,7 @@ mod suite {
         );
     }
 
-    /// 验证 `check_role_sync` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_role_sync` → `block_in_place` → `check_role`
-    /// → `GarrisonManager::logic()?` 委托链路。
+    /// `check_role_sync` 未初始化时返回 `Session`（经 block_in_place → check_role → `GarrisonManager::logic()?`）。
     #[tokio::test(flavor = "multi_thread")]
     #[serial_test::serial]
     async fn check_role_sync_delegates_to_garrison_manager() {
@@ -1223,10 +1107,7 @@ mod suite {
         );
     }
 
-    /// 验证 `check_access_token_sync` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_access_token_sync` → `block_in_place` → `check_access_token`
-    /// → `GarrisonManager::logic()?` 委托链路。
+    /// `check_access_token_sync` 未初始化时返回 `Session`（经 block_in_place → check_access_token → `GarrisonManager::logic()?`）。
     #[tokio::test(flavor = "multi_thread")]
     #[serial_test::serial]
     async fn check_access_token_sync_delegates_to_garrison_manager() {
@@ -1242,10 +1123,7 @@ mod suite {
         );
     }
 
-    /// 验证 `check_client_token_sync` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_client_token_sync` → `block_in_place` → `check_client_token`
-    /// → `GarrisonManager::logic()?` 委托链路。
+    /// `check_client_token_sync` 未初始化时返回 `Session`（经 block_in_place → check_client_token → `GarrisonManager::logic()?`）。
     #[tokio::test(flavor = "multi_thread")]
     #[serial_test::serial]
     async fn check_client_token_sync_delegates_to_garrison_manager() {
@@ -1261,10 +1139,7 @@ mod suite {
         );
     }
 
-    /// 验证 `check_temp_token_sync` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_temp_token_sync` → `block_in_place` → `check_temp_token`
-    /// → `GarrisonManager::logic()?` 委托链路。
+    /// `check_temp_token_sync` 未初始化时返回 `Session`（经 block_in_place → check_temp_token → `GarrisonManager::logic()?`）。
     #[tokio::test(flavor = "multi_thread")]
     #[serial_test::serial]
     async fn check_temp_token_sync_delegates_to_garrison_manager() {
@@ -1280,10 +1155,7 @@ mod suite {
         );
     }
 
-    /// 验证 `check_api_key_sync` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_api_key_sync` → `block_in_place` → `check_api_key`
-    /// → `GarrisonManager::logic()?` 委托链路。
+    /// `check_api_key_sync` 未初始化时返回 `Session`（经 block_in_place → check_api_key → `GarrisonManager::logic()?`）。
     #[tokio::test(flavor = "multi_thread")]
     #[serial_test::serial]
     async fn check_api_key_sync_delegates_to_garrison_manager() {
@@ -1299,10 +1171,7 @@ mod suite {
         );
     }
 
-    /// 验证 `check_safe_sync` 在未初始化时返回 `Session` 错误。
-    ///
-    /// 覆盖 `check_safe_sync` → `block_in_place` → `check_safe`
-    /// → `GarrisonManager::logic()?` 委托链路。
+    /// `check_safe_sync` 未初始化时返回 `Session`（经 block_in_place → check_safe → `GarrisonManager::logic()?`）。
     #[tokio::test(flavor = "multi_thread")]
     #[serial_test::serial]
     async fn check_safe_sync_delegates_to_garrison_manager() {

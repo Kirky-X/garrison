@@ -10,19 +10,13 @@
 //! cargo run -p garrison-examples --bin backend_remote --features full
 //! ```
 //!
-//! 注意：本示例不会真正连接服务器（无 Auth Server 运行），
-//! 所有 API 调用会返回 Network 错误，示例演示构造方式和预期行为。
+//! 注意：本示例不真正连接服务器（无 Auth Server 运行），API 调用返回 Network 错误，仅演示构造方式与预期行为。
 
 use garrison::backend::{AuthBackend, BackendRemote, LoginParams};
 use garrison::error::{GarrisonError, GarrisonResult};
 use std::time::Duration;
 
-/// 运行远程后端示例。
-///
-/// 演示：
-/// 1. 使用 `BackendRemote::new` 构造内网客户端
-/// 2. 使用 `BackendRemoteBuilder` 构造带超时的外网客户端
-/// 3. 尝试 login / check_login / logout（预期失败，无服务器运行）
+/// 运行远程后端示例：`BackendRemote::new` 构造内网客户端 + `BackendRemoteBuilder` 构造带超时的外网客户端，尝试 login / check_login / logout（预期失败）。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 远程后端示例 ===\n");
 

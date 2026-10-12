@@ -21,10 +21,7 @@ use tokio::sync::Mutex;
 // NoopEmailSender：示例用邮件发送器（捕获发送内容，不实际投递）
 // ============================================================================
 
-/// 示例用邮件发送器，将发送内容存入内存列表供验证。
-///
-/// 生产环境中业务方可实现 `EmailSender` trait 接入 SMTP / HTTP 邮件网关，
-/// 或直接启用 `email-verification-smtp` feature 使用框架内置 `SmtpEmailSender`。
+/// 示例用邮件发送器，捕获发送内容供验证；生产环境实现 `EmailSender` trait 接入 SMTP / HTTP 网关，或启用 email-verification-smtp feature。
 struct NoopEmailSender {
     sent: Mutex<Vec<(String, String, String)>>,
 }
@@ -40,10 +37,7 @@ impl EmailSender for NoopEmailSender {
     }
 }
 
-/// 运行邮箱验证码示例。
-///
-/// 演示 send_code（发送）/ verify_code（验证正确码/错误码/超最大尝试）与
-/// 邮箱规范化（大小写/空白归一）防绕过。
+/// 运行邮箱验证码示例：send_code / verify_code（正确码 / 错误码 / 超最大尝试）与邮箱规范化（大小写/空白归一）防绕过。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 邮箱验证码示例 ===\n");
 

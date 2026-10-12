@@ -1,20 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 请求对象式授权器。
-//!
-//! 提供以 [`AuthRequest`] 为入参、返回 [`Decision`] 的公开授权 trait [`Authorizer`]。
-//!
-//! # 与 [`PermissionChecker`] 的区别
-//!
-//! - [`PermissionChecker`] 依赖 [`GarrisonInterface`](crate::stp::GarrisonInterface)，是内部 trait，绑定具体数据源
-//! - [`Authorizer`] 是公开 API，不假设具体实现，可由任何授权引擎实现
-//! - 通过 blanket impl 自动为所有 [`PermissionChecker`] 提供 [`Authorizer`] 实现
-//!
-//! # 冲突说明
-//!
-//! `AuthRequest` / `Decision` / `DecisionReason` 已在 `decision` 模块定义，
-//! 本文件仅新增 `Authorizer` trait，复用现有类型（先读再写 + 惯例优先）。
+//! 请求对象式授权器：提供以 [`AuthRequest`] 为入参、返回 [`Decision`] 的公开授权 trait
+//! [`Authorizer`]。与内部 trait [`PermissionChecker`]（绑定具体数据源）的区别：`Authorizer`
+//! 不假设实现，任何授权引擎均可实现；blanket impl 让所有 `PermissionChecker` 自动获得实现。
 //!
 //! [`PermissionChecker`]: crate::core::permission::PermissionChecker
 
@@ -25,23 +14,9 @@ use crate::error::GarrisonResult;
 use super::decision::{AuthRequest, Decision};
 use super::PermissionChecker;
 
-/// 请求对象式授权器 trait。
-///
-/// 以 [`AuthRequest`] 为入参、返回 [`Decision`] 的公开授权 API，不假设具体实现，
-/// 可由任何授权引擎实现（不限于 [`PermissionChecker`]）。
-///
-/// # 与 [`PermissionChecker`] 的关系
-///
-/// [`PermissionChecker`] 已有 `authorize` 方法，但它是内部 trait（依赖
-/// [`GarrisonInterface`](crate::stp::GarrisonInterface)）。`Authorizer` 的角色是
-/// **显式公开 API**：任何授权引擎可实现此 trait，无需依赖具体数据源。
-///
-/// 通过 blanket impl，所有 [`PermissionChecker`] 自动实现 `Authorizer`，
-/// 行为委托给 `PermissionChecker::authorize`。
-///
-/// # trait object 安全
-///
-/// `Authorizer: Send + Sync` 且方法签名兼容 trait object，可用 `Box<dyn Authorizer>`。
+/// 请求对象式授权器 trait（公开 API，不假设实现，任何授权引擎可接入）；blanket impl 让所有
+/// [`PermissionChecker`] 自动实现并委托其 `authorize`。`Authorizer: Send + Sync` 且签名兼容
+/// trait object，可用 `Box<dyn Authorizer>`。
 ///
 /// # 使用示例
 ///
@@ -58,25 +33,13 @@ use super::PermissionChecker;
 /// [`PermissionChecker`]: crate::core::permission::PermissionChecker
 #[async_trait]
 pub trait Authorizer: Send + Sync {
-    /// 鉴权决策：基于 [`AuthRequest`] 返回完整 [`Decision`]。
-    ///
-    /// # 错误
-    ///
-    /// 校验过程本身出错（如 DAO 故障、参数无效）返回 `Err(GarrisonError)`；
+    /// 鉴权决策：校验过程出错（如 DAO 故障、参数无效）返回 `Err(GarrisonError)`；
     /// "未持有权限"不是错误，返回 `Ok(Decision { allowed: false, .. })`。
     async fn authorize(&self, req: &AuthRequest) -> GarrisonResult<Decision>;
 }
 
-/// Blanket impl：任何 [`PermissionChecker`] 自动实现 [`Authorizer`]。
-///
-/// 委托给 [`PermissionChecker::authorize`]，保持行为一致。这使所有现有的
-/// `PermissionChecker` 实现（如 `PermissionCheckerDefault`）自动获得
-/// `Authorizer` 实现，无需重复实现。
-///
-/// # 冲突处理
-///
-/// `PermissionChecker` trait 已有 `authorize` 方法且 `PermissionCheckerDefault`
-/// 已实现之。通过 blanket impl 复用现有实现，避免重复代码（先读再写）。
+/// Blanket impl：任何 [`PermissionChecker`] 自动实现 [`Authorizer`]（行为委托其 `authorize`），
+/// 现有实现（如 `PermissionCheckerDefault`）无需重复实现。
 ///
 /// [`PermissionChecker::authorize`]: crate::core::permission::PermissionChecker::authorize
 #[async_trait]
@@ -105,9 +68,8 @@ mod tests {
         InvalidParam,
     }
 
-    /// 测试用 MockAuthorizer，返回固定 Decision 或 Error，并捕获传入的 AuthRequest。
-    ///
-    /// 用于在隔离环境下测试 `Authorizer` trait 契约（不依赖 GarrisonLogicDefault）。
+    /// 测试用 MockAuthorizer：返回固定 Decision / Error 并捕获传入的 AuthRequest
+    ///（隔离测试 trait 契约，不依赖 GarrisonLogicDefault）。
     struct MockAuthorizer {
         outcome: MockOutcome,
         captured: Mutex<Option<AuthRequest>>,
@@ -121,7 +83,7 @@ mod tests {
             }
         }
 
-        /// 取出捕获的请求副本（用于断言字段传递正确性）。
+        /// 取出捕获的请求副本。
         fn captured_request(&self) -> Option<AuthRequest> {
             self.captured.lock().unwrap().clone()
         }
@@ -143,9 +105,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // Authorizer trait 测试
-    // ========================================================================
 
     /// Authorizer::authorize 在允许场景返回 allowed=true 的 Decision。
     #[tokio::test]
@@ -239,11 +199,8 @@ mod tests {
         assert_eq!(captured.tenant_id, 42);
     }
 
-    /// blanket impl — PermissionCheckerDefault 自动实现 Authorizer，
-    /// authorize 行为与 PermissionChecker::authorize 一致。
-    ///
-    /// 此测试在 添加 blanket impl 前不编译
-    ///（`PermissionCheckerDefault` 未实现 `Authorizer`）。
+    /// blanket impl：PermissionCheckerDefault 自动实现 Authorizer，行为与 PermissionChecker::authorize
+    /// 一致。
     #[tokio::test]
     async fn authorizer_blanket_impl_works_with_permission_checker() {
         let interface = MockInterface::new().with_perms("1001", vec!["user:read"]);
@@ -252,27 +209,22 @@ mod tests {
 
         let req = AuthRequest::new("1001", "user:read");
 
-        // Via PermissionChecker（内部 trait）
+        // 两条路径应行为一致：内部 trait 与 blanket impl 的 Authorizer。
         let decision_pc = PermissionChecker::authorize(&checker, &req)
             .await
             .expect("PermissionChecker::authorize ok");
 
-        // Via Authorizer（blanket impl — 需要 添加才能编译）
         let decision_auth = Authorizer::authorize(&checker, &req)
             .await
             .expect("Authorizer::authorize ok");
 
-        // 行为一致：两条路径返回相同的 allowed/reason
         assert_eq!(decision_pc.allowed, decision_auth.allowed);
         assert_eq!(decision_pc.reason, decision_auth.reason);
         assert!(decision_auth.allowed);
         assert_eq!(decision_auth.reason, DecisionReason::ExplicitAllow);
     }
 
-    /// Authorizer 可作为 dyn trait 使用（Box<dyn Authorizer>）。
-    ///
-    /// 验证 trait object 安全：`Authorizer: Send + Sync` + `#[async_trait]` 使
-    /// `Box<dyn Authorizer>` 可构造并调用 `authorize`。
+    /// Authorizer 可作为 dyn trait（`Box<dyn Authorizer>`）构造并调用。
     #[tokio::test]
     async fn authorizer_can_be_used_as_dyn_trait() {
         let authorizer: Box<dyn Authorizer> = Box::new(MockAuthorizer::new(MockOutcome::Allow));
@@ -282,9 +234,7 @@ mod tests {
         assert_eq!(decision.reason, DecisionReason::ExplicitAllow);
     }
 
-    // ========================================================================
     // 测试用 MockInterface（GarrisonInterface 实现，用于 blanket impl 测试）
-    // ========================================================================
 
     /// 测试用 mock GarrisonInterface（仅提供 permission/role 数据，供 PermissionCheckerDefault 使用）。
     struct MockInterface {

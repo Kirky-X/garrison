@@ -1,30 +1,10 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Keycloak OIDC RP 模块。
+//! Keycloak OIDC RP 模块：`KeycloakProvider` 作为 OIDC 依赖方，针对 Keycloak 特化（JWKS 验签、Keycloak 特有 claim 解析），区别于 `oauth2::oidc` 的通用 OIDC handler。
 //!
-//! 提供 `KeycloakProvider` 作为 OIDC 依赖方（RP），对接 Keycloak IdP：
-//! - `KeycloakConfig`：配置 base_url / client_id / client_secret / redirect_uri / expected_iss
-//! - `KeycloakProvider`：discover / verify_id_token / exchange_code
-//! - `KeycloakClaims`：Keycloak 特有 claim（realm_access.roles / resource_access / aud / iss）
-//!
-//! ## 与 `oauth2::oidc` 模块的关系
-//!
-//! `oauth2::oidc` 提供通用 OIDC handler（HS256 sign/verify id_token + discovery metadata），
-//! 本模块针对 Keycloak 特化（JWKS 验签、Keycloak 特有 claim 解析、RP 流程）。
-//!
-//! ## Keycloak OIDC 端点约定
-//!
-//! Keycloak realm 的 OIDC 端点均基于 `{base_url}`（即 realm URL，形如
-//! `https://kc.example.com:8443/realms/{realm}`），按 Keycloak 官方文档约定：
-//!
-//! | 端点 | 路径 |
-//! |------|------|
-//! | Discovery | `{base_url}/.well-known/openid-configuration` |
-//! | JWKS | `{base_url}/protocol/openid-connect/certs` |
-//! | Authorization | `{base_url}/protocol/openid-connect/auth` |
-//! | Token | `{base_url}/protocol/openid-connect/token` |
-//! | UserInfo | `{base_url}/protocol/openid-connect/userinfo` |
+//! 端点均基于 realm URL `{base_url}`（形如 `https://kc.example.com:8443/realms/{realm}`）：
+//! Discovery `/.well-known/openid-configuration`、JWKS / Authorization / Token / UserInfo 均为 `/protocol/openid-connect/*`。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -35,33 +15,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// JWKS 公钥缓存 TTL。
-///
-/// 10 分钟内复用缓存的 JWKS 公钥，避免每次 `verify_id_token` 都拉取 JWKS endpoint。
+/// JWKS 公钥缓存 TTL（10 分钟）：避免每次 `verify_id_token` 都拉取 JWKS endpoint。
 const JWKS_CACHE_TTL: Duration = Duration::from_secs(600);
 
-/// Keycloak OIDC RP 配置。
+/// Keycloak OIDC RP 配置：realm base_url、client_id、client_secret（confidential client 必填，public client 为 None）、redirect_uri、expected_iss。
 ///
-/// 持有对接 Keycloak IdP 所需的最小配置：realm base_url、client_id、
-/// client_secret（confidential client 必填，public client 可为 None）、redirect_uri、
-/// expected_iss（issuer 校验）。
-///
-/// # 字段
-///
-/// - `base_url`: Keycloak realm 根 URL，形如 `https://kc.example.com:8443/realms/myrealm`。
-/// 末尾不应有 `/`（URL 拼接时直接追加路径）。
-/// - `client_id`: 在 Keycloak 中注册的 OIDC client ID。
-/// - `client_secret`: confidential client 的密钥；public client（如 SPA）为 `None`。
-/// - `redirect_uri`: 授权码回调地址，必须与 Keycloak client 配置中登记的 URL 一致。
-/// - `expected_iss`: 预期的 issuer，通常等于 `base_url`，
-/// 用于 [`KeycloakProvider::verify_id_token`] 的 `validate_iss` 校验。
-///
-/// # 端点推导
-///
-/// [`KeycloakConfig`] 提供 5 个端点推导方法，按 Keycloak OIDC 约定拼接 URL：
-/// [`discovery_url`](Self::discovery_url) / [`jwks_url`](Self::jwks_url) /
-/// [`authorize_url`](Self::authorize_url) / [`token_url`](Self::token_url) /
-/// [`userinfo_url`](Self::userinfo_url)。
+/// 5 个端点推导方法按 Keycloak OIDC 约定拼接 URL。
 #[derive(Debug, Clone)]
 pub struct KeycloakConfig {
     /// Keycloak realm 根 URL（末尾无 `/`）。
@@ -78,50 +37,33 @@ pub struct KeycloakConfig {
 }
 
 impl KeycloakConfig {
-    /// 构造 OIDC Discovery 端点 URL。
-    ///
-    /// 返回 `{base_url}/.well-known/openid-configuration`，用于 `KeycloakProvider::discover`
-    /// 拉取 Keycloak 的 OIDC discovery metadata。
+    /// Discovery 端点 URL：`{base_url}/.well-known/openid-configuration`。
     pub fn discovery_url(&self) -> String {
         format!("{}/.well-known/openid-configuration", self.base_url)
     }
 
-    /// 构造 JWKS 端点 URL。
-    ///
-    /// 返回 `{base_url}/protocol/openid-connect/certs`，用于 `KeycloakProvider::verify_id_token`
-    /// 拉取公钥集合以验签 id_token。
+    /// JWKS 端点 URL：`{base_url}/protocol/openid-connect/certs`。
     pub fn jwks_url(&self) -> String {
         format!("{}/protocol/openid-connect/certs", self.base_url)
     }
 
-    /// 构造 Authorization 端点 URL。
-    ///
-    /// 返回 `{base_url}/protocol/openid-connect/auth`，用于浏览器跳转引导用户完成登录。
+    /// Authorization 端点 URL：`{base_url}/protocol/openid-connect/auth`（浏览器跳转登录）。
     pub fn authorize_url(&self) -> String {
         format!("{}/protocol/openid-connect/auth", self.base_url)
     }
 
-    /// 构造 Token 端点 URL。
-    ///
-    /// 返回 `{base_url}/protocol/openid-connect/token`，用于 `KeycloakProvider::exchange_code`
-    /// 以授权码换取 access_token / refresh_token / id_token。
+    /// Token 端点 URL：`{base_url}/protocol/openid-connect/token`（授权码换 token set）。
     pub fn token_url(&self) -> String {
         format!("{}/protocol/openid-connect/token", self.base_url)
     }
 
-    /// 构造 UserInfo 端点 URL。
-    ///
-    /// 返回 `{base_url}/protocol/openid-connect/userinfo`，用于查询用户信息 claim。
+    /// UserInfo 端点 URL：`{base_url}/protocol/openid-connect/userinfo`。
     pub fn userinfo_url(&self) -> String {
         format!("{}/protocol/openid-connect/userinfo", self.base_url)
     }
 }
 
-/// OIDC Discovery Metadata。
-///
-/// 表示从 `/.well-known/openid-configuration` 拉取的 IdP 元数据。
-/// 仅声明 Keycloak RP 流程所需的最小子集；其他字段（如 `response_types_supported`）
-/// 在反序列化时被忽略。
+/// OIDC Discovery Metadata：`/.well-known/openid-configuration` 拉取的 IdP 元数据（仅声明 RP 流程所需子集，其他字段反序列化时忽略）。
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct OidcDiscoveryMetadata {
     /// 签发者标识（Keycloak realm URL）。
@@ -134,10 +76,7 @@ pub struct OidcDiscoveryMetadata {
     pub jwks_uri: String,
 }
 
-/// JWKS 中的单个 RSA 公钥。
-///
-/// 表示从 `/.well-known/openid-configuration` 的 `jwks_uri` 拉取的公钥集合中的一个条目。
-/// 仅声明 RS256 验签所需字段；其他字段（如 `use` / `alg`）在反序列化时被忽略。
+/// JWKS 中的单个 RSA 公钥：仅声明 RS256 验签所需字段，其他字段（`use` / `alg` 等）反序列化时忽略。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Jwk {
     /// 公钥标识（Key ID），与 JWT header 的 `kid` 匹配以选择验签公钥。
@@ -155,47 +94,24 @@ pub struct JwksResponse {
     pub keys: Vec<Jwk>,
 }
 
-/// JWKS 缓存 key 前缀（拼入 DAO key：`keycloak:jwks:{expected_iss}`）。
-///
-/// 通过 [`GarrisonDao`] 抽象层委托 oxcache 管理 JWKS JSON + TTL，
-/// 禁止手写内存缓存（用户铁律：所有缓存由 oxcache 接管）。
+/// JWKS 缓存 key 前缀（拼入 DAO key：`keycloak:jwks:{expected_iss}`）；经 [`GarrisonDao`] 委托 oxcache 管理 JWKS JSON + TTL，禁止手写内存缓存。
 const JWKS_CACHE_KEY_PREFIX: &str = "keycloak:jwks:";
 
-/// Keycloak realm 访问信息。
-///
-/// 对应 Keycloak id_token 中 `realm_access` claim，含 realm 级别的角色列表。
+/// Keycloak realm 访问信息（id_token 的 `realm_access` claim）。
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct RealmAccess {
     /// realm 级别角色列表（如 `user` / `admin`）。
     pub roles: Vec<String>,
 }
 
-/// Keycloak id_token 的 claims。
-///
-/// 包含标准 OIDC claims（`sub` / `preferred_username` / `email` / `aud` / `iss`）+
-/// Keycloak 特有 claim（`realm_access` / `resource_access`）+ 多租户扩展（`tenant_id`）。
-///
-/// # 字段
-///
-/// - `sub`: 主体标识（Keycloak 用户 ID）。
-/// - `exp`: 过期时间（Unix 秒，RFC 7519 §4.1.4，用于 `validate_exp` 校验）。
-/// - `aud`: Audience（RFC 7519 §4.1.3）。支持单个 String 或 Vec<String>，
-/// 用 `serde_json::Value` 兼容两种形式，由 `verify_id_token` 的 `validate_aud` 校验。
-/// - `iss`: Issuer（RFC 7519 §4.1.1）。由 `verify_id_token` 的
-/// `validate_iss` 校验，旧 token 可能无此字段故用 `Option`。
-/// - `preferred_username`: 用户名（Keycloak 登录名）。
-/// - `email`: 邮箱（可选，需 `email` scope）。
-/// - `realm_access`: realm 级别角色（[`RealmAccess`]）。
-/// - `resource_access`: client 级别角色映射（key 为 client_id，value 为 [`RealmAccess`]）。
-/// - `tenant_id`: Garrison 多租户标识（可选，由 Keycloak mapper 注入）。
+/// Keycloak id_token 的 claims：标准 OIDC claims + Keycloak 特有 claim（`realm_access` / `resource_access`）+ 多租户扩展（`tenant_id`）。
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct KeycloakClaims {
     /// 主体标识（Keycloak 用户 ID）。
     pub sub: String,
     /// 过期时间（Unix 秒，RFC 7519 §4.1.4，用于 `validate_exp` 校验）。
     pub exp: i64,
-    /// Audience（RFC 7519 §4.1.3）。
-    /// 支持单个 String 或 Vec<String>，用 `serde_json::Value` 兼容两种形式。
+    /// Audience（RFC 7519 §4.1.3）：单个 String 或数组，用 `serde_json::Value` 兼容两种形式。
     #[serde(default)]
     pub aud: serde_json::Value,
     /// Issuer（RFC 7519 §4.1.1）。旧 token 可能无此字段故用 `Option`。
@@ -214,10 +130,7 @@ pub struct KeycloakClaims {
     pub tenant_id: Option<i64>,
 }
 
-/// Keycloak token endpoint 响应。
-///
-/// 表示 `exchange_code` 成功后 Keycloak 返回的 token 集合。
-/// 仅声明 RP 流程所需的最小字段；其他字段（如 `token_type` / `scope`）在反序列化时被忽略。
+/// Keycloak token endpoint 响应（`exchange_code` 成功后返回）：仅声明 RP 流程所需最小字段，其他字段反序列化时忽略。
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct KeycloakTokenSet {
     /// 访问令牌（用于调用 Keycloak 保护的资源 API）。
@@ -230,49 +143,23 @@ pub struct KeycloakTokenSet {
     pub expires_in: u64,
 }
 
-/// Keycloak OIDC 依赖方。
+/// Keycloak OIDC 依赖方：持有 `KeycloakConfig` 与可复用 `reqwest::Client`，提供 discover / verify_id_token / exchange_code 流程。
 ///
-/// 持有 `KeycloakConfig` 与可复用的 `reqwest::Client`，提供 OIDC RP 流程：
-/// - [`discover`](Self::discover)：从 `/.well-known/openid-configuration` 拉取 IdP 元数据
-/// - [`verify_id_token`](Self::verify_id_token)：JWKS 验签 + Keycloak claim 解析
-/// - [`exchange_code`](Self::exchange_code)：授权码换 token set
-///
-/// # 设计决策
-///
-/// - `http: reqwest::Client` 复用连接池，`Send + Sync` 可在多线程共享。
-/// - JWKS 公钥缓存通过 [`GarrisonDao`]（oxcache 抽象层）管理，TTL 由 [`JWKS_CACHE_TTL`]
-/// 控制，避免每次 `verify_id_token` 都拉取 JWKS endpoint。
-/// **禁止手写内存缓存**（用户铁律：所有缓存由 oxcache 接管）。
-/// 调用方必须通过 [`with_dao`](Self::with_dao) 注入 DAO 实例，
-/// 否则 `verify_id_token` 返回 [`GarrisonError::Config`] 错误。
+/// JWKS 缓存经 [`GarrisonDao`]（oxcache）管理，TTL 由 [`JWKS_CACHE_TTL`] 控制；须经 [`with_dao`](Self::with_dao) 注入 DAO，否则 `verify_id_token` 返回 [`GarrisonError::Config`]。
 pub struct KeycloakProvider {
-    /// RP 配置（base_url / client_id / client_secret / redirect_uri / expected_iss）。
+    /// RP 配置。
     config: KeycloakConfig,
     /// 可复用的 HTTP 客户端。
     http: reqwest::Client,
-    /// DAO 抽象（通过 oxcache 管理 JWKS 缓存）。
-    ///
-    /// `None` 时 `verify_id_token` 返回 [`GarrisonError::Config`] 错误。
-    /// 调用方通过 [`with_dao`](Self::with_dao) 注入。
+    /// DAO 抽象（oxcache 管理 JWKS 缓存）；`None` 时 `verify_id_token` 返回 `Config` 错误。
     dao: Option<Arc<dyn GarrisonDao>>,
-    /// PKCE code_verifier。
-    ///
-    /// 由 [`with_pkce`](Self::with_pkce) 设置；`Some` 时 `exchange_code` 改用 PKCE 鉴权
-    /// （请求体追加 `code_verifier`，跳过 `client_secret`）。`client_secret=None` 的
-    /// public client 必须调用 `with_pkce`，否则 `exchange_code` 返回错误。
+    /// PKCE code_verifier：`Some` 时 `exchange_code` 改用 PKCE 鉴权（追加 `code_verifier`、跳过 `client_secret`）；
+    /// public client（`client_secret=None`）必须经 [`with_pkce`](Self::with_pkce) 设置。
     pkce_verifier: Option<String>,
 }
 
 impl KeycloakProvider {
-    /// 构造 `KeycloakProvider`。
-    ///
-    /// # 参数
-    ///
-    /// - `config`: [`KeycloakConfig`] 配置实例。
-    ///
-    /// # 错误
-    ///
-    /// - `GarrisonError::Network`: `reqwest::Client` 构建失败。
+    /// 构造 `KeycloakProvider`（reqwest Client 构建失败返回 `Network`）。
     pub fn new(config: KeycloakConfig) -> GarrisonResult<Self> {
         let http = build_safe_http_client().map_err(|e| {
             GarrisonError::Network(loc!(
@@ -289,16 +176,7 @@ impl KeycloakProvider {
         })
     }
 
-    /// 注入 [`GarrisonDao`] 实例以接管 JWKS 缓存。
-    ///
-    /// **必选调用**：`verify_id_token` 依赖 DAO 缓存 JWKS 公钥集合，
-    /// 未注入 DAO 时返回 [`GarrisonError::Config`] 错误。
-    ///
-    /// JWKS 缓存 key 格式：`keycloak:jwks:{expected_iss}`，TTL 由 [`JWKS_CACHE_TTL`] 控制。
-    ///
-    /// # 参数
-    ///
-    /// - `dao`: DAO 实例（通常为 `Arc<GarrisonDaoOxcache>` 或测试用 `Arc<MockDao>`）。
+    /// 注入 [`GarrisonDao`] 接管 JWKS 缓存（`verify_id_token` 依赖，未注入返回 `Config`；缓存 key `keycloak:jwks:{expected_iss}`）。
     ///
     /// # 示例
     ///
@@ -311,43 +189,19 @@ impl KeycloakProvider {
         self
     }
 
-    /// 设置 PKCE code_verifier。
+    /// 设置 PKCE code_verifier（verifier 须 43-128 字符、仅 `[A-Z]/[a-z]/[0-9]/-./_/~`，RFC 7636 §4.1，非法返回 `InvalidParam`）。
     ///
-    /// 调用后，[`exchange_code`](Self::exchange_code) 改用 PKCE 鉴权：
-    /// - 请求体追加 `code_verifier` 字段
-    /// - 跳过 `client_secret` 字段（即使已配置，PKCE 优先级更高）
-    ///
-    /// `client_secret=None` 的 public client 必须调用此方法，否则 `exchange_code`
-    /// 返回 [`GarrisonError::Config`] 错误。
-    ///
-    /// # 参数
-    ///
-    /// - `verifier`: PKCE code_verifier，RFC 7636 §4.1 要求：
-    /// - 长度 43-128 字符
-    /// - 仅允许 `[A-Z]/[a-z]/[0-9]/-./_/~`
-    ///
-    /// # 错误
-    ///
-    /// - [`GarrisonError::InvalidParam`]: verifier 长度或字符集不合法（透传自
-    /// [`OAuth2Client::generate_pkce_challenge`](crate::protocol::oauth2::OAuth2Client::generate_pkce_challenge)）。
+    /// 调用后 [`exchange_code`](Self::exchange_code) 改用 PKCE 鉴权：追加 `code_verifier` 并跳过 `client_secret`（即使已配置，PKCE 优先）；
+    /// public client（`client_secret=None`）必须调用，否则 `exchange_code` 返回 `Config` 错误。
     pub fn with_pkce(mut self, verifier: &str) -> GarrisonResult<Self> {
-        // 复用 OAuth2Client::generate_pkce_challenge 校验 verifier 长度 43-128 + 字符集
-        //（RFC 7636 §4.1）。challenge 值本身不使用（授权服务器在 token endpoint 重新计算并比对
-        // code_verifier 与授权请求中的 code_challenge）。
+        // 复用 generate_pkce_challenge 校验 verifier 长度与字符集；challenge 值不使用（授权服务器在 token endpoint 重算比对）
         crate::protocol::oauth2::OAuth2Client::generate_pkce_challenge(verifier)?;
         self.pkce_verifier = Some(verifier.to_string());
         Ok(self)
     }
 
-    /// 从 `/.well-known/openid-configuration` 拉取 OIDC discovery metadata
-    ///
-    /// HTTP GET [`KeycloakConfig::discovery_url`]，响应体按 JSON 解析为
-    /// [`OidcDiscoveryMetadata`]。
-    ///
-    /// # 错误
-    ///
-    /// - `GarrisonError::Network`: HTTP 请求失败或非 2xx 状态码。
-    /// - `GarrisonError::Deserialize`: 响应体 JSON 无法解析为 `OidcDiscoveryMetadata`。
+    /// 拉取 OIDC discovery metadata：GET [`KeycloakConfig::discovery_url`]，JSON 解析为 [`OidcDiscoveryMetadata`]；
+    /// 请求失败/非 2xx/解析失败均返回 `Network`。
     pub async fn discover(&self) -> GarrisonResult<OidcDiscoveryMetadata> {
         let url = self.config.discovery_url();
         let resp = self.http.get(&url).send().await.map_err(|e| {
@@ -381,24 +235,14 @@ impl KeycloakProvider {
         })
     }
 
-    /// 构造 JWKS 在 DAO 中的缓存 key。
-    ///
-    /// 格式：`keycloak:jwks:{expected_iss}`，按 issuer 区分不同 Keycloak realm。
+    /// JWKS 缓存 key：`keycloak:jwks:{expected_iss}`（按 issuer 区分 realm）。
     fn jwks_cache_key(&self) -> String {
         format!("{}{}", JWKS_CACHE_KEY_PREFIX, self.config.expected_iss)
     }
 
-    /// 拉取 JWKS 公钥集合并写入 DAO 缓存。
+    /// 拉取 JWKS 公钥集合并写入 DAO 缓存（JSON + [`JWKS_CACHE_TTL`]，过期后下次验签自动重拉）。
     ///
-    /// HTTP GET [`KeycloakConfig::jwks_url`]，响应体按 JSON 解析为 [`JwksResponse`]，
-    /// 序列化为 JSON 字符串后通过 `dao.set(key, json, JWKS_CACHE_TTL.as_secs())` 写入缓存。
-    /// TTL 由 oxcache 自动管理（set 时传入 TTL），过期后下次 `verify_id_token` 自动重新拉取。
-    ///
-    /// # 错误
-    ///
-    /// - `GarrisonError::Config`: 未调用 [`with_dao`](Self::with_dao) 注入 DAO。
-    /// - `GarrisonError::Network`: HTTP 请求失败、非 2xx 状态码或 JSON 解析失败。
-    /// - `GarrisonError::Dao`: DAO 写入失败。
+    /// 未注入 DAO 返回 `Config`；请求失败/非 2xx/解析失败返回 `Network`，DAO 写入失败返回 `Dao`。
     async fn fetch_jwks(&self) -> GarrisonResult<()> {
         let dao = self.dao.as_ref().ok_or_else(|| {
             GarrisonError::Config(loc!(
@@ -450,35 +294,16 @@ impl KeycloakProvider {
         Ok(())
     }
 
-    /// 验证 id_token 签名并解析 Keycloak claims
-    ///
-    /// # 流程
-    ///
-    /// 1. 解析 JWT header，提取 `kid`。
-    /// 2. 从 DAO 缓存读取 JWKS（key=`keycloak:jwks:{expected_iss}`），
-    /// 缓存 miss 或反序列化失败时调用 `fetch_jwks` 重新拉取并写入缓存。
-    /// 3. 按 `kid` 匹配 JWKS 公钥，用 `n`/`e` 模数构造 `DecodingKey`。
-    /// 4. 用 RS256 算法验签，解析为 [`KeycloakClaims`]。
-    /// 5. 校验 `exp`（过期时间）/ `nbf`（生效时间）/ `aud`（受众）/ `iss`（签发者），
-    /// 启用 aud/iss/nbf 三重校验，防止 token 被重放给非预期 client/issuer。
-    ///
-    /// # 错误
-    ///
-    /// - `GarrisonError::Config`: 未调用 [`with_dao`](Self::with_dao) 注入 DAO。
-    /// - `GarrisonError::InvalidToken`: JWT header 解析失败 / kid 缺失 / JWKS 无匹配公钥 /
-    /// 签名验证失败 / claims 解析失败 / token 已过期 / aud 不匹配 / iss 不匹配 / nbf 未生效。
-    /// - `GarrisonError::Network`: JWKS 拉取失败。
-    /// - `GarrisonError::Dao`: DAO 读写失败。
-    ///
-    /// 清洗 JWT `kid` 用于日志/错误输出：过滤控制字符并限长 128，
-    /// 防止恶意 kid 注入控制字符污染日志或造成输出异常。
+    // 清洗 JWT `kid` 用于日志/错误输出：过滤控制字符并限长 128，防污染日志。
     fn sanitize_kid(kid: &str) -> String {
         let filtered: String = kid.chars().filter(|c| !c.is_control()).collect();
         filtered.chars().take(128).collect()
     }
 
-    /// 校验 Keycloak 签发的 `id_token`（JWKS 公钥 + iss/aud/exp 校验），
-    /// 返回解码后的 claims。DAO 未注入时返回配置错误（无法缓存 JWKS）。
+    /// 校验 Keycloak 签发的 `id_token`：解析 header 取 kid → DAO 缓存 JWKS（miss 时经 `fetch_jwks` 重拉）→
+    /// 按 kid 匹配公钥 → RS256 验签并校验 exp/nbf/aud/iss（三重校验防重放给非预期 client/issuer），返回 claims。
+    ///
+    /// 未注入 DAO 返回 `Config`；header/kid/验签/claims 失败返回 `InvalidToken`；JWKS 拉取失败返回 `Network`，DAO 读写失败返回 `Dao`。
     pub async fn verify_id_token(&self, id_token: &str) -> GarrisonResult<KeycloakClaims> {
         use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 
@@ -490,7 +315,7 @@ impl KeycloakProvider {
             ))
         })?;
 
-        // 1. 解析 JWT header，提取 kid
+        // 解析 JWT header 取 kid
         let header = jsonwebtoken::decode_header(id_token).map_err(|e| {
             GarrisonError::InvalidToken(loc!(
                 "keycloak-id-token-header-parse-failed",
@@ -505,7 +330,7 @@ impl KeycloakProvider {
             ))
         })?;
 
-        // 2. 从 DAO 读取 JWKS 缓存；缓存 miss 或反序列化失败（缓存损坏）时重新拉取
+        // 读 DAO JWKS 缓存；miss/损坏时重新拉取并写入缓存
         let cache_key = self.jwks_cache_key();
         let cached = dao.get(&cache_key).await?;
         let (jwks, fresh): (JwksResponse, bool) = match cached
@@ -535,8 +360,7 @@ impl KeycloakProvider {
             },
         };
 
-        // 3. 按 kid 匹配 JWKS 公钥。若缓存命中但 kid 未命中（密钥轮换场景），
-        // 强制重新拉取一次 JWKS 再匹配；已 freshly-fetched 则直接报错。
+        // 按 kid 匹配 JWKS 公钥；缓存命中但 kid 未命中（密钥轮换）时强制重拉一次，已 freshly-fetched 则直接报错
         let jwk = match jwks.keys.iter().find(|k| k.kid == kid).cloned() {
             Some(jwk) => jwk,
             None if !fresh => {
@@ -583,18 +407,13 @@ impl KeycloakProvider {
                 ("detail", &e.to_string())
             ))
         })?;
-        // 启用 aud/iss/nbf 三重校验
-        // - validate_exp: 校验 exp（过期时间）， 已启用
-        // - validate_nbf: 校验 nbf（生效时间），防止 token 在生效前被使用
-        // - validate_aud: 校验 aud（受众），期望 aud 包含 client_id，防止 token 被重放给非预期 client
-        // - set_audience: 设置期望的 audience = client_id
-        // - set_issuer: 设置期望的 issuer = expected_iss，防止 token 被重放给非预期 issuer
+        // aud/iss/nbf 三重校验（防重放给非预期 client/issuer）：exp 已启用，nbf 防生效前使用，aud 须含 client_id，iss 须等于 expected_iss
         let mut validation = Validation::new(Algorithm::RS256);
         validation.validate_exp = true;
-        validation.validate_nbf = true; // 启用 nbf 校验
-        validation.validate_aud = true; // 启用 aud 校验
-        validation.set_audience(&[&self.config.client_id]); // 期望 aud = client_id
-        validation.set_issuer(&[&self.config.expected_iss]); // 期望 iss = expected_iss
+        validation.validate_nbf = true;
+        validation.validate_aud = true;
+        validation.set_audience(&[&self.config.client_id]);
+        validation.set_issuer(&[&self.config.expected_iss]);
         validation.leeway = 0;
 
         let token_data =
@@ -606,19 +425,16 @@ impl KeycloakProvider {
                         "token expired".to_string()
                     ))
                 } else if msg.contains("ImmatureSignature") {
-                    // nbf 校验失败（token 尚未生效）
                     GarrisonError::InvalidToken(loc!(
                         "keycloak-token-immature",
                         "token not yet valid (nbf)".to_string()
                     ))
                 } else if msg.contains("InvalidAudience") {
-                    // aud 校验失败（audience 不匹配 client_id）
                     GarrisonError::InvalidToken(loc!(
                         "keycloak-token-invalid-audience",
                         "invalid audience".to_string()
                     ))
                 } else if msg.contains("InvalidIssuer") {
-                    // iss 校验失败（issuer 不匹配 expected_iss）
                     GarrisonError::InvalidToken(loc!(
                         "keycloak-token-invalid-issuer",
                         "invalid issuer".to_string()
@@ -634,27 +450,11 @@ impl KeycloakProvider {
         Ok(token_data.claims)
     }
 
-    /// 用授权码换取 token set
+    /// 用授权码换取 token set：POST `token_url`（form-urlencoded，grant_type=authorization_code + code + client_id + redirect_uri），
+    /// 鉴权字段为 PKCE `code_verifier`（已 with_pkce，跳过 client_secret）或 `client_secret`。
     ///
-    /// # 流程
-    ///
-    /// POST 请求 [`KeycloakConfig::token_url`]，以 `application/x-www-form-urlencoded`
-    /// 格式提交：
-    /// - `grant_type=authorization_code`
-    /// - `code`: 授权码
-    /// - `client_id`: [`KeycloakConfig::client_id`]
-    /// - `redirect_uri`: [`KeycloakConfig::redirect_uri`]
-    /// - 鉴权字段：
-    /// - 调用过 [`with_pkce`](Self::with_pkce)：追加 `code_verifier`，跳过 `client_secret`
-    /// - 仅配置 `client_secret`：追加 `client_secret`
-    /// - 两者均无：返回 [`GarrisonError::Config`]（public client 必须使用 PKCE）
-    ///
-    /// # 错误
-    ///
-    /// - `GarrisonError::Network`: HTTP 请求失败、非 2xx 状态码或 JSON 解析失败。
-    /// - `GarrisonError::InvalidParam`: `code` 为空。
-    /// - `GarrisonError::Config`: `client_secret=None` 且未调用 [`with_pkce`](Self::with_pkce)
-    /// （public client 必须使用 PKCE 鉴权）。
+    /// `code` 为空返回 `InvalidParam`；`client_secret=None` 且未 with_pkce 返回 `Config`（public client 必须用 PKCE）；
+    /// 请求失败/非 2xx/解析失败返回 `Network`。
     pub async fn exchange_code(&self, code: &str) -> GarrisonResult<KeycloakTokenSet> {
         if code.is_empty() {
             return Err(GarrisonError::InvalidParam(loc!(
@@ -670,10 +470,7 @@ impl KeycloakProvider {
             ("redirect_uri", &self.config.redirect_uri),
         ];
 
-        // 鉴权方式选择：
-        // - 设置了 PKCE verifier：使用 code_verifier，跳过 client_secret
-        // - 仅设置了 client_secret：使用 client_secret
-        // - 两者均无：返回错误（public client 必须调用 with_pkce）
+        // 鉴权方式：有 PKCE verifier 用 code_verifier（跳过 client_secret）；仅 client_secret 用之；两者皆无报错
         match (&self.pkce_verifier, &self.config.client_secret) {
             (Some(verifier), _) => form.push(("code_verifier", verifier.as_str())),
             (None, Some(secret)) => form.push(("client_secret", secret.as_str())),
@@ -724,19 +521,9 @@ mod tests {
     use super::*;
     use crate::dao::InMemoryDao;
 
-    // ========================================================================
-    // ========================================================================
+    // KeycloakConfig 构造 + discovery_url
 
-    /// `KeycloakConfig` 构造 + `discovery_url()` 返回正确 URL
-    ///
-    /// Red 阶段：`KeycloakConfig` 类型不存在 → 编译失败。
-    /// 定义 `KeycloakConfig` + `discovery_url()` 后测试通过。
-    ///
-    /// # 测试流程
-    ///
-    /// 1. 构造 `KeycloakConfig { base_url, client_id, client_secret: None, redirect_uri }`
-    /// 2. 断言四个字段可读且值正确
-    /// 3. 断言 `discovery_url()` 返回 `{base_url}/.well-known/openid-configuration`
+    /// `KeycloakConfig` 构造后字段可读，`discovery_url()` 返回 `{base_url}/.well-known/openid-configuration`。
     #[test]
     fn keycloak_config_constructs_with_base_url_client_id() {
         let config = KeycloakConfig {
@@ -761,23 +548,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // discover Red-
-    // ========================================================================
+    // discover
 
-    /// `KeycloakProvider::discover` 从 `/.well-known/openid-configuration`
-    /// 拉取 OIDC discovery metadata。
-    ///
-    /// Red 阶段：`KeycloakProvider` / `OidcDiscoveryMetadata` 类型不存在 → 编译失败。
-    /// 定义 struct + discover 方法后测试通过。
-    ///
-    /// # 测试流程
-    ///
-    /// 1. 启动 wiremock MockServer，挂载 `GET /.well-known/openid-configuration`
-    /// 返回标准 OIDC discovery JSON（含 issuer / authorization_endpoint / token_endpoint / jwks_uri）
-    /// 2. 用 mock server URI 作为 base_url 构造 `KeycloakConfig`
-    /// 3. 构造 `KeycloakProvider::new(config)`，调用 `discover().await?`
-    /// 4. 断言返回 `OidcDiscoveryMetadata` 的四个字段值正确
+    /// `discover` 从 `/.well-known/openid-configuration` 拉取 metadata，返回 issuer / authorization_endpoint / token_endpoint / jwks_uri。
     #[tokio::test]
     async fn keycloak_provider_discover_fetches_metadata_from_well_known() {
         use wiremock::matchers::{method, path};
@@ -820,25 +593,9 @@ mod tests {
         assert_eq!(metadata.jwks_uri, jwks_uri);
     }
 
-    // ========================================================================
-    // verify_id_token Red-
-    // ========================================================================
+    // verify_id_token
 
-    /// `KeycloakProvider::verify_id_token` 用 JWKS 公钥验签 id_token
-    /// 并解析 Keycloak 特有 claim。
-    ///
-    /// Red 阶段：`KeycloakClaims` 类型不存在 → 编译失败。
-    /// 定义 struct + verify_id_token 方法后测试通过。
-    ///
-    /// # 测试流程
-    ///
-    /// 1. 生成 RSA 2048 测试密钥对
-    /// 2. 提取公钥 n/e 模数编码为 base64url（JWKS 格式）
-    /// 3. 用私钥签发 JWT（header 含 kid=key1，claims 含 sub/preferred_username/
-    /// realm_access.roles/resource_access.account.roles/aud/iss）
-    /// 4. mock JWKS endpoint 返回公钥集合
-    /// 5. 调用 `verify_id_token(id_token).await?`
-    /// 6. 断言返回 `KeycloakClaims` 的 `sub` 与 `realm_access.roles` 正确
+    /// `verify_id_token` 用 JWKS 公钥验签 id_token 并解析 Keycloak 特有 claim（sub / realm_access.roles 等）。
     #[tokio::test]
     async fn keycloak_provider_verify_id_token_validates_signature_and_claims() {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -851,19 +608,16 @@ mod tests {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
-        // 1. 生成 RSA 2048 测试密钥对
         // rsa 0.9 基于 rand_core 0.6，rand 0.10 的 RNG trait 不兼容，用 rsa::rand_core::OsRng
         let mut rng = rsa::rand_core::OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
         let public_key = RsaPublicKey::from(&private_key);
 
-        // 2. 提取公钥 n/e 模数编码为 base64url（JWKS 格式）
         let n_bytes = public_key.n().to_bytes_be();
         let e_bytes = public_key.e().to_bytes_be();
         let n_b64 = URL_SAFE_NO_PAD.encode(n_bytes);
         let e_b64 = URL_SAFE_NO_PAD.encode(e_bytes);
 
-        // 3. 用私钥签发 JWT（header 含 kid=key1）
         // jsonwebtoken 10 的 EncodingKey::from_rsa_der 期望 PKCS#1 DER（非 PKCS#8）
         let der = private_key.to_pkcs1_der().expect("转 PKCS#1 DER 应成功");
         let encoding_key = EncodingKey::from_rsa_der(der.as_bytes());
@@ -887,7 +641,7 @@ mod tests {
         let mut header = Header::new(Algorithm::RS256);
         header.kid = Some("key1".to_string());
 
-        // exp 设为当前时间 + 3600 秒（1 小时后过期，确保 validate_exp 通过）
+        // exp = now + 3600，确保 validate_exp 通过
         let exp = (std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("系统时间应早于 UNIX_EPOCH")
@@ -924,7 +678,6 @@ mod tests {
             .mount(&server)
             .await;
 
-        // 5. 构造 KeycloakProvider 并调用 verify_id_token
         let config = KeycloakConfig {
             base_url: server.uri(),
             client_id: "garrison-rp".into(),
@@ -940,26 +693,13 @@ mod tests {
             .await
             .expect("verify_id_token 应返回 Ok");
 
-        // 6. 断言 KeycloakClaims 字段
         assert_eq!(keycloak_claims.sub, "user-123");
         assert_eq!(keycloak_claims.realm_access.roles, vec!["user", "admin"]);
     }
 
-    // ========================================================================
-    // exchange_code Red-
-    // ========================================================================
+    // exchange_code
 
-    /// `KeycloakProvider::exchange_code` 用授权码换取 token set
-    ///
-    /// Red 阶段：`KeycloakTokenSet` 类型 / `exchange_code` 方法不存在 → 编译失败。
-    /// 定义 struct + exchange_code 方法后测试通过。
-    ///
-    /// # 测试流程
-    ///
-    /// 1. 启动 wiremock MockServer，挂载 `POST /protocol/openid-connect/token`
-    /// 返回标准 token 响应 JSON
-    /// 2. 构造 `KeycloakProvider`，调用 `exchange_code("code").await?`
-    /// 3. 断言返回 `KeycloakTokenSet` 含 access_token / refresh_token / id_token / expires_in
+    /// `exchange_code` 用授权码换取 token set（POST token endpoint，断言 access_token / refresh_token / id_token / expires_in）。
     #[tokio::test]
     async fn keycloak_provider_exchange_code_returns_token_set() {
         use wiremock::matchers::{body_string, method, path};
@@ -1001,21 +741,9 @@ mod tests {
         assert_eq!(token_set.expires_in, 3600);
     }
 
-    // ========================================================================
-    // - 过期 id_token 被拒绝（已实现于 ，此为回归测试）
-    // ========================================================================
+    // 过期 id_token 被拒绝（回归测试）
 
-    /// 回归测试: `verify_id_token` 拒绝已过期的 id_token
-    ///
-    /// 的 `verify_id_token` 实现已含 `validate_exp = true` +
-    /// `ExpiredSignature` → `InvalidToken("token expired")` 映射。
-    /// 本测试验证该行为，确保过期 token 不会被误判为有效。
-    ///
-    /// # 测试流程
-    ///
-    /// 1. 生成 RSA 密钥对，签发一个 `exp` 已过期的 ID Token（aud/iss 正确以隔离 exp 校验）
-    /// 2. mock JWKS endpoint 返回公钥
-    /// 3. 调用 `verify_id_token`，断言返回 `GarrisonError::InvalidToken("token expired")`
+    /// 回归测试：`verify_id_token` 拒绝已过期的 id_token（validate_exp + ExpiredSignature → InvalidToken 映射）。
     #[tokio::test]
     async fn keycloak_provider_rejects_expired_id_token() {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -1028,7 +756,6 @@ mod tests {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
-        // 1. 生成 RSA 密钥对 + 签发过期 JWT
         let mut rng = rsa::rand_core::OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
         let public_key = RsaPublicKey::from(&private_key);
@@ -1056,7 +783,7 @@ mod tests {
         let mut header = Header::new(Algorithm::RS256);
         header.kid = Some("key1".to_string());
 
-        // exp 设为当前时间 - 3600 秒（1 小时前已过期）
+        // exp = now - 3600（已过期）
         let exp = (std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("系统时间应早于 UNIX_EPOCH")
@@ -1089,8 +816,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        // 3. 调用 verify_id_token，断言返回 InvalidToken（启用 i18n 时消息本地化，
-        // 关闭 i18n 时回退到 fallback 字面量，故用 contains 兼容两种构建）
+        // i18n 启用时错误消息本地化、关闭时回退 fallback 字面量，断言用 contains 兼容两种构建
         let config = KeycloakConfig {
             base_url: server.uri(),
             client_id: "garrison-rp".into(),
@@ -1115,20 +841,9 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // aud/iss 校验测试
-    // ========================================================================
 
-    /// 测试 1：`verify_id_token` 拒绝 aud 不匹配 client_id 的 id_token
-    ///
-    /// 启用 `validate_aud = true` + `set_audience(&[client_id])` 后，
-    /// aud 不包含 client_id 的 token 应返回 `InvalidToken("invalid audience")`。
-    ///
-    /// # 测试流程
-    ///
-    /// 1. 生成 RSA 密钥对，签发 aud="wrong-audience"（不匹配 client_id="garrison-rp"）的 JWT
-    /// 2. mock JWKS endpoint 返回公钥
-    /// 3. 调用 `verify_id_token`，断言返回 `InvalidToken` 且消息含 "audience"
+    /// `verify_id_token` 拒绝 aud 不匹配 client_id 的 id_token（validate_aud + set_audience(client_id) → InvalidToken）。
     #[tokio::test]
     async fn keycloak_verify_id_token_rejects_wrong_audience() {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -1223,16 +938,7 @@ mod tests {
         }
     }
 
-    /// 测试 2：`verify_id_token` 拒绝 iss 不匹配 expected_iss 的 id_token
-    ///
-    /// 启用 `set_issuer(&[expected_iss])` 后，
-    /// iss 不等于 expected_iss 的 token 应返回 `InvalidToken("invalid issuer")`。
-    ///
-    /// # 测试流程
-    ///
-    /// 1. 生成 RSA 密钥对，签发 iss="https://wrong-issuer.example.com"（不匹配 expected_iss）的 JWT
-    /// 2. mock JWKS endpoint 返回公钥
-    /// 3. 调用 `verify_id_token`，断言返回 `InvalidToken` 且消息含 "issuer"
+    /// `verify_id_token` 拒绝 iss 不匹配 expected_iss 的 id_token（set_issuer(expected_iss) → InvalidToken）。
     #[tokio::test]
     async fn keycloak_verify_id_token_rejects_wrong_issuer() {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -1327,17 +1033,7 @@ mod tests {
         }
     }
 
-    /// 测试 3：`verify_id_token` 接受 aud 为数组形式（包含 client_id）的 id_token
-    ///
-    /// RFC 7519 §4.1.3 规定 aud 可以是 String 或 Vec<String>。
-    /// Keycloak 实际签发的 token 中 aud 常为数组（如 `["garrison-rp", "account"]`）。
-    /// 本测试验证 `serde_json::Value` 反序列化 + `validate_aud` 能正确处理数组形式。
-    ///
-    /// # 测试流程
-    ///
-    /// 1. 生成 RSA 密钥对，签发 aud=`["garrison-rp", "account"]`（数组含 client_id）的 JWT
-    /// 2. mock JWKS endpoint 返回公钥
-    /// 3. 调用 `verify_id_token`，断言返回 `Ok` 且 `sub` 正确
+    /// `verify_id_token` 接受 aud 为数组（含 client_id）的 id_token：RFC 7519 §4.1.3 允许数组，Keycloak 常签发 `["garrison-rp", "account"]`。
     #[tokio::test]
     async fn keycloak_verify_id_token_accepts_aud_array() {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -1428,24 +1124,9 @@ mod tests {
         assert_eq!(keycloak_claims.realm_access.roles, vec!["user", "admin"]);
     }
 
-    // ========================================================================
-    // PKCE (RFC 7636) Red-
-    // ========================================================================
+    // PKCE (RFC 7636)
 
-    /// 测试 1：`with_pkce` 设置有效 verifier 后，`exchange_code` 请求体包含 `code_verifier`
-    ///
-    ///
-    /// Red 阶段：`with_pkce` 方法体为 `(未实现占位)` → 调用时 panic。
-    /// 实现 `with_pkce` 后测试通过。
-    ///
-    /// # 测试流程
-    ///
-    /// 1. 构造 `KeycloakConfig`（`client_secret: None`）
-    /// 2. `KeycloakProvider::new(config)?.with_pkce(VALID_VERIFIER)?`
-    /// 3. mock token endpoint 返回 200 + 标准 token set
-    /// 4. 调用 `exchange_code("code").await?`
-    /// 5. 断言返回 `KeycloakTokenSet`
-    /// 6. 断言收到的请求体包含 `code_verifier=`，不包含 `client_secret=`
+    /// `with_pkce` 设置有效 verifier 后 `exchange_code` 请求体含 `code_verifier=` 且不含 `client_secret=`。
     #[tokio::test]
     async fn keycloak_pkce_flow_succeeds_with_valid_verifier() {
         use wiremock::matchers::{method, path};
@@ -1501,11 +1182,7 @@ mod tests {
         );
     }
 
-    /// 测试 2：`with_pkce` 传入无效 verifier（长度 < 43）返回 `InvalidParam` 错误
-    ///
-    ///
-    /// Red 阶段：`with_pkce` 方法体为 `(未实现占位)` → 调用时 panic（非预期 InvalidParam）。
-    /// 实现校验后返回 `InvalidParam` 错误。
+    /// `with_pkce` 传入无效 verifier（长度 < 43，RFC 7636 §4.1 下限）返回 `InvalidParam`。
     #[test]
     fn keycloak_pkce_flow_fails_on_invalid_verifier() {
         let config = KeycloakConfig {
@@ -1535,18 +1212,7 @@ mod tests {
         }
     }
 
-    /// 测试 3：`client_secret=None` 且未调用 `with_pkce`，`exchange_code` 返回错误
-    ///
-    ///
-    /// Red 阶段：`exchange_code` 现有实现只检查 `client_secret.is_some()`，
-    /// `client_secret=None` 时直接跳过 secret 字段，不返回错误 → 测试失败。
-    /// 在 `exchange_code` 中校验鉴权方式后测试通过。
-    ///
-    /// # 测试流程
-    ///
-    /// 1. 构造 `KeycloakConfig`（`client_secret: None`）
-    /// 2. 不调用 `with_pkce`
-    /// 3. 调用 `exchange_code("code")`，断言返回 `Err(Config)`
+    /// `client_secret=None` 且未调用 `with_pkce` 时 `exchange_code` 返回 `Config` 错误，且在发送 HTTP 请求前失败。
     #[tokio::test]
     async fn keycloak_without_client_secret_and_without_pkce_returns_error() {
         use wiremock::matchers::{method, path};
@@ -1597,20 +1263,7 @@ mod tests {
         );
     }
 
-    /// 测试 4：同时配置 `client_secret` 和 PKCE 时，`exchange_code` 使用 PKCE 鉴权
-    ///
-    ///
-    /// Red 阶段：`with_pkce` 方法体为 `(未实现占位)` → 调用时 panic。
-    /// 实现 PKCE 优先级逻辑后测试通过。
-    ///
-    /// # 测试流程
-    ///
-    /// 1. 构造 `KeycloakConfig`（`client_secret: Some("secret123")`）
-    /// 2. `with_pkce(VALID_VERIFIER)?`
-    /// 3. mock token endpoint 返回 200
-    /// 4. 调用 `exchange_code("code").await?`
-    /// 5. 断言返回 `KeycloakTokenSet`
-    /// 6. 断言请求体包含 `code_verifier=`，不包含 `client_secret=`
+    /// 同时配置 `client_secret` 与 PKCE 时 `exchange_code` 使用 PKCE（请求体含 `code_verifier=`、不含 `client_secret=`）。
     #[tokio::test]
     async fn keycloak_with_pkce_overrides_client_secret_auth() {
         use wiremock::matchers::{method, path};
@@ -1663,14 +1316,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // Keycloak 异常消息 i18n（feature = "i18n"）
-    //
-    // 验证 keycloak 的 loc! 宏在中英文 locale 下返回正确翻译。
-    // 直接调用 loc! 宏避免依赖 HTTP mock，聚焦 i18n 翻译正确性。
-    // ========================================================================
+    // Keycloak 异常消息 i18n（feature = "i18n"）：直接调用 loc! 宏验证中英文翻译
 
-    /// i18n 测试 6：zh locale 下 keycloak-token-expired 返回中文消息（无参数）。
+    /// zh locale 下 keycloak-token-expired 返回中文消息（无参数）。
     #[cfg(feature = "i18n")]
     #[test]
     fn loc_i18n_keycloak_token_expired_zh() {
@@ -1680,7 +1328,7 @@ mod tests {
         assert_eq!(msg, "token 已过期");
     }
 
-    /// i18n 测试 7：en locale 下 keycloak-token-expired 返回英文消息（无参数）。
+    /// en locale 下 keycloak-token-expired 返回英文消息（无参数）。
     #[cfg(feature = "i18n")]
     #[test]
     fn loc_i18n_keycloak_token_expired_en() {
@@ -1690,7 +1338,7 @@ mod tests {
         assert_eq!(msg, "Token expired");
     }
 
-    /// i18n 测试 8：zh locale 下 keycloak-jwks-key-not-found 带 kid 参数返回中文。
+    /// zh locale 下 keycloak-jwks-key-not-found 带 kid 参数返回中文。
     #[cfg(feature = "i18n")]
     #[test]
     fn loc_i18n_keycloak_jwks_key_not_found_with_kid_zh() {
@@ -1713,15 +1361,9 @@ mod tests {
         assert_eq!(KeycloakProvider::sanitize_kid(&long).len(), 128);
     }
 
-    // ========================================================================
     // E1: reqwest 客户端超时（KeycloakProvider 复用 protocol::oauth2::client）
-    // ========================================================================
 
-    /// E1 回归测试：KeycloakProvider::new 使用带超时的 HTTP 客户端。
-    ///
-    /// 验证 `build_safe_http_client()` 通过 `KeycloakProvider::new` 正常注入。
-    /// 不直接断言 timeout 值（reqwest 不暴露运行时内省），由 client.rs 的
-    /// `e1_read_timeout_triggers_on_slow_server` 行为测试覆盖。
+    /// E1 回归测试：`KeycloakProvider::new` 经 `build_safe_http_client()` 注入带超时的 HTTP 客户端（超时值由 client.rs 行为测试覆盖）。
     #[test]
     fn e1_keycloak_provider_new_uses_safe_http_client() {
         let config = KeycloakConfig {
@@ -1735,13 +1377,9 @@ mod tests {
         assert!(provider.is_ok(), "KeycloakProvider::new 必须成功");
     }
 
-    // ========================================================================
     // E2: 响应体大小限制（KeycloakProvider discover/fetch_jwks/exchange_code）
-    // ========================================================================
 
-    /// E2 集成测试：KeycloakProvider::discover 拒绝超大 discovery JSON。
-    ///
-    /// wiremock 返回 5 MiB 的 discovery JSON，验证 discover() 返回 Err。
+    /// E2 集成测试：`discover` 拒绝 5 MiB 的 discovery JSON（返回 Err）。
     #[tokio::test]
     async fn e2_keycloak_discover_rejects_oversized_response() {
         use wiremock::matchers::{method, path};
@@ -1772,9 +1410,7 @@ mod tests {
         assert!(result.is_err(), "超大 discovery JSON 必须被拒绝");
     }
 
-    /// E2 集成测试：KeycloakProvider::exchange_code 拒绝超大 token 响应。
-    ///
-    /// wiremock 返回 5 MiB 的 token JSON，验证 exchange_code() 返回 Err。
+    /// E2 集成测试：`exchange_code` 拒绝 5 MiB 的 token JSON（返回 Err）。
     #[tokio::test]
     async fn e2_keycloak_exchange_code_rejects_oversized_response() {
         use wiremock::matchers::{method, path};

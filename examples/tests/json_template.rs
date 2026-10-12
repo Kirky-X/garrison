@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! json_template 示例测试。
-//!
-//! 验证 run() 完整执行（内部已包含 JSON render/serialize 断言）。
+//! json_template 示例测试：验证 run() 完整执行（内部已包含 JSON render/serialize 断言）。
 
 use garrison_examples::infrastructure::json_template;
 

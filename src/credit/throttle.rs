@@ -3,38 +3,36 @@
 
 //! 高频活跃度写路径节流聚合器。
 //!
-//! [`ActivityWriteThrottle`] 为「幂等心跳特征」的落库路径提供去抖窗口：
-//! 同 key 在 debounce 窗口内仅首次入队（后续调用直接去重返回，不产生新落库），
-//! 条目到期后由后台 `tokio::interval` 批量落库。
+//! [`ActivityWriteThrottle`] 为「幂等心跳特征」的落库路径提供去抖窗口：同 key 在
+//! debounce 窗口内仅首次入队（后续调用直接去重返回，不产生新落库），条目到期后由后台
+//! `tokio::interval` 批量落库。
 //!
 //! # 语义契约
 //!
-//! - **去抖窗口**：条目自入队起存活一个 debounce 窗口；窗口内同 key 的后续
-//!   活跃度全部去重（不落库），窗口到期后条目被 flush 落库并移除，窗口外
-//!   的下一次活跃度重新入队、再次落库。
-//! - **有界与丢弃显性化**：待落库条目数受 `max_size` 约束；容量满时新 key
-//!   非阻塞丢弃（record 为同步调用，绝不阻塞落库调用方），丢弃 = 跳过本次
-//!   落库，`tracing::warn!` 显性记录并递增丢弃计数（不静默）；被丢弃 key
-//!   未占用条目，容量释放后（窗口外）可恢复落库。
-//! - **批量 flush 与防泄漏**：后台 flush 循环每个 debounce 周期将全部到期
-//!   条目批量落库并清理；条目带截止时间（入队时间 + debounce），flush 只
-//!   处理到期条目——即使长期不落库，条目数也受 `max_size` 硬约束，到期
-//!   flush 保证已入队条目最终被清理，不泄漏。
-//! - **写超时**：flush 对每次落库写施加 timeout 上限（[`ActivityWriteThrottle::run_flush_loop`](crate::credit::throttle::ActivityWriteThrottle::run_flush_loop)
-//!   后台任务串行执行，单条挂起不阻塞消费调用方）；写失败/超时的条目同样
-//!   被清理并以 warn 显性化（不重试占用容量，窗口外活跃度重新入队）。
-//! - **可观测**：每次丢弃即时 warn；后台循环每个周期对窗口内丢弃做汇总
-//!   warn（累计丢弃数可从日志检索）。
-//! - **进程退出不持久化**：待落库条目仅存于内存，进程退出即丢失。活跃度
-//!   写路径为幂等心跳语义（下次活跃度会重新写入），可接受。
-//! - **窗口内快照语义**：窗口内仅首次入队的载荷会被落库（后续去重调用不
-//!   覆盖），落库记录是窗口内首次活跃度的快照而非窗口末态。
+//! - **去抖窗口**：条目自入队起存活一个 debounce 窗口；窗口内同 key 的后续活跃度全部
+//!   去重（不落库），窗口到期后条目被 flush 落库并移除，窗口外的下一次活跃度重新入队、
+//!   再次落库。
+//! - **有界与丢弃显性化**：待落库条目数受 `max_size` 约束；容量满时新 key 非阻塞丢弃
+//!   （record 为同步调用，绝不阻塞落库调用方），丢弃 = 跳过本次落库，`tracing::warn!`
+//!   显性记录并递增丢弃计数（不静默）；被丢弃 key 未占用条目，容量释放后（窗口外）可
+//!   恢复落库。
+//! - **批量 flush 与防泄漏**：后台 flush 循环每个 debounce 周期将全部到期条目批量落库
+//!   并清理；条目带截止时间（入队时间 + debounce），flush 只处理到期条目——即使长期不
+//!   落库，条目数也受 `max_size` 硬约束，到期 flush 保证已入队条目最终被清理，不泄漏。
+//! - **写超时**：flush 对每次落库写施加 timeout 上限，后台任务串行执行，单条挂起不阻塞
+//!   消费调用方；写失败/超时的条目同样被清理并以 warn 显性化（不重试占用容量，窗口外
+//!   活跃度重新入队）。
+//! - **可观测**：每次丢弃即时 warn；后台循环每个周期对窗口内丢弃做汇总 warn（累计丢弃
+//!   数可从日志检索）。
+//! - **进程退出不持久化**：待落库条目仅存于内存，进程退出即丢失。活跃度写路径为幂等
+//!   心跳语义（下次活跃度会重新写入），可接受。
+//! - **窗口内快照语义**：窗口内仅首次入队的载荷会被落库（后续去重调用不覆盖），落库
+//!   记录是窗口内首次活跃度的快照而非窗口末态。
 //!
 //! # 容量边界的并发声明
 //!
-//! 容量检查与插入为两次同步操作，多线程竞争下实际条目数可能短暂越过
-//! `max_size` 软上限一个写线程的窗口（单线程/单任务语义下精确）；硬性
-//! 保证以不做阻塞为前提（入队路径绝不等待）。
+//! 容量检查与插入为两次同步操作，多线程竞争下实际条目数可能短暂越过 `max_size` 软上限
+//! 一个写线程的窗口（单线程/单任务语义下精确）；硬性保证以不做阻塞为前提（入队路径绝不等待）。
 //!
 //! # 常量出处
 //!
@@ -83,13 +81,11 @@ struct ThrottleEntry<W> {
 
 /// 高频活跃度写路径节流聚合器。
 ///
-/// 同 key 在去抖窗口内仅保留首条待落库载荷（后续调用去重）；后台
-/// [`ActivityWriteThrottle::run_flush_loop`](crate::credit::throttle::ActivityWriteThrottle::run_flush_loop) 每个周期批量落库到期 key。待落库条目数受
-/// `max_size` 约束，超限时非阻塞丢弃并 `tracing::warn!` 计数显性化
-/// （丢弃 = 跳过本次落库，窗口外重写，不静默）。
-///
-/// 设计决策与语义契约详见模块文档。三常量量级出处：pomerium
-/// `authorize/access_tracker.go:20-24`。
+/// 同 key 在去抖窗口内仅保留首条待落库载荷（后续调用去重），后台
+/// [`ActivityWriteThrottle::run_flush_loop`](crate::credit::throttle::ActivityWriteThrottle::run_flush_loop)
+/// 每个周期批量落库到期 key；待落库条目数受 `max_size` 约束，超限时非阻塞丢弃并
+/// `tracing::warn!` 计数显性化（丢弃 = 跳过本次落库，窗口外重写，不静默）。语义契约
+/// 详见模块文档。
 pub struct ActivityWriteThrottle<W> {
     /// 待落库条目（key → 载荷 + 截止时间）。
     entries: DashMap<String, ThrottleEntry<W>>,
@@ -126,12 +122,11 @@ impl<W: std::fmt::Display + Send + Sync + 'static> ActivityWriteThrottle<W> {
 
     /// 记录一次活跃度（同步、非阻塞，绝不等待落库）。
     ///
-    /// - 同 key 窗口内已有条目 → 去重（返回 [`RecordOutcome::Deduplicated`]，
-    ///   落库的载荷保持窗口内首次快照；窗口锚定首次入队时间，去重不刷新
-    ///   截止时间——持续活跃的 key 仍按窗口周期出账，不会因滑动窗口饿死）；
-    /// - 新 key 且容量未满 → 入队（截止时间 = now + debounce）；
-    /// - 新 key 且容量满 → 非阻塞丢弃（返回 [`RecordOutcome::Dropped`]），
-    ///   丢弃计数递增并 `tracing::warn!` 显性化。
+    /// 同 key 窗口内已有条目 → 去重（返回 [`RecordOutcome::Deduplicated`]，落库的载荷
+    /// 保持窗口内首次快照；窗口锚定首次入队时间，去重不刷新截止时间——持续活跃的 key
+    /// 仍按窗口周期出账，不会因滑动窗口饿死）；新 key 且容量未满 → 入队（截止时间 =
+    /// now + debounce）；新 key 且容量满 → 非阻塞丢弃（返回 [`RecordOutcome::Dropped`]），
+    /// 丢弃计数递增并 `tracing::warn!` 显性化。
     pub fn record(&self, key: &str, payload: W) -> RecordOutcome {
         if self.entries.contains_key(key) {
             return RecordOutcome::Deduplicated;
@@ -143,7 +138,8 @@ impl<W: std::fmt::Display + Send + Sync + 'static> ActivityWriteThrottle<W> {
                 payload = %payload,
                 max_size = self.max_size,
                 dropped_total = total,
-                "credit: 活跃度节流容量满，丢弃本次落库（窗口外重写）"
+                "{}",
+                crate::i18n::translate_detail("logs-credit-throttle-capacity-full", &[])
             );
             return RecordOutcome::Dropped;
         }
@@ -159,9 +155,8 @@ impl<W: std::fmt::Display + Send + Sync + 'static> ActivityWriteThrottle<W> {
 
     /// 批量落库全部到期条目，返回处理的条目数（含写失败条目，均已清理）。
     ///
-    /// 截止时间清理防泄漏：只处理 `deadline <= now` 的条目；单条写施加
-    /// `timeout` 上限（写失败/超时的条目同样清理并以 `tracing::warn!`
-    /// 显性化，不重试占用容量）。
+    /// 只处理 `deadline <= now` 的条目（截止时间清理防泄漏）；单条写施加 `timeout` 上限
+    /// （写失败/超时的条目同样清理并以 `tracing::warn!` 显性化，不重试占用容量）。
     pub async fn flush_due<F, Fut, E>(&self, write: F) -> usize
     where
         F: Fn(String, W) -> Fut,
@@ -194,14 +189,16 @@ impl<W: std::fmt::Display + Send + Sync + 'static> ActivityWriteThrottle<W> {
                         key = %key,
                         error = %e,
                         timeout_secs = self.timeout.as_secs(),
-                        "credit: 活跃度落库写失败（条目已清理，窗口外活跃度重新入队）"
+                        "{}",
+                        crate::i18n::translate_detail("logs-credit-throttle-write-failed", &[])
                     );
                 },
                 Err(_) => {
                     tracing::warn!(
                         key = %key,
                         timeout_secs = self.timeout.as_secs(),
-                        "credit: 活跃度落库写超时（条目已清理，窗口外活跃度重新入队）"
+                        "{}",
+                        crate::i18n::translate_detail("logs-credit-throttle-write-timeout", &[])
                     );
                 },
             }
@@ -211,10 +208,9 @@ impl<W: std::fmt::Display + Send + Sync + 'static> ActivityWriteThrottle<W> {
 
     /// 后台 flush 循环：每个去抖周期批量落库到期 key 并汇总丢弃计数。
     ///
-    /// 周期 = debounce；首 tick 即刻触发一次（此时条目未到期，为无操作）。
-    /// 每周期汇总窗口内丢弃：累计丢弃数 > 上次已报告值时 `tracing::warn!`
-    /// 输出增量（可从日志检索）。进程退出不持久化：待落库条目丢失由幂等
-    /// 心跳语义兜底（下次活跃度重新写入）。
+    /// 周期 = debounce，首 tick 即刻触发一次（此时条目未到期，为无操作）；每周期汇总
+    /// 窗口内丢弃：累计丢弃数 > 上次已报告值时 `tracing::warn!` 输出增量（可从日志检索）。
+    /// 进程退出不持久化：待落库条目丢失由幂等心跳语义兜底（下次活跃度重新写入）。
     pub async fn run_flush_loop<F, Fut, E>(&self, write: F)
     where
         F: Fn(String, W) -> Fut,
@@ -233,7 +229,8 @@ impl<W: std::fmt::Display + Send + Sync + 'static> ActivityWriteThrottle<W> {
                     dropped_total = dropped,
                     new_dropped = dropped - reported_dropped,
                     debounce_secs = self.debounce.as_secs(),
-                    "credit: 活跃度节流窗口内丢弃汇总（丢弃=跳过本次落库，窗口外重写）"
+                    "{}",
+                    crate::i18n::translate_detail("logs-credit-throttle-window-dropped", &[])
                 );
                 reported_dropped = dropped;
             }
@@ -315,9 +312,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // 去抖窗口
-    // ========================================================================
 
     /// 同 key 窗口内仅首次入队（落库调用计数=1，窗口内首次快照落库）；
     /// 窗口外再次入队并再次落库。
@@ -382,9 +377,7 @@ mod tests {
         assert_eq!(log.lock()[0].1, 1, "落库为窗口内首次快照");
     }
 
-    // ========================================================================
     // 有界与丢弃显性化
-    // ========================================================================
 
     /// max_size 满时新 key 非阻塞丢弃（record 同步返回，跳过本次落库），
     /// 丢弃计数递增；被丢弃 key 在容量释放后的窗口外可恢复落库。
@@ -416,10 +409,9 @@ mod tests {
 
     /// 容量丢弃必须输出结构性 warn（含 key 与累计丢弃数），显性化不静默。
     ///
-    /// tracing interest 缓存是进程级全局态：并行运行的非订阅者测试可能抢先
-    /// 首次注册事件 callsite 并缓存 `Interest::never`（事件被宏直接剔除，与
-    /// 本线程订阅者无关，同 `web::request_id` 的 init_capture 先例）——故
-    /// set_default 后显式重建，捕获缺失时重建重试。
+    /// tracing interest 缓存是进程级全局态：并行运行的非订阅者测试可能抢先首次注册事件
+    /// callsite 并缓存 `Interest::never`（事件被宏直接剔除，与本线程订阅者无关，同
+    /// `web::request_id` 的 init_capture 先例）——故 set_default 后显式重建，捕获缺失时重建重试。
     #[tokio::test(start_paused = true)]
     #[serial_test::serial]
     async fn capacity_drop_emits_structured_warning() {
@@ -437,6 +429,8 @@ mod tests {
         tracing::callsite::rebuild_interest_cache();
 
         let mut lines = Vec::<String>::new();
+        // 丢弃文案按当前 locale 取值（不写死中文，locale 无关）
+        let dropped_msg = crate::i18n::translate_detail("logs-credit-throttle-capacity-full", &[]);
         for _ in 0..3 {
             let throttle = ActivityWriteThrottle::with_limits(1, DEBOUNCE, TIMEOUT);
             assert_eq!(throttle.record("first", 1), RecordOutcome::Recorded);
@@ -446,7 +440,7 @@ mod tests {
             lines = logs.lock().clone();
             if lines
                 .iter()
-                .any(|l| l.contains("丢弃") && l.contains("second") && l.contains("WARN"))
+                .any(|l| l.contains(&dropped_msg) && l.contains("second") && l.contains("WARN"))
             {
                 break;
             }
@@ -455,15 +449,13 @@ mod tests {
         assert!(
             lines
                 .iter()
-                .any(|l| l.contains("丢弃") && l.contains("second") && l.contains("WARN")),
+                .any(|l| l.contains(&dropped_msg) && l.contains("second") && l.contains("WARN")),
             "容量丢弃应输出含 key 的 warn，实际: {:?}",
             lines
         );
     }
 
-    // ========================================================================
     // 后台批量 flush（tokio::interval + pause 时钟）
-    // ========================================================================
 
     /// 后台 flush 循环：到期 key 批量落库（pause 时钟驱动，无真实 sleep），
     /// 首个周期（条目未到期）不得提前落库。
@@ -531,18 +523,17 @@ mod tests {
         settle().await;
 
         let lines = logs.lock();
+        let dropped_msg = crate::i18n::translate_detail("logs-credit-throttle-window-dropped", &[]);
         assert!(
             lines
                 .iter()
-                .any(|l| l.contains("丢弃") && l.contains("WARN")),
+                .any(|l| l.contains(&dropped_msg) && l.contains("WARN")),
             "后台循环应汇总窗口内丢弃，实际: {:?}",
             *lines
         );
     }
 
-    // ========================================================================
     // 写超时与写失败的显性化
-    // ========================================================================
 
     /// 单次落库写超时：挂起的写方不得卡死 flush，超时条目被清理并显性化。
     #[tokio::test(start_paused = true)]

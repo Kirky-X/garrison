@@ -5,12 +5,10 @@
 //!
 //! 部分虚拟化环境（Docker Desktop 的 WSL2 回环中继）会以低概率截断回环
 //! HTTP 连接——客户端侧表现为 `IncompleteMessage` / send error，与负载、
-//! 连接复用方式无关（裸 TCP 300 连发与本仓库同栈复现实验均无法稳定复现，
-//! 仅长程验收套件中偶发）。CI（GitHub runner）与裸机环境不受影响。
+//! 连接复用无关，仅长程验收套件中偶发；CI（GitHub runner）与裸机不受影响。
 //!
-//! [`SendRelayRetry::send_relay_retry`] 对传输层错误做有界重试（≤3 次，
-//! 100ms 退避）；任何已收到的响应（含 4xx/5xx）原样返回——业务状态码
-//! 断言语义完全不变，重试路径仅在传输抖动时触发。
+//! [`SendRelayRetry::send_relay_retry`] 对传输层错误有界重试（≤3 次、100ms
+//! 退避）；已收到的响应（含 4xx/5xx）原样返回，业务状态码断言语义不变。
 
 /// 回环中继抗抖动发送。
 pub(crate) trait SendRelayRetry {

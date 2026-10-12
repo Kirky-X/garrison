@@ -1,20 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 凭证模型 SPI 子模块（吸收 keycloak CredentialModel SPI）。
-//! 提供统一凭证抽象，支持 password / TOTP / WebAuthn等多种凭证类型。
-//! 详见 spec `credential-model`。
+//! 凭证模型 SPI 子模块（吸收 Keycloak CredentialModel SPI）：统一凭证抽象，支持 password / TOTP / WebAuthn 等。
 //!
-//! # 核心类型
-//!
-//! - `Credential` trait：统一凭证校验接口（对象安全，可作 `dyn Credential`）
-//! - `CredentialModel`：凭证存储模型（DAO 持久化结构，8 字段 schema）
-//! - `CredentialRepository` trait：凭证存储抽象（CRUD 5 方法）
-//!
-//! # 设计决策
-//!
-//! - `Credential::verify(&self, input: &str)` 接收 `&str` 而非泛型（对象安全）
-//! - `PasswordHasher` 位于本模块的 `password` 子模块
+//! 核心类型：`Credential` trait（统一校验接口）、`CredentialModel`（DAO 持久化结构，8 字段 schema）、
+//! `CredentialRepository` trait（CRUD 5 方法）。`Credential::verify` 接收 `&str` 而非泛型（对象安全）；
+//! `PasswordHasher` 位于 `password` 子模块。
 
 /// 密码哈希子模块。
 ///
@@ -32,10 +23,8 @@ pub use password::{Argon2Hasher, PasswordHasher, PasswordVerifier};
 #[cfg(all(feature = "account-credential", feature = "secure-totp"))]
 pub mod totp;
 
-/// 邮箱验证码凭证子模块（复用 `secure::email::EmailVerificationService`）。
-///
-/// 提供动态发送型验证码凭证：`secret_data` 存邮箱地址，验证委托
-/// `EmailVerificationService::verify_code`（KV 一次性消费 + 限速 + 异常检测）。
+/// 邮箱验证码凭证子模块（复用 `secure::email::EmailVerificationService`）：`secret_data` 存邮箱地址，
+/// 验证委托 `EmailVerificationService::verify_code`（KV 一次性消费 + 限速 + 异常检测）。
 ///
 /// 需同时启用 `account-credential` + `email-verification` feature。
 #[cfg(all(feature = "account-credential", feature = "email-verification"))]
@@ -51,28 +40,16 @@ use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-// ============================================================================
-// 类型别名
-// ============================================================================
-
 /// 凭证类型标识（字符串形式，如 `"password"` / `"totp"` / `"webauthn"`）。
 ///
 /// 使用 `&'static str` 而非 `String`：凭证类型在编译期已知，避免分配。
 pub type CredentialType = &'static str;
 
-// ============================================================================
-// Credential trait（统一凭证校验接口）
-// ============================================================================
-
-/// 凭证统一 trait（吸收 keycloak CredentialModel SPI）。
+/// 凭证统一 trait（吸收 Keycloak CredentialModel SPI）。
 ///
-/// 每种凭证类型（password / TOTP / WebAuthn）实现此 trait，提供统一的
-/// `credential_type()` / `to_model()` / `verify()` 接口。
-///
-/// # 对象安全
-///
-/// `verify` 接收 `&str` 而非泛型，保证 trait 对象安全，
-/// 可作 `Box<dyn Credential>` / `Arc<dyn Credential>` 使用。
+/// 每种凭证类型（password / TOTP / WebAuthn）提供统一的 `credential_type()` / `to_model()` /
+/// `verify()` 接口；`verify` 接收 `&str` 而非泛型，保证对象安全（可作 `Box<dyn Credential>` /
+/// `Arc<dyn Credential>`）。
 ///
 /// # 示例
 ///
@@ -90,47 +67,19 @@ pub trait Credential: Send + Sync {
     /// 转换为存储模型（序列化用于 DAO 持久化）。
     fn to_model(&self) -> CredentialModel;
 
-    /// 校验用户输入与存储凭证是否匹配。
-    ///
-    /// # 参数
-    /// - `input`: 用户输入（明文密码 / TOTP code / WebAuthn challenge JSON）
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 校验通过
-    /// - `Ok(false)`: 校验失败（凭证不匹配）
-    /// - `Err(_)`: 校验过程出错（如哈希格式不支持、DAO 故障）
+    /// 校验用户输入（明文密码 / TOTP code / WebAuthn challenge JSON）与存储凭证是否匹配；
+    /// `Ok(false)` 为凭证不匹配，`Err` 为校验过程出错（哈希格式不支持、DAO 故障）。
     async fn verify(&self, input: &str) -> GarrisonResult<bool>;
 }
 
-// ============================================================================
-// CredentialModel（凭证存储模型）
-// ============================================================================
-
-/// 凭证存储模型（DAO 持久化结构）。
+/// 凭证存储模型（DAO 持久化结构，8 字段 schema 锁定；经 serde 序列化为 JSON 存入 DAO）。
 ///
-/// 8 字段 schema（pre-1.0 锁定，与 design.md §3.1 严格一致）。
-/// 通过 `serde::Serialize` / `serde::Deserialize` 序列化为 JSON 存入 DAO。
-///
-/// # 字段说明
-///
-/// | 字段 | 类型 | 说明 |
-/// |:---|:---|:---|
-/// | `id` | `String` | 凭证 ID（UUID v4） |
-/// | `user_id` | `String` | 用户 ID（关联 login_id） |
-/// | `credential_type` | `String` | 凭证类型（`"password"` / `"totp"` / ...） |
-/// | `secret_data` | `String` | 凭证数据（hash / secret / public key，JSON 编码）。**敏感字段**：仅启用 `credential-zeroize` feature 时 drop 后自动清零（见 struct 级安全注意） |
-/// | `label` | `Option<String>` | 用户自定义标签（如 `"iPhone TOTP"`） |
-/// | `created_at` | `i64` | 创建时间（Unix 时间戳） |
-/// | `enabled` | `bool` | 是否启用 |
-/// | `priority` | `i32` | 优先级（多凭证时排序，小值优先） |
 /// # 安全注意（secret_data 默认不清零）
 ///
-/// `CredentialModel.secret_data` 存储密码哈希 / TOTP secret / WebAuthn 公钥等敏感
-/// 材料。`Zeroize` / `ZeroizeOnDrop` 仅在启用 **`credential-zeroize`** feature 时
-/// 派生——该 feature 是独立 opt-in，**不随 `account-credential` 自动启用**。
-/// 默认构建下，struct drop 后内存中的敏感数据不会被清零，存在内存残留
-/// （heapdump / 冷启动攻击）风险。高安全场景请显式启用 `credential-zeroize`，
-/// 或在业务层自行管理敏感数据生命周期。
+/// `secret_data` 存密码哈希 / TOTP secret / WebAuthn 公钥等敏感材料。`Zeroize` / `ZeroizeOnDrop`
+/// 仅在启用 `credential-zeroize` feature 时派生（独立 opt-in，不随 `account-credential` 自动启用）；
+/// 默认构建下 drop 后内存不清零，存在 heapdump / 冷启动残留风险，高安全场景请显式启用或在业务层
+/// 自行管理生命周期。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(
     feature = "credential-zeroize",
@@ -155,20 +104,14 @@ pub struct CredentialModel {
     pub priority: i32,
 }
 
-// ============================================================================
-// CredentialRepository trait（凭证存储抽象）
-// ============================================================================
-
-/// 凭证存储抽象（DAO 层接口）。
-///
-/// 5 方法 CRUD：`create` / `find_by_user` / `find_by_user_and_type` / `update` / `delete`。
-/// 由 `DaoCredentialRepository`基于 `GarrisonDao` 实现，也可由业务方自定义实现。
+/// 凭证存储抽象（DAO 层接口），CRUD 方法：`create` / `find_by_user` / `find_by_user_and_type` /
+/// `update` / `delete`；默认实现 `DaoCredentialRepository` 基于 `GarrisonDao`，也可由业务方自定义。
 ///
 /// # IDOR 防护
 ///
-/// `find_by_user` / `update` / `delete` 强制要求 `caller_login_id` 参数，由实现层验证
-/// `caller_login_id` 与目标凭证的 `user_id` 一致，否则返回 `GarrisonError::NotPermission`
-/// （HTTP 403 Forbidden）。`update` 额外禁止修改 `user_id` 字段（防止凭证跨用户转移）。
+/// `find_by_user` / `update` / `delete` 强制 `caller_login_id` 参数，实现层须验证其与目标凭证
+/// `user_id` 一致，否则返回 `GarrisonError::NotPermission`（403）；`update` 额外禁止修改 `user_id`
+/// （防凭证跨用户转移）。
 ///
 /// # DAO key 格式
 ///
@@ -186,43 +129,27 @@ pub struct CredentialModel {
 /// ```
 #[async_trait]
 pub trait CredentialRepository: Send + Sync {
-    /// 创建凭证。
-    ///
-    /// # 错误
-    /// - 凭证 ID 已存在：`GarrisonError::InvalidParam`
-    /// - DAO 故障：透传 `GarrisonError::Dao`
+    /// 创建凭证；凭证 ID 已存在返回 `InvalidParam`，DAO 故障透传。
     async fn create(&self, credential: CredentialModel) -> GarrisonResult<()>;
 
     /// 按 `user_id` 查询所有凭证（IDOR 防护：需 caller 身份校验）。
     ///
-    /// 实现层必须验证 `caller_login_id == user_id`，否则返回
-    /// `GarrisonError::NotPermission`。返回顺序按 `priority` 升序（小值优先）。
-    ///
-    /// # 错误
-    /// - `caller_login_id != user_id`：`GarrisonError::NotPermission`（403 Forbidden）
-    /// - DAO 故障：透传 `GarrisonError::Dao`
+    /// 实现层必须验证 `caller_login_id == user_id`，否则返回 `GarrisonError::NotPermission`；
+    /// 返回顺序按 `priority` 升序（小值优先）。
     async fn find_by_user(
         &self,
         caller_login_id: &str,
         user_id: &str,
     ) -> GarrisonResult<Vec<CredentialModel>>;
 
-    /// 按 `user_id` + `credential_type` 查询凭证。
-    ///
-    /// 在 `find_by_user` 基础上按 `credential_type` 字段过滤。
-    ///
-    /// # 安全语义（IDOR 设计决策 — 调用方责任）
+    /// 按 `user_id` + `credential_type` 查询凭证（在 `find_by_user` 基础上按类型过滤）。
     ///
     /// # Warning
     ///
-    /// 此方法**未显式接收 `caller_login_id`，实现层不做 caller-vs-owner 校验**：
-    /// 它是面向认证流程内部的受信接口，调用方必须保证在认证上下文中使用，
-    /// 确保 `user_id` 即为当前会话主体（如 `execute_login` / `execute_mfa` 内部调用）。
-    /// 将外部可控的 `user_id` 直接透传给本方法属于 IDOR 漏洞。
-    /// 面向外部请求的查询请使用带 caller 校验的 [`find_by_user`](Self::find_by_user)。
-    ///
-    /// 默认实现 (`DaoCredentialRepository`) 内部以 `find_by_user(user_id, user_id)` 调用，
-    /// 即假定 caller 即 user_id。
+    /// 此方法未显式接收 `caller_login_id`，实现层不做 caller-vs-owner 校验：它是面向认证流程内部
+    /// 的受信接口，调用方必须保证 `user_id` 即为当前会话主体（如 `execute_login` / `execute_mfa`
+    /// 内部调用），透传外部可控的 `user_id` 属 IDOR 漏洞；外部查询请用
+    /// [`find_by_user`](Self::find_by_user)。默认实现内部以 `find_by_user(user_id, user_id)` 调用。
     async fn find_by_user_and_type(
         &self,
         user_id: &str,
@@ -231,57 +158,30 @@ pub trait CredentialRepository: Send + Sync {
 
     /// 更新凭证（覆盖写，IDOR 防护：需 caller 身份校验）。
     ///
-    /// 实现层必须验证 `caller_login_id` 与既有凭证的 `user_id` 一致，
-    /// 且新 `credential.user_id` 不得改变（防止凭证跨用户转移），
-    /// 否则返回 `GarrisonError::NotPermission`。
-    ///
-    /// # 错误
-    /// - 凭证 ID 不存在：`GarrisonError::InvalidParam`
-    /// - `caller_login_id != 既有凭证.user_id`：`GarrisonError::NotPermission`
-    /// - `credential.user_id != 既有凭证.user_id`：`GarrisonError::NotPermission`（禁止转移）
-    /// - DAO 故障：透传 `GarrisonError::Dao`
+    /// 实现层必须验证 `caller_login_id` 与既有凭证 `user_id` 一致，且新 `credential.user_id`
+    /// 不得改变（防跨用户转移）；凭证 ID 不存在返回 `InvalidParam`，越权返回 `NotPermission`。
     async fn update(
         &self,
         caller_login_id: &str,
         credential: CredentialModel,
     ) -> GarrisonResult<()>;
 
-    /// 删除凭证（IDOR 防护：需 caller 身份校验）。
-    ///
-    /// 实现层必须先定位凭证，验证 `caller_login_id` 与凭证的 `user_id` 一致，
-    /// 否则返回 `GarrisonError::NotPermission`。
-    ///
-    /// # 错误
-    /// - 凭证 ID 不存在：`GarrisonError::InvalidParam`
-    /// - `caller_login_id != 凭证.user_id`：`GarrisonError::NotPermission`（403 Forbidden）
-    /// - DAO 故障：透传 `GarrisonError::Dao`
+    /// 删除凭证（IDOR 防护：需 caller 身份校验）：实现层须先定位凭证并验证 `caller_login_id`
+    /// 与凭证 `user_id` 一致（否则 `NotPermission`）；凭证 ID 不存在返回 `InvalidParam`。
     async fn delete(&self, caller_login_id: &str, credential_id: &str) -> GarrisonResult<()>;
 }
 
-// ============================================================================
-// DaoCredentialRepository（基于 GarrisonDao 的默认实现）
-// ============================================================================
-
-/// 基于 `GarrisonDao` 的 `CredentialRepository` 默认实现。
-///
-/// 凭证以 JSON 序列化存入 DAO，key 格式严格为 `cred:{user_id}:{cred_id}`，
-/// 永久存储（无 TTL，使用 `set_permanent`）。
-///
-/// # DAO key 格式
-///
-/// `cred:{user_id}:{cred_id}`（如 `cred:alice:550e8400-e29b-...`）
+/// 基于 `GarrisonDao` 的 `CredentialRepository` 默认实现：凭证以 JSON 序列化存入 DAO，
+/// key 严格为 `cred:{user_id}:{cred_id}`，永久存储（`set_permanent`，无 TTL）。
 ///
 /// # 已知限制
 ///
-/// - `find_by_user` / `find_by_user_and_type` / `delete` 依赖 `GarrisonDao::keys()`，
-///   `keys()` 的错误会原样向上传播（保持失败可见，不静默吞掉）。
-///   `GarrisonDaoOxcache` 默认**未启用** `dao-key-index` feature 时不实现 `keys()`
-///   （返回 `NotImplemented`）——生产环境需启用 `dao-key-index`，
-///   或使用支持 `keys()` 的 DAO 后端，或由业务方维护 key 索引。
-/// - `delete(caller_login_id, credential_id)` 通过扫描 `cred:*:{credential_id}` 定位
-///   完整 key（`credential_id` 为 UUID v4 全局唯一，理论上仅匹配一个 key），
-///   再反序列化校验 `user_id == caller_login_id` 后删除。
-///   异常多键场景下逐 key 处理：先删除的 key 不回滚（详见 repository_impl 模块文档）。
+/// - `find_by_user` / `find_by_user_and_type` / `delete` 依赖 `GarrisonDao::keys()`，其错误原样上抛
+///   （不静默）；`GarrisonDaoOxcache` 未启用 `dao-key-index` feature 时 `keys()` 返回 `NotImplemented`，
+///   生产环境需启用该 feature 或换支持 `keys()` 的后端，或自维护 key 索引。
+/// - `delete` 扫描 `cred:*:{credential_id}` 定位完整 key（UUID v4 全局唯一，理论上仅匹配一个），
+///   再反序列化校验 `user_id == caller_login_id` 后删除；异常多键场景逐 key 处理，先删的 key 不回滚
+///   （详见 repository_impl 模块文档）。
 pub struct DaoCredentialRepository {
     dao: Arc<dyn GarrisonDao>,
 }

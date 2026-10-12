@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 权限校验层测试（从 mod.rs 迁移）。
+//! 权限校验层测试。
 
 use super::mock::MockInterface;
 use super::*;
@@ -16,28 +16,23 @@ fn make_checker() -> PermissionCheckerDefault {
     PermissionCheckerDefault::new(interface_arc)
 }
 
-// ========================================================================
 // has_permission 测试
-// ========================================================================
 
-/// has_permission 持有权限返回 true（spec Scenario）。
+/// has_permission 持有权限返回 true。
 #[tokio::test]
 async fn has_permission_held_returns_true() {
     let checker = make_checker();
     assert!(checker.has_permission("1001", "user:read").await.unwrap());
 }
 
-/// has_permission 未持有权限返回 false（spec Scenario）。
+/// has_permission 未持有权限返回 false。
 #[tokio::test]
 async fn has_permission_not_held_returns_false() {
     let checker = make_checker();
     assert!(!checker.has_permission("1001", "user:delete").await.unwrap());
 }
 
-/// has_permission 空字符串返回 InvalidParam 错误（spec Scenario）。
-///
-/// 断言强度补强——锁定具体错误变体与错误码，
-/// 任意其他错误变体（NotPermission/Dao/...）不再能蒙混通过。
+/// has_permission 空字符串返回 InvalidParam 错误（锁定错误变体与错误码，防其他变体蒙混）。
 #[tokio::test]
 async fn has_permission_empty_string_returns_error() {
     let checker = make_checker();
@@ -49,28 +44,24 @@ async fn has_permission_empty_string_returns_error() {
     );
 }
 
-// ========================================================================
 // has_role 测试
-// ========================================================================
 
-/// has_role 持有角色返回 true（spec Scenario）。
+/// has_role 持有角色返回 true。
 #[tokio::test]
 async fn has_role_held_returns_true() {
     let checker = make_checker();
     assert!(checker.has_role("1001", "admin").await.unwrap());
 }
 
-/// has_role 未持有角色返回 false（spec Scenario）。
+/// has_role 未持有角色返回 false。
 #[tokio::test]
 async fn has_role_not_held_returns_false() {
     let checker = make_checker();
     assert!(!checker.has_role("1001", "superadmin").await.unwrap());
 }
 
-/// has_role 对 role 字符串做 NFC 规范化（与 has_permission 对齐）。
-///
-/// NFD 形式 `"role\u{0301}1"`（e + COMBINING ACUTE ACCENT）应规范化为 NFC 形式
-/// `"rol\u{00e9}1"` 后匹配，防止视觉同形字符串绕过角色校验。
+/// has_role 对 role 做 NFC 规范化（与 has_permission 对齐）：NFD 形式应规范化后匹配 NFC
+/// 存储，防视觉同形字符串绕过角色校验。
 #[tokio::test]
 async fn has_role_normalizes_unicode() {
     let interface = MockInterface::new().with_roles("1001", vec!["rol\u{00e9}1"]);
@@ -90,18 +81,16 @@ async fn has_role_normalizes_unicode() {
     );
 }
 
-// ========================================================================
 // check_permission 测试
-// ========================================================================
 
-/// check_permission 持有权限返回 Ok(())（spec Scenario）。
+/// check_permission 持有权限返回 Ok(())。
 #[tokio::test]
 async fn check_permission_held_returns_ok() {
     let checker = make_checker();
     assert!(checker.check_permission("1001", "user:read").await.is_ok());
 }
 
-/// check_permission 未持有权限返回 NotPermission 错误（spec Scenario）。
+/// check_permission 未持有权限返回 NotPermission 错误。
 #[tokio::test]
 async fn check_permission_not_held_returns_error() {
     let checker = make_checker();
@@ -113,9 +102,7 @@ async fn check_permission_not_held_returns_error() {
     }
 }
 
-// ========================================================================
 // check_role 测试
-// ========================================================================
 
 /// check_role 持有角色返回 Ok(())。
 #[tokio::test]
@@ -124,7 +111,7 @@ async fn check_role_held_returns_ok() {
     assert!(checker.check_role("1001", "admin").await.is_ok());
 }
 
-/// check_role 未持有角色返回 NotRole 错误（spec Scenario）。
+/// check_role 未持有角色返回 NotRole 错误。
 #[tokio::test]
 async fn check_role_not_held_returns_error() {
     let checker = make_checker();
@@ -136,11 +123,9 @@ async fn check_role_not_held_returns_error() {
     }
 }
 
-// ========================================================================
 // has_any_permission 测试
-// ========================================================================
 
-/// has_any_permission 任一匹配返回 true（spec Scenario）。
+/// has_any_permission 任一匹配返回 true。
 #[tokio::test]
 async fn has_any_permission_any_match_returns_true() {
     let checker = make_checker();
@@ -151,7 +136,7 @@ async fn has_any_permission_any_match_returns_true() {
     );
 }
 
-/// has_any_permission 全不匹配返回 false（spec Scenario）。
+/// has_any_permission 全不匹配返回 false。
 #[tokio::test]
 async fn has_any_permission_no_match_returns_false() {
     let checker = make_checker();
@@ -162,11 +147,9 @@ async fn has_any_permission_no_match_returns_false() {
     );
 }
 
-// ========================================================================
 // has_all_permissions 测试
-// ========================================================================
 
-/// has_all_permissions 全部匹配返回 true（spec Scenario）。
+/// has_all_permissions 全部匹配返回 true。
 #[tokio::test]
 async fn has_all_permissions_all_match_returns_true() {
     let checker = make_checker();
@@ -177,7 +160,7 @@ async fn has_all_permissions_all_match_returns_true() {
     );
 }
 
-/// has_all_permissions 部分匹配返回 false（spec Scenario）。
+/// has_all_permissions 部分匹配返回 false。
 #[tokio::test]
 async fn has_all_permissions_partial_match_returns_false() {
     let checker = make_checker();
@@ -195,14 +178,9 @@ async fn has_all_permissions_empty_list_returns_true() {
     assert!(checker.has_all_permissions("1001", &[]).await);
 }
 
-// ========================================================================
 // authorize 测试
-// ========================================================================
 
-/// authorize 在权限匹配时返回 allowed=true 的 Decision。
-///
-/// 验证 `authorize(&AuthRequest{ login_id: 1001, action: "user:read", .. })`
-/// 返回 `Decision { allowed: true, reason: ExplicitAllow, .. }`。
+/// authorize 权限匹配时返回 allowed=true 的 Decision（reason=ExplicitAllow）。
 #[tokio::test]
 async fn authorize_returns_decision_with_allowed_true_when_permission_matches() {
     let checker = make_checker();
@@ -214,7 +192,7 @@ async fn authorize_returns_decision_with_allowed_true_when_permission_matches() 
     assert_eq!(decision.reason, DecisionReason::ExplicitAllow);
 }
 
-/// 补充: authorize 在权限不匹配时返回 allowed=false + NoMatchingPermission。
+/// authorize 在权限不匹配时返回 allowed=false + NoMatchingPermission。
 #[tokio::test]
 async fn authorize_returns_deny_when_permission_not_matched() {
     let checker = make_checker();
@@ -226,7 +204,7 @@ async fn authorize_returns_deny_when_permission_not_matched() {
     assert_eq!(decision.reason, DecisionReason::NoMatchingPermission);
 }
 
-/// 补充: authorize 在权限字符串为空时返回 InvalidParam 错误。
+/// authorize 在权限字符串为空时返回 InvalidParam 错误。
 #[tokio::test]
 async fn authorize_returns_error_for_empty_permission() {
     let checker = make_checker();
@@ -239,17 +217,11 @@ async fn authorize_returns_error_for_empty_permission() {
     }
 }
 
-/// check_permission 与 authorize 行为一致。
-///
-/// 验证 `check_permission(login_id, perm)` 的返回值（Ok/Err）与
-/// `authorize(&AuthRequest{..}).await?.allowed` 一致：
-/// - allowed=true → check_permission 返回 Ok(())
-/// - allowed=false → check_permission 返回 Err(NotPermission)
+/// check_permission 与 authorize 行为一致：allowed=true → Ok(())，allowed=false → Err(NotPermission)。
 #[tokio::test]
 async fn check_permission_delegates_to_authorize_and_returns_allowed() {
     let checker = make_checker();
 
-    // 持有权限：authorize().allowed == true，check_permission == Ok
     let req_ok = AuthRequest::new("1001", "user:read");
     let decision_ok = PermissionChecker::authorize(&checker, &req_ok)
         .await
@@ -257,7 +229,6 @@ async fn check_permission_delegates_to_authorize_and_returns_allowed() {
     assert!(decision_ok.allowed);
     assert!(checker.check_permission("1001", "user:read").await.is_ok());
 
-    // 未持有权限：authorize().allowed == false，check_permission == Err
     let req_no = AuthRequest::new("1001", "user:delete");
     let decision_no = PermissionChecker::authorize(&checker, &req_no)
         .await
@@ -269,7 +240,7 @@ async fn check_permission_delegates_to_authorize_and_returns_allowed() {
         .is_err());
 }
 
-/// 补充: check_permission 的错误类型为 NotPermission（不是其他错误）。
+/// check_permission 的错误类型为 NotPermission（不是其他错误）。
 #[tokio::test]
 async fn check_permission_deny_returns_not_permission_error() {
     let checker = make_checker();
@@ -283,7 +254,7 @@ async fn check_permission_deny_returns_not_permission_error() {
     }
 }
 
-/// 补充: check_role 仍保持原行为（未持有角色返回 NotRole）。
+/// check_role 仍保持原行为（未持有角色返回 NotRole）。
 #[tokio::test]
 async fn check_role_still_returns_not_role_when_unmatched() {
     let checker = make_checker();
@@ -294,7 +265,7 @@ async fn check_role_still_returns_not_role_when_unmatched() {
     }
 }
 
-/// 补充: Decision 可从 authorize 序列化为 JSON（端到端 trace 输出验证）。
+/// Decision 可从 authorize 序列化为 JSON（端到端 trace 输出验证）。
 #[tokio::test]
 async fn authorize_decision_serializes_to_json() {
     let checker = make_checker();
@@ -307,19 +278,10 @@ async fn authorize_decision_serializes_to_json() {
     assert_eq!(json["reason"], serde_json::json!("explicit_allow"));
 }
 
-// ========================================================================
 // Unicode NFC 规范化 + 长度限制测试
-// ========================================================================
 
-/// check_permission 对 permission 字符串做 NFC 规范化。
-///
-/// NFD 形式 `"user:e\u{0301}read"`（e + COMBINING ACUTE ACCENT U+0301）应规范化为
-/// NFC 形式 `"user:\u{00e9}read"`（LATIN SMALL LETTER E WITH ACUTE U+00E9）。
-/// mock 存储 NFC 形式，传入 NFD 形式应规范化后匹配。
-///
-/// 注：任务描述原例 `"user\u{0301}:read"` → `"user\u{00e9}:read"` 不正确，
-/// 因为 U+0301 会与前一个 'r' 组合形成 'ŕ'（U+0157），而非 'é'（U+00E9）。
-/// 正确的 NFD→NFC 对为 `"user:e\u{0301}read"` → `"user:\u{00e9}read"`。
+/// check_permission 对 permission 做 NFC 规范化：NFD `"user:e\u{0301}read"` 规范化为 NFC
+/// `"user:\u{00e9}read"`（mock 存 NFC 形式），传入 NFD 应规范化后匹配。
 #[tokio::test]
 async fn check_permission_normalizes_unicode() {
     let interface = MockInterface::new().with_perms("1001", vec!["user:\u{00e9}read"]);
@@ -352,11 +314,9 @@ async fn check_permission_rejects_over_256_bytes() {
     );
 }
 
-// ========================================================================
 // 覆盖率补充：has_role 空角色 + check_role 错误消息验证
-// ========================================================================
 
-/// has_role 空字符串返回 InvalidParam 错误（覆盖行 180）。
+/// has_role 空字符串返回 InvalidParam 错误。
 #[tokio::test]
 async fn has_role_empty_string_returns_error() {
     let checker = make_checker();
@@ -368,7 +328,7 @@ async fn has_role_empty_string_returns_error() {
     );
 }
 
-/// check_role 未持有角色的错误消息包含 login_id 和 role（覆盖行 124-125 的 format）。
+/// check_role 未持有角色的错误消息含 login_id 与 role。
 #[tokio::test]
 async fn check_role_deny_message_includes_login_id_and_role() {
     let checker = make_checker();
@@ -386,7 +346,7 @@ async fn check_role_deny_message_includes_login_id_and_role() {
     }
 }
 
-/// 调用 MockInterface 的默认委托方法以覆盖 async_trait wrapper。
+/// 调用默认委托方法覆盖 async_trait wrapper。
 #[tokio::test]
 async fn mock_interface_default_methods_with_type_coverage() {
     let iface = MockInterface::new();
@@ -400,12 +360,10 @@ async fn mock_interface_default_methods_with_type_coverage() {
         .unwrap();
 }
 
-// ========================================================================
-// 租户感知判定（渗透-RBAC-租户维度-1）：authorize 消费 AuthRequest.tenant_id
-// ========================================================================
+// 租户感知判定：authorize 消费 AuthRequest.tenant_id
 
-/// 租户感知 interface mock：按 (tenant_id, login_id) 返回权限，
-/// 模拟业务方覆写 `get_permission_list_in_tenant` 的租户隔离数据源。
+/// 租户感知 interface mock：按 (tenant_id, login_id) 返回权限（模拟业务方覆写
+/// `get_permission_list_in_tenant` 的租户隔离数据源）。
 struct TenantScopedInterface {
     by_tenant: HashMap<(i64, String), Vec<String>>,
 }

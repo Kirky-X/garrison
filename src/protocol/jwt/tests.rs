@@ -6,24 +6,19 @@
 use super::*;
 use crate::error::GarrisonError;
 
-// ============================================================================
 // 测试确定性工具：墙钟 NTP 回跳容错
-// ============================================================================
 
-/// 宿主墙钟 NTP 校时会整秒回跳（本仓库门禁宿主为 WSL2，实测每 ~31s 回跳
-/// ~1.35s）。`verify` 的 leeway=0（严格安全默认，见 handler.rs `verify`）下，
-/// `sign` 盖戳 nbf=now 后若墙钟在 sign 与 verify 之间回跳，紧随的 verify 会
-/// 读到 now < nbf 而误报 `jwt-not-yet-valid`——token 本身有效，属环境噪声。
-/// 下面两个包装仅对该误报做有限重试（每 35s 一次、至多 2 次；墙钟以
-/// ~+1.35s/31s 的速率漂移回 nbf 之上，一个校正周期即可恢复）；其余错误
-/// （签名不符/过期/算法不匹配等）原样立即 panic，不掩盖任何真实缺陷。
+/// 宿主墙钟 NTP 校时会整秒回跳（WSL2 门禁实测每 ~31s 回跳 ~1.35s）：`verify`
+/// 的 leeway=0（严格安全默认，见 handler.rs `verify`）下，`sign` 盖戳 nbf=now 后
+/// 墙钟回跳会让紧随的 verify 误报 `jwt-not-yet-valid`（token 本身有效，属环境
+/// 噪声）。下面两个包装仅对该误报做有限重试（每 35s 一次、至多 2 次）；其余
+/// 错误（签名不符/过期/算法不匹配等）原样立即 panic，不掩盖任何真实缺陷。
 const NBF_RETRY_WAIT_SECS: u64 = 35;
 const NBF_RETRY_ATTEMPTS: usize = 3;
 
 /// verify 成功路径：nbf 回跳误报时有限重试，其余错误立即 panic。
 ///
-/// `pub(crate)`：stp/mfa 与 stp/session 的 JWT 单测（login 后立即 verify）
-/// 复用本包装，见顶部说明。
+/// `pub(crate)`：stp/mfa 与 stp/session 的 JWT 单测复用本包装。
 pub(crate) fn verify_ok(handler: &JwtHandler, token: &str) -> GarrisonJwtClaims {
     for attempt in 0..NBF_RETRY_ATTEMPTS {
         match handler.verify(token) {
@@ -60,11 +55,9 @@ fn refresh_ok(handler: &JwtHandler, token: &str, timeout: i64) -> String {
     unreachable!("重试循环内必然 return 或 panic")
 }
 
-// ============================================================================
 // GarrisonJwtClaims 测试
-// ============================================================================
 
-/// GarrisonJwtClaims 完整字段序列化）。
+/// GarrisonJwtClaims 完整字段序列化。
 #[test]
 fn claims_serializes_full_fields() {
     let claims = GarrisonJwtClaims {
@@ -89,7 +82,7 @@ fn claims_serializes_full_fields() {
     assert!(json.contains("\"nbf\":1700000000"));
 }
 
-/// GarrisonJwtClaims device 字段为 None 时序列化为 null）。
+/// GarrisonJwtClaims device 字段为 None 时序列化为 null。
 #[test]
 fn claims_device_none_serializes_as_null() {
     let claims = GarrisonJwtClaims {
@@ -170,11 +163,9 @@ fn claims_deserializes() {
     assert_eq!(claims.device, Some("web".to_string()));
 }
 
-// ============================================================================
 // JwtHandler 构造测试
-// ============================================================================
 
-/// new 默认采用 HS256 算法）。
+/// new 默认采用 HS256 算法。
 #[test]
 fn new_defaults_to_hs256() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
@@ -183,7 +174,7 @@ fn new_defaults_to_hs256() {
     assert!(handler.device.is_none());
 }
 
-/// with_algorithm 切换为 HS512）。
+/// with_algorithm 切换为 HS512。
 #[test]
 fn with_algorithm_switches_to_hs512() {
     let handler =
@@ -198,11 +189,9 @@ fn with_device_sets_device() {
     assert_eq!(handler.device, Some("ios-app".to_string()));
 }
 
-// ============================================================================
 // sign 测试
-// ============================================================================
 
-/// sign 返回三段 Base64URL）。
+/// sign 返回三段 Base64URL。
 #[test]
 fn sign_returns_three_segment_jwt() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
@@ -214,7 +203,7 @@ fn sign_returns_three_segment_jwt() {
     assert!(!parts[2].is_empty());
 }
 
-/// sign 空密钥返回 Config 错误）。
+/// sign 空密钥返回 Config 错误。
 #[test]
 fn sign_rejects_empty_secret() {
     let handler = JwtHandler::new("");
@@ -226,7 +215,7 @@ fn sign_rejects_empty_secret() {
     }
 }
 
-/// sign 负数 timeout 返回 Config 错误）。
+/// sign 负数 timeout 返回 Config 错误。
 #[test]
 fn sign_rejects_negative_timeout() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
@@ -238,7 +227,7 @@ fn sign_rejects_negative_timeout() {
     }
 }
 
-/// sign 带 device 写入 payload）。
+/// sign 带 device 写入 payload。
 #[test]
 fn sign_with_device_includes_device_in_claims() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef").with_device("ios-app");
@@ -247,11 +236,9 @@ fn sign_with_device_includes_device_in_claims() {
     assert_eq!(claims.device, Some("ios-app".to_string()));
 }
 
-// ============================================================================
 // verify 测试
-// ============================================================================
 
-/// verify 有效 token 返回 claims）。
+/// verify 有效 token 返回 claims。
 #[test]
 fn verify_valid_token_returns_claims() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
@@ -262,7 +249,7 @@ fn verify_valid_token_returns_claims() {
     assert!(claims.exp > claims.iat);
 }
 
-/// verify 篡改 payload 返回错误）。
+/// verify 篡改 payload 返回错误。
 #[test]
 fn verify_tampered_payload_fails() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
@@ -274,7 +261,7 @@ fn verify_tampered_payload_fails() {
     assert!(result.is_err());
 }
 
-/// verify 错误密钥返回错误）。
+/// verify 错误密钥返回错误。
 #[test]
 fn verify_wrong_secret_fails() {
     let signer = JwtHandler::new("0123456789abcdef0123456789abcdef");
@@ -284,14 +271,12 @@ fn verify_wrong_secret_fails() {
     assert!(result.is_err());
 }
 
-/// verify 已过期 token 返回 ExpiredToken）。
+/// verify 已过期 token 返回 ExpiredToken。
 #[test]
 fn verify_expired_token_returns_expired_error() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
-    // 手动构造 exp 已过期的 token（leeway=0，过期立即拒绝）。
-    // 旧版 sign(timeout=1)+sleep(3) 依赖墙钟推进：宿主 NTP 整秒回跳
-    // （实测每 ~31s 一次、单次 ~1.35s）下，回跳可使 verify 时刻仍早于
-    // exp 而漏判。改为注入确定性过期时间，断言与墙钟推进速度解耦。
+    // 手构 exp 已过期的 token（leeway=0，过期立即拒绝）：不依赖
+    // sign(timeout=1)+sleep 的墙钟推进，避免 NTP 整秒回跳导致漏判。
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -319,7 +304,7 @@ fn verify_expired_token_returns_expired_error() {
     }
 }
 
-/// verify 算法不匹配返回错误）。
+/// verify 算法不匹配返回错误。
 #[test]
 fn verify_algorithm_mismatch_fails() {
     let signer =
@@ -330,9 +315,7 @@ fn verify_algorithm_mismatch_fails() {
     assert!(result.is_err());
 }
 
-// ============================================================================
 // nbf 校验测试
-// ============================================================================
 
 /// verify 拒绝 nbf 为未来时间的 token。
 #[test]
@@ -436,9 +419,7 @@ fn verify_token_without_nbf_field_returns_ok() {
     assert!(claims.nbf.is_none(), "无 nbf 字段时 claims.nbf 应为 None");
 }
 
-// ============================================================================
 // refresh 测试
-// ============================================================================
 
 /// refresh 返回新 token 且可 verify。
 #[test]
@@ -459,9 +440,7 @@ fn refresh_invalid_token_fails() {
     assert!(result.is_err());
 }
 
-// ============================================================================
 // LoginId newtype 接入（impl Into<LoginId>）
-// ============================================================================
 
 /// 验证 `JwtHandler::sign` 接受 String 形式 login_id。
 #[test]
@@ -472,9 +451,7 @@ fn sign_accepts_login_id_numeric() {
     assert_eq!(claims.login_id, "1001");
 }
 
-// ============================================================================
 // JWT 密钥最小长度校验
-// ============================================================================
 
 /// `sign` 拒绝 < 32 字节密钥，返回 Config 错误。
 #[test]
@@ -521,9 +498,7 @@ fn sign_accepts_exactly_32_byte_secret() {
     assert_eq!(claims.login_id, "1001");
 }
 
-// ========================================================================
 // alg confusion 对抗测试（行为锁定：攻击输入必须全部拒绝）
-// ========================================================================
 
 /// `alg=none`（无签名）token 必须被拒绝——防 JWT none 算法攻击。
 #[test]
@@ -602,9 +577,7 @@ fn base64_encode_urlsafe(data: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
 }
 
-// ========================================================================
 // 非对称签名：RSA（RS256/RS384/RS512）
-// ========================================================================
 
 /// 测试专用 RSA 2048 私钥（PKCS#8 PEM，仅用于单元测试，非真实凭证）。
 // nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
@@ -705,9 +678,7 @@ fn rsa_key_material_debug_redacts_pem() {
     );
 }
 
-// ========================================================================
 // 非对称签名：EC（ES256/ES384）
-// ========================================================================
 
 /// 测试专用 P-256 EC 私钥（PKCS#8 PEM，仅用于单元测试，非真实凭证）。
 // nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
@@ -773,9 +744,7 @@ fn ec_pem_es384_sign_verify_roundtrip() {
     assert_eq!(claims.login_id, "user123");
 }
 
-// ========================================================================
 // 非对称签名：Ed25519（EdDSA）
-// ========================================================================
 
 /// 测试专用 Ed25519 私钥（PKCS#8 PEM，RFC 8410，仅用于单元测试，非真实凭证）。
 // nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
@@ -805,12 +774,9 @@ fn ed_pem_invalid_pem_fails_fast() {
     assert!(result.is_err(), "非法 Ed PEM 必须在构造期报错");
 }
 
-/// 非对称算法 + 空 jwt_secret 占位：sign 与 verify 语义必须对称（都不误拒）。
-///
-/// config 层明确允许非对称算法下 jwt_secret 留空（密钥强度由 PEM 决定，
-/// `validate_jwt_secret` 对 RS/ES/EdDSA 跳过对称长度校验）；verify 曾因无条件的
-/// `secret.is_empty()` 检查误拒该合法配置（sign 有 KeyMaterial 门控而 verify 没有），
-/// 本测试锁定修复后的对称语义。
+/// 非对称算法 + 空 jwt_secret 占位：config 允许该配置（密钥强度由 PEM 决定，
+/// `validate_jwt_secret` 对 RS/ES/EdDSA 跳过对称长度校验），sign 与 verify
+/// 语义必须对称（都不误拒）。
 #[test]
 fn asymmetric_empty_secret_placeholder_sign_verify_symmetric() {
     let handler = JwtHandler::new("")
@@ -827,9 +793,7 @@ fn asymmetric_empty_secret_placeholder_sign_verify_symmetric() {
     assert_eq!(claims.login_id, "user123");
 }
 
-// ========================================================================
 // 跨密钥类型 alg confusion（T020-T023 KeyMaterial 齐备后的交叉验证）
-// ========================================================================
 
 /// 跨密钥类型令牌交叉使用全部必须被拒绝：
 /// RS 签发 → HS 验证、HS 签发 → RS 验证、HS 签发 → EC 验证、HS 签发 → Ed 验证。
@@ -903,9 +867,7 @@ fn cross_key_type_tokens_always_rejected() {
     assert!(hs.verify(&hs_token).is_ok());
 }
 
-// ============================================================================
 // sign_claims 测试（crate 内部自定义 claims 签发通道）
-// ============================================================================
 
 /// sign_claims 以同一密钥签发自定义 claims，且与 GarrisonJwtClaims 签发路径
 /// 共享密钥校验（空密钥 fail-closed）。
@@ -964,9 +926,7 @@ fn sign_claims_rejects_empty_secret() {
     }
 }
 
-// ============================================================================
 // amr / auth_time claim 映射（MFA 因子账本 → RFC 8176）
-// ============================================================================
 
 /// claims 含 amr/auth_time 时序列化输出对应字段，且可反序列化往返。
 #[test]
@@ -1164,9 +1124,7 @@ fn sign_without_amr_omits_claims_and_still_verifies() {
     assert_eq!(claims.auth_time, None);
 }
 
-// ============================================================================
 // JWKS 公钥导出（export_public_jwk_parts）与 from_algorithm_parts 构造分派
-// ============================================================================
 
 /// 测试专用 RSA 2048 私钥（PKCS#1 传统格式 PEM，仅用于单元测试，非真实凭证）。
 /// 覆盖 extract_rsa_public_components 的 PKCS#1 分支（`BEGIN RSA PRIVATE KEY`）。
@@ -1477,9 +1435,7 @@ fn verify_expired_token_maps_to_expired_token_error() {
     );
 }
 
-// ============================================================================
 // 覆盖收口：Debug(Hs) / 曲线分派 / sign_with_amr / 参数与密钥校验
-// ============================================================================
 
 /// 测试专用 P-384 EC 私钥（PKCS#8，RFC 5915 无内嵌公钥）——覆盖曲线 OID
 /// 分派后的 P-384 标量乘法路径。

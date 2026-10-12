@@ -1,11 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 健康检查层测试 mock 实现。
-//!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `AlwaysHealthy` / `AlwaysUnhealthy` / `AlwaysDegraded` 三个固定状态的 HealthCheck mock，
-//! 供 `health::tests` HealthRegistry 聚合测试复用。
+//! 健康检查层测试 mock 实现（`cfg(test)`）：`AlwaysHealthy` / `AlwaysUnhealthy` /
+//! `AlwaysDegraded` 三个固定状态的 HealthCheck mock，供 `health::tests` 聚合测试复用。
 
 use super::{HealthCheck, HealthResult, HealthStatus};
 use crate::error::GarrisonError;

@@ -3,28 +3,15 @@
 
 //! Plugin / Listener 集成测试：编译期注册 → 钩子调用 → 事件广播。
 //!
-//! 验证 `GarrisonPluginManager` 与 `GarrisonListenerManager` 的端到端行为：
-//! 1. 通过 `inventory::submit!` 注册测试 plugin / listener
-//! 2. `GarrisonPluginManager::new()` / `GarrisonListenerManager::new()` 收集已注册条目
-//! 3. `on_login` / `on_logout` / `on_permission_check` 钩子被调用
-//! 4. `broadcast` 将事件分发到所有 listener
-//! 5. 单个 plugin/listener 失败不中断主流程（仅 tracing::warn!）
+//! 通过 `inventory::submit!` 注册测试 plugin / listener，验证 `GarrisonPluginManager` /
+//! `GarrisonListenerManager` 的收集、`on_login` / `on_logout` / `on_permission_check` 钩子
+//! 与 `broadcast` 行为，以及单个 plugin/listener 失败不中断主流程（仅 tracing::warn!）。
 //!
-//! ## auto-wire 集成（0.2.1 修复）
-//!
-//! `GarrisonManager::builder()` 自动注入 `GarrisonPluginManager` / `GarrisonListenerManager`
-//! 到 `GarrisonLogicDefault`，`GarrisonUtil::login` 会自动触发 `on_login` 钩子与 `Login` 事件。
-//! 本文件包含两组测试：
-//! 1. 扩展点本身行为（直接调用 plugin/listener 方法）
-//! 2. auto-wire 端到端（通过 `GarrisonManager::builder()` + `GarrisonUtil::login` 验证自动触发）
-//!
-//!
-//! # production-mock-purge
-//!
-//! - auto-wire 辅助 DAO `MockDao` 已替换为产品 `InMemoryDao`（src/dao/in_memory.rs）。
-//! - NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化
-//!   （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
-//!   本文件三个 auto-wire 组内的 `EmptyInterface` 替身保留）。
+//! `GarrisonManager::builder()` 自动注入两个 Manager 到 `GarrisonLogicDefault`，
+//! `GarrisonUtil::login` 会自动触发 `on_login` 钩子与 `Login` 事件；本文件含两组测试：
+//! 扩展点本身行为（直接调用）与 auto-wire 端到端（经 builder + login 验证自动触发）。
+//! 库层无产品 `GarrisonInterface` 实现，`EmptyInterface` 替身保留；`MockDao` 已替换为
+//! 产品 `InMemoryDao`。
 
 use async_trait::async_trait;
 use garrison::error::GarrisonResult;
@@ -295,7 +282,7 @@ async fn full_lifecycle_plugin_and_listener_cooperate() {
     let plugin_manager = GarrisonPluginManager::new();
     let listener_manager = GarrisonListenerManager::new();
 
-    // 1. 模拟登录：先调用 plugin on_login，再广播 Login 事件
+    // 模拟登录：先调用 plugin on_login，再广播 Login 事件
     plugin_manager.on_login("1001", "T1");
     listener_manager
         .broadcast(&GarrisonEvent::Login {
@@ -306,10 +293,10 @@ async fn full_lifecycle_plugin_and_listener_cooperate() {
         })
         .await;
 
-    // 2. 模拟权限校验：调用 plugin on_permission_check
+    // 模拟权限校验：调用 plugin on_permission_check
     plugin_manager.on_permission_check("1001", "user:read");
 
-    // 3. 模拟登出：调用 plugin on_logout + 广播 Logout 事件
+    // 模拟登出：调用 plugin on_logout + 广播 Logout 事件
     plugin_manager.on_logout("1001", "T1");
     listener_manager
         .broadcast(&GarrisonEvent::Logout {
@@ -370,10 +357,8 @@ async fn permission_check_event_only_goes_to_listener() {
 // GarrisonUtil::login 会自动触发 on_login 钩子与 Login 事件。
 // ============================================================================
 
-/// auto-wire: `GarrisonManager::builder()` + `GarrisonUtil::login` 自动触发 plugin on_login 钩子。
-///
-/// 验证 0.2.1 修复：init 阶段注入 PluginManager 后，
-/// `GarrisonUtil::login(1001)` 会自动调用编译期注册的 CountingPlugin.on_login。
+/// auto-wire: `GarrisonManager::builder()` + `GarrisonUtil::login` 自动触发 plugin on_login
+/// 钩子与 Login 事件（init 阶段注入 PluginManager）。
 #[tokio::test]
 #[serial_test::serial]
 async fn auto_wire_login_triggers_plugin_on_login() {

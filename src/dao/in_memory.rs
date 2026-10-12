@@ -1,12 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! DAO 进程内实现（HashMap + Instant 模拟 TTL）。
-//!
-//! 提供 `InMemoryDao`（完整实现 `GarrisonDao` 的**进程内**内存后端，含 CAS/
-//! set_if_absent/incr/lua 模拟）。定位：测试用 mock + 单实例部署的内存模式
-//! （如 PasswordRateLimiter / GarrisonFirewallCheckHookDefault 的内存后端）。
-//! **不跨实例共享**——多节点部署必须使用共享存储后端（Redis / 数据库）。
+//! DAO 进程内实现（HashMap + Instant 模拟 TTL）：测试 mock + 单实例部署内存模式
+//!（PasswordRateLimiter / GarrisonFirewallCheckHookDefault 的内存后端）；**不跨实例共享**，多节点部署须用共享存储后端。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -16,18 +12,12 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 // ------------------------------------------------------------------------
-// Mock 实现：基于 HashMap + Instant 模拟 TTL，严格按 spec 语义
+// Mock 实现：HashMap + Instant 模拟 TTL
 // ------------------------------------------------------------------------
 
-/// 进程内内存 DAO（HashMap 后端，用于验证 trait 契约与单实例内存模式）。
-///
-/// 语义：
-/// - `set(ttl=0)`: 永久驻留（expire_at = None）
-/// - `set(ttl=N)`: N 秒后过期（expire_at = Some(now + N)）
-/// - `update`: 保留原 expire_at，仅更新 value
-/// - `expire`: 重置 expire_at
-///
-/// `pub` 供跨模块测试（如 `strategy::hooks`）复用，仅在 `cfg(test)` 下编译。
+/// 进程内内存 DAO（HashMap 后端）：`set(ttl=0)` 永久驻留、`set(ttl=N)` N 秒后过期、
+/// `update` 保留原 expire_at、`expire` 重置 expire_at。
+/// `pub` 供跨模块测试与生产内存模式复用（`cfg(test)` 下亦编译）。
 pub struct InMemoryDao {
     store: Mutex<HashMap<String, (String, Option<Instant>)>>,
 }
@@ -39,7 +29,7 @@ impl Default for InMemoryDao {
 }
 
 impl InMemoryDao {
-    /// 创建空的 mock DAO 实例（无任何键值）。
+    /// 创建空的进程内 DAO（无任何键值）。
     pub fn new() -> Self {
         Self {
             store: Mutex::new(HashMap::new()),
@@ -79,8 +69,7 @@ impl GarrisonDao for InMemoryDao {
 
     async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
-        // 过期键视为不存在（与 get()/keys() 语义一致）：先做过期检查，
-        // 避免已过期键被 update 改值「复活」。
+        // 过期键视为不存在（与 get()/keys() 一致），避免被 update 改值「复活」
         let expired = match store.get(key) {
             Some((_, Some(deadline))) => Instant::now() >= *deadline,
             _ => false,
@@ -100,8 +89,7 @@ impl GarrisonDao for InMemoryDao {
 
     async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         let mut store = self.store.lock();
-        // 过期键视为不存在（与 get()/keys() 语义一致）：先做过期检查，
-        // 避免已过期键被 expire 续期「复活」。
+        // 过期键视为不存在（与 get()/keys() 一致），避免被 expire 续期「复活」
         let expired = match store.get(key) {
             Some((_, Some(deadline))) => Instant::now() >= *deadline,
             _ => false,
@@ -136,10 +124,7 @@ impl GarrisonDao for InMemoryDao {
         Ok(())
     }
 
-    /// get_timeout 返回剩余 TTL。
-    ///
-    /// - `Some(remaining)`: 键存在且设置了 TTL（expire_at - now）
-    /// - `None`: 键不存在，或永久键（expire_at = None）
+    /// 返回剩余 TTL；永久键与不存在的键均返回 None。
     async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<Duration>> {
         let store = self.store.lock();
         match store.get(key) {
@@ -156,15 +141,10 @@ impl GarrisonDao for InMemoryDao {
         }
     }
 
-    /// keys 按 glob pattern 扫描 key（支持 `*` 与 `?`）。
+    /// keys 按 glob pattern 扫描（支持 `*` / `?`），过滤已过期项。
     ///
-    /// 遍历所有 key，过滤已过期的，然后用 glob_match 匹配 pattern。
-    ///
-    /// # L7 复杂度说明
-    ///
-    /// O(n) 遍历是预期行为：`InMemoryDao` 是测试用实现，store 容量小（通常 < 1000 entry），
-    /// 无需索引优化。生产环境应使用 `GarrisonDaoOxcache`（Redis SCAN）或 dbnexus（SQL LIKE），
-    /// 它们的 keys() 实现委托后端原生 scan API，不在此 O(n) 路径上。
+    /// O(n) 遍历是预期行为：测试用实现 store 容量小（通常 < 1000 entry）；生产环境用
+    /// `GarrisonDaoOxcache` / dbnexus 的原生 scan 实现，不走此路径。
     async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
         let mut result = Vec::new();
         let now = Instant::now();
@@ -182,7 +162,7 @@ impl GarrisonDao for InMemoryDao {
         Ok(result)
     }
 
-    /// rename 重命名 key，保留原 TTL（非原子）。
+    /// 重命名 key，保留原 TTL。
     async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
         match store.get(old_key).cloned() {
@@ -198,10 +178,7 @@ impl GarrisonDao for InMemoryDao {
         }
     }
 
-    /// get_and_delete 用 `parking_lot::Mutex` 保护原子性。
-    ///
-    /// 在单个 `lock()` 作用域内完成 get + remove，保证进程内原子。
-    /// TTL 语义与 `get` 一致：已过期的 key 视为不存在（返回 None）。
+    /// 单锁作用域内 get + remove（进程内原子）；过期 key 视为不存在返回 None。
     async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.remove(key) {
@@ -214,10 +191,7 @@ impl GarrisonDao for InMemoryDao {
         }
     }
 
-    /// set_if_absent 用 Mutex 保护原子性（进程内原子）。
-    ///
-    /// 在单个 `lock()` 作用域内完成 get → set，保证进程内原子：
-    /// 并发调用同一 key 时仅第一个返回 `true`。TTL 语义与 `set` 一致。
+    /// 单锁作用域内 get → set（进程内原子，并发同 key 仅一个返回 true）；TTL 语义同 `set`。
     async fn set_if_absent(
         &self,
         key: &str,
@@ -247,9 +221,7 @@ impl GarrisonDao for InMemoryDao {
         Ok(true)
     }
 
-    /// incr 用 Mutex 保护原子性（进程内原子）。
-    ///
-    /// 在单个 lock() 作用域内完成 get → parse → update/set，保证进程内原子。
+    /// 单锁作用域内 get → parse → update/set（进程内原子）；解析失败显式报错，禁止静默按 0 重置计数器。
     async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64> {
         let mut store = self.store.lock();
         let now = Instant::now();
@@ -284,17 +256,10 @@ impl GarrisonDao for InMemoryDao {
         }
     }
 
-    /// decr 用 Mutex 保护原子性（进程内原子，与 `incr` 对称）。
+    /// 单锁作用域内 get → parse → update/delete（进程内原子，消除 TOCTOU）：
+    /// 不存在/已过期→0；值为 0→0；>0 递减，到 0 删 key，否则保留原 expire_at。
     ///
-    /// 在单个 lock() 作用域内完成 get → parse → update/delete，消除 TOCTOU 竞态。
-    /// 语义：
-    /// - key 不存在或已过期：清理（若已过期）并返回 0
-    /// - 当前值为 0：返回 0（不递减为负）
-    /// - 当前值 > 0：递减 1；递减后值为 0 时删除 key；递减后值 > 0 时保留原 expire_at
-    ///
-    /// 修复 `concurrent_send_does_not_exceed_limit` flaky test（fix-refresh-race-and-test-contracts）：
-    /// 原 `SmsRateLimiter::decrement_counter` 用 `dao.get → parse → dao.update/delete` 三步组合，
-    /// 跨越 await 间隙允许其他 task 的 `incr` 插入，导致 update 基于过时 get 值覆盖 incr 结果。
+    /// 该原子性修复了 `concurrent_send_does_not_exceed_limit` flaky（SMS 限速「跨越式递减」，见 `SmsRateLimiter::decrement_counter`）。
     async fn decr(&self, key: &str) -> GarrisonResult<u64> {
         let mut store = self.store.lock();
         let now = Instant::now();
@@ -330,13 +295,8 @@ impl GarrisonDao for InMemoryDao {
         Ok(new_val)
     }
 
-    /// compare_and_update_if_greater 用 Mutex 保护原子性（进程内原子）。
-    ///
-    /// 在单个 lock() 作用域内完成 get → parse → compare → set，消除 TOCTOU 竞态。
+    /// 单锁作用域内 get → parse → compare → set（进程内原子）：不存在视 0，> current 时写入并保留原 expire_at；
     /// 用于 HTTP Digest nc 单调性校验（RFC 7616 §3.4.6）。
-    /// - key 不存在或已过期：current_val = 0，new_value > 0 时初始化并设置 TTL
-    /// - key 已存在且 new_value > current_val：保留原 expire_at（不重置 TTL）
-    /// - key 已存在但 new_value <= current_val：不修改，返回 false
     async fn compare_and_update_if_greater(
         &self,
         key: &str,
@@ -365,17 +325,10 @@ impl GarrisonDao for InMemoryDao {
         if new_value > current_val {
             // 保留原 TTL：键已存在用原 expire_at；新键/永久键用 ttl_seconds。
             //
-            //【已知行为不一致——记录不改逻辑】
-            // 当 existing_expire_at = None 时（永久键或新键），代码落入
-            // `ttl_seconds` 分支：若 ttl_seconds > 0 则将永久键「升级」为 TTL 键。
-            // 而 incr/decr 对已存在的永久键保留 expire_at = None（永久语义不变）。
-            //
-            // 影响范围：此方法仅用于 HTTP Digest nc 单调性校验，调用方始终传入
-            // 非零 ttl_seconds（Digest 会话有固定过期窗口），因此永久键被升级在
-            // 当前使用场景中不会引发功能问题。若未来需统一语义，修复点在此分支：
-            // 将 `existing_expire_at = None && key 已存在` 与 `key 不存在` 区分，
-            // 对已存在的永久键保留 None，同时同步更新 mod.rs 中
-            // `in_memory_compare_and_update_if_greater_matrix` 测试的断言。
+            //【已知行为不一致，记录不改逻辑】existing_expire_at=None（永久键或新键）会落入
+            // ttl_seconds 分支，把永久键「升级」为 TTL 键，与 incr/decr 对永久键保留 None 的语义不一致。
+            // 影响：调用方（Digest nc 校验）始终传非零 ttl，当前不引发功能问题；统一语义需区分
+            //「已存在的永久键」与「键不存在」，并同步更新 mod.rs 的 compare_and_update matrix 测试断言。
             let expire_at = if existing_expire_at.is_some() {
                 existing_expire_at
             } else if ttl_seconds == 0 {
@@ -390,10 +343,7 @@ impl GarrisonDao for InMemoryDao {
         }
     }
 
-    /// compare_and_swap 用 Mutex 保护原子性（进程内原子）。
-    ///
-    /// 在单个 `lock()` 作用域内完成 get → compare → set，消除 TOCTOU 竞态。
-    /// 用于备份码消费等需要原子 CAS 语义的场景。
+    /// 单锁作用域内 get → compare → set（进程内原子）；用于备份码消费等 CAS 场景。
     async fn compare_and_swap(
         &self,
         key: &str,
@@ -424,42 +374,23 @@ impl GarrisonDao for InMemoryDao {
         }
     }
 
-    /// eval_lua 内存模拟实现（识别两类脚本模式）。
+    /// eval_lua 内存模拟（`parking_lot::Mutex` 内原子），识别两类 limiteron 脚本模式：
     ///
-    /// InMemoryDao 不支持真正的 Lua 脚本，但用 `parking_lot::Mutex` 保证进程内原子性。
-    ///
-    /// # 支持的脚本模式
-    ///
-    /// 1. **INCR + EXPIRE**（limiteron BruteForceStrategy 用）：
-    /// 识别脚本中含 `INCR` + `EXPIRE`，提取 `KEYS[1]` 与 `ARGV[2]`（TTL），
-    /// 委托 `self.incr`，返回 `vec![count.to_string()]`。
-    ///
-    /// 2. **ZREMRANGEBYSCORE**（limiteron `SLIDING_WINDOW_SCRIPT`，RateLimitStrategy 用）：
-    /// 识别脚本中含 `ZREMRANGEBYSCORE`，在单次 `lock()` 作用域内原子执行
-    /// remove-outdated → count → check → add（消除 TOCTOU）。
-    /// - `KEYS[1]`：Sorted Set key（score=毫秒时间戳，member=时间戳:seq）
-    /// - `KEYS[2]`：seq 键（rc.6 起脚本内 INCR 生成成员唯一序号；模拟器不消费）
-    /// - `ARGV[1]`：窗口大小 ms（u64）
-    /// - `ARGV[2]`：最大请求数（usize，>= 即拦截）
-    /// - 时钟：rc.6 起脚本内取 Redis TIME；模拟器取系统墙钟
-    /// - 返回 `vec![allowed, count, reset_time]`（allowed "1"/"0"；reset_time
-    ///   模拟器返回近似值 window_start+window，与脚本的最早成员+window 有差异，
-    ///   调用方 rate_limit 仅消费 allowed 位）
+    /// 1. **INCR + EXPIRE**（BruteForceStrategy）：取 `KEYS[1]` 与 `ARGV[2]`（TTL）委托 `self.incr`，返回 `vec![count]`。
+    /// 2. **ZREMRANGEBYSCORE**（`SLIDING_WINDOW_SCRIPT`，RateLimitStrategy）：单锁内 remove-outdated → count → check → add；
+    ///    `KEYS[1]`=Sorted Set（score=毫秒时间戳，member=时间戳:seq）、`KEYS[2]`=seq 键、
+    ///    `ARGV[1]`=窗口 ms、`ARGV[2]`=最大请求数；rc.6 起脚本内取 Redis TIME，模拟器取系统墙钟；
+    ///    返回 `[allowed, count, reset_time]`（reset_time 为近似值，调用方仅消费 allowed 位）。
     async fn eval_lua(
         &self,
         script: &str,
         keys: Vec<String>,
         args: Vec<String>,
     ) -> GarrisonResult<Vec<String>> {
-        // 模式 1（先判）：ZREMRANGEBYSCORE（limiteron SLIDING_WINDOW_SCRIPT）。
-        // rc.6 起滑窗脚本为修复「同毫秒成员互相覆盖绕过限流」改用 INCR seq_key
-        // 生成唯一序号——脚本同时含 INCR+EXPIRE 与 ZREMRANGEBYSCORE 两种特征，
-        // 必须先判滑窗，否则会被误派发到 INCR 模式（BruteForceStrategy 的
-        // INCR+EXPIRE 脚本不含 ZREMRANGEBYSCORE，反转判序不影响其派发）。
-        // 注意：上游 FIXED_WINDOW_SCRIPT 同样含 INCR+EXPIRE 且无滑窗特征——
-        // 未来 garrison 若消费它，会与 BruteForce 共享模式 2 派发（行为恰为
-        // INCR 语义，恰巧正确）；新增消费任何 oxcache_lua 脚本前须先核对
-        // 本派发特征表。
+        // 模式 1（滑窗）必须先判：rc.6 起滑窗脚本含 INCR+EXPIRE 与 ZREMRANGEBYSCORE
+        // 双特征（INCR seq_key 生成成员唯一序号），反转判序会被误派发到 INCR 模式。
+        // 注意：上游 FIXED_WINDOW_SCRIPT 同样含 INCR+EXPIRE 且无滑窗特征，会共享
+        // INCR 模式派发（行为恰为 INCR 语义）；新增消费 oxcache_lua 脚本前须先核对本派发特征表。
         if script.contains("ZREMRANGEBYSCORE") {
             return self.eval_lua_sliding_window_mode(&keys, &args).await;
         }
@@ -491,12 +422,9 @@ impl InMemoryDao {
         Ok(vec![count.to_string()])
     }
 
-    /// ZREMRANGEBYSCORE（limiteron SLIDING_WINDOW_SCRIPT，rc.6 契约）：
-    /// 原子 remove→count→check→add。
-    ///
-    /// rc.6 契约：`KEYS = [窗口键, seq 键]`、`ARGV = [window_ms, max_requests]`——
-    /// 时钟源在脚本内取 Redis TIME（不再经 ARGV 传 now）；seq 键生成成员唯一
-    /// 序号，模拟器以「追加时间戳列表」计数，天然区分同毫秒请求，无需 seq 语义。
+    /// ZREMRANGEBYSCORE（limiteron SLIDING_WINDOW_SCRIPT，rc.6 契约）：原子 remove→count→check→add。
+    /// rc.6 契约：KEYS=[窗口键, seq 键]、ARGV=[window_ms, max_requests]；时钟源在脚本内取 Redis TIME；
+    /// seq 键生成成员唯一序号，模拟器以「追加时间戳列表」计数，天然区分同毫秒请求。
     async fn eval_lua_sliding_window_mode(
         &self,
         keys: &[String],
@@ -519,10 +447,8 @@ impl InMemoryDao {
             .unwrap_or(0);
         let window_start_ms = now_ms.saturating_sub(window_ms);
 
-        // 原子 remove-outdated → count → check → add（单次 lock 作用域内）。
-        // member=score=毫秒时间戳，value 以逗号分隔 member 列表存储；
-        // `parse_timestamps` 的 `t > window_start` 过滤与
-        // `ZREMRANGEBYSCORE key -inf window_start`（移除 score <= window_start）语义一致。
+        // 单次 lock 内原子 remove-outdated → count → check → add；member=score=毫秒时间戳，
+        // `parse_timestamps` 的 `t > window_start` 过滤与 `ZREMRANGEBYSCORE -inf window_start` 语义一致。
         let mut store = self.store.lock();
         let now = Instant::now();
         let mut members: Vec<u64> = match store.get(key) {
@@ -590,11 +516,8 @@ fn parse_timestamps(raw: &str, window_start_ms: u64) -> Vec<u64> {
 // glob 匹配 helper（用于 keys 方法，支持 `*` 与 `?`）
 // ------------------------------------------------------------------------
 
-/// 简单 glob 匹配：`*` 匹配 0+ 字符，`?` 匹配 1 字符。
-///
-/// 使用经典双指针算法（O(n+m) 时间复杂度）。
-///
-/// 改为 `pub(crate)` 以供 `protocol::apikey` 模块的 `list_by_namespace` 复用
+/// glob 匹配：`*` 匹配 0+ 字符、`?` 匹配 1 字符（经典双指针，O(n+m)）；
+/// `pub(crate)` 供 `protocol::apikey::list_by_namespace` 复用。
 pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
     let pattern: Vec<char> = pattern.chars().collect();
     let text: Vec<char> = text.chars().collect();
@@ -640,7 +563,7 @@ mod glob_match_tests {
     fn glob_match_exact() {
         assert!(glob_match("abc", "abc"));
         assert!(!glob_match("abc", "xyz"));
-        // pattern 长于 text → false（`else { return false }` 分支）
+        // pattern 长于 text → false
         assert!(!glob_match("abcdef", "abc"));
     }
 
@@ -716,10 +639,7 @@ mod glob_match_tests {
 mod ttl_semantics_tests {
     use super::*;
 
-    /// update 对已过期 key 视为不存在：报 dao-key-missing 且不改值（不复活）。
-    ///
-    /// TTL 契约一致性：`get()` / `keys()` 视过期键为不存在，
-    /// `update()` 不得通过改值让过期键复活。
+    /// update 对已过期 key 报 dao-key-missing 且不改值（与 `get()`/`keys()` 一致，不复活过期键）。
     #[tokio::test]
     async fn update_expired_key_returns_missing_without_reviving() {
         let dao = InMemoryDao::new();
@@ -737,10 +657,7 @@ mod ttl_semantics_tests {
         );
     }
 
-    /// expire 对已过期 key 视为不存在：报 dao-key-missing 且不续期（不复活）。
-    ///
-    /// TTL 契约一致性：`get()` / `keys()` 视过期键为不存在，
-    /// `expire()` 不得通过续期让过期键复活。
+    /// expire 对已过期 key 报 dao-key-missing 且不续期（与 `get()`/`keys()` 一致，不复活过期键）。
     #[tokio::test]
     async fn expire_expired_key_returns_missing_without_reviving() {
         let dao = InMemoryDao::new();

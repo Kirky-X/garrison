@@ -3,8 +3,7 @@
 
 //! SMS 验证码渐进式限速模块。
 //!
-//! 提供 SmsSender trait（业务方实现短信发送）+ SmsRateLimiter（双窗口限速）+
-//! SmsVerificationService（发送/验证/异常检测）三层抽象。
+//! 三层抽象：`SmsSender` trait（业务方实现短信发送）+ `SmsRateLimiter`（双窗口限速）+ `SmsVerificationService`（发送/验证/异常检测）。
 //!
 //! # Key 空间设计
 //!
@@ -19,10 +18,8 @@
 //!
 //! # 安全约束
 //!
-//! - phone 不能包含 ':'（防止 key 注入）
-//! - 验证码使用 `rand::rng()`（ThreadRng，ChaCha12 CSPRNG）密码学安全随机数
-//! - 限速账本经 `GarrisonDao::incr`/`decr` 原子增减（QuotaStorage 适配器），
-//!   未验证计数器经 `GarrisonDao::incr` 原子递增
+//! phone 不含 ':'（防 key 注入）；验证码用 `rand::rng()`（ThreadRng，ChaCha12 CSPRNG）；限速账本与
+//! 未验证计数器均经 `GarrisonDao::incr`/`decr` 原子增减（QuotaStorage 适配器）。
 
 use crate::dao::GarrisonDao;
 use crate::error::GarrisonResult;
@@ -51,9 +48,8 @@ pub struct NoopSmsSender;
 
 /// SMS 限速器（双窗口：小时 + 天）。
 ///
-/// 窗口判定与补偿委托泛型内核 [`DualWindowQuota`]（limiteron `QuotaStorage`
-/// 账本，经 `GarrisonDaoQuotaStorage` 落 DAO）；本类型只保留 SMS 特有面：
-/// normalize/validate、`sms:` 命名空间与 `SmsRateLimitExceeded` 错误变体。
+/// 窗口判定与补偿委托泛型内核 [`DualWindowQuota`]（limiteron `QuotaStorage` 账本，经 `GarrisonDaoQuotaStorage` 落 DAO）；
+/// 本类型只保留 SMS 特有面：normalize/validate、`sms:` 命名空间与 `SmsRateLimitExceeded` 错误变体。
 pub struct SmsRateLimiter {
     /// 双窗口账本内核（hour/day 判定与补偿）。
     kernel: DualWindowQuota<GarrisonDaoQuotaStorage>,
@@ -63,11 +59,9 @@ pub struct SmsRateLimiter {
 ///
 /// # DAO 注入约束（重要）
 ///
-/// 本服务持有独立的 [`GarrisonDao`]（用于 code/attempts/unverified/recycled key），
-/// 同时内嵌的 [`SmsRateLimiter`] 也持有自己的 DAO（用于限速计数器与回滚）。
-/// **两者必须指向同一 DAO 实例/后端**（构造时传入同一个 `Arc`），框架不强制该约束：
-/// 若注入不同实例，服务与限速器将观察到不一致的状态（如限速器在一个后端递增、
-/// 服务在另一个后端读码），导致限速失效或验证码状态错乱。
+/// 本服务与内嵌 [`SmsRateLimiter`] 各持有一个 [`GarrisonDao`]（分别用于 code/attempts/unverified/recycled key 与限速计数），
+/// **两者必须指向同一实例/后端**（构造时传同一个 `Arc`）；框架不强制该约束，若注入不同实例，限速递增与读码落在不同后端，
+/// 导致限速失效或验证码状态错乱。
 pub struct SmsVerificationService {
     rate_limiter: SmsRateLimiter,
     sender: Arc<dyn SmsSender>,

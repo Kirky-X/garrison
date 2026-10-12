@@ -1,39 +1,33 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! WebAuthn/Passkey 凭据 SPI 与注册/认证仪式（feature = "protocol-webauthn"）。
+//! WebAuthn/Passkey 凭据 SPI 与注册/认证仪式（feature = "protocol-webauthn"），
+//! 基于 `webauthn-rs` 0.5：
 //!
-//! 基于 `webauthn-rs` 0.5 提供 Passkey 凭据的注册与认证两大仪式，职责边界：
-//!
-//! - [`challenge`](crate::protocol::webauthn::challenge)：仪式态（`PasskeyRegistration` / `PasskeyAuthentication`）
-//!   经 [`crate::dao::GarrisonDao`] `set_if_absent`+TTL 暂存，消费用原子读删
-//!   （`get_and_delete`），键不存在即判重放——challenge 一次性是整个协议的
-//!   反重放根基（assertion 重放 = challenge 已消费）。
-//! - [`credential`](crate::protocol::webauthn::credential)：凭据领域模型（公钥/sign_count/backup flags/attestation）
-//!   与 SQL 行的双向映射。
-//! - [`service`](crate::protocol::webauthn::service)：仪式编排。注册侧 `ExcludeCredentials` 防同 authenticator
-//!   重复绑定（叠加 `credential_id` 唯一约束兜底）；认证侧 sign_count 单调性
-//!  （count ≤ 上次 → 克隆嫌疑拒绝）与 backup flags 更新落库。
+//! - [`challenge`](crate::protocol::webauthn::challenge)：仪式态经 DAO `set_if_absent`+TTL 暂存、
+//!   `get_and_delete` 原子读删，键不存在即判重放——challenge 一次性是协议的反重放根基。
+//! - [`credential`](crate::protocol::webauthn::credential)：凭据领域模型
+//!   （公钥/sign_count/backup flags/attestation）与 SQL 行双向映射。
+//! - [`service`](crate::protocol::webauthn::service)：仪式编排；注册侧 `ExcludeCredentials`
+//!   防同 authenticator 重复绑定（叠加 `credential_id` 唯一约束兜底），认证侧
+//!   sign_count 单调（回退判克隆）与 backup flags 更新落库。
 //!
 //! ## RP 配置派生
 //!
-//! Relying Party 配置从 issuer URL 派生：`rp_id` = URL host，`origins` =
-//! `origins` 取该 issuer URL。issuer 变更后 rp_id 自动跟随，无需独立 RP 配置项。
+//! RP 配置从 issuer URL 派生（`rp_id` = URL host，`origins` = issuer URL），
+//! issuer 变更后自动跟随，无需独立 RP 配置项。
 //!
 //! ## key 命名空间
 //!
-//! - `garrison:webauthn:challenge:<challenge_b64>`：仪式态 JSON，
-//!   TTL = `WebauthnConfig::challenge_ttl_secs`。
-//!
-//! 与 session/qrlogin/sign 等命名空间隔离。
+//! `garrison:webauthn:challenge:<challenge_b64>`（仪式态 JSON，
+//! TTL = `WebauthnConfig::challenge_ttl_secs`），与 session/qrlogin/sign 等隔离。
 //!
 //! ## 安全语义
 //!
-//! - 仪式态只落服务端存储（`danger-allow-state-serialisation` 的上游文档
-//!   认可场景）；绝不可下发到客户端可读位置，否则重放防御失效。
-//! - 认证成功后 sign_count 单调推进；回退触发克隆嫌疑拒绝（显性错误，
-//!   不静默放行）。
-//! - backup_eligible 只升不降（BE 升级单向），backup_state 跟随最新断言。
+//! - 仪式态只落服务端存储（`danger-allow-state-serialisation` 上游认可场景），
+//!   绝不可下发客户端可读位置，否则重放防御失效。
+//! - 认证成功后 sign_count 单调推进，回退显性拒克隆（不静默放行）；
+//!   backup_eligible 只升不降，backup_state 跟随最新断言。
 
 pub mod challenge;
 pub mod credential;
@@ -47,9 +41,7 @@ pub(crate) mod tests;
 
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
 // FactorPurpose / FactorPolicy：passwordless 与 2FA 双 policy
-// ============================================================================
 
 /// 凭据准入用途：passwordless（凭据即身份）或 second factor（叠加因子）。
 ///
@@ -71,14 +63,9 @@ pub struct FactorPolicy {
     pub enabled: bool,
 }
 
-// ============================================================================
 // WebauthnConfig：配置（构造后不可变）
-// ============================================================================
 
-/// WebAuthn/Passkey 配置。
-///
-/// 经 [`service::WebauthnService`] 注入，构造后不可变。
-/// RP 配置（rp_id/origins）不自立配置项，从 [`WebauthnConfig`] 的 `issuer` 字段派生。
+/// WebAuthn/Passkey 配置（经 [`service::WebauthnService`] 注入，构造后不可变）。
 #[derive(Debug, Clone)]
 pub struct WebauthnConfig {
     /// RP 派生源：issuer URL（如 `https://sso.example.com`）。
@@ -98,9 +85,7 @@ pub struct WebauthnConfig {
     pub second_factor: FactorPolicy,
 }
 
-// ============================================================================
 // WebauthnCeremonyError：仪式错误词汇表（显性化，不静默）
-// ============================================================================
 
 /// WebAuthn 仪式错误：模块自有的错误词汇表，边界处映射为
 /// [`crate::error::GarrisonError`]（`InvalidParam` 携带显性 detail）。

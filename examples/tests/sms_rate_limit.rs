@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! sms_rate_limit 示例测试（sms-rate-limit feature）。
-//!
-//! 验证 run() 完整执行（key 空间设计/限速配置/使用流程说明，无外部短信网关依赖）。
+//! sms_rate_limit 示例测试（sms-rate-limit feature）：验证 run() 完整执行（key 空间设计/限速配置/使用流程说明，无外部短信网关依赖）。
 
 #![cfg(feature = "sms-rate-limit")]
 

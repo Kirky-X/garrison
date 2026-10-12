@@ -3,8 +3,7 @@
 
 //! 邮箱验证码模块。
 //!
-//! 提供 EmailSender trait（业务方实现邮件发送）+ EmailRateLimiter（双窗口限速）+
-//! EmailVerificationService（发送/验证/异常检测）三层抽象。
+//! 三层抽象：`EmailSender` trait（业务方实现邮件发送）+ `EmailRateLimiter`（双窗口限速）+ `EmailVerificationService`（发送/验证/异常检测）。
 //!
 //! # Key 空间设计
 //!
@@ -19,11 +18,9 @@
 //!
 //! # 安全约束
 //!
-//! - 所有 key 中的邮箱地址经过 `normalize_email()` 规范化（trim + 小写化）
-//! - email 不能包含 ':'（防止 key 注入）
-//! - 验证码使用 `rand::rng()`（ThreadRng，ChaCha12 CSPRNG）密码学安全随机数
-//! - 限速账本经 `GarrisonDao::incr`/`decr` 原子增减（QuotaStorage 适配器），
-//!   未验证计数器经 `GarrisonDao::incr` 原子递增
+//! 所有 key 中的邮箱地址经 `normalize_email()` 规范化（trim + 小写化）且不含 ':'
+//! （防 key 注入）；验证码用 `rand::rng()`（ThreadRng，ChaCha12 CSPRNG）；限速账本与
+//! 未验证计数器均经 `GarrisonDao::incr`/`decr` 原子增减（QuotaStorage 适配器）。
 
 use crate::dao::GarrisonDao;
 use crate::error::GarrisonResult;
@@ -45,20 +42,15 @@ mod tests;
 /// 邮件发送 trait（业务方实现）。
 #[async_trait]
 pub trait EmailSender: Send + Sync {
-    /// 发送邮件验证码。
-    ///
-    /// # 参数
-    /// - `to`: 收件人邮箱地址（已规范化）。
-    /// - `subject`: 邮件主题。
-    /// - `body`: 邮件正文（纯文本或 HTML）。
+    /// 发送邮件验证码（`to` 收件人地址已规范化）。
     async fn send(&self, to: &str, subject: &str, body: &str) -> GarrisonResult<()>;
 }
 
 /// 邮箱验证码限速器（双窗口：小时 + 天）。
 ///
-/// 窗口判定与补偿委托泛型内核 [`DualWindowQuota`]（limiteron `QuotaStorage`
-/// 账本，经 `GarrisonDaoQuotaStorage` 落 DAO）；本类型只保留邮箱特有面：
-/// normalize/validate、`email:` 命名空间与 `EmailRateLimitExceeded` 错误变体。
+/// 窗口判定与补偿委托泛型内核 [`DualWindowQuota`]（limiteron `QuotaStorage` 账本，经
+/// `GarrisonDaoQuotaStorage` 落 DAO）；本类型只保留邮箱特有面：normalize/validate、
+/// `email:` 命名空间与 `EmailRateLimitExceeded` 错误变体。
 pub struct EmailRateLimiter {
     /// 双窗口账本内核（hour/day 判定与补偿）。
     kernel: DualWindowQuota<GarrisonDaoQuotaStorage>,

@@ -8,38 +8,16 @@ use crate::json::GarrisonJsonTemplate;
 use std::collections::HashMap;
 
 impl GarrisonJsonTemplate {
-    /// 解析 JSON 字符串为模板。
-    ///
-    /// # 参数
-    /// - `template`: JSON 字符串，可包含 `${key}` 占位符。
-    ///
-    /// # 返回
-    /// - `Ok(Self)`: 解析成功，struct 内部持有解析后的 `Value`。
-    /// - `Err(GarrisonError::Internal)`: JSON 解析失败，消息含解析错误信息。
+    /// 解析含 `${key}` 占位符的 JSON 字符串为模板；解析失败返回 `Internal` 错误（消息含 json-template-parse）。
     pub fn new(template: &str) -> GarrisonResult<Self> {
         let value: serde_json::Value = serde_json::from_str(template)
             .map_err(|e| GarrisonError::Internal(format!("json-template-parse::{}", e)))?;
         Ok(Self { value })
     }
 
-    /// 递归替换 `${key}` 占位符并序列化为 JSON 字符串。
+    /// 递归替换 `${key}` 占位符并序列化为 JSON 字符串；未提供的 `${key}` 保留原样。
     ///
-    /// # 参数
-    /// - `params`: 占位符键值对。未在 `params` 中提供的 `${key}` 保留原样。
-    ///
-    /// # 替换语义
-    ///
-    /// 单遍扫描：占位符仅从**模板原文**中识别并替换一次，替换值本身即使包含
-    /// `${key}` 也不会被二次替换；遍历顺序与 `params` 无关，输出确定。
-    ///
-    /// # 性能
-    ///
-    /// 渲染借用内部 `Value`（`&self`），按需构建新树：无占位符的字符串节点
-    /// 原样克隆，不再整树深拷贝 + 逐节点二次 clone。
-    ///
-    /// # 返回
-    /// - `Ok(String)`: 渲染后的 JSON 字符串（可被 `serde_json::from_str` 再次解析）。
-    /// - `Err(GarrisonError::Internal)`: 序列化失败。
+    /// 单遍扫描：占位符仅从模板原文识别并替换一次，替换值中的 `${key}` 不二次替换；输出与 `params` 顺序无关、确定。
     pub fn render(&self, params: &HashMap<String, String>) -> GarrisonResult<String> {
         let rendered = render_value(&self.value, params);
         serde_json::to_string(&rendered)
@@ -52,12 +30,7 @@ impl GarrisonJsonTemplate {
     }
 }
 
-/// 递归替换 `Value` 中的 `${key}` 占位符（借用输入，返回新树）。
-///
-/// - `String` 类型: 执行占位符替换（含占位符时才分配新 String）
-/// - `Object` 类型: 递归处理每个值
-/// - `Array` 类型: 递归处理每个元素
-/// - 其他类型: 克隆原样返回
+/// 递归替换 `Value` 中的 `${key}` 占位符（借用输入返回新树，无占位符的字符串节点直接克隆）。
 fn render_value(value: &serde_json::Value, params: &HashMap<String, String>) -> serde_json::Value {
     match value {
         serde_json::Value::String(s) => {
@@ -81,11 +54,7 @@ fn render_value(value: &serde_json::Value, params: &HashMap<String, String>) -> 
     }
 }
 
-/// 单遍扫描替换 `s` 中的 `${key}` 占位符。
-///
-/// - 仅识别模板原文中的占位符，替换值不会被再次扫描（杜绝二次替换）；
-/// - 单次遍历 O(n)（哈希查表，与参数数量 k 无关）；
-/// - 未在 `params` 中的 `${key}` 原样保留；无闭合 `}` 的 `${` 同样原样保留。
+/// 单遍扫描 O(n) 替换 `s` 中的 `${key}`（哈希查表）：仅识别模板原文占位符，替换值不再扫描；未提供或无闭合 `}` 的占位符原样保留。
 fn substitute(s: &str, params: &HashMap<String, String>) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
@@ -98,7 +67,6 @@ fn substitute(s: &str, params: &HashMap<String, String>) -> String {
                 match params.get(key) {
                     Some(val) => out.push_str(val),
                     None => {
-                        // 占位符未提供：原样保留
                         out.push_str("${");
                         out.push_str(key);
                         out.push('}');
@@ -107,7 +75,6 @@ fn substitute(s: &str, params: &HashMap<String, String>) -> String {
                 rest = &after[end + 1..];
             },
             None => {
-                // 无闭合 '}'：原样保留并继续扫描剩余部分
                 out.push_str("${");
                 rest = after;
             },
@@ -127,8 +94,7 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("a".to_string(), "${b}".to_string());
         params.insert("b".to_string(), "X".to_string());
-        // 旧实现按 HashMap 顺序连续 replace 时，${b} 可能被展开为 X（不确定输出）；
-        // 单遍扫描后替换值 ${b} 必须原样保留
+        // 单遍扫描：替换值中的 ${b} 必须原样保留，不二次展开
         assert_eq!(substitute("v=${a}", &params), "v=${b}");
     }
 
@@ -159,9 +125,7 @@ mod tests {
             GarrisonJsonTemplate::new(r#"{"o":{"s":"${x}"},"arr":["${x}",1,null],"n":5}"#).unwrap();
         let mut params = HashMap::new();
         params.insert("x".to_string(), "v".to_string());
-        // JSON 键序为实现细节：生产构建（BTreeMap）按字母序、测试构建（toml
-        // dev-dep 的 preserve_order feature 统一后为 IndexMap）按插入序。
-        // 断言按 Value 语义比较，不锁键序。
+        // JSON 键序为实现细节（BTreeMap/IndexMap 不同），断言按 Value 语义比较，不锁键序
         let rendered: serde_json::Value =
             serde_json::from_str(&template.render(&params).unwrap()).unwrap();
         let expected: serde_json::Value =

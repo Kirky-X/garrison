@@ -4,7 +4,6 @@
 
 set -euo pipefail
 
-# 颜色输出
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -16,7 +15,6 @@ ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC} $*"; }
 
-# 项目根目录（脚本所在目录的父目录）
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
@@ -44,7 +42,6 @@ cmd_check_version() {
 
     info "检查版本一致性: $version"
 
-    # 1. 检查 Cargo.toml version 字段
     local cargo_version
     cargo_version=$(grep -E '^version = ' Cargo.toml | head -1 | sed -E 's/version = "([^"]+)".*/\1/')
     if [[ "$cargo_version" != "$version" ]]; then
@@ -60,8 +57,7 @@ cmd_check_version() {
     fi
     ok "CHANGELOG.md: 找到 ## [$version] 章节"
 
-    # 3. 检查 git tag 是否已存在（应当不存在，发布前检查）
-    # 重复发布属于错误状态，必须显性失败（规则 12）
+    # git tag 不应已存在：重复发布属于错误状态，必须显性失败
     if git rev-parse -q --verify "refs/tags/v${version}" >/dev/null; then
         fail "git tag v${version} 已存在（如需重新发布需先删除 tag 并 cargo yank）"
         exit 1
@@ -120,11 +116,9 @@ cmd_bump_version() {
     old_version=$(grep -E '^version = ' Cargo.toml | head -1 | sed -E 's/version = "([^"]+)".*/\1/')
     info "bump version: $old_version → $new_version"
 
-    # 使用 sed 原地替换第一个 version = "..." 行
-    # new_version 已通过 validate_semver 校验，不含 sed 特殊字符
+    # sed 原地替换第一个 version = "..." 行；new_version 已过 validate_semver 校验，不含 sed 特殊字符
     sed -i -E "0,/^version = \".+\"/s//version = \"$new_version\"/" Cargo.toml
 
-    # 验证
     local actual_version
     actual_version=$(grep -E '^version = ' Cargo.toml | head -1 | sed -E 's/version = "([^"]+)".*/\1/')
     if [[ "$actual_version" != "$new_version" ]]; then
@@ -145,7 +139,7 @@ cmd_precheck() {
 
     local failures=0
 
-    # 1. cargo fmt --check（轻量，先跑快速失败）
+    # 轻量检查先跑，快速失败
     info "[1/8] cargo fmt --check"
     if cargo fmt --all -- --check >/dev/null 2>&1; then
         ok "fmt 通过"
@@ -154,7 +148,7 @@ cmd_precheck() {
         failures=$((failures + 1))
     fi
 
-    # 2. cargo audit（SAST 安全审查，规则 19 强制要求 0 CRITICAL）
+    # SAST 安全审查，强制要求 0 CRITICAL
     info "[2/8] cargo audit"
     if ! command -v cargo-audit >/dev/null 2>&1; then
         fail "cargo-audit 未安装，无法执行安全审查（运行 cargo install cargo-audit 安装）"
@@ -166,7 +160,7 @@ cmd_precheck() {
         failures=$((failures + 1))
     fi
 
-    # 3. cargo deny check（依赖审计，规则 18 强制要求）
+    # 依赖审计，强制要求
     info "[3/8] cargo deny check"
     if ! command -v cargo-deny >/dev/null 2>&1; then
         fail "cargo-deny 未安装，无法执行依赖审计（运行 cargo install cargo-deny 安装）"
@@ -178,7 +172,6 @@ cmd_precheck() {
         failures=$((failures + 1))
     fi
 
-    # 4. cargo test --lib（核心测试）
     info "[4/8] cargo test --features full --lib"
     if cargo test --features full --lib >/dev/null 2>&1; then
         ok "lib 测试通过"
@@ -187,7 +180,6 @@ cmd_precheck() {
         failures=$((failures + 1))
     fi
 
-    # 5. cargo test --test '*'（E2E 测试）
     info "[5/8] cargo test --features full --test '*'"
     if cargo test --features full --test '*' --no-fail-fast >/dev/null 2>&1; then
         ok "E2E 测试通过"
@@ -196,7 +188,6 @@ cmd_precheck() {
         failures=$((failures + 1))
     fi
 
-    # 6. cargo doc（零警告）
     info "[6/8] cargo doc --features full --no-deps"
     local doc_output
     doc_output=$(RUSTDOCFLAGS="-D warnings" cargo doc --features full --no-deps 2>&1 || true)
@@ -208,7 +199,7 @@ cmd_precheck() {
         failures=$((failures + 1))
     fi
 
-    # 7. cargo clippy -D warnings（重量级，最后跑）
+    # 重量级，最后跑
     info "[7/8] cargo clippy --features full --lib --tests -- -D warnings"
     if cargo clippy --features full --lib --tests -- -D warnings >/dev/null 2>&1; then
         ok "clippy 通过"
@@ -217,7 +208,6 @@ cmd_precheck() {
         failures=$((failures + 1))
     fi
 
-    # 8. 版本一致性
     info "[8/8] 版本一致性检查"
     local cargo_version
     cargo_version=$(grep -E '^version = ' Cargo.toml | head -1 | sed -E 's/version = "([^"]+)".*/\1/')

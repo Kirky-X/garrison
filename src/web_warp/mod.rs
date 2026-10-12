@@ -1,27 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! warp 框架适配模块。
+//! warp 框架适配模块：GarrisonRouter + Filter extractor + GarrisonInterceptor 完整集成。
 //!
-//! 对应 warp 适配器，
-//! 提供 GarrisonRouter + Filter extractor + GarrisonInterceptor 完整集成。
-//!
-//! ## 设计
-//!
-//! - `GarrisonRouter`：路由规则构建器，`route_protected` 注册路径 + 注解映射，`into_filter` 生成守卫 Filter
-//! - `check_login()` / `check_role(role)` / `check_permission(perm)`：guard Filter，per-handler 鉴权
-//! - `garrison_principal` / `tenant_context`：value-extracting Filter
-//! - `impl Reply for GarrisonError` / `impl Reply`+`Reject`+`Display for GarrisonRejection` +
-//! `garrison_recover()`：错误响应。warp 拒绝链不会自动调用 `Reply`，须显式挂
-//! `.recover(garrison_recover)` 才能得到与 axum/actix 一致的 `error_code`/`message` JSON
-//!
-//! ## 模块结构（接口隔离）
-//!
-//! - `mod.rs`：仅声明 `GarrisonRouter` / `GarrisonRejection` 结构体 + re-export
-//! - `extractor`：value-extracting Filter（`garrison_principal` / `tenant_context`）
-//! - `extractors`：guard Filter（`check_login` / `check_role` / `check_permission`）+
-//! `Reject` / `Reply` / `Display` impl + `garrison_recover()`
-//! - [`router`]：`impl GarrisonRouter` + `impl Default`
+//! 模块结构：`mod.rs` 结构体声明 + re-export 与 [`router`] impl、`extractor`（value-extracting Filter）、
+//! `extractors`（guard Filter + Reject/Reply/Display impl + `garrison_recover()`）。
+//! warp 拒绝链不会自动调用 `Reply`，须显式挂 `.recover(garrison_recover)` 才能得到与 axum/actix 一致的 JSON。
 //!
 //! ## 使用示例
 //!
@@ -69,34 +53,20 @@ pub use extractors::garrison_recover;
 /// X-Request-ID 中间件：提取 / 生成 / 回传请求标识（错误体后置回填 request_id）。
 pub use request_id::with_request_id;
 
-// ============================================================================
-// 结构体声明：实现见子模块 router / extractors
-// ============================================================================
+// 结构体声明（实现见子模块 router / extractors）
 
-/// 包装 `GarrisonError` 以实现 `warp::reject::Reject`（warp 拒绝链需要 Reject 类型）。
-///
-/// `impl Reject` / `impl Reply` 见 [`extractors`]。
+/// 包装 `GarrisonError` 以实现 `warp::reject::Reject`（`impl Reject`/`Reply` 见 [`extractors`]）。
 #[derive(Debug)]
 pub struct GarrisonRejection(pub GarrisonError);
 
-/// warp 路由器，收集鉴权路由规则并生成守卫 Filter。
+/// warp 路由器：收集鉴权路由规则并生成守卫 Filter（API 对齐 axum 版；`impl` 见 [`router`]）。
 ///
-/// 对应 axum 版 `GarrisonRouter`，API 对齐。
-/// `impl GarrisonRouter` + `impl Default` 见 [`router`]。
-///
-/// # 封装性
-///
-/// 内部字段（`rules` / `interceptor` / `config`）不对外暴露：
-/// 直接公开可变字段会让调用方绕过任何校验任意改写路由表、替换拦截器或
-/// 更换配置，静默破坏鉴权行为。请通过构造器 API
-/// （[`GarrisonRouter::new`] / [`GarrisonRouter::with_interceptor`] /
-/// [`GarrisonRouter::route_protected`]）注册规则。
+/// 内部字段不对外暴露：公开可变字段会让调用方绕过校验任意改写路由表、替换拦截器或更换配置，
+/// 静默破坏鉴权行为；请通过 [`GarrisonRouter::new`] / [`GarrisonRouter::with_interceptor`] /
+/// [`GarrisonRouter::route_protected`] 注册规则。
 pub struct GarrisonRouter {
-    /// 路径 → 注解映射（私有：防外部绕过校验直接改写）。
     rules: HashMap<String, Annotation>,
-    /// 拦截器（私有：防外部运行时替换）。
     interceptor: Arc<dyn GarrisonInterceptor>,
-    /// 配置（私有：防外部运行时更换）。
     config: Arc<GarrisonConfig>,
 }
 

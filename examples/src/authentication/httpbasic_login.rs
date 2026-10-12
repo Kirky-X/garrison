@@ -15,8 +15,7 @@ use garrison::secure::httpbasic::HttpBasicAuth;
 
 /// 运行 HTTP Basic 认证示例。
 ///
-/// 演示 encode / decode / parse_authorization_header 以及中文特殊字符支持、
-/// 非 Basic 方案拒绝。
+/// 演示 encode / decode / parse_authorization_header、中文特殊字符支持与非 Basic 方案拒绝。
 pub fn run() -> GarrisonResult<()> {
     println!("=== Garrison HTTP Basic 认证示例 ===\n");
 

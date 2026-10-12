@@ -56,13 +56,9 @@ impl InvitationHandler {
         self
     }
 
-    /// 签发单条邀请码。
-    ///
-    /// 校验规格（TTL > 0、max_uses >= 1）后生成短码，经 `set_if_absent` 写入
-    /// `garrison:invitation:code:<code>`，碰撞时重试最多 `MAX_COLLISION_RETRIES` 次。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: `ttl_seconds <= 0`、`max_uses == 0` 或碰撞重试耗尽。
+    /// 签发单条邀请码：校验规格（TTL > 0、max_uses >= 1）后生成短码，经
+    /// `set_if_absent` 写入 KV，碰撞时重试最多 `MAX_COLLISION_RETRIES` 次；
+    /// 规格非法或重试耗尽返回 `InvalidParam`。
     pub async fn create(&self, spec: InvitationSpec) -> GarrisonResult<InvitationRecord> {
         validate_spec(&spec)?;
         let record = self.persist_new_record(spec).await?;
@@ -77,10 +73,8 @@ impl InvitationHandler {
         Ok(record)
     }
 
-    /// 批量签发 `count` 条邀请码（同一规格，码互异）。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: `count == 0`，或任一条签发失败（规格校验/碰撞）。
+    /// 批量签发 `count` 条邀请码（同一规格，码互异）；`count == 0` 或任一条
+    /// 签发失败（规格校验/碰撞）返回 `InvalidParam`。
     pub async fn create_batch(
         &self,
         spec: InvitationSpec,
@@ -109,13 +103,12 @@ impl InvitationHandler {
         Ok(records)
     }
 
-    /// 吊销邀请码（幂等）。
+    /// 吊销邀请码（幂等）：未吊销记录置 Revoked 回写（剩余 TTL）并广播
+    /// `InvitationRevoked`；已吊销记录回写原状、不重复广播；未知码或脏数据返回
+    /// `Ok(())`（取出即清理）。
     ///
-    /// 对存在且未吊销的记录：status 置 Revoked 回写（剩余 TTL）并广播 `InvitationRevoked`；
-    /// 对已吊销记录：回写原状、不重复广播；对未知码或脏数据：`Ok(())`（删除即清理，幂等语义）。
-    ///
-    /// 注意：`issuer_id` 仅用于事件落账（取记录内真实邀请人），吊销权限校验属应用层职责
-    /// （框架不持有权限模型，与 temp/apikey 协议同风格）。
+    /// `issuer_id` 仅用于事件落账（取记录内真实邀请人）；吊销权限校验属应用层
+    /// 职责（框架不持有权限模型，与 temp/apikey 协议同风格）。
     pub async fn revoke(&self, code_input: &str, _issuer_id: &str) -> GarrisonResult<()> {
         let normalized = code::normalize(code_input)?;
         let key = format!("{}{}", KEY_PREFIX, normalized);
@@ -145,11 +138,9 @@ impl InvitationHandler {
         Ok(())
     }
 
-    /// 列出指定邀请人的邀请码记录（管理面，低频操作）。
-    ///
-    /// 经 `dao.keys("garrison:invitation:code:*")` 枚举后逐键读取反序列化，
-    /// 过滤 `issuer_id` 匹配的记录；脏数据键跳过。大型 Redis 后端注意 `keys` 的
-    /// 阻塞成本（管理面可接受；分页为后续变更）。
+    /// 列出指定邀请人的邀请码记录（管理面低频操作）：`keys` 枚举后逐键读取并
+    /// 过滤 `issuer_id`，脏数据键跳过。大型 Redis 后端注意 `keys` 的阻塞成本
+    /// （管理面可接受）。
     pub async fn list(&self, issuer_id: &str) -> GarrisonResult<Vec<InvitationRecord>> {
         let pattern = format!("{}*", KEY_PREFIX);
         let keys = self.dao.keys(&pattern).await?;
@@ -167,11 +158,9 @@ impl InvitationHandler {
         Ok(records)
     }
 
-    /// 只读校验邀请码（不产生任何 KV 写副作用）。
-    ///
-    /// 输入经规范化后查 KV，返回 [`InvitationStatusReport`]：
-    /// 有效时 `reason` 为 `None` 且携带记录；无效时 `reason` 精确区分
-    /// NotFound / Expired / Revoked / Exhausted。
+    /// 只读校验邀请码（不产生 KV 写副作用）：规范化后查 KV，返回
+    /// [`InvitationStatusReport`]——有效时 `reason` 为 `None` 且携带记录，
+    /// 无效时精确区分 NotFound / Expired / Revoked / Exhausted。
     pub async fn validate(&self, code_input: &str) -> GarrisonResult<InvitationStatusReport> {
         let normalized = code::normalize(code_input)?;
         let key = format!("{}{}", KEY_PREFIX, normalized);
@@ -201,20 +190,13 @@ impl InvitationHandler {
         })
     }
 
-    /// 消费邀请码（原子 check-and-restore）。
+    /// 消费邀请码（原子 check-and-restore）：`get_and_delete` 原子取出并删除，
+    /// 并发消费同一单次码恰一成功、其余 NotFound（防 double-spend）。取出后按
+    /// 记录状态处置——Revoked / 耗尽回写原记录（供 validate 复核）后拒绝，过期
+    /// 不回写直接拒绝，有效则 `used_count += 1` 且有剩余次数时回写（剩余 TTL）。
     ///
-    /// 经 `dao.get_and_delete` 原子取出并删除——并发消费同一单次码时恰有一个调用成功，
-    /// 其余收到 NotFound（防 double-spend）。取出后校验：
-    /// - `Revoked`：回写原记录（供 validate 复核）并拒绝；
-    /// - 过期：不回写并拒绝；
-    /// - 耗尽（`used_count >= max_uses`）：回写并拒绝；
-    /// - 有效：`used_count += 1`，仍有剩余次数时回写更新记录（剩余 TTL），否则不回写。
-    ///
-    /// 成功消费广播 `InvitationRedeemed`（需 listener feature 且已注入 manager）。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: 码格式非法、不存在、过期、已吊销或已耗尽
-    ///   （`invitation-*::` key 前缀）。
+    /// 成功消费广播 `InvitationRedeemed`（需 listener feature 且已注入 manager）；
+    /// 失败统一返回 `InvalidParam`（`invitation-*::` key 前缀）。
     pub async fn redeem(
         &self,
         code_input: &str,

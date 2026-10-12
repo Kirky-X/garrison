@@ -5,10 +5,7 @@
 //!
 //! 对应模块：`src/secure/sms/`（`sms-rate-limit` feature 开启时可用）。
 //!
-//! 限速策略：
-//! - 每小时上限（hourly_limit）
-//! - 每天上限（daily_limit）
-//! - 连续未验证检测（异常发送不验证 → 标记为可疑号码）
+//! 限速策略：每小时上限（hourly_limit）、每天上限（daily_limit）、连续未验证检测（异常发送不验证 → 标记可疑号码）。
 //!
 //! 运行方式：
 //! ```sh
@@ -17,9 +14,7 @@
 
 use garrison::error::GarrisonResult;
 
-/// 运行 SMS 验证码限速示例。
-///
-/// 演示 SMS 限速的 key 空间设计与限速策略。
+/// 运行 SMS 验证码限速示例：key 空间设计、限速配置、使用流程与安全约束。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison SMS 验证码限速示例 ===\n");
 

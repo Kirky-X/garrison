@@ -3,12 +3,8 @@
 
 //! Strategy 注册表示例。
 //!
-//! 演示 `Strategy` 注册表的运行时可插拔策略替换：
-//! - `Strategy::new(logic)` 构造（6 个默认策略委托 GarrisonLogic）
-//! - `register_*` 替换策略
-//! - `getter` 查询当前策略
-//! - `remove_*` 恢复默认策略
-//! - 替换一个策略不影响其他策略
+//! 演示 `Strategy` 注册表的运行时可插拔策略替换：`Strategy::new(logic)` 构造（6 个默认策略委托 GarrisonLogic）、
+//! `register_*` 替换策略、`getter` 查询当前策略、`remove_*` 恢复默认、替换一个策略不影响其他策略。
 //!
 //! 运行方式：
 //! ```sh

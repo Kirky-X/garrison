@@ -1,36 +1,19 @@
-// Copyright (c) 2026 Kirky.X🌠
-// SPDX-License-Identifier: Apache-2.0
-
-//! 匿名 Session 模块。
+//! 匿名 Session 模块（启用 `anonymous-session` feature 后编译）。
 //!
-//! 启用 `anonymous-session` feature 后编译。提供未登录用户的匿名会话支持，
-//! 适用于购物车、访客浏览等场景。
-//!
-//! ## Key 空间隔离
-//!
-//! 匿名 Session 使用独立的 key 空间，与登录 Session 隔离：
-//! - 登录 Session: `token:session:{token}`
-//! - 匿名 Session: `token:session:anon:{token}`
-//!
-//! 匿名 Session 的 `login_id` 为空字符串 `""`，`is_anon` 为 `true`。
-//! 不参与 `login_token_map`（因为 login_id 为空）。
-
+//! 为未登录用户提供匿名会话支持（购物车、访客浏览等），使用独立 key 空间 `token:session:anon:{token}`
+//! 与登录 Session 隔离：login_id 为空字符串，不参与 `login_token_map`。
 use super::{GarrisonSession, TokenSession};
 use crate::constants::DaoKeyPrefix;
 use crate::error::{GarrisonError, GarrisonResult};
 use chrono::Utc;
 use std::collections::HashMap;
 
-/// 生成匿名 Token-Session 的存储 key。
-///
-/// 格式: `token:session:anon:{token}`
+/// 生成匿名 Token-Session 的存储 key（格式 `token:session:anon:{token}`）。
 fn anon_token_key(token: &str) -> String {
     format!("{}session:anon:{}", DaoKeyPrefix::Token, token)
 }
 
-/// 校验匿名 token 输入。
-///
-/// 拒绝空字符串和超长 token（>128 字节），防止 DoS 和语义混淆。
+/// 校验匿名 token 输入：拒绝空字符串和超长 token（>128 字节），防止 DoS 和语义混淆。
 fn validate_anon_token(token: &str) -> GarrisonResult<()> {
     if token.is_empty() {
         return Err(GarrisonError::InvalidParam(
@@ -47,19 +30,8 @@ fn validate_anon_token(token: &str) -> GarrisonResult<()> {
 
 /// 获取匿名 Token-Session，不存在则创建。
 ///
-/// 首次调用时创建新的匿名 Session（`login_id = ""`, `is_anon = true`）并存储到 DAO，
-/// 后续调用返回已存在的 Session。TTL 由 `anon_session_timeout` 控制。
-///
-/// # 参数
-/// - `session`: GarrisonSession 引用。
-/// - `token`: token 字符串。
-///
-/// # 返回
-/// 匿名 TokenSession。
-///
-/// # 错误
-/// - 序列化/反序列化失败：`GarrisonError::Session`。
-/// - DAO 操作失败：透传 `GarrisonError`。
+/// 首次调用创建匿名 Session（`login_id = ""`, `is_anon = true`）并存储到 DAO，后续返回已存在 Session；
+/// TTL 由 `anon_session_timeout` 控制。
 pub async fn get_anon_token_session(
     session: &GarrisonSession,
     token: &str,
@@ -70,7 +42,6 @@ pub async fn get_anon_token_session(
     // 使用 per-token 锁保护 check-then-set 序列，避免并发 lost update
     session
         .with_token_session_lock(token, async {
-            // 已存在则返回
             if let Some(json) = session.dao.get(&key).await? {
                 let ts: TokenSession = serde_json::from_str(&json).map_err(|e| {
                     GarrisonError::Session(format!("session-sim-anon-deserialize::{}", e))
@@ -78,7 +49,6 @@ pub async fn get_anon_token_session(
                 return Ok(ts);
             }
 
-            // 不存在则创建
             let now = Utc::now().timestamp();
             let ts = TokenSession {
                 token: token.to_string(),
@@ -111,40 +81,14 @@ pub async fn get_anon_token_session(
         .await
 }
 
-/// 判断 token 是否为匿名 Session。
-///
-/// 检查 `token:session:anon:{token}` 是否存在：
-/// - 存在 → `true`（匿名 Session）
-/// - 不存在 → `false`（登录 Session 或不存在的 token）
-///
-/// # 参数
-/// - `session`: GarrisonSession 引用。
-/// - `token`: token 字符串。
-///
-/// # 返回
-/// `true` 表示匿名 Session，`false` 表示非匿名。
-///
-/// # 错误
-/// DAO 读取失败时透传 `GarrisonError`。
+/// 判断 token 是否为匿名 Session（检查 `token:session:anon:{token}` 是否存在）。
 pub async fn is_anon(session: &GarrisonSession, token: &str) -> GarrisonResult<bool> {
     validate_anon_token(token)?;
     let key = anon_token_key(token);
     Ok(session.dao.get(&key).await?.is_some())
 }
 
-/// 注销匿名 Session。
-///
-/// 删除 `token:session:anon:{token}` 键。不存在的 anon token 返回 `Ok(())`（幂等）。
-///
-/// # 参数
-/// - `session`: GarrisonSession 引用。
-/// - `token`: token 字符串。
-///
-/// # 返回
-/// 成功返回 `Ok(())`。
-///
-/// # 错误
-/// DAO 删除失败时透传 `GarrisonError`。
+/// 注销匿名 Session（删除 `token:session:anon:{token}` 键）；不存在的 anon token 幂等返回 `Ok(())`。
 pub async fn logout_anon(session: &GarrisonSession, token: &str) -> GarrisonResult<()> {
     validate_anon_token(token)?;
     let key = anon_token_key(token);
@@ -169,10 +113,6 @@ mod tests {
             .with_anon_session_timeout(anon_timeout);
         (dao, session)
     }
-
-    // ========================================================================
-    // get_anon_token_session
-    // ========================================================================
 
     /// 首次调用创建匿名 Session，login_id 为空，is_anon 为 true。
     #[tokio::test]
@@ -228,11 +168,6 @@ mod tests {
         assert!(ts2.login_id.is_empty(), "新 Session 的 login_id 应为空");
     }
 
-    // ========================================================================
-    // is_anon
-    // ========================================================================
-
-    /// 匿名 token 的 is_anon 返回 true。
     #[tokio::test]
     async fn is_anon_returns_true_for_anon_token() {
         let (_dao, session) = make_anon_session(3600, 86400, 1800);
@@ -243,7 +178,6 @@ mod tests {
         assert!(result, "匿名 token 的 is_anon 应返回 true");
     }
 
-    /// 登录 token 的 is_anon 返回 false。
     #[tokio::test]
     async fn is_anon_returns_false_for_login_token() {
         let (_dao, session) = make_anon_session(3600, 86400, 1800);
@@ -254,16 +188,10 @@ mod tests {
         assert!(!result, "登录 token 的 is_anon 应返回 false");
     }
 
-    // ========================================================================
-    // logout_anon
-    // ========================================================================
-
-    /// 注销后再获取创建新 Session。
     #[tokio::test]
     async fn logout_anon_then_get_creates_new_session() {
         let (_dao, session) = make_anon_session(3600, 86400, 1800);
 
-        // 首次创建
         session.get_anon_token_session("anon-1").await.unwrap();
         assert!(
             session.is_anon("anon-1").await.unwrap(),
@@ -276,7 +204,6 @@ mod tests {
             "注销后 is_anon 应为 false"
         );
 
-        // 再次获取应创建新 Session
         let ts2 = session.get_anon_token_session("anon-1").await.unwrap();
         assert!(
             session.is_anon("anon-1").await.unwrap(),
@@ -286,7 +213,6 @@ mod tests {
         assert!(ts2.login_id.is_empty(), "新 Session 的 login_id 应为空");
     }
 
-    /// 注销不存在的 anon token 返回 Ok(())（幂等）。
     #[tokio::test]
     async fn logout_anon_nonexistent_returns_ok() {
         let (_dao, session) = make_anon_session(3600, 86400, 1800);

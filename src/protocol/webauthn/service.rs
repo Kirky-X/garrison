@@ -8,10 +8,10 @@
 //!
 //! ## 反重放链路
 //!
-//! start_*：webauthn-rs 产出随机 challenge → 仪式态以 challenge 为键 SETNX 暂存。
-//! finish_*：从响应的 clientDataJSON 提取 challenge → GETDEL 原子消费
-//! （不存在即 [`WebauthnCeremonyError::ChallengeReplayed`]）→ webauthn-rs 复核
-//! challenge/signature/origin → 落库或处置。
+//! start_* 以 webauthn-rs 随机 challenge 为键 SETNX 暂存仪式态；finish_* 从
+//! clientDataJSON 提取 challenge 后 GETDEL 原子消费（不存在即
+//! [`WebauthnCeremonyError::ChallengeReplayed`]），webauthn-rs 复核
+//! challenge/signature/origin 后落库或处置。
 //!
 //! ## 克隆检测
 //!
@@ -21,9 +21,9 @@
 //!
 //! ## RP 配置派生
 //!
-//! `RelyingParty::derive`（外部 `webauthn-rs`）：`rp_id` = issuer URL host，`origins` = 该 issuer URL。
-//! issuer 变更后 rp_id 自动跟随（新凭据绑定新 rp_id；既有凭据的 rpIdHash
-//! 由 authenticator 侧绑定旧 rp_id，更换 issuer 属迁移事项，不在本模块处理）。
+//! `rp_id` = issuer URL host，`origins` = 该 issuer URL；issuer 变更后 rp_id
+//! 自动跟随（既有凭据的 rpIdHash 已由 authenticator 绑定旧 rp_id，更换 issuer
+//! 属迁移事项，不在本模块处理）。
 
 use super::challenge::{ChallengePayload, ChallengeStore};
 use super::credential::WebauthnCredential;
@@ -193,9 +193,7 @@ impl WebauthnService {
         }
     }
 
-    // ========================================================================
     // 注册仪式
-    // ========================================================================
 
     /// 发起注册：ExcludeCredentials 携带用户既有凭据（防同 authenticator
     /// 重复绑定的协议级防线），仪式态按 challenge 暂存。
@@ -301,9 +299,7 @@ impl WebauthnService {
         }
     }
 
-    // ========================================================================
     // 认证仪式
-    // ========================================================================
 
     /// 发起认证：以用户既有凭据构造 allow-list，仪式态按 challenge 暂存。
     pub async fn start_authentication(

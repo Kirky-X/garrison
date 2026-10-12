@@ -1,76 +1,38 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! WAF Hook 实现（9 个内置 Hook）。
+//! WAF Hook 实现（9 个内置 Hook），每个 Hook 实现 `WafHook` trait，经 `WafHookChain` 按注册顺序执行。
 //!
-//! 每个 Hook 实现 [`WafHook`](crate::strategy::firewall::waf::WafHook) trait，
-//! 通过 [`WafHookChain`](crate::strategy::firewall::waf::WafHookChain) 按注册顺序执行。
-//!
-//! # 9 个 Hook
-//!
-//! | Hook | name() | 校验内容 |
-//! |------|--------|----------|
-//! | `WhitePathHook` | `white_path` | 路径前缀白名单（匹配返回 AllowAndSkip） |
-//! | `BlackPathHook` | `black_path` | 路径前缀黑名单 |
-//! | `DangerCharacterHook` | `danger_char` | 危险字符（`//`、`\`、`%2e`、`%00` 等，校验 path/param/header 值） |
-//! | `BannedCharacterHook` | `banned_char` | 不可打印 ASCII 字符 |
-//! | `DirectoryTraversalHook` | `dir_traversal` | 目录遍历（`./`、`../`、`//`） |
-//! | `HostHook` | `host` | Host 头白名单 |
-//! | `HttpMethodHook` | `http_method` | HTTP 方法白名单 |
-//! | `HeaderHook` | `header` | 禁止请求头黑名单 |
-//! | `ParameterHook` | `parameter` | 禁止参数黑名单 |
+//! 9 个 Hook（name）：`WhitePathHook`（white_path，路径前缀白名单，匹配返回 AllowAndSkip）、`BlackPathHook`（black_path，路径前缀黑名单）、
+//! `DangerCharacterHook`（danger_char，危险字符 `//` / `\` / `%2e` / `%00` 等，校验 path/param/header 值）、
+//! `BannedCharacterHook`（banned_char，不可打印 ASCII）、`DirectoryTraversalHook`（dir_traversal，`./` / `../` / `//`）、
+//! `HostHook`（host，Host 头白名单）、`HttpMethodHook`（http_method）、`HeaderHook`（header）、`ParameterHook`（parameter）。
 
 use super::waf::{WafContext, WafHook, WafVerdict};
 use crate::i18n::translate_detail;
 use async_trait::async_trait;
 
-// ============================================================================
 // 1. WhitePathHook — 路径前缀白名单
-// ============================================================================
 
-/// 路径前缀白名单 Hook。
+/// 路径前缀白名单 Hook：匹配时返回 `AllowAndSkip`（放行并跳过后续 Hook），不匹配返回 `Allow`（继续后续 Hook）。
 ///
-/// 语义：白名单匹配时返回 `AllowAndSkip`（放行并跳过后续 Hook），
-/// 不匹配时返回 `Allow`（继续执行后续 Hook）。
+/// # 注册顺序约束
 ///
-/// # 注册顺序约束（架构评审修复）
-///
-/// **警告**：WhitePathHook 必须注册在所有安全关键 Hook（如
-/// [`DirectoryTraversalHook`] / [`DangerCharacterHook`]）**之后**。
-///
-/// 若注册在安全 Hook 之前，白名单匹配会短路跳过安全校验，导致
-/// `/api/../admin` 等路径遍历攻击绕过。为防止上述绕过，本 Hook 在匹配白名单前
-/// 会先检查 path 是否含可疑模式（`..` 或 `//`），若含可疑模式则不短路，
-/// 返回 `Allow` 交给后续安全 Hook 处理。但这只是兜底防御，正确的注册顺序
-/// 仍是强约束。
-///
-/// [`DirectoryTraversalHook`]: DirectoryTraversalHook
-/// [`DangerCharacterHook`]: DangerCharacterHook
+/// **警告**：本 Hook 必须注册在所有安全关键 Hook（如 `DirectoryTraversalHook` / `DangerCharacterHook`）**之后**——
+/// 若注册在安全 Hook 之前，白名单匹配会短路跳过安全校验，导致 `/api/../admin` 等路径遍历攻击绕过。为兜底，本 Hook 在匹配白名单前
+/// 先检查 path 是否含可疑模式（`..` 或 `//`），含可疑模式则不短路、返回 `Allow` 交给后续安全 Hook；但这只是兜底，正确的注册顺序仍是强约束。
 pub struct WhitePathHook {
     paths: Vec<String>,
 }
 
 impl WhitePathHook {
-    /// 创建白名单 Hook，传入允许的路径前缀列表。
-    ///
-    /// 匹配任一前缀时返回 `AllowAndSkip`，短路后续 Hook。
-    ///
-    /// # 注册顺序约束（架构评审修复）
-    ///
-    /// **警告**：WhitePathHook 必须注册在所有安全关键 Hook（如
-    /// [`DirectoryTraversalHook`] / [`DangerCharacterHook`]）**之后**。
-    /// 若注册在安全 Hook 之前，白名单匹配会短路跳过安全校验，导致路径遍历攻击绕过。
-    ///
-    /// [`DirectoryTraversalHook`]: DirectoryTraversalHook
-    /// [`DangerCharacterHook`]: DangerCharacterHook
+    /// 创建白名单 Hook，传入允许的路径前缀列表（匹配任一前缀时返回 `AllowAndSkip`，短路后续 Hook；注册顺序约束见类型文档）。
     pub fn new(paths: Vec<String>) -> Self {
         Self { paths }
     }
 }
 
-/// 精确路径段匹配：`path == prefix` 或 `path` 以 `prefix/` 开头。
-///
-/// 避免 `starts_with` 的前缀混淆问题（如 `/api` 误匹配 `/api-v2/secret`）。
+/// 精确路径段匹配：`path == prefix` 或 `path` 以 `prefix/` 开头，避免 `starts_with` 的前缀混淆（如 `/api` 误匹配 `/api-v2/secret`）。
 fn path_matches(prefix: &str, path: &str) -> bool {
     path == prefix || path.starts_with(&format!("{}/", prefix))
 }
@@ -81,25 +43,11 @@ impl WafHook for WhitePathHook {
         "white_path"
     }
 
-    /// 校验请求上下文。
-    ///
-    /// # 注册顺序约束（架构评审修复）
-    ///
-    /// **警告**：本 Hook 必须注册在所有安全关键 Hook（如
-    /// [`DirectoryTraversalHook`] / [`DangerCharacterHook`]）**之后**。
-    ///
-    /// 实现细节：匹配白名单前先检查 path 是否含可疑模式（字面量 `..`/`//`、
-    /// URL 编码形式 `%2e`/`%2f`/`%5c`，以及双重编码标志 `%25`——
-    /// `%252e`/`%25252e` 等多层编码均含 `%25`），若含可疑模式则返回 `Allow`
-    /// （不短路），交给后续安全 Hook 处理。
-    ///
-    /// [`DirectoryTraversalHook`]: DirectoryTraversalHook
-    /// [`DangerCharacterHook`]: DangerCharacterHook
+    /// 校验请求上下文：匹配白名单前先检查 path 是否含可疑模式（字面量 `..` / `//`、URL 编码 `%2e` / `%2f` / `%5c` 及双重编码标志 `%25`），
+    /// 含可疑模式则返回 `Allow`（不短路）交给后续安全 Hook；注册顺序约束见类型文档。
     async fn check(&self, ctx: &WafContext<'_>) -> WafVerdict {
-        // 安全兜底：含可疑模式（字面量或 URL 编码）时不短路，返回 Allow 交给后续安全 Hook 处理。
+        // 安全兜底：含可疑模式（字面量或 URL 编码，含双重编码标志 %25）时不短路，返回 Allow 交给后续安全 Hook 处理，
         // 防止 `/api/../admin` 或 `/api/%2e%2e/admin` 通过 `starts_with("/api")` 绕过安全 Hook。
-        // `%25` 是双重编码标志：`%252e`（→%2e）、`%25252e`（三重）等均含 `%25`
-        // 但不含明文 `%2e`，必须一并视为可疑，否则双编码路径可短路跳过安全 Hook。
         let lower = ctx.path.to_lowercase();
         if lower.contains("..")
             || lower.contains("//")
@@ -117,13 +65,9 @@ impl WafHook for WhitePathHook {
     }
 }
 
-// ============================================================================
 // 2. BlackPathHook — 路径前缀黑名单
-// ============================================================================
 
-/// 路径前缀黑名单 Hook。
-///
-/// 匹配任一黑名单前缀时返回 Deny，否则 Allow。空列表始终 Allow。
+/// 路径前缀黑名单 Hook：匹配任一黑名单前缀时返回 Deny，否则 Allow；空列表始终 Allow。
 pub struct BlackPathHook {
     paths: Vec<String>,
 }
@@ -155,14 +99,10 @@ impl WafHook for BlackPathHook {
     }
 }
 
-// ============================================================================
 // 3. DangerCharacterHook — 危险字符检测
-// ============================================================================
 
-/// 危险字符检测 Hook。
-///
-/// 检测 path、参数值、请求头值中的危险字符：`//`、`\`、`;`、`\0`、`\n`、`\r`，
-/// 以及百分号编码 `%2e`、`%2f`、`%00`、`%5c`、`%3b`、`%0a`、`%0d`（大小写不敏感）。
+/// 危险字符检测 Hook：检测 path、参数值、请求头值中的危险字符 `//` / `\` / `;` / `\0` / `\n` / `\r`，
+/// 以及百分号编码 `%2e` / `%2f` / `%00` / `%5c` / `%3b` / `%0a` / `%0d`（大小写不敏感）。
 pub struct DangerCharacterHook;
 
 impl DangerCharacterHook {
@@ -178,11 +118,8 @@ impl Default for DangerCharacterHook {
     }
 }
 
-/// 检测字符串中的危险字符，返回对应的 i18n pattern ID。
-///
-/// 所有模式均大小写不敏感，统一在 `lower`（小写形式）中检测。
-/// 非编码模式（`//`、`\`、`;`、`\0`、`\n`、`\r`）为符号和控制字符，无大小写之分，
-/// 百分号编码模式（`%2e`、`%2f` 等）通过小写形式统一匹配。
+/// 检测字符串中的危险字符，返回对应的 i18n pattern ID；所有模式均大小写不敏感，统一在 `lower`（小写形式）中检测
+/// （非编码模式为符号和控制字符无大小写之分，百分号编码模式经小写形式统一匹配）。
 fn check_danger_chars(lower: &str) -> Option<&'static str> {
     // (pattern, i18n_pattern_id) — 所有模式均大小写不敏感，统一用 lower.contains(pattern) 检测
     const PATTERNS: &[(&str, &str)] = &[
@@ -205,10 +142,8 @@ fn check_danger_chars(lower: &str) -> Option<&'static str> {
             return Some(id);
         }
     }
-    // 双重/多重编码检测：迭代将 %25 解码为 % 后重新校验。
-    // 单次 replace 对三重及以上编码失效（%25252e → %252e 仍无 %2e 子串），
-    // 故循环解码直到不再含 %25（上限 5 轮，防恶意超长编码链拖垮检测），
-    // 覆盖 %252e（双重）、%25252e（三重）、%2525252e（四重）等绕过。
+    // 双重/多重编码检测：迭代将 %25 解码为 % 后重新校验（单次 replace 对三重及以上编码失效：%25252e → %252e 仍无 %2e 子串），
+    // 循环解码直到不再含 %25（上限 5 轮，防恶意超长编码链拖垮检测），覆盖 %252e（双重）、%25252e（三重）、%2525252e（四重）等绕过。
     if lower.contains("%25") {
         let mut decoded = lower.to_string();
         const MAX_DECODE_ROUNDS: usize = 5;
@@ -290,13 +225,9 @@ impl WafHook for DangerCharacterHook {
     }
 }
 
-// ============================================================================
 // 4. BannedCharacterHook — 不可打印 ASCII 字符检测
-// ============================================================================
 
-/// 不可打印 ASCII 字符检测 Hook。
-///
-/// 检测 path 中的不可打印字符（ASCII < 0x20 或 > 0x7E）。
+/// 不可打印 ASCII 字符检测 Hook：检测 path 中的不可打印字符（ASCII < 0x20 或 > 0x7E）。
 pub struct BannedCharacterHook;
 
 impl BannedCharacterHook {
@@ -331,13 +262,9 @@ impl WafHook for BannedCharacterHook {
     }
 }
 
-// ============================================================================
 // 5. DirectoryTraversalHook — 目录遍历检测
-// ============================================================================
 
-/// 目录遍历检测 Hook。
-///
-/// 检测 path 中的目录遍历模式：`./`、`../`、`//`。
+/// 目录遍历检测 Hook：检测 path 中的目录遍历模式 `./` / `../` / `//`。
 pub struct DirectoryTraversalHook;
 
 impl DirectoryTraversalHook {
@@ -373,15 +300,10 @@ impl WafHook for DirectoryTraversalHook {
     }
 }
 
-// ============================================================================
 // 6. HostHook — Host 头白名单
-// ============================================================================
 
-/// Host 头白名单 Hook。
-///
-/// 空列表始终 Allow。非空时 Host 头必须在白名单中。
-/// 无 Host 头时 **Deny**（fail-closed）：白名单非空却缺失 Host 头的请求
-/// 若放行将完全绕过 Host 白名单校验（虚拟主机隔离场景下可被利用）。
+/// Host 头白名单 Hook：空列表始终 Allow；非空时 Host 头必须在白名单中，无 Host 头时 **Deny**（fail-closed）——
+/// 白名单非空却缺失 Host 头的请求若放行将完全绕过 Host 白名单校验（虚拟主机隔离场景下可被利用）。
 pub struct HostHook {
     hosts: Vec<String>,
 }
@@ -423,13 +345,9 @@ impl WafHook for HostHook {
     }
 }
 
-// ============================================================================
 // 7. HttpMethodHook — HTTP 方法白名单
-// ============================================================================
 
-/// HTTP 方法白名单 Hook。
-///
-/// 空列表始终 Allow。非空时方法必须在列表中（大小写敏感，RFC 7230）。
+/// HTTP 方法白名单 Hook：空列表始终 Allow；非空时方法必须在列表中（大小写敏感，RFC 7230）。
 pub struct HttpMethodHook {
     methods: Vec<String>,
 }
@@ -462,14 +380,9 @@ impl WafHook for HttpMethodHook {
     }
 }
 
-// ============================================================================
 // 8. HeaderHook — 禁止请求头黑名单
-// ============================================================================
 
-/// 禁止请求头黑名单 Hook。
-///
-/// 空列表始终 Allow。非空时请求头中含黑名单 header 则 Deny。
-/// header 名称比较大小写不敏感。
+/// 禁止请求头黑名单 Hook：空列表始终 Allow；非空时请求头中含黑名单 header 则 Deny（header 名称比较大小写不敏感）。
 pub struct HeaderHook {
     headers: Vec<String>,
 }
@@ -506,13 +419,9 @@ impl WafHook for HeaderHook {
     }
 }
 
-// ============================================================================
 // 9. ParameterHook — 禁止参数黑名单
-// ============================================================================
 
-/// 禁止参数黑名单 Hook。
-///
-/// 空列表始终 Allow。非空时请求参数中含黑名单参数则 Deny。
+/// 禁止参数黑名单 Hook：空列表始终 Allow；非空时请求参数中含黑名单参数则 Deny。
 pub struct ParameterHook {
     params: Vec<String>,
 }
@@ -593,9 +502,7 @@ mod tests {
         make_ctx("/api/test", "GET", Some("example.com"), &[], &[])
     }
 
-    // ========================================================================
-    // 1. WhitePathHook 测试（3 个）
-    // ========================================================================
+    // 1. WhitePathHook 测试
 
     /// 验证匹配白名单路径返回 AllowAndSkip。
     #[tokio::test]
@@ -624,9 +531,7 @@ mod tests {
         assert!(matches!(verdict, WafVerdict::Allow));
     }
 
-    // ========================================================================
-    // 2. BlackPathHook 测试（3 个）
-    // ========================================================================
+    // 2. BlackPathHook 测试
 
     /// 验证匹配黑名单路径返回 Deny。
     #[tokio::test]
@@ -655,9 +560,7 @@ mod tests {
         assert!(matches!(verdict, WafVerdict::Allow));
     }
 
-    // ========================================================================
-    // 3. DangerCharacterHook 测试（3 个）
-    // ========================================================================
+    // 3. DangerCharacterHook 测试
 
     /// 验证含 `//` 返回 Deny。
     #[tokio::test]
@@ -686,9 +589,7 @@ mod tests {
         assert!(matches!(verdict, WafVerdict::Allow));
     }
 
-    // ========================================================================
-    // 4. BannedCharacterHook 测试（2 个）
-    // ========================================================================
+    // 4. BannedCharacterHook 测试
 
     /// 验证含不可打印字符返回 Deny。
     #[tokio::test]
@@ -709,9 +610,7 @@ mod tests {
         assert!(matches!(verdict, WafVerdict::Allow));
     }
 
-    // ========================================================================
-    // 5. DirectoryTraversalHook 测试（3 个）
-    // ========================================================================
+    // 5. DirectoryTraversalHook 测试
 
     /// 验证含 `../` 返回 Deny。
     #[tokio::test]
@@ -740,9 +639,7 @@ mod tests {
         assert!(matches!(verdict, WafVerdict::Allow));
     }
 
-    // ========================================================================
-    // 6. HostHook 测试（3 个）
-    // ========================================================================
+    // 6. HostHook 测试
 
     /// 验证 Host 不在白名单返回 Deny。
     #[tokio::test]
@@ -774,9 +671,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // 7. HttpMethodHook 测试（2 个）
-    // ========================================================================
+    // 7. HttpMethodHook 测试
 
     /// 验证 Method 不在允许列表返回 Deny。
     #[tokio::test]
@@ -796,9 +691,7 @@ mod tests {
         assert!(matches!(verdict, WafVerdict::Allow));
     }
 
-    // ========================================================================
-    // 8. HeaderHook 测试（2 个）
-    // ========================================================================
+    // 8. HeaderHook 测试
 
     /// 验证含黑名单 Header 返回 Deny。
     #[tokio::test]
@@ -820,9 +713,7 @@ mod tests {
         assert!(matches!(verdict, WafVerdict::Allow));
     }
 
-    // ========================================================================
-    // 9. ParameterHook 测试（2 个）
-    // ========================================================================
+    // 9. ParameterHook 测试
 
     /// 验证含黑名单参数返回 Deny。
     #[tokio::test]
@@ -844,9 +735,7 @@ mod tests {
         assert!(matches!(verdict, WafVerdict::Allow));
     }
 
-    // ========================================================================
-    // 10. WAF 绕过场景测试（10 个）
-    // ========================================================================
+    // 10. WAF 绕过场景测试
 
     /// 验证 path 含 `%00` 编码返回 Deny。
     #[tokio::test]
@@ -1001,14 +890,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // 11. 回归测试（5 个）
-    // ========================================================================
+    // 11. 回归测试
 
-    /// 验证 path 含 `..` 时 WhitePathHook 不短路。
-    ///
-    /// `/api/../admin` 虽然以 `/api` 开头，但含 `..` 可疑模式，
-    /// 应返回 Allow 交给后续安全 Hook（如 DirectoryTraversalHook）处理。
+    /// 验证 path 含 `..` 时 WhitePathHook 不短路：`/api/../admin` 以 `/api` 开头但含可疑模式，返回 Allow 交给后续安全 Hook。
     #[tokio::test]
     async fn white_path_traversal_not_short_circuited() {
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -1116,10 +1000,7 @@ mod tests {
         );
     }
 
-    /// 验证前缀混淆路径不匹配白名单。
-    ///
-    /// `/api-v2/secret` 虽然以 `/api` 开头，但不是精确匹配也不是段前缀匹配，
-    /// 应返回 Allow（不命中白名单）。
+    /// 验证前缀混淆路径不匹配白名单：`/api-v2/secret` 以 `/api` 开头但既非精确匹配也非段前缀匹配，返回 Allow。
     #[tokio::test]
     async fn white_path_prefix_confusion_not_matched() {
         let hook = WhitePathHook::new(vec!["/api".to_string()]);
@@ -1131,14 +1012,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // 12. T-CONV-002: 双重编码边界测试（%252e）
-    // ========================================================================
+    // 12. 双重编码边界测试（%252e）
 
-    /// 验证 `%252e` 双重编码被检测到。
-    ///
-    /// 当前实现检测 `%2e`（子串匹配）而非解码后检测，
-    /// `%252e` 被捕获是子串匹配的副作用。
+    /// 验证 `%252e` 双重编码被检测到（经 `%25` 双重编码检测路径拦截）。
     #[tokio::test]
     async fn double_encoding_percent_252e_detected() {
         let mut chain = WafHookChain::new();
@@ -1156,13 +1032,9 @@ mod tests {
         assert!(result.is_err(), "%252e 双重编码应被拦截");
     }
 
-    // ========================================================================
     // 13. 覆盖率补充：边界分支与空列表路径
-    // ========================================================================
 
-    /// 验证 path 含 `%5c` 时 WhitePathHook 不短路。
-    ///
-    /// 覆盖 WhitePathHook::check 中 `%5c` 可疑模式分支。
+    /// 验证 path 含 `%5c` 时 WhitePathHook 不短路（覆盖 `%5c` 可疑模式分支）。
     #[tokio::test]
     async fn white_path_percent_5c_not_short_circuited() {
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -1183,9 +1055,7 @@ mod tests {
         );
     }
 
-    /// 验证 path 含高于 0x7E 的字符返回 Deny。
-    ///
-    /// 覆盖 BannedCharacterHook::check 中 `> 0x7E` 分支。
+    /// 验证 path 含高于 0x7E 的字符返回 Deny（覆盖 `> 0x7E` 分支）。
     #[tokio::test]
     async fn banned_char_high_ascii_returns_deny() {
         let hook = BannedCharacterHook::new();
@@ -1198,9 +1068,7 @@ mod tests {
         );
     }
 
-    /// 验证 path 含 `//` 返回 Deny。
-    ///
-    /// 覆盖 DirectoryTraversalHook::check 中 `//` 模式分支。
+    /// 验证 path 含 `//` 返回 Deny（覆盖 DirectoryTraversalHook 的 `//` 模式分支）。
     #[tokio::test]
     async fn dir_traversal_double_slash_returns_deny() {
         let hook = DirectoryTraversalHook::new();
@@ -1212,9 +1080,7 @@ mod tests {
         );
     }
 
-    /// 验证空 Host 白名单返回 Allow。
-    ///
-    /// 覆盖 HostHook::check 中 `self.hosts.is_empty()` 分支。
+    /// 验证空 Host 白名单返回 Allow（覆盖 `self.hosts.is_empty()` 分支）。
     #[tokio::test]
     async fn host_empty_list_returns_allow() {
         let hook = HostHook::new(vec![]);
@@ -1223,9 +1089,7 @@ mod tests {
         assert!(matches!(verdict, WafVerdict::Allow));
     }
 
-    /// 验证空 HTTP 方法白名单返回 Allow。
-    ///
-    /// 覆盖 HttpMethodHook::check 中 `self.methods.is_empty()` 分支。
+    /// 验证空 HTTP 方法白名单返回 Allow（覆盖 `self.methods.is_empty()` 分支）。
     #[tokio::test]
     async fn http_method_empty_list_returns_allow() {
         let hook = HttpMethodHook::new(vec![]);
@@ -1234,9 +1098,7 @@ mod tests {
         assert!(matches!(verdict, WafVerdict::Allow));
     }
 
-    /// 验证空 Header 黑名单返回 Allow。
-    ///
-    /// 覆盖 HeaderHook::check 中 `self.headers.is_empty()` 分支。
+    /// 验证空 Header 黑名单返回 Allow（覆盖 `self.headers.is_empty()` 分支）。
     #[tokio::test]
     async fn header_empty_list_returns_allow() {
         let hook = HeaderHook::new(vec![]);
@@ -1246,9 +1108,7 @@ mod tests {
         assert!(matches!(verdict, WafVerdict::Allow));
     }
 
-    /// 验证空 Parameter 黑名单返回 Allow。
-    ///
-    /// 覆盖 ParameterHook::check 中 `self.params.is_empty()` 分支。
+    /// 验证空 Parameter 黑名单返回 Allow（覆盖 `self.params.is_empty()` 分支）。
     #[tokio::test]
     async fn parameter_empty_list_returns_allow() {
         let hook = ParameterHook::new(vec![]);
@@ -1258,9 +1118,7 @@ mod tests {
         assert!(matches!(verdict, WafVerdict::Allow));
     }
 
-    /// 验证 HeaderHook 大小写不敏感匹配。
-    ///
-    /// 覆盖 HeaderHook::check 中 `name.to_lowercase() == banned_lower` 分支。
+    /// 验证 HeaderHook 大小写不敏感匹配（覆盖 `name.to_lowercase() == banned_lower` 分支）。
     #[tokio::test]
     async fn header_case_insensitive_match_returns_deny() {
         let hook = HeaderHook::new(vec!["X-Forbidden".to_string()]);
@@ -1274,9 +1132,7 @@ mod tests {
         );
     }
 
-    /// 验证双重编码 `%252f` 被检测到。
-    ///
-    /// 覆盖 check_danger_chars 中 `%25` 双重编码检测路径。
+    /// 验证双重编码 `%252f` 被检测到（覆盖 check_danger_chars 的 `%25` 双重编码检测路径）。
     #[tokio::test]
     async fn danger_char_double_encoding_percent_25_2f_detected() {
         let hook = DangerCharacterHook::new();
@@ -1288,10 +1144,7 @@ mod tests {
         );
     }
 
-    /// 验证三重编码 `%25252e` 被检测到（迭代解码修复）。
-    ///
-    /// 旧实现单次 `replace("%25", "%")` 后 `%25252e` → `%252e`，无 `%2e` 子串，
-    /// 会漏检放行；修复后迭代解码至不含 `%25`（上限 5 轮），可检出。
+    /// 验证三重编码 `%25252e` 被检测到：迭代解码至不含 `%25`（上限 5 轮）后命中 `%2e` 模式。
     #[tokio::test]
     async fn danger_char_triple_encoding_percent_25252e_detected() {
         let hook = DangerCharacterHook::new();
@@ -1303,7 +1156,7 @@ mod tests {
         );
     }
 
-    /// 验证四重编码 `%2525252e` 被检测到（迭代解码修复）。
+    /// 验证四重编码 `%2525252e` 被检测到（迭代解码）。
     #[tokio::test]
     async fn danger_char_quadruple_encoding_detected() {
         let hook = DangerCharacterHook::new();
@@ -1315,10 +1168,8 @@ mod tests {
         );
     }
 
-    /// 验证 path 含 `%252e` 双重编码时 WhitePathHook 不短路（不再被白名单绕过）。
-    ///
-    /// `/api/%252e/admin` 不含明文 `%2e`，旧守卫会放行并 AllowAndSkip 短路安全 Hook；
-    /// 修复后 `%25` 双重编码标志使守卫返回 Allow，交给后续安全 Hook。
+    /// 验证 path 含 `%252e` 双重编码时 WhitePathHook 不短路：`/api/%252e/admin` 不含明文 `%2e` 但含 `%25` 双重编码标志，
+    /// 守卫返回 Allow 交给后续安全 Hook，应被 DangerCharacterHook 拦截而非被白名单短路放行。
     #[tokio::test]
     async fn white_path_double_encoded_traversal_not_short_circuited() {
         let log = Arc::new(Mutex::new(Vec::new()));

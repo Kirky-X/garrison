@@ -4,15 +4,7 @@
 //! 事件 reason 枚举，提供类型安全的事件原因标识。
 use std::fmt;
 
-/// 事件 reason 枚举。
-///
-/// 统一管理所有事件 reason 字符串，避免硬编码。
-///
-/// 目前覆盖以下事件变体的 reason 字段：
-/// - `crate::listener::GarrisonEvent::LoginFailure`（`InvalidCredentials` / `HashFormatError`）
-/// - `crate::listener::GarrisonEvent::Kickout`（`Kickout` / `Logout` 等）
-/// - `crate::listener::GarrisonEvent::AccountLocked`（`Locked`）
-/// - `crate::listener::GarrisonEvent::FirewallBlock`（`Revoked` / `Expired` 等）
+/// 事件 reason 枚举，统一管理 reason 字符串避免硬编码；覆盖 `LoginFailure`（`InvalidCredentials`/`HashFormatError`）、`Kickout`、`AccountLocked`、`FirewallBlock` 等事件的 reason 字段。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventReason {
     /// 无效凭证（user_not_found 与 wrong_password 统一）

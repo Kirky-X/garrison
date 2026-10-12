@@ -1,11 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! observability 模块测试（从 mod.rs 迁移）。
+//! observability 模块测试。
 
-// ============================================================================
 // GarrisonMetrics 测试（feature = "metrics-prometheus"）
-// ============================================================================
 
 #[cfg(all(test, feature = "metrics-prometheus"))]
 mod tests_metrics {
@@ -87,7 +85,6 @@ mod tests_metrics {
         let output = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
-        // Histogram 应有 _count 和 _sum
         assert!(output.contains("garrison_token_validation_duration_seconds_count 2"));
     }
 
@@ -131,20 +128,16 @@ mod tests_metrics {
         let metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
         metrics.record_login(true);
         metrics.record_permission_query(true);
-        // gather() 内部使用 default registry；此处仅验证不 panic 且返回 String
-        // 不依赖 default registry 状态（避免与其他测试串扰）
+        // gather() 读默认 registry，仅验证不 panic、不依赖其状态
         let _output: String = metrics.gather();
     }
 
-    /// 测试 Default trait 实现可构造（不 panic）。
-    /// 注意：Default 调用 new() 注册到 default registry，若 default registry 已注册会 panic。
-    /// 此测试用 #[serial] 隔离，但仍可能因其他测试已注册而失败——故仅验证 register_to 路径。
+    /// Default 亦注册到 default registry（重复注册会 panic），故仅经 register_to 验证可构造路径。
     #[test]
     #[serial]
     fn test_default_impl_via_register_to() {
         let registry = prometheus::Registry::new();
         let _m1 = GarrisonMetrics::register_to(&registry).expect("注册失败");
-        // 验证 register_to 路径可构造实例（Default 在 default registry 已注册时会 panic，故不直接调用）
     }
 
     /// 测试 register_to 重复注册返回 AlreadyReg 错误。
@@ -184,7 +177,6 @@ mod tests_metrics {
         let m2 = m1.clone();
         m1.record_login(true);
         m2.record_login(true);
-        // 两个 clone 共享底层 Counter，应都记录
         let output = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
@@ -203,34 +195,24 @@ mod tests_metrics {
         assert!(debug_str.contains("Histogram"));
     }
 
-    /// 测试 Default trait 实现可构造（注册到 default registry）。
-    /// 注意：Default 调用 new() 注册到 default registry，只能调用一次。
-    /// 使用 #[serial] 隔离，避免与可能注册 default registry 的其他测试冲突。
+    /// Default 注册到 default registry，只能调用一次（与 test_new_registers_to_default_registry 互斥）。
     #[test]
     #[serial]
     fn test_default_impl_creates_instance() {
-        // Default::default() 等价于 new()，注册到 default registry
         let metrics = GarrisonMetrics::default();
-        // 验证实例可用
         metrics.record_login(true);
         metrics.record_permission_query(false);
     }
 
-    /// 测试 new() 构造方法（注册到 default registry）。
-    /// 与 test_default_impl_creates_instance 互斥：二者都注册到 default registry，
-    /// 只能有一个执行。此测试验证 new() 路径，由 Default 测试间接覆盖。
+    /// new() 已由 Default 测试覆盖（Default 调用 new()），此处仅验证 register_to 路径不 panic。
     #[test]
     #[serial]
     fn test_new_registers_to_default_registry() {
-        // new() 已由 Default 测试覆盖（Default 调用 new()），
-        // 此处仅验证 register_to 路径不 panic
         let registry = prometheus::Registry::new();
         let _metrics = GarrisonMetrics::register_to(&registry).expect("注册失败");
     }
 
-    // ========================================================================
     // 补充测试：边界情况与多操作组合
-    // ========================================================================
 
     /// 测试 observe_token_validation 传入零时长不 panic 且被记录。
     #[test]
@@ -280,7 +262,6 @@ mod tests_metrics {
         metrics.observe_token_validation(Duration::from_millis(5));
         metrics.record_permission_query(true);
         metrics.record_role_query(true);
-        // gather() 内部使用 default registry，此处验证 custom registry 的输出
         let output = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
@@ -392,26 +373,20 @@ mod tests_metrics {
     }
 }
 
-// ============================================================================
 // OpenTelemetry OTLP 追踪测试（feature = "otlp"）
-// ============================================================================
 
 #[cfg(all(test, feature = "otlp"))]
 mod tests_otlp {
     use super::super::*;
     use serial_test::serial;
 
-    /// 测试 init_otlp_tracing 成功初始化（使用本地 endpoint，不实际导出）。
-    /// tonic channel 是惰性连接，build() 不需要 endpoint 可达，但 build() 内部
-    /// 调用 tokio::spawn，因此需要 tokio runtime（使用 #[tokio::test] 提供）。
-    /// 注意：set_tracer_provider 是全局一次性操作，用 #[serial] 隔离，
-    /// 避免与其他触碰全局 provider 的测试并发竞争。
+    /// tonic 惰性连接使 build() 无需 endpoint 可达；set_tracer_provider 为全局一次性
+    /// 操作，故用 #[tokio::test] + #[serial] 隔离竞争。
     #[tokio::test]
     #[serial]
     async fn test_init_otlp_tracing_succeeds() {
         // 使用本地不可达 endpoint，tonic 不会实际连接（惰性连接）
         let result = init_otlp_tracing("http://localhost:4317");
-        // build() 应成功（tonic 惰性连接），set_tracer_provider 也应成功（首次调用）
         assert!(
             result.is_ok(),
             "init_otlp_tracing 应成功: {:?}",
@@ -419,12 +394,8 @@ mod tests_otlp {
         );
     }
 
-    /// 测试 init_otlp_tracing 对明显非法 endpoint 返回 Err。
-    ///
-    /// 含空格的字符串不是合法 URI → `Endpoint::from_shared` 解析失败 →
-    /// `ExporterBuildError` 经 `From` 转换为 `GarrisonOtelError::Exporter`。
-    /// 此路径在 build() 阶段即失败，不触达 `set_tracer_provider` 全局状态；
-    /// 仍加 #[serial] 与全局 provider 测试串行。
+    /// 含空格的 endpoint 不是合法 URI，解析失败经 `From` 转 `Exporter` 变体；
+    /// 不触达 `set_tracer_provider` 全局状态，仍串行隔离。
     #[tokio::test]
     #[serial]
     async fn test_init_otlp_tracing_invalid_endpoint_returns_err() {
@@ -453,8 +424,7 @@ mod tests_otlp {
         assert!(format!("{}", err2).contains("Tracer provider"));
     }
 
-    /// 测试 GarrisonOtelError 的 Debug 实现。
-    /// derive(Debug) 仅输出变体名（如 Exporter("test")），不包含枚举名 GarrisonOtelError。
+    /// Debug 实现仅输出变体名（如 `Exporter("test")`），不含枚举名。
     #[test]
     fn test_otel_error_debug() {
         let err = GarrisonOtelError::Exporter("test".to_string());
@@ -469,9 +439,7 @@ mod tests_otlp {
     }
 }
 
-// ============================================================================
 // 无 feature 时的编译验证测试
-// ============================================================================
 
 #[cfg(all(test, not(feature = "metrics-prometheus")))]
 mod tests_no_feature {
@@ -484,9 +452,7 @@ mod tests_no_feature {
     }
 }
 
-// ============================================================================
 // inklog 初始化测试（feature = "audit-inklog"）
-// ============================================================================
 
 #[cfg(all(test, feature = "audit-inklog"))]
 mod tests_inklog {
@@ -503,7 +469,6 @@ mod tests_inklog {
             "init_inklog_logging 应成功: {:?}",
             result.err()
         );
-        // logger guard 在 scope 结束时 drop，关闭 inklog
     }
 
     /// 测试 init_inklog_logging() 读取 RUST_LOG 环境变量。
@@ -548,16 +513,11 @@ mod tests_inklog {
         assert!(!normal.is_degraded());
     }
 
-    /// inklog 初始化失败时 init_inklog_logging 返回 Err。
-    ///
-    /// 通过 RUST_LOG 注入 inklog 非法 level（合法集合仅 trace/debug/info/warn/
-    /// warning/error/fatal/critical），使 builder 校验失败 → build() 返回
-    /// ConfigError。验证原始初始化函数的 Err 路径。
+    /// 注入 inklog 非法 level（合法集合仅 trace/debug/info/warn/error 等）使 build()
+    /// 校验失败返回 ConfigError，验证原始初始化函数的 Err 路径。
     #[tokio::test]
     #[serial]
     async fn init_inklog_logging_fails_on_invalid_level() {
-        // "not-a-valid-level" 不是 inklog 合法 level，也不是合法 tracing level，
-        // EnvFilter::try_from_default_env 会解析失败（仅影响降级路径分支选择）
         std::env::set_var("RUST_LOG", "not-a-valid-level");
         let result = init_inklog_logging().await;
         std::env::remove_var("RUST_LOG");
@@ -567,8 +527,7 @@ mod tests_inklog {
     /// inklog 初始化失败时 with_fallback 降级（degraded=true, guard=None）。
     ///
     /// RUST_LOG 设为 inklog 非法 level → build() 返回 Err → 走降级分支：
-    /// metrics-prometheus 启用时先 try_init tracing-subscriber JSON（全局注册，
-    /// 失败则静默跳过），再返回 degraded 状态。断言不持有 guard。
+    /// metrics-prometheus 启用时先 try_init tracing-subscriber JSON，再返回 degraded 状态。
     #[tokio::test]
     #[serial]
     async fn r_dep003_fallback_degrades_when_inklog_fails() {

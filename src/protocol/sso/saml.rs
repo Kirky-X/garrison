@@ -1,67 +1,23 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! SAML 2.0 协议支持骨架。
+//! SAML 2.0 协议支持骨架（`protocol-sso` feature）：核心数据结构（`SamlAssertion`/`SamlResponse`/`SamlRequest`）
+//! 与 `SamlProvider` trait（`build_authn_request`/`parse_response`/`validate_assertion`）。
 //!
-//! 提供 SAML 2.0 核心数据结构（`SamlAssertion`/`SamlResponse`/`SamlRequest`）
-//! 和 `SamlProvider` trait（`build_authn_request`/`parse_response`/`validate_assertion`）。
+//! `DefaultSamlProvider` 不执行 XML 签名验证：`validate_assertion` 返回 `NotImplemented`，
+//! `parse_response` 对未验证 Assertion fail-closed 剥离（`assertion = None`）并告警——使用本
+//! Provider 无法完成 SSO，生产须自行实现 `validate_assertion`（成熟签名库 + 证书信任链 + 算法
+//! 白名单，禁 `rsa-1_5` 等弱算法）。
 //!
-//! `DefaultSamlProvider` 提供基础实现：
-//! - `build_authn_request`：生成 AuthnRequest XML（UUID 作为 id，当前时间作为 issue_instant）
-//! - `parse_response`：使用 quick-xml 解析 Response XML 提取关键字段
-//! - `validate_assertion`：返回 `NotImplemented`（签名验证 defer 到后续变更）
+//! `XmlSecSamlProvider`（`protocol-saml` feature）用 `rsa` 执行 RSA-SHA256 验签，`<ds:SignedInfo>`
+//! 应用 Exclusive C14N 常用子集（注释剥离 / 自闭合展开 / 属性排序与空白规范化）；限制：命名空间声明
+//! 不重写/不搬移、字符引用不展开，不满足时验签失败（fail-closed，不会错误放行）。
+//! DigestValue 约定：被引用元素去除 Signature 子元素后的原始字节（隐式 enveloped-signature
+//! transform），不做 C14N，仅与采用相同约定的 IdP/测试装置兼容。
 //!
-//! 仅在启用 `protocol-sso` 特性时编译。
-//!
-//! # Known Limitations
-//!
-//! ## SAML 签名验证未实现（fail-closed）
-//!
-//! 当前 `DefaultSamlProvider::validate_assertion` 返回 `GarrisonError::NotImplemented`，
-//! **不执行任何 XML 签名验证**。出于安全考虑（fail-closed 原则），`parse_response`
-//! 在检测到未验证的 Assertion 时会将其剥离（`response.assertion = None`），
-//! 并通过 `tracing::warn!` 记录告警。这意味着：
-//!
-//! - 使用 `DefaultSamlProvider` 解析的 Response **不会包含 Assertion 数据**，
-//!   无法完成 SSO 单点登录流程。
-//! - 调用方拿到的 `SamlResponse` 中 `assertion` 字段为 `None`。
-//!
-//! ## 生产环境使用建议
-//!
-//! 生产环境必须自行实现 `SamlProvider` trait 并覆盖 `validate_assertion`，
-//! 使用成熟的 XML 签名库（如 `openssl` / `ring` / `xmlsec`）验证：
-//!
-//! 1. Response 签名（`<ds:Signature>` 覆盖 `<samlp:Response>`）
-//! 2. Assertion 签名（`<ds:Signature>` 覆盖 `<saml:Assertion>`）
-//! 3. 签名证书信任链（对接 IdP 元数据中的 X.509 证书）
-//! 4. 算法白名单（禁止 `rsa-1_5` 等弱算法，仅允许 `rsa-sha256` / `ecdsa-sha256`）
-//!
-//! ## 签名验证与 C14N 现状（`protocol-saml` feature）
-//!
-//! `XmlSecSamlProvider::validate_assertion`（`protocol-saml` feature）使用 `rsa`
-//! crate 执行 RSA-SHA256 验签，并对 `<ds:SignedInfo>` 应用 **Exclusive C14N
-//! 常用子集**规范化（注释剥离 / 自闭合展开 / 属性排序与空白规范化）后再验签。
-//! 子集限制：**命名空间声明不重写/不搬移、字符引用不展开**——若 IdP 依赖完整
-//! C14N 的命名空间重写，验签将失败（fail-closed，不会错误放行）。参见
-//! `canonicalize_signed_info_c14n_subset` 文档。
-//!
-//! 其余约定（原样字节验签 IdP 兼容性）：
-//!
-//! - DigestValue 计算约定：被引用元素**去除 Signature 子元素后的原始字节**
-//!   （隐式 enveloped-signature transform），不做 C14N。仅与采用相同约定的
-//!   IdP/测试装置兼容。
-//!
-//! ## 已实现的安全检查
-//!
-//! 以下安全检查已内置，无需自行实现：
-//!
-//! - **NotOnOrAfter 过期校验**：`parse_saml_response_xml` 解析后立即校验
-//!   Assertion 的 `NotOnOrAfter` 时间戳，过期则返回 `InvalidToken` 错误。
-//! - **Assertion 重放防护**：[`check_assertion_replay`] 函数通过 DAO 记录已消费的
-//!   Assertion ID（key = `saml:replay:{assertion_id}`），TTL 由 `not_on_or_after` 决定。
-//! - **fail-closed 剥离**：未验证的 Assertion 一律剥离，不会泄漏给调用方。
-//! - **XXE 防护**：底层 XML 解析器为 `quick-xml`（纯 Rust 实现），默认不解析外部实体
-//!   （无 `libxml2` 依赖），不存在 XML External Entity (XXE) 注入风险。
+//! 已内置安全检查：NotOnOrAfter 过期校验（缺失即拒绝）、Assertion 重放防护
+//! （[`check_assertion_replay`] 经 DAO 记录已消费 ID）、未验证 Assertion fail-closed 剥离、
+//! quick-xml 纯 Rust 解析（不解析外部实体，无 XXE 风险）。
 
 use crate::constants::DaoKeyPrefix;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -70,13 +26,9 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-// ============================================================================
 // SAML 2.0 数据结构
-// ============================================================================
 
-/// SAML Assertion 结构，包含 IdP 签发的身份声明。
-///
-/// 对应 SAML 2.0 `<saml:Assertion>` 元素。
+/// SAML Assertion 结构（对应 `<saml:Assertion>`），IdP 签发的身份声明。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SamlAssertion {
     /// Assertion ID（`<saml:Assertion ID="...">` 属性，用于重放防护）。
@@ -97,20 +49,12 @@ pub struct SamlAssertion {
     pub not_before: String,
     /// 属性集合（`<saml:AttributeStatement>` 中的键值对）。
     pub attributes: Vec<(String, String)>,
-    /// Assertion 的原始 XML 字符串（含 `<ds:Signature>`，用于签名验证）。
-    ///
-    /// 仅在 `parse_saml_response_xml` 解析时填充；手动构造的 `SamlAssertion` 该字段为 `None`。
-    /// [`XmlSecSamlProvider::validate_assertion`] 依赖此字段执行 XML 签名验证。
-    ///
-    /// `skip_serializing` / `skip_deserializing`：避免序列化循环与跨版本兼容问题，
-    /// 反序列化时默认为 `None`（与手动构造一致）。
+    /// Assertion 原始 XML（含 `<ds:Signature>`）：由 `parse_saml_response_xml` 填充，[`XmlSecSamlProvider::validate_assertion`] 依赖其验签；serde skip，反序列化恒为 `None`。
     #[serde(skip_serializing, skip_deserializing, default)]
     pub raw_xml: Option<String>,
 }
 
-/// SAML Response 结构，IdP 返回给 SP 的响应。
-///
-/// 对应 SAML 2.0 `<samlp:Response>` 元素。
+/// SAML Response 结构（对应 `<samlp:Response>`），IdP 返回给 SP 的响应。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SamlResponse {
     /// 目标 URL（`Destination` 属性）。
@@ -128,9 +72,7 @@ pub struct SamlResponse {
     pub in_response_to: String,
 }
 
-/// SAML AuthnRequest 结构，SP 发送给 IdP 的认证请求。
-///
-/// 对应 SAML 2.0 `<samlp:AuthnRequest>` 元素。
+/// SAML AuthnRequest 结构（对应 `<samlp:AuthnRequest>`），SP 发送给 IdP 的认证请求。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SamlRequest {
     /// 请求 ID（唯一标识，UUID 格式）。
@@ -145,25 +87,12 @@ pub struct SamlRequest {
     pub assertion_consumer_service_url: String,
 }
 
-// ============================================================================
 // SamlProvider trait
-// ============================================================================
 
-/// SAML 2.0 协议交互 trait。
-///
-/// 支持构建 AuthnRequest、解析 Response、验证 Assertion。
+/// SAML 2.0 协议交互 trait：构建 AuthnRequest、解析 Response、验证 Assertion。
 #[async_trait]
 pub trait SamlProvider: Send + Sync {
-    /// 构建 SAML AuthnRequest。
-    ///
-    /// # 参数
-    /// - `sp_entity_id`: SP 的 entity_id。
-    /// - `acs_url`: Assertion Consumer Service URL。
-    /// - `idp_sso_endpoint`: IdP 的 SSO 端点 URL（不再为空，
-    /// 避免生成的 AuthnRequest 缺失 Destination）。
-    ///
-    /// # 返回
-    /// `SamlRequest` 结构。
+    /// 构建 SAML AuthnRequest（`idp_sso_endpoint` 必传，避免生成的请求缺失 Destination）。
     async fn build_authn_request(
         &self,
         sp_entity_id: &str,
@@ -171,44 +100,19 @@ pub trait SamlProvider: Send + Sync {
         idp_sso_endpoint: &str,
     ) -> GarrisonResult<SamlRequest>;
 
-    /// 解析 SAML Response XML。
-    ///
-    /// 输入为 base64 解码后的原始 XML 字符串，调用方负责 base64 解码。
-    ///
-    /// # 参数
-    /// - `response_xml`: SAML Response XML 字符串。
-    ///
-    /// # 返回
-    /// 解析后的 `SamlResponse` 结构。
+    /// 解析 SAML Response XML（输入为 base64 解码后的原始 XML，调用方负责解码）。
     async fn parse_response(&self, response_xml: &str) -> GarrisonResult<SamlResponse>;
 
-    /// 验证 SAML Assertion 签名。
-    ///
-    /// # 参数
-    /// - `assertion`: 待验证的 Assertion。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 签名验证通过。
-    /// - `Err(GarrisonError::NotImplemented)`: 签名验证尚未实现。
+    /// 验证 SAML Assertion 签名；默认实现返回 `NotImplemented`。
     async fn validate_assertion(&self, assertion: &SamlAssertion) -> GarrisonResult<bool>;
 }
 
-// ============================================================================
 // DefaultSamlProvider
-// ============================================================================
 
-/// 默认 SAML Provider 实现。
+/// 默认 SAML Provider：基础 AuthnRequest 构建与 Response 解析；签名验证返回 `NotImplemented`（defer 到 [`XmlSecSamlProvider`]）。
 ///
-/// 提供基础的 AuthnRequest 构建和 Response 解析功能。
-/// 签名验证返回 `NotImplemented`，defer 到 [`XmlSecSamlProvider`]（`secure-saml` feature）。
-///
-/// # Destination / Audience 验证
-///
-/// 通过 [`DefaultSamlProvider::with_expected_destination`] /
-/// [`DefaultSamlProvider::with_expected_audience`] 配置预期值后，
-/// [`SamlProvider::parse_response`] 会在解析后强制校验：
-/// - 不匹配返回 [`GarrisonError::InvalidParam`]（fail-loud，禁止静默放行）
-/// - 未配置则 `tracing::warn!` 告警（开发环境兼容）
+/// 配置 [`Self::with_expected_destination`] / [`Self::with_expected_audience`] 后 `parse_response` 强制校验：
+/// 不匹配返回 [`GarrisonError::InvalidParam`]（fail-loud），未配置仅告警（开发环境兼容）。
 pub struct DefaultSamlProvider {
     /// 预期 Destination（SP 的 ACS URL）。None = 跳过验证（仅告警）。
     expected_destination: Option<String>,
@@ -221,14 +125,7 @@ pub struct DefaultSamlProvider {
 }
 
 impl DefaultSamlProvider {
-    /// 创建新的 `DefaultSamlProvider` 实例（无 Destination / Audience 验证）。
-    ///
-    /// 生产环境推荐使用 [`DefaultSamlProvider::with_expected_destination`] +
-    /// [`DefaultSamlProvider::with_expected_audience`] 显式配置预期值，
-    /// 或直接使用 [`XmlSecSamlProvider`]（`secure-saml` feature）。
-    ///
-    /// # 返回
-    /// 可用的 `DefaultSamlProvider` 实例。
+    /// 创建实例（无 Destination / Audience 校验）；生产推荐显式配置预期值，或改用 [`XmlSecSamlProvider`]。
     pub fn new() -> GarrisonResult<Self> {
         Ok(Self {
             expected_destination: None,
@@ -238,26 +135,19 @@ impl DefaultSamlProvider {
         })
     }
 
-    /// 配置 DAO，启用 InResponseTo 绑定校验与 Assertion 重放防护。
-    ///
-    /// `build_authn_request` 会将请求 ID 写入注册表（TTL 600 秒），
-    /// `parse_response` 原子消费并校验。
+    /// 注入 DAO：启用 InResponseTo 绑定校验与 Assertion 重放防护（请求 ID 写入注册表，TTL 600 秒）。
     pub fn with_request_dao(mut self, dao: std::sync::Arc<dyn crate::dao::GarrisonDao>) -> Self {
         self.request_dao = Some(dao);
         self
     }
 
-    /// 配置预期 Destination（SP 的 ACS URL），开启 Destination 验证。
-    ///
-    /// 链式调用：`DefaultSamlProvider::new()?.with_expected_destination(acs_url)`
+    /// 配置预期 Destination（SP 的 ACS URL），开启 Destination 校验。
     pub fn with_expected_destination(mut self, destination: String) -> Self {
         self.expected_destination = Some(destination);
         self
     }
 
-    /// 配置预期 Audience（SP 的 entity_id），开启 Audience 验证。
-    ///
-    /// 链式调用：`DefaultSamlProvider::new()?.with_expected_audience(entity_id)`
+    /// 配置预期 Audience（SP 的 entity_id），开启 Audience 校验。
     pub fn with_expected_audience(mut self, audience: String) -> Self {
         self.expected_audience = Some(audience);
         self
@@ -281,7 +171,7 @@ impl SamlProvider for DefaultSamlProvider {
         let request = SamlRequest {
             id: Uuid::new_v4().to_string(),
             issue_instant: Utc::now().to_rfc3339(),
-            // 使用调用方传入的 IdP SSO 端点（不再为空）
+            // Destination 取调用方传入的 IdP SSO 端点
             destination: idp_sso_endpoint.to_string(),
             issuer: sp_entity_id.to_string(),
             assertion_consumer_service_url: acs_url.to_string(),
@@ -318,9 +208,7 @@ impl SamlProvider for DefaultSamlProvider {
         )
         .await?;
 
-        // Destination 验证（fail-loud）
-        // DefaultSamlProvider 无验签实现，Assertion 恒被剥离（fail-closed），
-        // 跨 SP 断言不可能经本 Provider 存活，故缺省放行为 warn-only（见 GAR-31）。
+        // Destination 验证：本 Provider 恒剥离未验签 Assertion（fail-closed），故缺省 warn-only
         validate_destination(
             &response.destination,
             self.expected_destination.as_deref(),
@@ -373,14 +261,9 @@ impl SamlProvider for DefaultSamlProvider {
     }
 }
 
-// ============================================================================
 // Destination / Audience 验证辅助
-// ============================================================================
 
-/// 校验 SAML Response 的 StatusCode 是否为 Success（fail-closed）。
-///
-/// 非 Success 响应（如 Responder / Requester 错误）即使夹带 Assertion 也必须拒绝，
-/// 防止错误响应被当作成功登录处理。
+/// 校验 StatusCode 必须为 Success（fail-closed）：错误响应即使夹带 Assertion 也拒绝。
 fn validate_status_code(status_code: &str) -> GarrisonResult<()> {
     const STATUS_SUCCESS: &str = "urn:oasis:names:tc:SAML:2.0:status:Success";
     if status_code != STATUS_SUCCESS {
@@ -392,13 +275,8 @@ fn validate_status_code(status_code: &str) -> GarrisonResult<()> {
     Ok(())
 }
 
-/// 校验 SAML Response 的 Destination 是否匹配预期值。
-///
-/// - `expected = Some(exp)`（非空）: 严格匹配，不匹配返回 [`GarrisonError::InvalidParam`]（fail-loud）
-/// - `expected = None`/`Some("")` 且 `allow_unvalidated = false`: 拒绝（fail-closed，
-///   安全审计 GAR-31：缺省不放行未校验 Destination）
-/// - `expected` 缺失且 `allow_unvalidated = true`: `tracing::warn!` 告警后放行
-///   （显式 opt-out，仅限开发环境；跨 SP 断言重放风险由调用方自担）
+/// 校验 SAML Response 的 Destination：expected 非空须严格匹配（不匹配返回 [`GarrisonError::InvalidParam`]，fail-loud）；
+/// 未配置且未豁免即拒绝（fail-closed）；`allow_unvalidated=true` 时告警放行（显式 opt-out，仅限开发环境）。
 fn validate_destination(
     actual: &str,
     expected: Option<&str>,
@@ -430,13 +308,8 @@ fn validate_destination(
     }
 }
 
-/// 校验 SAML Assertion 的 Audience 是否匹配预期值。
-///
-/// - `expected = Some(exp)`（非空）: 严格匹配，不匹配返回 [`GarrisonError::InvalidParam`]（fail-loud）
-/// - `expected = None`/`Some("")` 且 `allow_unvalidated = false`: 拒绝（fail-closed，
-///   安全审计 GAR-31：缺省不放行未校验 Audience）
-/// - `expected` 缺失且 `allow_unvalidated = true`: `tracing::warn!` 告警后放行
-///   （显式 opt-out，仅限开发环境；open redirect 风险由调用方自担）
+/// 校验 SAML Assertion 的 Audience：expected 非空须严格匹配（不匹配返回 [`GarrisonError::InvalidParam`]，fail-loud）；
+/// 未配置且未豁免即拒绝（fail-closed）；`allow_unvalidated=true` 时告警放行（显式 opt-out，仅限开发环境）。
 fn validate_audience(
     actual: &str,
     expected: Option<&str>,
@@ -468,15 +341,10 @@ fn validate_audience(
     }
 }
 
-// ============================================================================
 // XML 解析辅助
-// ============================================================================
 
-/// SAML Response XML 解析上下文。
-///
-/// 收拢 `parse_saml_response_xml` 的所有解析状态变量，将手工状态机拆分为
-/// `handle_start_element` / `handle_end_element` / `handle_empty_element` / `handle_text`
-/// 四个方法，主函数简化为 loop + dispatch。
+/// SAML Response XML 解析上下文：收拢解析状态变量，主函数简化为 loop + dispatch
+/// （`handle_start_element` / `handle_end_element` / `handle_empty_element` / `handle_text`）。
 struct SamlParseContext {
     // Response 级字段
     destination: String,
@@ -794,12 +662,9 @@ impl SamlParseContext {
     }
 }
 
-/// 从 SAML Response XML 中提取关键字段。
+/// 提取 `<ds:Signature>` 原始 XML 并记录 `<Assertion>` 原始字节范围，供 [`XmlSecSamlProvider`] 验签。
 ///
-/// 使用 quick-xml 的 pull reader 解析 XML，提取 Destination / Issuer / StatusCode / Assertion。
-///
-/// 解析时同步记录 `<Assertion>` 元素的原始 XML 字节范围，
-/// 填充到 [`SamlAssertion::raw_xml`]，供 [`XmlSecSamlProvider`] 执行 XML 签名验证。
+/// quick-xml pull reader 解析，提取 Destination / Issuer / StatusCode / Assertion 字段。
 fn parse_saml_response_xml(xml: &str) -> GarrisonResult<SamlResponse> {
     use quick_xml::events::Event;
     use quick_xml::reader::Reader;
@@ -838,38 +703,10 @@ fn parse_saml_response_xml(xml: &str) -> GarrisonResult<SamlResponse> {
     ctx.into_response()
 }
 
-/// 检查 SAML Assertion 是否被重放（C-3 重放防护）。
-///
-/// 生产环境应在 [`SamlProvider::parse_response`] 后调用此函数，
-/// 确保同一 Assertion ID 不被重复消费。
-///
-/// # 参数
-/// - `assertion_id`: SAML Assertion ID（`<saml:Assertion ID="...">` 属性）。
-/// - `not_on_or_after`: Assertion 过期时间（RFC 3339），用于计算缓存 TTL。
-/// - `dao`: DAO 抽象（用于记录已消费的 Assertion ID）。
-///
-/// # 返回
-/// - `Ok(true)`: 首次消费，已记录到 DAO。
-/// - `Ok(false)`: 已被消费（重放拒绝）。
-/// - `Err(_)`: DAO 读写失败或时间解析失败。
-///
-/// # 原子 set_if_absent（SET NX）消除 TOCTOU 竞态
-///
-/// 原实现 v1 使用 `dao.get()` + `dao.set()` 两步操作，v2 改为
-/// `get_and_delete` + `set`。但 `get_and_delete` 对**不存在**的键不产生任何预留——并发请求可能
-/// 同时拿到 `None` 后各自 `set`，导致同一 Assertion 被多次消费（跨进程场景
-/// 尤其明显）。
-///
-/// 现使用 `dao.set_if_absent()`（语义等价 Redis `SET NX EX`）单步原子预留：
-/// 1. 返回 `Ok(true)` → 首个消费者，键已写入（TTL = NotOnOrAfter 剩余有效期）
-/// 2. 返回 `Ok(false)` → 键已存在 = 已消费（重放拒绝）
-///
-/// 原子性由 DAO 实现保证：`InMemoryDao` / `GarrisonDaoOxcache` 以单锁临界区
-/// 实现 `set_if_absent`；跨进程（Redis L2）后端应实现为 `SET NX EX` 或 Lua 脚本。
-///
-/// # TTL 计算
-/// TTL = `NotOnOrAfter - now`（剩余有效期）。若 `not_on_or_after` 为空或已过期，
-/// 使用 300 秒（5 分钟）兜底，确保缓存不会过早失效。
+/// 检查 SAML Assertion 是否被重放（生产环境应在 `parse_response` 后调用）：经 `dao.set_if_absent`
+/// （语义等价 `SET NX EX`）单步原子预留，返回 `Ok(true)` 为首个消费者（键已写入、TTL = NotOnOrAfter
+/// 剩余有效期，空或已过期用 300 秒兜底），`Ok(false)` 为已消费（重放拒绝）；原子性由 DAO 实现保证，
+/// 跨进程后端应实现为 `SET NX EX` 或 Lua 脚本。
 pub async fn check_assertion_replay(
     assertion_id: &str,
     not_on_or_after: &str,
@@ -895,19 +732,13 @@ pub async fn check_assertion_replay(
         }
     };
 
-    // 单步原子预留（SET NX 语义），消除 get_and_delete + set
-    // 两步之间对「不存在键」的竞态窗口——并发下仅首个请求返回 true
+    // 单步原子预留（SET NX 语义）：并发下仅首个请求返回 true
     let first = dao.set_if_absent(&key, "1", ttl).await?;
     Ok(first)
 }
 
-/// InResponseTo ↔ AuthnRequest ID 绑定校验。
-///
-/// - 配置了 DAO：`InResponseTo` 非空时原子 get_and_delete 注册表条目
-///   （`saml:req:{id}`，由 build_authn_request 写入，TTL 600 秒），
-///   未命中即拒绝（不存在的在途请求 / 重放 / 过期）。
-/// - 未配置 DAO：携带 InResponseTo 的 SP-initiated 响应无法验证绑定 → fail-closed 拒绝；
-///   无 InResponseTo 的 IdP-initiated 响应放行但 warn 一次（防护未启用提示）。
+/// InResponseTo ↔ AuthnRequest ID 绑定校验：配置 DAO 时原子消费注册表条目（`saml:req:{id}`，TTL 600 秒），
+/// 未命中即拒绝；未配置 DAO 时携带 InResponseTo 的响应 fail-closed 拒绝，IdP-initiated（无 InResponseTo）放行但 warn 一次。
 pub(crate) async fn enforce_in_response_to(
     dao: Option<&std::sync::Arc<dyn crate::dao::GarrisonDao>>,
     warned_no_dao: &std::sync::atomic::AtomicBool,
@@ -954,12 +785,8 @@ fn extract_local_name(qualified: &str) -> String {
     }
 }
 
-/// 检查 XML 限定名的命名空间前缀是否为 SAML 允许的前缀。
-///
-/// 允许：`saml`、`samlp`、`ds`（XML 签名）、或无前缀（兼容无命名空间的 XML）。
-/// 不允许的前缀（如 `evil:Assertion`）记录告警，防止命名空间混淆攻击。
-///
-/// 返回 true 表示前缀合法，false 表示不合法（调用方可选择跳过该元素）。
+/// 检查 XML 限定名的命名空间前缀是否为 SAML 允许（`saml` / `samlp` / `ds` 或无前缀）；非法前缀（如 `evil:Assertion`）
+/// 告警，防命名空间混淆攻击；返回前缀是否合法（调用方可跳过非法元素）。
 fn check_saml_namespace(qualified: &str) -> bool {
     match qualified.rsplit_once(':') {
         Some((prefix, _)) => {
@@ -976,9 +803,7 @@ fn check_saml_namespace(qualified: &str) -> bool {
     }
 }
 
-// ============================================================================
 // XmlSecSamlProvider：SAML 签名验证实现（secure-saml feature）
-// ============================================================================
 
 /// SAML 签名算法标识 URI（XML-DSig 标准）。
 #[cfg(feature = "protocol-saml")]
@@ -989,33 +814,17 @@ const SIG_ALG_ECDSA_SHA256: &str = "http://www.w3.org/2001/04/xmldsig-more#ecdsa
 #[cfg(feature = "protocol-saml")]
 const SIG_ALG_RSA_1_5: &str = "http://www.w3.org/2000/09/xmldsig#rsa-1_5";
 
-/// 检查签名算法是否在白名单中（安全要求）。
-///
-/// 仅允许 RSA-SHA256 / ECDSA-SHA256，禁止 rsa-1_5 等弱算法。
-///
-/// # ECDSA-SHA256 fail-closed 设计
-///
-/// 当前实现仅支持 RSA-SHA256 验证（依赖 `rsa` crate）。
-/// ECDSA-SHA256 在白名单中通过（`is_signature_algorithm_allowed` 返回 `true`），
-/// 但实际签名验证会返回 `Ok(false)`（拒绝），这是 **fail-closed** 设计：
-/// 不认识的算法宁可拒绝也不放行。待引入 `p256`/`ecdsa` crate 后启用完整支持。
+/// 检查签名算法是否在白名单中：仅允许 RSA-SHA256 / ECDSA-SHA256，禁止 rsa-1_5 等弱算法；
+/// ECDSA-SHA256 白名单通过但实际验证返回 `Ok(false)`（fail-closed，待引入 ECDSA 库后补全）。
 #[cfg(all(feature = "protocol-saml", test))]
 fn is_signature_algorithm_allowed(algorithm: &str) -> bool {
     matches!(algorithm, SIG_ALG_RSA_SHA256 | SIG_ALG_ECDSA_SHA256)
 }
 
-/// 提取 `<ds:SignatureMethod Algorithm="...">` 的 Algorithm 属性值。
+/// 提取 `<ds:SignatureMethod Algorithm="...">` 的 Algorithm 属性值（单双引号容错），找不到返回 None。
 ///
-/// 在 signature_xml 中查找 `<SignatureMethod` 元素并提取 `Algorithm` 属性
-///（双引号/单引号属性值均支持——带属性标签与引号风格容错）。找不到返回 None。
-///
-/// # 安全性
-///
-/// 有意使用字符串查找而非完整 XML 解析（与同文件 `extract_signature_value` 等
-/// `extract_*` 函数风格一致）。SAML 响应已在上层由 quick-xml 完整解析，
-/// 此处仅对签名段做快速提取。附加以下防御：
-/// - 拒绝含 XML 特殊字符（`<`、`>`、`&`）的 Algorithm 值（防注入）
-/// - 限制 Algorithm 值最大长度为 128 字符（标准 URI 通常 < 100 字符）
+/// 有意用字符串查找而非 XML 解析（与 `extract_*` 函数风格一致；SAML 响应已由 quick-xml 上层解析）；
+/// 防御：拒绝含 XML 特殊字符（`<`/`>`/`&`）的值，长度上限 128 字符。
 #[cfg(feature = "protocol-saml")]
 fn extract_signature_method_algorithm(signature_xml: &str) -> Option<String> {
     // 字符串查找 SignatureMethod 元素的 Algorithm 属性（兼容单/双引号）
@@ -1049,32 +858,21 @@ fn extract_signature_method_algorithm(signature_xml: &str) -> Option<String> {
     Some(algorithm.to_string())
 }
 
-/// 提取 `<ds:SignatureValue>...</ds:SignatureValue>` 的 base64 文本内容。
-///
-/// 通过 [`find_element_text_span`] 查找，对带属性的开始标签
-///（如 `<ds:SignatureValue xmlns:ds="...">`）与混合前缀形式同样适用。
-/// 找不到返回 None。
+/// 提取 `<ds:SignatureValue>` 的 base64 文本（支持带属性标签与混合前缀），找不到返回 None。
 #[cfg(feature = "protocol-saml")]
 fn extract_signature_value(signature_xml: &str) -> Option<String> {
     find_element_text_span(signature_xml, "SignatureValue")
 }
 
-/// 提取 `<ds:SignedInfo>...</ds:SignedInfo>` 的原始 XML（含标签）。
-///
-/// 签名验证时对此 XML 做 C14N 常用子集规范化后作为签名验证输入。
-///
-/// **容错匹配**：通过 [`find_element_span`] 查找，对带属性的开始标签
-///（如 `<ds:SignedInfo xmlns:ds="...">`）与混合前缀（开始 `ds:` 前缀、
-/// 结束无前缀，或反之）形式同样适用；找不到返回 None。
+/// 提取 `<ds:SignedInfo>...</ds:SignedInfo>` 原始 XML（含标签），验签前对其做 C14N 常用子集规范化；
+/// 容错带属性标签与混合前缀形式，找不到返回 None。
 #[cfg(feature = "protocol-saml")]
 fn extract_signed_info_xml(assertion_xml: &str) -> Option<String> {
     find_element_span(assertion_xml, "SignedInfo")
         .map(|(start, end)| assertion_xml[start..end].to_string())
 }
 
-/// 提取 `<ds:Signature>...</ds:Signature>` 的原始 XML。
-///
-/// 通过 [`find_element_span`] 查找，支持带属性标签与混合前缀形式。找不到返回 None。
+/// 提取 `<ds:Signature>...</ds:Signature>` 原始 XML（支持带属性标签与混合前缀），找不到返回 None。
 #[cfg(feature = "protocol-saml")]
 fn extract_signature_xml(assertion_xml: &str) -> Option<String> {
     find_element_span(assertion_xml, "Signature")
@@ -1085,10 +883,8 @@ fn extract_signature_xml(assertion_xml: &str) -> Option<String> {
 #[cfg(feature = "protocol-saml")]
 const DIGEST_ALG_SHA256: &str = "http://www.w3.org/2001/04/xmlenc#sha256";
 
-/// SignedInfo 内单个 `<ds:Reference>` 绑定。
-///
-/// XML-DSig 中签名对内容的绑定依赖「SignedInfo → Reference URI → 被引用元素
-/// 的 DigestValue」链条；缺失任一环即签名与内容解耦（XSW 可伪造）。
+/// SignedInfo 内单个 `<ds:Reference>` 绑定：XML-DSig 靠「SignedInfo → Reference URI → DigestValue」链条
+/// 绑定内容，缺失任一环即签名与内容解耦（XSW 可伪造）。
 #[cfg(feature = "protocol-saml")]
 struct ReferenceBinding {
     /// `URI` 属性值，必须为 `#<element-id>` 形式。
@@ -1163,15 +959,10 @@ fn extract_reference_bindings(signed_info_xml: &str) -> Vec<ReferenceBinding> {
     bindings
 }
 
-/// 查找元素的完整 XML 片段范围（含开始/结束标签），返回 `(start, end)` 字节偏移。
+/// 查找元素的完整 XML 片段范围（含起止标签），返回 `(start, end)` 字节偏移；找不到返回 None。
 ///
-/// **容错匹配**（修复原字符串精确匹配对属性变体/混合前缀的漏配）：
-/// - 开始标签带属性（`<ds:SignedInfo xmlns:ds="...">`）同样命中——通过
-///   「local name 后必须是空白/`>`/`/`」边界检查 + 跳过属性定位 `>` 实现；
-/// - 混合前缀：开始 `ds:` 前缀 + 结束无前缀（或反之）也能配对（同前缀优先）；
-/// - 边界检查避免 `<ds:Signature` 误配 `<ds:SignedInfo` 这类更长标签名。
-///
-/// 找不到返回 None。
+/// 容错：开始标签带属性、混合前缀（开始 `ds:` + 结束无前缀或反之，同前缀优先）均可配对；
+/// 边界检查避免 `<ds:Signature` 误配 `<ds:SignedInfo` 这类更长标签名。
 #[cfg(feature = "protocol-saml")]
 fn find_element_span(xml: &str, local_name: &str) -> Option<(usize, usize)> {
     let prefixes = ["ds:", ""];
@@ -1206,10 +997,7 @@ fn find_element_span(xml: &str, local_name: &str) -> Option<(usize, usize)> {
     None
 }
 
-/// 查找元素的文本内容（首个匹配，去除前后空白）。
-///
-/// 基于 [`find_element_span`]：取开始标签 `>` 之后、闭合标签之前的文本，
-/// 对带属性的开始标签与混合前缀形式同样适用。找不到返回 None。
+/// 查找元素的文本内容（首个匹配，去除前后空白；支持带属性标签与混合前缀），找不到返回 None。
 #[cfg(feature = "protocol-saml")]
 fn find_element_text_span(xml: &str, local_name: &str) -> Option<String> {
     let (start, end) = find_element_span(xml, local_name)?;
@@ -1225,21 +1013,14 @@ fn find_element_text_span(xml: &str, local_name: &str) -> Option<String> {
     }
 }
 
-/// 提取指定 local name 元素的文本内容（首个匹配，去除前后空白）。
-///
-/// 同时兼容 `<ds:Name>` / `<Name>` / 带属性标签（如 `<ds:Name xmlns:ds="...">`）
-/// 等形式（委托 [`find_element_text_span`]）。
+/// 提取指定 local name 元素的文本内容（首个匹配，去除前后空白；兼容带属性标签与命名空间前缀）。
 #[cfg(feature = "protocol-saml")]
 fn extract_xml_text(xml: &str, local_name: &str) -> Option<String> {
     find_element_text_span(xml, local_name)
 }
 
-/// 提取被验元素切片根元素（位置 0 的开始标签）的限定名与 `ID` 属性值。
-///
-/// SAML 验签的锚点：`verify_saml_signature` 的输入切片恒以被验 Assertion
-/// 的开始标签开头（解析层按字节范围截取），根元素 ID 即签名声明约束的主体。
-/// 开始标签 `>` 的定位带引号状态机（属性值可含 `>`），属性解析复用
-/// [`parse_tag_inner`]。切片不以元素开始标签开头时返回 None（fail-closed）。
+/// 提取被验元素切片根元素（位置 0 的开始标签）的限定名与 `ID` 属性值：验签输入恒以被验 Assertion
+/// 开始标签开头，根元素 ID 即签名约束的主体；切片不以开始标签开头时返回 None（fail-closed）。
 #[cfg(feature = "protocol-saml")]
 fn root_element_identity(xml: &str) -> Option<(String, String)> {
     let bytes = xml.as_bytes();
@@ -1279,13 +1060,10 @@ fn root_element_identity(xml: &str) -> Option<(String, String)> {
     Some((qname, id))
 }
 
-/// 计算以位置 0 为根的元素完整字节范围（含起止标签），基于同限定名嵌套深度。
+/// 计算以位置 0 为根的元素完整字节范围（含起止标签），基于同限定名嵌套深度；自闭合标签不影响深度。
 ///
-/// 旧实现 `find_element_raw_by_id` 在全文档做 `ID="..."` 纯字符串扫描，
-/// CDATA 字面量中的元素（quick-xml 不产生事件，但字符串扫描可命中）会把
-/// 摘要计算引向攻击者投喂的内容（XSW CDATA 隐藏变体的根因）。本函数锚定
-/// 切片起始位置定位根元素：CDATA 内的同限定名字面量无法改变「根元素从
-/// 位置 0 开始」这一事实，摘要计算因此无法被移花接木。自闭合标签不影响深度。
+/// 摘要计算必须锚定切片根元素而非全文档 `ID="..."` 字符串扫描：CDATA 内的同限定名字面量
+/// 无法改变「根元素从位置 0 开始」这一事实，避免 XSW CDATA 隐藏变体劫持摘要计算。
 #[cfg(feature = "protocol-saml")]
 fn root_element_span(xml: &str, qname: &str) -> Option<(usize, usize)> {
     let open_pat = format!("<{}", qname);
@@ -1324,10 +1102,8 @@ fn root_element_span(xml: &str, qname: &str) -> Option<(usize, usize)> {
     }
 }
 
-/// 剥离元素切片内首个 `<ds:Signature>` 块（隐式 enveloped-signature transform）。
-///
-/// 本实现的摘要输入约定：被引用元素去除自身 Signature 子元素后的原始字节。
-/// 签名方与验证方必须采用相同约定（见模块文档 C14N 限制说明）。
+/// 剥离元素切片内首个 `<ds:Signature>` 块（隐式 enveloped-signature transform）：
+/// 摘要输入约定为被引用元素去除自身 Signature 子元素后的原始字节，签名方与验证方须一致。
 #[cfg(feature = "protocol-saml")]
 fn strip_enveloped_signature(element_xml: &str) -> String {
     match extract_signature_xml(element_xml) {
@@ -1336,28 +1112,13 @@ fn strip_enveloped_signature(element_xml: &str) -> String {
     }
 }
 
-// ============================================================================
 // SignedInfo C14N 规范化（Exclusive C14N 常用子集）
-// ============================================================================
 
-/// 对 SignedInfo XML 做 Exclusive C14N 常用子集规范化，输出作为签名验证输入。
+/// 对 SignedInfo XML 做 Exclusive C14N 常用子集规范化，输出作为签名验证输入：
+/// 移除注释（无注释模式）、自闭合标签展开、属性按限定名排序并统一双引号/空白，文本节点原样保留。
 ///
-/// 实现的规范化规则（覆盖真实 IdP（Keycloak/ADFS/Okta 等）SignedInfo 的常见形态）：
-/// 1. **移除注释**（`<!--...-->`，与 C14N「无注释模式」一致）；
-/// 2. **自闭合标签展开**为双标签形式（`<X/>` → `<X></X>`）；
-/// 3. **属性规范化**：属性间空白压缩为单个空格、属性值统一双引号、
-///    属性按限定名字典序排序（消除属性顺序/空白差异导致的字节歧义）；
-/// 4. 文本节点原样保留（C14N 不修改文本内容，不做 trim）。
-///
-/// # 限制（fail-closed，不产生错误放行）
-///
-/// - **命名空间声明不重写/不搬移**：Exclusive C14N 的 visibly-utilized
-///   命名空间渲染未实现。若 IdP 的 SignedInfo 内部携带 `xmlns` 声明且依赖
-///   完整 C14N 的命名空间重写，规范化输出与 IdP 签名输入不一致 → 验签失败
-///   （拒绝，而非错误放行）。
-/// - **字符引用不展开**（`&#x41;` → `A` 等）。
-///
-/// 上述限制已在模块文档与 `verify_saml_signature` 运行时告警中说明。
+/// 限制（fail-closed）：命名空间声明不重写/不搬移、字符引用不展开——若 IdP 依赖完整 C14N，
+/// 规范化输出与其签名输入不一致将验签失败（拒绝而非错误放行）。
 #[cfg(feature = "protocol-saml")]
 fn canonicalize_signed_info_c14n_subset(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
@@ -1424,9 +1185,7 @@ fn canonicalize_signed_info_c14n_subset(input: &str) -> String {
     out
 }
 
-/// 解析开始标签内部（不含尖括号）：返回 `(限定名, 属性列表)`。
-///
-/// 属性值支持双/单引号；属性间空白（多空格/换行/制表符）规范化消除。
+/// 解析开始标签内部（不含尖括号），返回 `(限定名, 属性列表)`；属性值支持双/单引号，属性间空白规范化。
 #[cfg(feature = "protocol-saml")]
 fn parse_tag_inner(inner: &str) -> (String, Vec<(String, String)>) {
     let inner = inner.trim();
@@ -1486,15 +1245,8 @@ fn parse_tag_inner(inner: &str) -> (String, Vec<(String, String)>) {
     (qname, attrs)
 }
 
-/// 校验单个 Reference 绑定：URI 解析 → 根元素锚定 → 摘要常量时间比对。
-///
-/// XSW 双防线（安全审计 GAR-01）：
-/// 1. **URI 锚定**——每个 `<ds:Reference>` 的 URI 必须为 `#<被验 Assertion 根元素 ID>`；
-///    指向他处（含全文扫描可命中的 CDATA 内元素）或无 URI 即拒绝；
-/// 2. **摘要锚定**——摘要输入锚定为被验切片根元素子树（[`root_element_span`]），
-///    不做 `ID="..."` 全文扫描，CDATA 内的同名元素字面量无法劫持摘要计算。
-///
-/// 返回 Err(reason) 表示绑定失败（调用方应拒绝验签）。
+/// 校验单个 Reference 绑定（XSW 双防线）：URI 必须为 `#<被验 Assertion 根元素 ID>`（指向他处或无 URI 即拒绝），
+/// 摘要输入锚定为被验切片根元素子树（不做全文 `ID="..."` 扫描），比对用常量时间比较（subtle `ct_ne`，防时序侧信道）；返回 Err(reason) 表示绑定失败（调用方应拒绝验签）。
 #[cfg(feature = "protocol-saml")]
 fn validate_reference_binding(
     document_xml: &str,
@@ -1539,23 +1291,11 @@ fn validate_reference_binding(
     Ok(())
 }
 
-/// 验证 SAML Assertion 的 XML 签名。
+/// 验证 SAML Assertion 的 XML 签名：提取 `<ds:Signature>` → 校验 SignatureMethod 算法白名单 →
+/// 解码 `<ds:SignatureValue>` → 规范化 `<ds:SignedInfo>` → IdP 公钥验证 RSA-SHA256 签名 →
+/// 校验 Reference/DigestValue 绑定链。
 ///
-/// # 流程
-/// 1. 从 `assertion_xml` 提取 `<ds:Signature>` 元素
-/// 2. 提取 `<ds:SignatureMethod Algorithm="...">`，校验算法白名单
-/// 3. 提取 `<ds:SignatureValue>` (base64) 并解码
-/// 4. 提取 `<ds:SignedInfo>` 原始 XML
-/// 5. 用 IdP RSA 公钥验证 PKCS#1 v1.5 RSA-SHA256 签名
-///
-/// # 参数
-/// - `assertion_xml`: Assertion 的原始 XML（含 `<ds:Signature>`）
-/// - `idp_public_key_pem`: IdP RSA 公钥 PEM（PKCS#8 或 PKCS#1）
-///
-/// # 返回
-/// - `Ok(true)`: 签名验证通过
-/// - `Ok(false)`: 签名缺失 / 算法不在白名单 / 签名不匹配
-/// - `Err(_)`: 公钥解析失败 / base64 解码失败 / 内部错误
+/// 返回 `Ok(false)` 表示签名缺失 / 算法不在白名单 / 签名或摘要不匹配；`Err` 为公钥解析或解码失败。
 #[cfg(feature = "protocol-saml")]
 fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> GarrisonResult<bool> {
     use rsa::pkcs1::DecodeRsaPublicKey;
@@ -1627,8 +1367,8 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
         },
     };
 
-    // C14N 防御（fail-closed）：注释不应出现在 SignedInfo 中（C14N 无注释模式
-    // 会剥离注释，攻击者可借注释差异构造语义不明的签名输入），出现即拒绝。
+    // C14N 防御（fail-closed）：SignedInfo 不应含注释（C14N 无注释模式会剥离注释，
+    // 攻击者可借注释差异构造语义不明的签名输入），出现即拒绝。
     if signed_info_xml.contains("<!--") {
         tracing::warn!(
             "SAML <ds:SignedInfo> contains XML comments, rejected (C14N no-comments mode)"
@@ -1636,11 +1376,8 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
         return Ok(false);
     }
 
-    // C14N 规范化：XML-DSig 要求签名验证输入为 canonicalized SignedInfo，
-    // 而非原始序列化字节。此处应用 Exclusive C14N 常用子集（注释剥离/自闭合
-    // 展开/属性排序与空白规范化），消除属性顺序等非语义差异导致的验签失配。
-    // 子集限制（命名空间重写未实现等）见 canonicalize_signed_info_c14n_subset
-    // 文档——不满足时验证失败（fail-closed），不会错误放行。
+    // C14N 规范化：XML-DSig 要求验证输入为 canonicalized SignedInfo 而非原始字节；此处用常用子集
+    // （注释剥离/自闭合展开/属性排序与空白规范化）消除属性顺序等非语义差异，限制见函数文档（fail-closed）。
     let signed_info_canonical = canonicalize_signed_info_c14n_subset(&signed_info_xml);
     tracing::warn!(
         "SAML signature verification uses a common-subset Exclusive C14N for <ds:SignedInfo> \
@@ -1705,44 +1442,20 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
     Ok(true)
 }
 
-/// 基于 XML-DSig 的 SAML Provider。
+/// 基于 XML-DSig 的 SAML Provider：用 `rsa` crate 验证 Assertion 的 RSA-SHA256 签名；
+/// 算法白名单仅允许 `rsa-sha256` / `ecdsa-sha256`，禁止 `rsa-1_5` 等弱算法（ECDSA 白名单内但未实现验证，返回 `Ok(false)`）。
 ///
-/// 使用 `rsa` crate 验证 SAML Assertion 的 XML 签名（RSA-SHA256）。
-/// 算法白名单：仅允许 `rsa-sha256` / `ecdsa-sha256`，禁止 `rsa-1_5` 等弱算法。
-///
-/// # 适用场景
-///
-/// - 生产环境 SSO 单点登录（需 IdP 公钥 + Destination + Audience 配置）
-/// - 测试环境（配合 `rsa::RsaPrivateKey::new` 生成测试密钥对）
-///
-/// # Destination / Audience 缺省 fail-closed（安全审计 GAR-31）
-///
-/// `expected_destination` / `expected_audience` **未配置时默认拒绝**（不再 warn 放行）：
-/// 签名合法但受众/目标指向其他 SP 的断言（跨 SP 断言重放）在缺省配置下即被拒。
-/// 生产部署必须 `with_expected_destination` + `with_expected_audience` 显式配置；
-/// 开发/测试环境可经 [`allow_unvalidated_destination`](Self::allow_unvalidated_destination)
-/// / [`allow_unvalidated_audience`](Self::allow_unvalidated_audience) 显式豁免
-/// （warn 后放行，风险自担）。
-///
-/// # 限制（C14N）
-///
-/// 当前实现**不执行 XML Canonicalization (C14N)**，直接使用原始 `<ds:SignedInfo>`
-/// XML 作为签名验证输入。若 IdP 对 canonicalized 形式签名（XML-DSig 标准做法），
-/// 验证可能失败。生产部署前应验证 IdP 签名格式兼容性，或替换为完整 C14N 实现。
-///
-/// # ECDSA 限制
-///
-/// 当前仅实现 RSA-SHA256 验证。ECDSA-SHA256 在算法白名单内但实际验证返回 `Ok(false)`，
-/// 待引入 ECDSA 库后补全。
+/// Destination / Audience 未配置时默认拒绝（fail-closed，跨 SP 断言重放防护）：生产部署必须
+/// [`with_expected_destination`](Self::with_expected_destination) + [`with_expected_audience`](Self::with_expected_audience)
+/// 显式配置；开发/测试可经 [`allow_unvalidated_destination`](Self::allow_unvalidated_destination) /
+/// [`allow_unvalidated_audience`](Self::allow_unvalidated_audience) 显式豁免（warn 后放行，风险自担）。
 #[cfg(feature = "protocol-saml")]
 pub struct XmlSecSamlProvider {
-    /// IdP RSA 公钥 PEM（PKCS#8 或 PKCS#1 格式），用于验证 Assertion 签名。
+    /// IdP RSA 公钥 PEM（PKCS#8 或 PKCS#1），用于验证 Assertion 签名。
     idp_public_key_pem: String,
-    /// 预期 Destination（SP 的 ACS URL）。None = 未配置 → 拒绝（fail-closed），
-    /// 除非 `allow_unvalidated_destination` 显式豁免。
+    /// 预期 Destination（SP 的 ACS URL）。None = 未配置 → 拒绝（fail-closed），除非显式豁免。
     expected_destination: Option<String>,
-    /// 预期 Audience（SP 的 entity_id）。None = 未配置 → 拒绝（fail-closed），
-    /// 除非 `allow_unvalidated_audience` 显式豁免。
+    /// 预期 Audience（SP 的 entity_id）。None = 未配置 → 拒绝（fail-closed），除非显式豁免。
     expected_audience: Option<String>,
     /// Destination 校验豁免标记（显式 opt-out，缺省 false = fail-closed）。
     allow_unvalidated_destination: bool,
@@ -1756,15 +1469,8 @@ pub struct XmlSecSamlProvider {
 
 #[cfg(feature = "protocol-saml")]
 impl XmlSecSamlProvider {
-    /// 创建 `XmlSecSamlProvider` 实例。
-    ///
-    /// # 参数
-    /// - `idp_public_key_pem`: IdP RSA 公钥 PEM 字符串（PKCS#8 或 PKCS#1）。
-    ///   通常从 IdP 元数据 `<ds:X509Certificate>` 提取后转为 PEM 格式。
-    ///
-    /// # 返回
-    /// - `Ok(Self)`: 创建成功
-    /// - `Err(GarrisonError::InvalidParam)`: 公钥 PEM 格式无效
+    /// 创建实例：`idp_public_key_pem` 为 IdP RSA 公钥 PEM（PKCS#8 或 PKCS#1，通常从 IdP 元数据
+    /// `<ds:X509Certificate>` 提取转换）；构造期预解析公钥 fail-fast，格式无效返回 `InvalidParam`。
     pub fn new(idp_public_key_pem: String) -> GarrisonResult<Self> {
         // 预解析公钥，fail-fast 避免每次 validate_assertion 才报错
         let _ = parse_rsa_public_key(&idp_public_key_pem)?;
@@ -1797,26 +1503,16 @@ impl XmlSecSamlProvider {
         self
     }
 
-    /// 显式豁免 Destination 校验（安全审计 GAR-31 的 opt-out 出口）。
-    ///
-    /// # 风险
-    ///
-    /// 豁免后 Destination 不匹配的响应仅告警放行，存在 open redirect 风险；
-    /// **仅限开发/测试环境**，生产部署必须改用
-    /// [`with_expected_destination`](Self::with_expected_destination)。
+    /// 显式豁免 Destination 校验（opt-out 出口）：不匹配的响应仅告警放行，存在 open redirect 风险，
+    /// 仅限开发/测试环境；生产必须改用 [`with_expected_destination`](Self::with_expected_destination)。
     #[must_use = "豁免 Destination 校验属显式安全决策，返回值必须被消费"]
     pub fn allow_unvalidated_destination(mut self) -> Self {
         self.allow_unvalidated_destination = true;
         self
     }
 
-    /// 显式豁免 Audience 校验（安全审计 GAR-31 的 opt-out 出口）。
-    ///
-    /// # 风险
-    ///
-    /// 豁免后受众为其他 SP 的签名合法断言将被接受（跨 SP 断言重放风险）；
-    /// **仅限开发/测试环境**，生产部署必须改用
-    /// [`with_expected_audience`](Self::with_expected_audience)。
+    /// 显式豁免 Audience 校验（opt-out 出口）：受众为其他 SP 的签名合法断言将被接受（跨 SP 重放风险），
+    /// 仅限开发/测试环境；生产必须改用 [`with_expected_audience`](Self::with_expected_audience)。
     #[must_use = "豁免 Audience 校验属显式安全决策，返回值必须被消费"]
     pub fn allow_unvalidated_audience(mut self) -> Self {
         self.allow_unvalidated_audience = true;
@@ -1891,15 +1587,14 @@ impl SamlProvider for XmlSecSamlProvider {
         )
         .await?;
 
-        // Destination 验证（fail-loud；未配置且未豁免时 fail-closed 拒绝，GAR-31）
+        // Destination 验证（fail-loud；未配置且未豁免时 fail-closed 拒绝）
         validate_destination(
             &response.destination,
             self.expected_destination.as_deref(),
             self.allow_unvalidated_destination,
         )?;
 
-        // Audience 验证（fail-loud，仅在有 Assertion 时校验；未配置且未豁免时
-        // fail-closed 拒绝，GAR-31）
+        // Audience 验证（fail-loud，仅在有 Assertion 时校验；未配置且未豁免时 fail-closed 拒绝）
         if let Some(ref assertion) = response.assertion {
             validate_audience(
                 &assertion.audience,
@@ -1908,7 +1603,7 @@ impl SamlProvider for XmlSecSamlProvider {
             )?;
         }
 
-        // 验证 Assertion 签名（非 fail-closed，而是真实验证）
+        // 验证 Assertion 签名（真实 RSA-SHA256 验证）
         if let Some(ref assertion) = response.assertion {
             match self.validate_assertion(assertion).await {
                 Ok(true) => {
@@ -1952,9 +1647,7 @@ impl SamlProvider for XmlSecSamlProvider {
 mod tests {
     use super::*;
 
-    // ========================================================================
     // 数据结构测试
-    // ========================================================================
 
     /// SamlAssertion 序列化/反序列化往返（所有结构实现 Serialize/Deserialize）。
     #[test]
@@ -2042,9 +1735,7 @@ mod tests {
         assert!(debug_str.contains("SamlAssertion"));
     }
 
-    // ========================================================================
     // DefaultSamlProvider 测试
-    // ========================================================================
 
     /// DefaultSamlProvider::new() 返回可用实例（验收标准）。
     #[test]
@@ -2099,11 +1790,8 @@ mod tests {
         assert_ne!(r1.id, r2.id);
     }
 
-    /// parse_response 解析成功响应。
-    ///
-    /// C-1: DefaultSamlProvider::validate_assertion 返回 NotImplemented，
-    /// parse_response fail-closed 剥离 Assertion（不返回未验证的 Assertion）。
-    /// XML 字段（destination / issuer / status_code）仍正常解析。
+    /// parse_response 解析成功响应：validate_assertion 返回 NotImplemented 时 fail-closed 剥离 Assertion
+    /// （不返回未验证的 Assertion），XML 字段（destination / issuer / status_code）仍正常解析。
     #[tokio::test]
     async fn parse_response_success() {
         let future = Utc::now().timestamp() + 3600;
@@ -2211,10 +1899,7 @@ mod tests {
         );
     }
 
-    /// 非 SAML XML 输入：provider 层因 StatusCode 校验返回 InvalidParam（fail-closed）。
-    ///
-    /// quick-xml 是宽松解析器，非 XML 文本不会在解析层报错（字段均为空），
-    /// 但空 status_code 不等于 Success，parse_response 必须拒绝而非静默放行。
+    /// 非 SAML XML 输入：解析层返回空字段，但空 status_code 不等于 Success，provider 层 fail-closed 拒绝（InvalidParam）。
     #[tokio::test]
     async fn parse_response_non_saml_xml_returns_empty_fields() {
         let provider = DefaultSamlProvider::new().unwrap();
@@ -2231,7 +1916,7 @@ mod tests {
         assert!(parsed.assertion.is_none());
     }
 
-    /// C-2: 过期的 SAML Assertion（NotOnOrAfter < now）应返回 InvalidToken 错误。
+    /// 过期的 SAML Assertion（NotOnOrAfter < now）返回 InvalidToken 错误。
     #[tokio::test]
     async fn parse_response_rejects_expired_assertion() {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -2261,10 +1946,8 @@ mod tests {
         );
     }
 
-    /// C-2: 未过期的 SAML Assertion（NotOnOrAfter > now）正常解析（不报 InvalidToken 错误）。
-    ///
-    /// 注意：C-1 修复后，DefaultSamlProvider 会剥离未验证的 Assertion（fail-closed），
-    /// 但 parse_response 本身不应返回错误——NotOnOrAfter 校验通过。
+    /// 未过期的 SAML Assertion（NotOnOrAfter > now）正常解析（NotOnOrAfter 校验通过，不报错；
+    /// 未验证的 Assertion 仍会被 fail-closed 剥离）。
     #[tokio::test]
     async fn parse_response_accepts_valid_assertion() {
         let future = Utc::now().timestamp() + 3600;
@@ -2322,11 +2005,9 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // C-3 断言重放防护测试
-    // ========================================================================
+    // 断言重放防护测试
 
-    /// C-3: 同一 Assertion ID 首次消费通过，二次拒绝。
+    /// 同一 Assertion ID 首次消费通过，二次拒绝。
     #[tokio::test]
     async fn check_assertion_replay_rejects_replay() {
         let dao = crate::dao::tests::MockDao::new();
@@ -2349,7 +2030,7 @@ mod tests {
         );
     }
 
-    /// C-3: 不同 Assertion ID 互不影响（隔离性）。
+    /// 不同 Assertion ID 互不影响（隔离性）。
     #[tokio::test]
     async fn check_assertion_replay_isolates_by_id() {
         let dao = crate::dao::tests::MockDao::new();
@@ -2369,7 +2050,7 @@ mod tests {
         assert!(b, "assertion-B 首次应通过（不同 ID 隔离）");
     }
 
-    /// C-3: 空 Assertion ID 放行（无法做重放检查）。
+    /// 空 Assertion ID 放行（无法做重放检查）。
     #[tokio::test]
     async fn check_assertion_replay_empty_id_passes() {
         let dao = crate::dao::tests::MockDao::new();
@@ -2379,9 +2060,7 @@ mod tests {
         assert!(result, "空 Assertion ID 应放行（无法做重放检查）");
     }
 
-    // ========================================================================
     // 辅助函数测试
-    // ========================================================================
 
     /// extract_local_name 正确去除命名空间前缀。
     #[test]
@@ -2391,9 +2070,7 @@ mod tests {
         assert_eq!(extract_local_name("Assertion"), "Assertion");
     }
 
-    // ========================================================================
     // SAML 命名空间强制测试
-    // ========================================================================
 
     /// check_saml_namespace 接受合法前缀（saml/samlp/ds/无前缀）。
     #[test]
@@ -2435,9 +2112,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // SAML 属性污染告警测试
-    // ========================================================================
 
     /// 重复属性名的 Assertion 仍被解析（两个值都保留），但应触发告警。
     #[tokio::test]
@@ -2481,9 +2156,7 @@ mod tests {
         assert!(roles.contains(&"admin"));
     }
 
-    // ========================================================================
     // Destination / Audience 验证测试
-    // ========================================================================
 
     /// Destination 匹配时 parse_response 通过。
     #[tokio::test]
@@ -2616,7 +2289,7 @@ mod tests {
             validate_destination("https://evil/acs", Some("https://sp/acs"), false),
             Err(GarrisonError::InvalidParam(_))
         ));
-        // Destination 未配置（None / Some("")）→ fail-closed 拒绝（GAR-31），
+        // Destination 未配置（None / Some("")）→ fail-closed 拒绝，
         // 显式豁免（allow_unvalidated=true）→ Ok + warn
         assert!(matches!(
             validate_destination("https://sp/acs", None, false),
@@ -2634,7 +2307,7 @@ mod tests {
             validate_audience("https://evil", Some("https://sp"), false),
             Err(GarrisonError::InvalidParam(_))
         ));
-        // Audience 未配置（None / Some("")）→ fail-closed 拒绝（GAR-31），
+        // Audience 未配置（None / Some("")）→ fail-closed 拒绝，
         // 显式豁免 → Ok + warn
         assert!(matches!(
             validate_audience("https://sp", None, false),
@@ -2647,9 +2320,7 @@ mod tests {
         assert!(validate_audience("https://sp", None, true).is_ok());
     }
 
-    // ========================================================================
     // 签名算法白名单测试（仅 secure-saml feature 下编译）
-    // ========================================================================
 
     #[cfg(feature = "protocol-saml")]
     mod signature_tests {
@@ -2686,19 +2357,11 @@ mod tests {
             assert!(!is_signature_algorithm_allowed(""), "空字符串应被拒绝");
         }
 
-        // ========================================================================
         // RSA-SHA256 签名验证测试
-        // ========================================================================
 
-        /// 构造测试用 SAML Assertion XML（含完整 XML-DSig <ds:Signature>）。
-        ///
-        /// 返回 (assertion_xml, public_key_pem)：
-        /// - `assertion_xml`：含 `<ds:Signature>` 的 Assertion XML，SignedInfo 含
-        ///   `<ds:Reference URI="#id">` 与 SHA-256 DigestValue（完整校验链）
-        /// - `public_key_pem`：对应 RSA 公钥的 PKCS#8 PEM 字符串
-        ///
-        /// 摘要约定：DigestValue = SHA256(被引用元素去除 Signature 子元素后的原始字节)
-        /// ——与 `strip_enveloped_signature` 的隐式 enveloped-signature transform 一致。
+        /// 构造测试用 SAML Assertion XML（含完整 XML-DSig `<ds:Signature>`），返回 (assertion_xml, public_key_pem)：
+        /// SignedInfo 含 `<ds:Reference URI="#id">` 与 SHA-256 DigestValue（完整校验链）；
+        /// DigestValue = SHA256(被引用元素去除 Signature 子元素后的原始字节)，与 `strip_enveloped_signature` 约定一致。
         fn build_test_signed_assertion() -> (String, String) {
             build_test_signed_assertion_with_inner("")
         }
@@ -2756,11 +2419,8 @@ mod tests {
             (xml, public_key_pem)
         }
 
-        /// XSW 攻击防护。
-        ///
-        /// 攻击者将一份合法签名的 `<ds:Signature>` 原样拷贝进自己控制的
-        /// Assertion（NameID=admin），试图让有效签名为其伪造内容背书。
-        /// 验签必须拒绝——签名仅对 DigestValue 绑定的原始元素有效。
+        /// XSW 攻击防护：攻击者把合法 `<ds:Signature>` 拷贝进自己控制的 Assertion（NameID=admin），
+        /// 试图让有效签名为伪造内容背书；验签必须拒绝（签名仅对 DigestValue 绑定的原始元素有效）。
         #[test]
         fn verify_saml_signature_rejects_xsw_copied_signature() {
             let (legit_xml, public_key_pem) = build_test_signed_assertion();
@@ -2789,14 +2449,10 @@ mod tests {
             );
         }
 
-        /// SAML XSW「CDATA 隐藏变体」回归测试（安全审计 GAR-01）。
-        ///
-        /// 攻击者在伪造 Assertion（ID=evil-*，NameID/Attributes 任意）内嵌入
-        /// (a) 受害者合法 `<ds:Signature>` 原样拷贝 (b) `<![CDATA[受害者完整断言原文]]>`：
-        /// quick-xml 不解析 CDATA（业务字段解析为伪造值），而纯字符串扫描能在
-        /// CDATA 内命中被 Reference 引用的受害者元素 → digest/签名全部通过。
-        /// 验签必须拒绝：每个 `<ds:Reference>` 的 URI 必须锚定被验 Assertion
-        /// 根元素自身的 ID，且摘要计算锚定在根元素子树内。
+        /// SAML XSW「CDATA 隐藏变体」回归测试：伪造 Assertion 内嵌入 (a) 受害者合法 `<ds:Signature>` 拷贝
+        /// (b) `<![CDATA[受害者完整断言原文]]>`——quick-xml 不解析 CDATA（业务字段为伪造值），纯字符串扫描
+        /// 却能在 CDATA 内命中被引用元素使 digest/签名全过。验签必须拒绝：URI 须锚定被验 Assertion 根元素
+        /// 自身 ID，摘要计算锚定根元素子树。
         ///
         /// 返回 (evil_assertion_xml, victim_public_key_pem)。
         fn build_xsw_cdata_evil_assertion() -> (String, String) {
@@ -2973,9 +2629,7 @@ mod tests {
             );
         }
 
-        // ========================================================================
         // Assertion 重放防护接线（端到端）
-        // ========================================================================
 
         /// XmlSecSamlProvider 端到端——同一签名 Assertion 二次提交被重放防护拒绝。
         #[tokio::test]
@@ -2993,7 +2647,7 @@ mod tests {
             let provider = XmlSecSamlProvider::new(public_key_pem)
                 .unwrap()
                 .with_request_dao(dao)
-                // 本用例聚焦重放防护，Destination/Audience 显式豁免（GAR-31 opt-out）
+                // 本用例聚焦重放防护，Destination/Audience 显式豁免
                 .allow_unvalidated_destination()
                 .allow_unvalidated_audience();
 
@@ -3017,9 +2671,7 @@ mod tests {
             );
         }
 
-        // ====================================================================
-        // Destination / Audience 缺省 fail-closed（安全审计 GAR-31）
-        // ====================================================================
+        // Destination / Audience 缺省 fail-closed
 
         /// 构造带未来 NotOnOrAfter 与 Audience 的签名 Assertion Response
         /// （XmlSecSamlProvider e2e 用；extra 内容纳入 DigestValue 计算）。
@@ -3046,8 +2698,7 @@ mod tests {
             (xml, public_key_pem)
         }
 
-        /// 缺省构造（未配置 Destination）→ fail-closed 拒绝，错误码
-        /// sso-saml-destination-not-configured（不再 warn 放行）。
+        /// 缺省构造（未配置 Destination）→ fail-closed 拒绝（sso-saml-destination-not-configured，不再 warn 放行）。
         #[tokio::test]
         async fn xmlsec_provider_default_rejects_unconfigured_destination() {
             let (xml, public_key_pem) = build_xsec_signed_response();
@@ -3060,8 +2711,7 @@ mod tests {
             );
         }
 
-        /// 仅豁免 Destination（Audience 仍缺省）→ fail-closed 拒绝，错误码
-        /// sso-saml-audience-not-configured。
+        /// 仅豁免 Destination（Audience 仍缺省）→ fail-closed 拒绝（sso-saml-audience-not-configured）。
         #[tokio::test]
         async fn xmlsec_provider_default_rejects_unconfigured_audience() {
             let (xml, public_key_pem) = build_xsec_signed_response();
@@ -3076,8 +2726,7 @@ mod tests {
             );
         }
 
-        /// 显式配置 expected_audience/expected_destination → 签名合法断言放行
-        /// （GAR-31 缺省收紧不得破坏显式配置的正常路径）。
+        /// 显式配置 expected_audience/expected_destination → 签名合法断言放行（缺省收紧不得破坏显式配置的正常路径）。
         #[tokio::test]
         async fn xmlsec_provider_with_expected_config_accepts_signed_assertion() {
             let (xml, public_key_pem) = build_xsec_signed_response();
@@ -3105,10 +2754,8 @@ mod tests {
             );
         }
 
-        /// XSW CDATA 隐藏变体端到端（安全审计 GAR-01）：
-        /// 伪造断言（含拷贝的受害者签名 + CDATA 包裹的受害者断言）经完整
-        /// parse_response 流程后必须被拒——断言剥离或整体拒绝，
-        /// 伪造的 subject/attributes 不得存活，重放防护（DAO）亦不改变结论。
+        /// XSW CDATA 隐藏变体端到端：伪造断言（拷贝的受害者签名 + CDATA 包裹的受害者断言）经完整
+        /// parse_response 流程后必须被拒（断言剥离或整体拒绝），伪造 subject/attributes 不得存活。
         #[tokio::test]
         async fn xmlsec_provider_rejects_xsw_cdata_forged_assertion() {
             let (evil_assertion, public_key_pem) = build_xsw_cdata_evil_assertion();
@@ -3152,20 +2799,10 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // TOCTOU 并发重放防护测试
-    // ========================================================================
+    // 并发重放防护测试
 
-    /// 并发场景下 get_and_delete 原子性验证。
-    ///
-    /// 验证 `check_assertion_replay` 在并发调用时：
-    /// - 不应 panic 或返回 Err
-    /// - 至少一个任务成功消费（Ok(true)）
-    /// - 至少一个任务被拒绝（Ok(false)）—— 证明 get_and_delete 原子生效
-    ///
-    /// **注意**：完整 TOCTOU 修复需要 `set_nx`（SET if Not eXists）原语，
-    /// 当前 GarrisonDao trait 未提供。本测试验证 `get_and_delete` 提供的
-    /// 进程内原子性（MockDao 由 parking_lot::Mutex 保护）。
+    /// 并发场景下 `set_if_absent` 原子性验证：10 个并发调用不应 panic / 报错，
+    /// 至少一个成功消费（Ok(true)）且至少一个被拒绝（Ok(false)）。
     #[tokio::test]
     async fn check_assertion_replay_concurrent_atomic_get_and_delete() {
         let dao = std::sync::Arc::new(crate::dao::tests::MockDao::new());
@@ -3196,7 +2833,7 @@ mod tests {
                 Err(e) => panic!("check_assertion_replay 不应报错: {:?}", e),
             }
         }
-        // 并发场景下至少一个成功 + 一个失败（证明 get_and_delete 原子性生效）
+        // 至少一个成功 + 一个失败（证明 set_if_absent 原子性生效）
         assert!(
             success_count >= 1,
             "至少一个任务应成功消费，实际成功: {}",
@@ -3215,8 +2852,6 @@ mod tests {
     }
 
     /// 串行场景下重放防护正确（首次通过 + 二次拒绝）。
-    ///
-    /// 验证 `get_and_delete` 替代 `get+set` 后，串行重放防护仍然正确。
     #[tokio::test]
     async fn check_assertion_replay_serial_replay_protection() {
         let dao = crate::dao::tests::MockDao::new();
@@ -3240,9 +2875,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // parse_saml_response_xml 结构覆盖测试
-    // ========================================================================
 
     /// `raw_xml` 应包含完整 `<Assertion>...</Assertion>` 原始 XML。
     #[test]
@@ -3328,10 +2961,8 @@ mod tests {
         );
     }
 
-    /// 空 Assertion 元素（无子元素）应解析为 Some 但字段均为空。
-    ///
-    /// 解析层保留空字段；NotOnOrAfter 缺失的拒绝发生在 into_response，
-    /// 故此用例补充未来 NotOnOrAfter 以通过时间条件校验。
+    /// 空 Assertion 元素（无子元素）解析为 Some 但字段均为空；补未来 NotOnOrAfter 以通过时间条件校验
+    /// （缺失拒绝发生在 into_response）。
     #[test]
     fn parse_saml_response_xml_handles_empty_assertion() {
         let future = Utc::now().timestamp() + 3600;
@@ -3441,9 +3072,7 @@ mod tests {
         assert_eq!(result.issuer, "https://idp.example.com");
     }
 
-    // ========================================================================
     // InResponseTo ↔ AuthnRequest 绑定校验
-    // ========================================================================
 
     /// 构造带 InResponseTo 的最小合法 Response（Success，无 Assertion）。
     fn build_sp_initiated_response(in_response_to: &str) -> String {

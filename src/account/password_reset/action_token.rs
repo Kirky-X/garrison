@@ -1,15 +1,12 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! ActionToken（找回密码动作令牌）：自包含 JWT（sub / purpose / jti / exp）。
+//! ActionToken（找回密码动作令牌）：自包含 JWT（sub / purpose / jti / exp），复用 [`JwtHandler`]
+//! 的密钥材料与校验语义（`sign_custom` / `verify_custom`）。purpose 与 [`PURPOSE_PASSWORD_RESET`]
+//! 不符的 token 一律拒绝，防止其他用途签发的 JWT 被挪用为改密凭据。
 //!
-//! 复用 [`JwtHandler`] 的密钥材料与校验语义
-//! （`sign_custom` / `verify_custom`），claims 增加 `purpose` 扩展字段：purpose
-//! 与 [`PURPOSE_PASSWORD_RESET`] 不符的 token 一律拒绝，防止其他用途签发的
-//! JWT 被挪用为改密凭据。
-//!
-//! jti（RFC 7519 §4.1.7）是一次性消费登记的主键，由 [`ActionTokenConsumer`](super::ActionTokenConsumer)
-//! 经 DAO `set_if_absent` 原子消费（见 `consumer` 模块）。
+//! jti（RFC 7519 §4.1.7）是一次性消费登记的主键，由
+//! [`ActionTokenConsumer`](super::ActionTokenConsumer) 经 DAO `set_if_absent` 原子消费（见 `consumer` 模块）。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::protocol::jwt::JwtHandler;
@@ -20,9 +17,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// ActionToken `purpose` claim 固定值：找回密码。
 pub const PURPOSE_PASSWORD_RESET: &str = "password_reset";
 
-/// ActionToken 默认有效期（秒）：15 分钟。
-///
-/// 与既有验证码类凭据（`email:code` 600s）同量级，长时效改密凭据扩大重放窗口。
+/// ActionToken 默认有效期（秒，15 分钟）：与 `email:code` 的 600s 同量级，
+/// 长时效改密凭据扩大重放窗口。
 pub const DEFAULT_TOKEN_TTL_SECS: i64 = 900;
 
 /// ActionToken claims（RFC 7519 子集 + `purpose` 扩展）。
@@ -109,10 +105,8 @@ impl ActionTokenService {
 
     /// 校验 ActionToken：签名 + exp（leeway=0）+ purpose 白名单 + jti 非空。
     ///
-    /// # 错误
-    /// - 签名/格式非法：[`GarrisonError::InvalidToken`]（透传 `verify_custom`）
-    /// - 已过期：[`GarrisonError::ExpiredToken`]
-    /// - purpose 不符 / jti 缺失：[`GarrisonError::InvalidToken`]（显性错误码）
+    /// 已过期返回 [`GarrisonError::ExpiredToken`]；签名/格式非法、purpose 不符或 jti 缺失返回
+    /// [`GarrisonError::InvalidToken`]（显性错误码）。
     pub fn verify(&self, token: &str) -> GarrisonResult<ActionTokenClaims> {
         let claims: ActionTokenClaims = self.jwt.verify_custom(token)?;
         if claims.purpose != PURPOSE_PASSWORD_RESET {

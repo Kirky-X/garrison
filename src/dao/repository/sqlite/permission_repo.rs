@@ -88,12 +88,10 @@ impl PermissionRepository for DbnexusPermissionRepository {
         if sets.is_empty() {
             return Ok(());
         }
-        // updated_at 随每次成功 UPDATE 刷新（CURRENT_TIMESTAMP 同款格式，
-        // TEXT/VARCHAR 列在三方言下均以字符串参数绑定，避免 timestamp→text 隐式转换）
+        // updated_at 随每次成功 UPDATE 刷新（CURRENT_TIMESTAMP 同款格式，三方言下均以字符串参数绑定，避免隐式 timestamp→text 转换）
         sets.push("updated_at = ?");
         params.push(v_str(&now_timestamp()));
-        // 安全性说明：sets 中的元素均为硬编码列名（如 "resource_type = ?"），
-        // 非用户输入，不存在 SQL 注入风险。所有值通过 `?` 占位符参数化传递。
+        // sets 元素均为硬编码列名，非用户输入（无 SQL 注入风险）；所有值经 `?` 占位符参数化传递
         params.push(v_str(id));
         let sql = format!("UPDATE app_permission SET {} WHERE id = ?", sets.join(", "));
         dao_session!(self.pool, "dao-app-permission-update", session, conn);

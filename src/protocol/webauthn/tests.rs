@@ -3,15 +3,11 @@
 
 //! protocol-webauthn 模块测试。
 //!
-//! 按安全属性组织：challenge 一次性（重放/TTL 过期/并发消费恰一成功）、
-//! 注册仪式（重复绑定被拒/attestation 非法被拒/ExcludeCredentials）、
-//! 认证仪式（assertion 重放被拒/克隆检测触发/正常认证更新落库）、
-//! RP 配置派生（issuer 变更 rp_id 跟随/双 policy 准入差异）。
-//!
-//! 仪式测试采用 webauthn-rs 上游测试集的**真实 authenticator 录制向量**
-//! （MPL-2.0，出处 webauthn-rs-core 0.5.5 src/core.rs 测试模块）：
-//! challenge 固定，测试经 [`seed_registration`]/[`seed_authentication`]
-//! 以与 start_* 相同的 SETNX 路径植入与向量匹配的仪式态。
+//! 按安全属性组织：challenge 一次性、注册/认证仪式、RP 配置派生与双 policy
+//! 准入差异。仪式测试用 webauthn-rs 上游测试集的真实 authenticator 录制向量
+//! （MPL-2.0，出处 webauthn-rs-core 0.5.5 src/core.rs 测试模块），经
+//! [`seed_registration`]/[`seed_authentication`] 以与 start_* 相同的 SETNX
+//! 路径植入仪式态。
 
 use super::challenge::{ChallengePayload, ChallengeStore};
 use super::credential::WebauthnCredential;
@@ -25,9 +21,7 @@ use webauthn_rs::prelude::{
     Credential, CredentialID, PublicKeyCredential, RegisterPublicKeyCredential, WebauthnBuilder,
 };
 
-// ============================================================================
 // 测试装置
-// ============================================================================
 
 /// RP issuer：与录制向量的 origin/rp_id 一致（origin 带 8080 端口，rp_id=host）。
 const ISSUER: &str = "https://etools-dev.example.com:8080";
@@ -76,9 +70,7 @@ fn client_data_challenge(client_data_json: &[u8]) -> String {
         .to_string()
 }
 
-// ============================================================================
 // 录制向量（webauthn-rs-core 0.5.5 测试集，MPL-2.0）
-// ============================================================================
 
 /// 注册向量（Windows Hello，fmt=none，RS256，flags=0x45 UP|UV|AT，counter=0）：
 /// origin=https://etools-dev.example.com:8080，rp_id=etools-dev.example.com。
@@ -122,9 +114,7 @@ fn auth_vector_challenge() -> String {
     client_data_challenge(auth.response.client_data_json.as_slice())
 }
 
-// ============================================================================
 // service/sqlite 装置
-// ============================================================================
 
 /// 构造绑定 InMemoryDao + 内存凭据仓库的 service——凭据仓库用 sqlite 装置。
 /// 仪式链路对仓库 trait 的依赖经 [`WebauthnCredentialRepository`]，测试用
@@ -212,9 +202,7 @@ pub(crate) async fn seed_authentication(
         .expect("植入认证仪式态应成功");
 }
 
-// ============================================================================
 // challenge 一次性防重放
-// ============================================================================
 
 /// 二次消费被拒：GETDEL 语义下首个消费者取到载荷，第二个消费者见键已删
 /// → `ChallengeReplayed`。
@@ -421,9 +409,7 @@ pub(crate) fn domain_to_credential(domain: &WebauthnCredential) -> Credential {
     domain.protocol_credential().clone()
 }
 
-// ============================================================================
 // 注册仪式
-// ============================================================================
 
 /// 注册向量全流程：challenge 消费 + attestation 复核 + 凭据落库，落库字段
 /// 与向量一致（fmt=none，UV=1，counter=0，BE/BS=0）。
@@ -557,9 +543,7 @@ async fn start_registration_carries_exclude_credentials() {
     );
 }
 
-// ============================================================================
 // 认证仪式
-// ============================================================================
 
 /// 正常认证：签名复核通过，sign_count 单调推进（0→1）并落库，
 /// 返回视图携带断言后的 backup flags 与 UV。
@@ -715,9 +699,7 @@ async fn authentication_start_without_credentials_is_rejected() {
     );
 }
 
-// ============================================================================
 // RP 配置派生与双 policy
-// ============================================================================
 
 /// issuer 变更后 rp_id 跟随：派生纯函数对 issuer 的 host 一一对应。
 #[test]

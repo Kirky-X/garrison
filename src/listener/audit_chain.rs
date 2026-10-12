@@ -4,29 +4,23 @@
 //! 审计事件防篡改 HMAC 链（内核：limiteron `AuditLogEntry::chain_onto` /
 //! `verify_chain`；链首盐折入密钥派生）。
 //!
-//! 链条以**每次 [`AuditEventChain::new`] 生成的随机盐**为链首——
-//! garrison 侧派生 `chain_key = HMAC-SHA256(key, salt)`，链哈希由库原语
-//! `AuditLogEntry::chain_onto(chain_key, prev)` 计算（GENESIS 起步）。
-//! 盐随每个条目冗余存储（secret 由使用方持有），校验方以「盐 + 密钥」重算
-//! 派生密钥后 `verify_chain` 重算整链：任一事件被篡改、删除、重排或伪造
-//! 即校验失败。合规场景（等保审计取证）可将条目 JSONL 落盘（与审计日志
-//! 分库存储），事后用 [`AuditEventChain::verify_entries`] 验证。
+//! 链条以**每次 [`AuditEventChain::new`] 生成的随机盐**为链首，garrison 侧派生
+//! `chain_key = HMAC-SHA256(key, salt)`，链哈希由库原语计算（GENESIS 起步）；
+//! 盐随每个条目冗余存储，校验方以「盐 + 密钥」重算派生密钥后重算整链：任一
+//! 事件被篡改、删除、重排或伪造即校验失败。合规场景（等保审计取证）可将
+//! 条目 JSONL 独立落盘，事后用 [`AuditEventChain::verify_entries`] 验证。
 //!
-//! **载荷适配（闭集枚举）**：garrison 事件是任意规范化 JSON 字符串，limiteron
-//! `AuditEvent` 是闭集枚举。事件经 `AuditEvent::SystemEvent { name:
-//! "garrison-audit", details }` 承载，`details` 字节级保真。limiteron 的
-//! 签名消息（`timestamp|operation|target|result`）**不含**
-//! `SystemEvent.details`，因此 garrison 侧把 `details` 的 SHA-256 摘要绑入
-//! 被签名的 `level` 槽位（`info:{摘要}`）——篡改事件 JSON 会同时破坏
-//! `level` 与链哈希，防篡改性质不受库侧签名面缺口影响（不修改库约束下的
-//! 适配，见 CHANGELOG）。
+//! **载荷适配（闭集枚举）**：garrison 事件是任意规范化 JSON，limiteron
+//! `AuditEvent` 是闭集枚举，事件经 `SystemEvent { name: "garrison-audit", details }`
+//! 承载（`details` 字节级保真）；库签名消息（`timestamp|operation|target|result`）
+//! 不含 `SystemEvent.details`，故 garrison 侧把 details 的 SHA-256 摘要绑入
+//! 被签名的 `level` 槽位（`info:{摘要}`）——篡改事件 JSON 会同时破坏 `level`
+//! 与链哈希，防篡改性质不依赖库侧签名面。
 //!
-//! **归档格式声明**：JSONL 形态为本结构（`index` + `salt` + limiteron
-//! `AuditLogEntry` serde 视图）。旧平铺格式（`index/salt/prev_hash/event/
-//! hmac`）**不做读取兼容**——取证是重算语义，格式切换见 CHANGELOG。
-//!
-//! 与 [`super::audit::AuditConfig::signing_key`](crate::listener::audit::AuditConfig)
-//! 的导出签名链互补：后者为导出文件的逐行签名，本模块为**活动事件链**。
+//! **归档格式**：JSONL 形态为 `index` + `salt` + limiteron `AuditLogEntry`
+//! serde 视图；旧平铺格式不做读取兼容（取证是重算语义）。与
+//! [`AuditConfig::signing_key`](crate::listener::audit::AuditConfig) 的导出
+//! 签名链互补：后者为导出文件逐行签名，本模块为**活动事件链**。
 //!
 //! ```rust
 //! use garrison::listener::audit_chain::AuditEventChain;
@@ -96,10 +90,8 @@ pub struct AuditEventChain {
 }
 
 impl AuditEventChain {
-    /// 以密钥创建链条；链首盐取 OS CSPRNG（`getrandom::fill`）。
-    ///
-    /// # Panics
-    /// OS 随机源不可用时 panic（与令牌生成路径同一安全立场：无法取熵即拒绝服务）。
+    /// 以密钥创建链条；链首盐取 OS CSPRNG（`getrandom::fill`），OS 随机源
+    /// 不可用时 panic（与令牌生成同一立场：无法取熵即拒绝服务）。
     pub fn new(key: &[u8]) -> Self {
         let mut salt = [0u8; CHAIN_SALT_LEN];
         getrandom::fill(&mut salt).expect("OS CSPRNG 不可用");
@@ -150,10 +142,8 @@ impl AuditEventChain {
             if item.index != expected_index as u64 {
                 return false;
             }
-            // garrison 载荷绑定：details 的摘要必须与 level 槽位一致——
-            // 库签名消息（timestamp|operation|target|result）不含
-            // SystemEvent.details，只改事件 JSON 不改 level 时链哈希不变，
-            // 故 garrison 侧必须显式核对绑定（改 level 则破坏链哈希，两道防线）。
+            // 载荷绑定核对：库签名消息不含 details，只改事件 JSON 不改 level
+            // 时链哈希不变，故 garrison 侧显式核对（改 level 则破坏链哈希）
             if !details_binding_ok(&item.entry.event) {
                 return false;
             }

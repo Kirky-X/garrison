@@ -2,25 +2,10 @@
 # Copyright (c) 2026 Kirky.X🌠
 # SPDX-License-Identifier: Apache-2.0
 #
-# Redis 故障演练脚本（四场景）：容器暂停恢复 / 网络断开重连 / 强制重启 /
-# Sentinel 主从故障切换（chaos profile）。
+# Redis 故障演练（四场景：pause / disconnect / restart / sentinel）：基于 docker/docker-compose.e2e.yml 的 Redis 服务（容器 garrison-e2e-redis，宿主端口 16379）。每场景注入故障 → 确认不可用 → 解除 → 验证恢复（PING + SET/GET 往返 + 金丝雀断言）；失败以 [FAIL] 标注并退出码 1。
 #
-# 基于 docker/docker-compose.e2e.yml 的现有 Redis 服务（容器名 garrison-e2e-redis，
-# 宿主端口 16379）。每场景依次：
-#   1. 注入故障 → 确认不可用（降级行为可观测）
-#   2. 解除故障 → 验证恢复（PING + SET/GET 往返 + 金丝雀值断言）
-# 任何场景失败以 [FAIL] 标注并使脚本退出码为 1。
-#
-# 用法：
-#   docker compose -f docker/docker-compose.e2e.yml up -d redis   # 先拉起 Redis
-#   scripts/chaos_redis.sh                                  # 全部三场景
-#   scripts/chaos_redis.sh pause|disconnect|restart|sentinel # 单场景
-#
-# 环境变量：
-#   GARRISON_CHAOS_CONTAINER  目标容器（默认 garrison-e2e-redis）
-#   GARRISON_CHAOS_HOST       宿主探测地址（默认 127.0.0.1）
-#   GARRISON_CHAOS_PORT       宿主探测端口（默认 16379）
-#   GARRISON_CHAOS_TIMEOUT_S  单次探测超时秒数（默认 3）
+# 用法：docker compose -f docker/docker-compose.e2e.yml up -d redis && scripts/chaos_redis.sh [pause|disconnect|restart|sentinel]（缺省 all）
+# 环境变量：GARRISON_CHAOS_CONTAINER / HOST / PORT / TIMEOUT_S（默认 garrison-e2e-redis / 127.0.0.1 / 16379 / 3）
 
 set -u
 
@@ -46,9 +31,7 @@ host_tcp_ok() {
   timeout "$TIMEOUT_S" bash -c "exec 3<>/dev/tcp/${HOST}/${PORT}" 2>/dev/null
 }
 
-# 宿主侧协议级可用性探测：发送 PING 并等待 +PONG。
-# 仅测 TCP 连接不够——docker userland-proxy 会先替容器接受连接（disconnect 后
-# 仍"连接成功"），必须以协议响应判定真实服务可用性。
+# 宿主侧协议级探测：PING 等 +PONG；仅 TCP 不够（docker userland-proxy 会先替容器接受连接），必须以协议响应判定可用性。
 host_redis_ping_ok() {
   timeout "$TIMEOUT_S" bash -c "
     exec 3<>/dev/tcp/${HOST}/${PORT}"' || exit 1
@@ -176,8 +159,7 @@ scenario_restart() {
   fi
 }
 
-# 场景 4：Sentinel 主从故障切换（chaos profile：master/replica/sentinel）。
-# 演练拓扑为单 Sentinel + quorum 1（提速）；生产建议 ≥3 Sentinel + quorum 2。
+# 场景 4：Sentinel 主从故障切换（chaos profile：master/replica/sentinel）；演练为单 Sentinel + quorum 1（提速），生产建议 ≥3 + quorum 2。
 scenario_sentinel() {
   log "=== 场景 4/4：Redis Sentinel 主从故障切换（docker compose --profile chaos）==="
   step "拉起演练拓扑（master + replica + sentinel）"
@@ -192,8 +174,7 @@ scenario_sentinel() {
   local replica_cli="docker exec garrison-chaos-replica redis-cli"
 
   step "等待 Sentinel 进入监控（≤60s）"
-  # resolve-hostnames 开启时 get-master-addr 返回裸主机名行（非旧版引号格式），
-  # 以首行非空为准
+  # resolve-hostnames 开启时 get-master-addr 返回裸主机名行（非旧版引号格式），以首行非空为准
   local deadline=$((SECONDS + 60))
   until [[ -n "$($sentinel_cli sentinel get-master-addr-by-name mymaster 2>/dev/null | head -1)" ]]; do
     (( SECONDS < deadline )) || { fail "Sentinel 60s 内未进入监控"; return; }

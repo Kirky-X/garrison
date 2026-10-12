@@ -322,13 +322,9 @@ mod tests {
         assert_eq!(list_2[0].tenant_id, 2);
     }
 
-    // ========================================================================
     // 错误路径测试：DROP TABLE 后查询/插入触发 SQL 错误，覆盖 map_err 闭包
-    // ========================================================================
 
-    /// 删除 app_login_log 表后 find_by_id 应返回 Dao 错误。
-    ///
-    /// 覆盖 find_by_id 中 query_one_raw 的 map_err 闭包（line 38）。
+    /// 删除 app_login_log 表后 find_by_id 返回 Dao 错误（覆盖 query_one_raw 的 map_err 分支）。
     #[tokio::test(flavor = "multi_thread")]
     async fn find_by_id_returns_error_when_table_dropped() {
         let pool = setup_db().await;
@@ -357,9 +353,7 @@ mod tests {
         }
     }
 
-    /// 删除 app_login_log 表后 find_by_user_id 应返回 Dao 错误。
-    ///
-    /// 覆盖 find_by_user_id 中 query_all_raw 的 map_err 闭包（line 76）。
+    /// 删除 app_login_log 表后 find_by_user_id 返回 Dao 错误（覆盖 query_all_raw 的 map_err 分支）。
     #[tokio::test(flavor = "multi_thread")]
     async fn find_by_user_id_returns_error_when_table_dropped() {
         let pool = setup_db().await;
@@ -388,9 +382,7 @@ mod tests {
         }
     }
 
-    /// 删除 app_login_log 表后 create 应返回 Dao 错误。
-    ///
-    /// 覆盖 create 中 execute_raw 的 map_err 闭包（line 107）。
+    /// 删除 app_login_log 表后 create 返回 Dao 错误（覆盖 execute_raw 的 map_err 分支）。
     #[tokio::test(flavor = "multi_thread")]
     async fn create_returns_error_when_table_dropped() {
         let pool = setup_db().await;
@@ -431,9 +423,7 @@ mod tests {
         }
     }
 
-    /// 删除 app_login_log 表后 list 应返回 Dao 错误。
-    ///
-    /// 覆盖 list 中 query_all_raw 的 map_err 闭包（line 133）。
+    /// 删除 app_login_log 表后 list 返回 Dao 错误（覆盖 query_all_raw 的 map_err 分支）。
     #[tokio::test(flavor = "multi_thread")]
     async fn list_returns_error_when_table_dropped() {
         let pool = setup_db().await;
@@ -462,9 +452,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // parse_login_log_row 错误路径测试：重建表缺少列触发 try_get 解析失败
-    // ========================================================================
 
     /// 重建 app_login_log 表（action 列插入 NULL）后 find_by_id 应返回 Dao 解析错误。
     ///

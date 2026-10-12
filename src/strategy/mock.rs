@@ -1,11 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 策略层测试 mock 实现。
-//!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `MockCacheDao`（基于 `HashMap` 模拟权限缓存 DAO），
-//! 供 `strategy::tests` 权限缓存测试复用。
+//! 策略层测试 mock 实现,仅在 `cfg(test)` 下编译,供 `strategy::tests` 权限缓存测试复用。
 
 use crate::dao::GarrisonDao;
 use crate::error::GarrisonResult;
@@ -13,13 +9,13 @@ use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 
-/// 简单的 MockDao，用于权限缓存测试。
+/// 基于 `HashMap` 的权限缓存测试替身。
 pub struct MockCacheDao {
     store: Mutex<HashMap<String, String>>,
 }
 
 impl MockCacheDao {
-    /// 创建空的 mock DAO 实例（无任何键值）。
+    /// 创建空实例。
     pub fn new() -> Self {
         Self {
             store: Mutex::new(HashMap::new()),

@@ -1,34 +1,19 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Credit 计量模块（`credit-metering` feature）。
+//! Credit 计量模块（`credit-metering` feature）：`CreditMeter` 为计量引擎（按 tenant 维度，
+//! tenant_id 来源为 `context::tenant`），`CreditCycle` 决定配额周期，`CreditSchedule`
+//! 提供资源权重，`ActivityWriteThrottle` 默认启用做活跃度写路径节流，
+//! `CreditMeteringListener` 为可选事件监听器（Login 自动扣减，CreditConsumed /
+//! CreditAlert 事件可被 `listener::audit` 审计）。
 //!
-//! 提供 team-level credit 消费计量能力：
-//! - `CreditMeter`：核心计量引擎（consume / query / reset API）
-//! - `CreditCycle`：配额周期模型（Fixed 自然月 / Rolling 滚动窗口）
-//! - `CreditSchedule`：resource → credit_weight 映射
-//! - `ActivityWriteThrottle`：高频活跃度写路径节流聚合（persist_history
-//!   流水落库的去抖窗口，`CreditMeter` 默认启用）
-//! - `CreditConfig` / `CreditAlertConfig`：配置
-//! - `CreditMeteringListener`：可选事件监听器（Login 自动扣减）
-//!
-//! # 与现有模块的关系
-//!
-//! - `listener::audit`：审计日志（CreditConsumed / CreditAlert 事件可被审计监听器捕获）
-//! - `context::tenant`：tenant_id 来源（CreditMeter 按 tenant 维度计量）
-//!
-//! # 消费语义与已知限制
-//!
-//! - `CreditMeter::consume_credit`：credits = cost × weight 经 `checked_mul`
-//! 计算，溢出返回错误（不静默回绕）；**被拒绝的请求不消耗配额**（预检拒绝
-//! 零副作用，并发交错超限时回滚本次扣减）。
-//! - `CreditMeterStorage::incr_consumed`：`GarrisonDao` 无 `INCRBY` 语义，
-//! credits > 1 时循环单步 incr——整体非原子且为 N 次串行 DAO 往返（详见
-//! `credit::storage` 模块文档）。
-//! - persist_history 流水落库默认经 `ActivityWriteThrottle` 节流聚合（同
-//! key 窗口内仅首次快照落库、进程退出不持久化），逐笔对账需求用
-//! `CreditMeter::without_activity_throttle` 显式关闭（详见 `credit::throttle`
-//! 模块文档）。
+//! 消费语义与已知限制：`consume_credit` 的 credits = cost × weight 经 `checked_mul`
+//! 计算，溢出返回错误（不静默回绕），被拒绝的请求不消耗配额（并发交错超限时回滚
+//! 本次扣减）；`CreditMeterStorage::incr_consumed` 在 `GarrisonDao` 无 `INCRBY`
+//! 语义下按 credits 循环单步 incr，整体非原子且为 N 次串行 DAO 往返（详见
+//! `credit::storage`）；persist_history 默认经 `ActivityWriteThrottle` 节流聚合
+//! （同 key 窗口内仅首次快照落库、进程退出不持久化），逐笔对账用
+//! `CreditMeter::without_activity_throttle` 关闭（详见 `credit::throttle`）。
 
 /// Credit 配额周期模型。
 pub mod cycle;

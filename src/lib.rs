@@ -10,10 +10,9 @@
 //!
 //! ## 快速开始
 //!
-//! 最小可用示例：初始化管理器 → 执行登录 → 校验登录状态 → 校验权限 → 登出。
-//! （以下 doctest 随 `cargo test --doc` 持续验证，可直接复制使用；
-//! `InMemoryDao` 为进程内实现，生产请替换为 `GarrisonDaoOxcache` /
-//! `GarrisonDaoDbnexus` 等持久化后端。）
+//! 最小可用示例：初始化管理器 → 登录 → 校验登录状态 → 校验权限 → 登出。
+//! 以下 doctest 随 `cargo test --doc` 持续验证，可直接复制使用；`InMemoryDao` 为进程内实现，
+//! 生产请换 `GarrisonDaoOxcache` / `GarrisonDaoDbnexus` 等持久化后端。
 //!
 //! ```rust
 //! use async_trait::async_trait;
@@ -111,64 +110,25 @@
 //!
 //! ## 模块概览
 //!
-//! 涵盖协议层、安全模块与可插拔扩展点：
-//!
-//! - **核心扩展**（always on）
-//! - [`core::token`]：`Token` trait + `TokenStyleFactory`（uuid / random_64 / simple / jwt 四种风格）
-//! - [`core::auth`]：`AuthLogic` trait + `DefaultAuthLogic`（login_by_token / verify_token / refresh_token）
-//! - [`core::permission`]：`PermissionChecker` trait + `DefaultPermissionChecker`
-//! - [`plugin`]：`GarrisonPlugin` trait + `inventory` 编译期注册 + `GarrisonPluginManager`（on_login / on_logout / on_permission_check 钩子）
-//! - [`strategy`]：`GarrisonPermissionStrategyDefault` 扩展 `with_permission_checker` / `with_role_hierarchy` / `with_plugin_manager` / `with_dao`（权限缓存）
-//! - [`session`]：`GarrisonSession` 扩展 SSO / OAuth2 / 临时凭证关联（`link_sso_ticket` / `link_oauth2_token` / `link_temp_credential`）
-//! - **协议层**（特性门控）
-//! - `protocol::jwt`：`JwtHandler`（sign / verify / refresh，HS256/HS512）
-//! - `protocol::oauth2`：`OAuth2Client`（Authorization Code / Client Credentials / Password 三种流程）
-//! - `protocol::sso`：`SsoClient`（ticket 签发 / 校验 / 销毁，一次性 60s TTL）
-//! - `protocol::sign`：`SignHandler`（HMAC-SHA256 签名 + 防重放时间窗口）
-//! - `protocol::apikey`：`ApiKeyHandler`（生成 / 校验 / 吊销 / 轮换）
-//! - `protocol::temp`：`TempCredentialHandler`（issue / get / revoke / consume）
-//! - **安全模块**（特性门控）
-//! - `secure::totp`：`TotpHandler`（RFC 6238，±1 时间窗口偏差）
-//! - `secure::sign`：`SignVerifier` trait
-//! - `secure::httpbasic` / `secure::httpdigest`：HTTP Basic / Digest 认证
-//! - **可观测性**
-//! - `listener`：`GarrisonEvent` + `Listener` trait + `GarrisonListenerManager`（Login / Logout / PermissionCheck / Kickout 事件）
+//! - **核心扩展**（always on）：[`core::token`]（`Token` trait + `TokenStyleFactory`）、[`core::auth`]（`AuthLogic` + `DefaultAuthLogic`）、[`core::permission`]（`PermissionChecker` + 默认实现）、[`plugin`]（编译期插件注册）、[`strategy`]（权限策略扩展）、[`session`]（SSO / OAuth2 / 临时凭证关联）
+//! - **协议层**（特性门控）：jwt（HS256/HS512）/ oauth2（Authorization Code / Client Credentials / Password）/ sso（一次性 60s ticket）/ sign（HMAC-SHA256 + 防重放窗口）/ apikey / temp
+//! - **安全模块**（特性门控）：totp（RFC 6238，±1 窗口）/ sign / httpbasic / httpdigest
+//! - **可观测性**：`listener`（`GarrisonEvent` + `Listener`，Login / Logout / PermissionCheck / Kickout 事件）
 //!
 //! ## 特性域
 //!
-//! Garrison 采用 100+ 个 feature flag 分域设计，涵盖：
-//!
-//! - **登录认证** - 基于 Token 的会话管理
-//! - **权限认证** - RBAC 权限模型 + 决策溯源 + ABAC (Cedar)
-//! - **Session 会话** - 双模会话生命周期管理
-//! - **协议层** - OAuth2 / SSO / JWT / Sign / API Key / Temp / OIDC / SAML
-//! - **安全模块** - TOTP / 签名 / Basic / Digest / Unicode 检测 / 脱敏 / XSS / 常量时间比较
-//! - **账号安全引擎** - 凭证 SPI / 密码策略 / 用户锁定 / 认证流 DSL
-//! - **Web 框架适配** - axum / actix-web / warp + WAF / CORS / CSRF 中间件
-//! - **安全防护套件** - 暴力破解 / 限流 / 异常检测 / GeoIP / DDoS / WAF
-//! - **可观测性** - 事件监听 / tracing 日志 / Prometheus 指标 / OTLP 追踪 / gRPC / i18n
-//! - **服务器层** - 独立认证服务器 / OAuth2 Server / 远程后端 / TLS
-//! - **社交登录** - 微信扫码 / 支付宝 / Keycloak OIDC RP
-//! - **第一方扫码登录** - 两票分离状态机（Web 端扫码、App 端确认，`protocol-qrlogin`）
-//! - **插件化扩展** - 编译期插件注册 + 过程宏注解
+//! 100+ feature flag 分域：登录认证 / 权限认证（RBAC + ABAC）/ Session / 协议层（OAuth2 / SSO / JWT /
+//! Sign / API Key / Temp / OIDC / SAML）/ 安全模块（TOTP / 签名 / Basic / Digest / Unicode 检测 / 脱敏 /
+//! XSS / 常量时间比较）/ 账号安全引擎 / Web 适配 / 安全防护套件 / 可观测性 / 服务器层 / 社交与扫码登录 /
+//! 插件化扩展。
 //!
 //! ## 架构
 //!
-//! Garrison 采用双抽象层 + 全局单例的架构：
-//!
-//! - **双抽象层**
-//! - `dbnexus`：数据库抽象层（SQLite / PostgreSQL / MySQL），由 [`GarrisonDao`] trait 屏蔽后端差异
-//! - `oxcache`：缓存抽象层（L1 内存 + L2 redis），承载 Token-Session 与 Account-Session
-//! - **GarrisonManager 单例模式**
-//! - [`GarrisonManager`] 持有全局 `Arc<GarrisonLogicDefault>`（基于 `arc_swap::ArcSwapOption`，读路径无锁、支持覆盖式重建）
-//! - 业务方启动时通过 [`GarrisonManager::builder`] 链式注入 dao / config / interface 依赖
-//! - `GarrisonLogicFactory` 通过 `inventory::submit!` 在编译期注册，运行时由 `inventory::iter` 选取
-//! - [`GarrisonUtil::login`] / [`GarrisonUtil::check_login`] 等静态方法委托到全局单例
-//!
-//! ## 双抽象层
-//!
-//! - **dbnexus** - 数据库抽象层（SQLite / PostgreSQL / MySQL）
-//! - **oxcache** - 缓存抽象层（L1 内存 + L2 redis）
+//! 双抽象层 + 全局单例：`dbnexus`（[`GarrisonDao`] 屏蔽 SQLite / PostgreSQL / MySQL 差异）与 `oxcache`
+//! （L1 内存 + L2 redis，承载 Token-Session 与 Account-Session）；[`GarrisonManager`] 持全局
+//! `Arc<GarrisonLogicDefault>`（`arc_swap::ArcSwapOption`，读路径无锁、支持覆盖式重建），启动时经
+//! [`GarrisonManager::builder`] 链式注入 dao / config / interface，`GarrisonLogicFactory` 经 `inventory`
+//! 编译期注册、运行时选取，[`GarrisonUtil`] 静态方法委托全局单例。
 //!
 //! ## 使用示例
 //!
@@ -188,9 +148,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
 
-// ====================================================================
 // 核心模块（always on，无 feature flag）
-// ====================================================================
 
 /// 常量定义模块，提供 DAO key 前缀等类型安全枚举。
 pub mod constants;
@@ -212,13 +170,10 @@ pub mod dao;
 
 /// limiteron 适配器模块，将 GarrisonDao 桥接到 limiteron Storage/BanStorage/DistributedLimiter trait。
 ///
-/// 无条件编译：`GarrisonDaoDistributedLimiter` 是防爆破计数的公共基座
-/// （invitation 防爆破锁定器在任意 feature 面下均委托它），且 `limiteron`
-/// 本身是非 optional 依赖。子模块仍有各自的 feature 门控（ban → `firewall-ddos`、
-/// circuit/fallback → `backend-remote`）。
-///
-/// `firewall` 和 `oauth2-server` 传递启用 `dep:limiteron`，
-/// 因 `GarrisonFirewallCheckHookDefault` / `PasswordRateLimiter` 统一使用 limiteron（禁止手写限流实现）。
+/// 无条件编译：`GarrisonDaoDistributedLimiter` 是防爆破计数公共基座（invitation 锁定器在任意 feature
+/// 面下均委托它），`limiteron` 为非 optional 依赖；子模块各自门控（ban → `firewall-ddos`，
+/// circuit/fallback → `backend-remote`）。`firewall` / `oauth2-server` 传递启用 `dep:limiteron`，
+/// 防火墙与密码限流统一走 limiteron（禁止手写限流实现）。
 pub mod limiteron;
 
 /// 策略模块，提供鉴权策略与防火墙策略。
@@ -227,27 +182,21 @@ pub mod strategy;
 /// 会话模块，提供 GarrisonSession 会话模型。
 pub mod session;
 
-/// 数据合规模块（GDPR / 个保法数据主体权利编排）。
-///
-/// 启用 `data-erasure` feature 时编译。提供按主体（login_id / IP）擦除
-/// 框架管辖内数据的 [`compliance::erasure::DataErasureService`] 与擦除报告；
+/// 数据合规模块（GDPR / 个保法数据主体权利编排）；启用 `data-erasure` 时编译，提供按主体
+/// （login_id / IP）擦除框架管辖内数据的 [`compliance::erasure::DataErasureService`] 与擦除报告，
 /// 数据清单与责任边界见 `docs/DATA_COMPLIANCE.md`。
 #[cfg(feature = "data-erasure")]
 pub mod compliance;
 
-/// 缓存模块，提供三层缓存架构（L1 oxcache 内存 + L2 DAO + L3 interface）。
-///
-/// 启用 `three-tier-cache` feature 时编译。提供 [`UserCacheService`]，
-/// 用于权限/角色/用户信息的加速查询。
+/// 缓存模块，提供三层缓存架构（L1 oxcache 内存 + L2 DAO + L3 interface）；启用 `three-tier-cache`
+/// 时编译，提供 [`UserCacheService`] 加速权限 / 角色 / 用户信息查询。
 ///
 /// [`UserCacheService`]: crate::cache::three_tier::UserCacheService
 #[cfg(feature = "three-tier-cache")]
 pub mod cache;
 
-/// 状态机模块，定义 Token / User 显式状态机。
-///
-/// 提供 [`state::TokenState`]（5 状态 + 6 条合法转换）与 [`state::UserStatus`]（5 状态 + 9 条合法转换），
-/// 不集成到现有 Session / User 模块。
+/// 状态机模块，提供 [`state::TokenState`]（5 状态 + 6 条合法转换）与 [`state::UserStatus`]
+/// （5 状态 + 9 条合法转换）；独立于 Session / User 模块，不集成。
 pub mod state;
 
 /// 配置模块，提供 GarrisonConfig 全局配置。
@@ -271,10 +220,8 @@ pub mod manager;
 /// 插件模块，定义插件 trait 与编译期注册。
 pub mod plugin;
 
-/// 可观测性模块，提供 Prometheus 指标 / 结构化 JSON 日志 / OpenTelemetry 分布式追踪。
-///
-/// 启用 `metrics-prometheus` feature 启用指标采集；启用 `otlp` 启用 OTLP 追踪导出。
-/// 未启用任一 feature 时模块仍可导入但 API 为 no-op。
+/// 可观测性模块，提供 Prometheus 指标 / 结构化 JSON 日志 / OpenTelemetry 分布式追踪；对应 feature
+/// （`metrics-prometheus` / `otlp` / `tracing-log`）未启用时模块仍可导入但 API 为 no-op。
 #[cfg(any(
     feature = "metrics-prometheus",
     feature = "otlp",
@@ -282,25 +229,17 @@ pub mod plugin;
 ))]
 pub mod observability;
 
-/// gRPC 鉴权拦截器模块，提供 `tonic::Interceptor` 实现。
-///
-/// 启用 `grpc` feature 时编译。从 gRPC 请求 metadata 提取 Authorization Bearer token
-/// 并执行鉴权。
+/// gRPC 鉴权拦截器模块（`grpc` feature）：`tonic::Interceptor` 实现，从 gRPC 请求 metadata
+/// 提取 Authorization Bearer token 并执行鉴权。
 #[cfg(feature = "grpc")]
 pub mod grpc;
 
-/// 国际化模块，提供异常消息中英文切换（fluent-rs）。
-///
-/// 默认 `Zh`（中文），通过 `set_locale(GarrisonLocale::En)`
-/// 切换至英文。
+/// 国际化模块（fluent-rs）：异常消息中英文切换，默认 `Zh`，经 `set_locale(GarrisonLocale::En)`
+/// 切至英文。
 pub mod i18n;
 
-/// 声明式 JSON 测试套件模块。
-///
-/// 启用 `garrison-testing` feature 时编译。提供 [`JsonTestSuite`] / [`JsonTestCase`] /
-/// [`TestReport`] 类型，支持从 JSON 文件加载测试用例并运行 [`Authorizer`] trait。
-///
-/// 依赖 `authorize-api` feature（提供 [`Authorizer`] trait 与 [`AuthRequest`] / [`Decision`]）。
+/// 声明式 JSON 测试套件模块（`garrison-testing` feature）：提供 [`JsonTestSuite`] / [`JsonTestCase`] /
+/// [`TestReport`]，从 JSON 文件加载用例并运行 [`Authorizer`] trait（依赖 `authorize-api`）。
 ///
 /// [`JsonTestSuite`]: crate::testing::JsonTestSuite
 /// [`JsonTestCase`]: crate::testing::JsonTestCase
@@ -311,27 +250,18 @@ pub mod i18n;
 #[cfg(feature = "garrison-testing")]
 pub mod testing;
 
-/// actix-web 框架适配模块。
-///
-/// 启用 `web-actix` feature 时编译。提供 GarrisonRouter + FromRequest extractor +
+/// actix-web 框架适配模块（`web-actix` feature）：GarrisonRouter + FromRequest extractor +
 /// GarrisonMiddleware 完整集成，与 axum 适配对齐。
 #[cfg(feature = "web-actix")]
 pub mod web_actix;
 
-/// warp 框架适配模块。
-///
-/// 启用 `web-warp` feature 时编译。提供 GarrisonRouter + Filter extractor +
-/// GarrisonRejection 完整集成，与 axum/actix-web 适配对齐。
+/// warp 框架适配模块（`web-warp` feature）：GarrisonRouter + Filter extractor + GarrisonRejection
+/// 完整集成，与 axum/actix-web 适配对齐。
 #[cfg(feature = "web-warp")]
 pub mod web_warp;
 
-/// Web 安全中间件模块，提供 WAF / CORS / CSRF / 安全响应头等能力。
-///
-/// 各子模块独立 feature-gated：
-/// - `web-cors`：CORS 跨域资源共享
-/// - `web-csrf`：CSRF 跨站请求伪造防护
-/// - `web-security-headers`：HTTP 安全响应头中间件
-/// - `web-axum`：X-Request-ID 请求标识中间件
+/// Web 安全中间件模块，提供 WAF / CORS / CSRF / 安全响应头等能力；子模块独立 feature-gated：
+/// `web-cors`（CORS）/ `web-csrf`（CSRF）/ `web-security-headers`（HTTP 安全响应头）/ `web-axum`（X-Request-ID）。
 #[cfg(any(
     feature = "web-axum",
     feature = "firewall-waf",
@@ -342,9 +272,7 @@ pub mod web_warp;
 ))]
 pub mod web;
 
-// ====================================================================
 // 可选模块（特性门控）
-// ====================================================================
 
 /// 监听器模块，提供事件监听抽象。
 #[cfg(feature = "listener")]
@@ -355,8 +283,6 @@ pub mod listener;
 pub mod credit;
 
 /// 安全模块，提供 TOTP / 签名 / Basic / Digest / Unicode 同形异义字检测 / 敏感数据脱敏 验证。
-///
-/// 密码哈希能力已迁移到 `account::credential::password`。
 #[cfg(any(
     feature = "secure-totp",
     feature = "secure-sign",
@@ -373,66 +299,38 @@ pub mod credit;
 ))]
 pub mod secure;
 
-/// 账号安全引擎模块（吸收 keycloak 安全能力）。
-///
-/// 提供：
-/// - 凭证模型 SPI（`account-credential` feature）
-/// - 密码策略套件（`account-policy` feature）
-/// - 用户级双态锁定（`account-lockout` feature）
-/// - AuthenticationFlow DSL（`account-authflow` feature）
-///
-/// 与 `secure/`（密码学原语）互补：`secure/` 提供底层原语，
-/// `account/` 提供账号生命周期安全能力。
+/// 账号安全引擎模块：凭证模型 SPI / 密码策略套件 / 用户级双态锁定 / AuthenticationFlow DSL
+/// （分别经 `account-credential` / `account-policy` / `account-lockout` / `account-authflow` 门控）；
+/// 与 `secure/`（密码学原语）互补，提供账号生命周期安全能力。
 pub mod account;
 
-/// 协议层模块，包含各协议插件子模块。
-///
-/// 各重依赖子模块（oauth2/sso/jwt/sign/apikey/temp）在 `protocol/mod.rs` 内自行按 feature 门控；
-/// `protocol::social`（扩展点契约类型）无 feature 依赖，始终编译。
+/// 协议层模块，包含各协议插件子模块；重依赖子模块（oauth2/sso/jwt/sign/apikey/temp）在
+/// `protocol/mod.rs` 内自行按 feature 门控，`protocol::social`（扩展点契约类型）无 feature 依赖，始终编译。
 pub mod protocol;
 
-/// 认证后端抽象模块，提供 AuthBackend trait + BackendEmbedded + BackendRemote。
-///
-/// 启用 `backend-embedded` 或 `backend-remote` feature 时编译。
-/// - `backend-embedded`：进程内认证，委托 GarrisonManager（zero-break 兼容）
-/// - `backend-remote`：HTTP 客户端，连接远程 Auth Server
+/// 认证后端抽象模块（`backend-embedded` / `backend-remote` 任一）：`AuthBackend` trait +
+/// `BackendEmbedded`（进程内认证，委托 GarrisonManager）或 `BackendRemote`（HTTP 客户端连远程 Auth Server）。
 #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
 pub mod backend;
 
-/// ABAC 策略引擎模块，提供 AbacEngine（基于 Cedar 策略语言）。
+/// ABAC 策略引擎模块（`abac` feature，依赖 `cedar-policy`）：`AbacEngine` 基于 Cedar 策略语言。
 ///
-/// 启用 `abac` feature 时编译核心引擎（AbacEngine / init_abac_engine），
-/// 依赖 `cedar-policy` crate。
-///
-/// `abac` feature 关闭时仅提供 `check_abac_with_policy` fail-closed stub（endpoints without abac attr: no-op allow; with abac attr but feature disabled: Err(Config)），
-/// 确保宏 `#[check_permission(permission = "...", abac = "...")]` 生成的代码
-/// 在任意 feature 组合下均可编译。
-///
-/// ABAC 作为 RBAC 的增量校验层，不替换 RBAC。RBAC 通过后再检查 ABAC。
+/// feature 关闭时提供 `check_abac_with_policy` fail-closed stub（无 abac attr：no-op allow；
+/// 有 abac attr 但 feature 关闭：`Err(Config)`），保证宏 `#[check_permission(permission = "...", abac = "...")]`
+/// 生成的代码在任意 feature 组合下均可编译。ABAC 是 RBAC 的增量校验层：RBAC 通过后再检查，不替换 RBAC。
 pub mod abac;
 
-/// Auth Server 模块，提供 GarrisonAuthServer（双端口 axum 服务器）。
-///
-/// 启用 `auth-server` feature 时编译。
-/// 将 AuthBackend 方法暴露为 HTTP 端点：
-/// - 外网端口：login / logout / refresh（面向用户）
-/// - 内网端口：check-* / get-* / kickout 等（服务间调用，需 X-API-Key）
+/// Auth Server 模块（`auth-server` feature）：双端口 axum 服务器，外网端口 login / logout / refresh
+/// （面向用户），内网端口 check-* / get-* / kickout 等（服务间调用，需 X-API-Key）。
 #[cfg(feature = "auth-server")]
 pub mod server;
 
-/// OAuth2 Server 模块，提供完整 OAuth2 授权服务器实现（4 端点 + 4 种 grant type + PKCE）。
-///
-/// 启用 `oauth2-server` feature 时编译。作为授权服务器（AS）角色，处理客户端的
-/// authorize / token / revoke / introspect 请求。
-///
-/// 与 `protocol::oauth2`（OAuth2 客户端 / RP 角色）互补：`protocol::oauth2` 向外部 AS 请求 token，
-/// `oauth2_server` 本身就是 AS。
+/// OAuth2 Server 模块（`oauth2-server` feature）：授权服务器（AS）实现，4 端点 + 4 种 grant type +
+/// PKCE；与 `protocol::oauth2`（OAuth2 客户端 / RP 角色，向外部 AS 请求 token）互补。
 #[cfg(feature = "oauth2-server")]
 pub mod oauth2_server;
 
-// ====================================================================
 // 公共入口
-// ====================================================================
 
 /// 预导出模块，包含最常用的类型与 trait。
 pub mod prelude;
@@ -440,17 +338,9 @@ pub mod prelude;
 /// 错误类型定义模块。
 pub mod error;
 
-// Re-export prelude 以便 `use garrison::prelude::*;` 可用
 pub use prelude::*;
 
-// ============================================================================
 // 多租户隔离类型 re-export
-// ============================================================================
-//
-// 业务方可通过 `use garrison::{TenantContext, TenantResolver, ...}` 直接使用，
-// 无需写完整路径 `garrison::context::tenant::TenantContext`。
-//
-// `ClaimTenantResolver` 需 `protocol-jwt` feature（依赖 jsonwebtoken 解码 JWT claim）。
 
 /// 多租户上下文类型与解析器。
 pub use context::tenant::{
@@ -465,15 +355,8 @@ pub use context::tenant::ClaimTenantResolver;
 /// 登录主体（携带 login_id，由 web 框架 extractor 填充）。
 pub use context::GarrisonPrincipal;
 
-// ============================================================================
 // 状态机类型 re-export
-// ============================================================================
-//
-// 业务方可通过 `use garrison::{TokenState, UserStatus}` 直接使用，
-// 无需写完整路径 `garrison::state::TokenState`。
-//
-// 注：`Mode` 未在 state 模块定义
-// （AnnotationMode 位于 annotation 模块），故仅 re-export TokenState / UserStatus。
+// `Mode`（AnnotationMode）位于 annotation 模块而非 state，故此处仅 re-export 两个状态类型。
 
 /// Token 生命周期状态（Issued / Active / Expired / Revoked / Refreshed）。
 pub use state::TokenState;
@@ -481,15 +364,7 @@ pub use state::TokenState;
 /// 用户账号状态（Pending / Active / Suspended / Inactive / Deleted）。
 pub use state::UserStatus;
 
-// ============================================================================
 // 角色层级
-// ============================================================================
-//
-// `RoleHierarchyRecord` 为 always compiled（无 feature gate）。
-// `RoleHierarchyService` 需任一 db 后端 feature（`db-sqlite` / `db-postgres` / `db-mysql`，依赖 DbPool 查 SQL）。
-//
-// 业务方可通过 `use garrison::{RoleHierarchyRecord, RoleHierarchyService}` 直接使用，
-// 无需写完整路径 `garrison::dao::repository::role_hierarchy::RoleHierarchyService`。
 
 /// 角色层级表行结构（child_role → parent_role + tenant_id）。
 pub use dao::repository::role_hierarchy::RoleHierarchyRecord;
@@ -498,14 +373,7 @@ pub use dao::repository::role_hierarchy::RoleHierarchyRecord;
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub use dao::repository::role_hierarchy::RoleHierarchyService;
 
-// ============================================================================
 // Dbnexus Repository re-export
-// ============================================================================
-//
-// 业务方可通过 `use garrison::{DbnexusUserRepository, ...}` 直接使用，
-// 无需写完整路径 `garrison::dao::repository::sqlite::DbnexusUserRepository`。
-//
-// 需 `db-sqlite` 或 `db-postgres` feature（运行时占位符转换支持两种后端）。
 
 /// 用户表 Repository（app_user）。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
@@ -543,16 +411,8 @@ pub use dao::repository::sqlite::DbnexusLoginLogRepository;
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub use dao::repository::sqlite::DbnexusUserExtRepository;
 
-// ============================================================================
 // 事件派发事务绑定（OnCommit 语义）
-// ============================================================================
-//
-// 业务方可通过 `use garrison::GarrisonEventTx` 直接使用，
-// 无需写完整路径 `garrison::dao::GarrisonEventTx`。
-//
-// 需 `listener` + 任一 db 后端 feature（`db-sqlite` / `db-postgres` / `db-mysql`）。
-// 返回类型 `DispatchOutcome` 经既有 `garrison::listener::DispatchOutcome` 路径访问
-// （与 `GarrisonEvent` / `GarrisonListenerManager` 同策略，不入根 re-export）。
+// `DispatchOutcome` 不入根 re-export，经 `garrison::listener::DispatchOutcome` 访问（同 `GarrisonEvent` 策略）。
 
 /// 事件派发事务 guard（OnCommit 语义：数据库事务 commit 成功后才按 FIFO 派发缓冲事件；rollback/丢弃 guard 时事件不派发）。
 #[cfg(all(
@@ -561,15 +421,7 @@ pub use dao::repository::sqlite::DbnexusUserExtRepository;
 ))]
 pub use dao::GarrisonEventTx;
 
-// ============================================================================
 // JWT RefreshToken Rotation
-// ============================================================================
-//
-// `RefreshTokenRecord` 需 `protocol-jwt` feature（hash chain 行结构）。
-// `RefreshTokenRotation` 需 `protocol-jwt` + `db-sqlite` feature（依赖 DbPool 查 SQL）。
-//
-// 业务方可通过 `use garrison::{RefreshTokenRecord, RefreshTokenRotation}` 直接使用，
-// 无需写完整路径 `garrison::protocol::jwt::refresh::RefreshTokenRotation`。
 
 /// RefreshToken 表行结构（hash chain：token_hash + parent_token_hash）。
 #[cfg(feature = "protocol-jwt")]
@@ -583,16 +435,7 @@ pub use protocol::jwt::refresh::RefreshTokenReuseSubtype;
 #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
 pub use protocol::jwt::refresh::RefreshTokenRotation;
 
-// ============================================================================
 // 审计日志
-// ============================================================================
-//
-// 业务方可通过 `use garrison::{AuditLogListener, AuditConfig, AuditEntry, AuditQuery}` 直接使用，
-// 无需写完整路径 `garrison::listener::audit::AuditLogListener`。
-//
-// `AuditConfig` 需 `audit-log` feature（纯配置结构，无 SQL 依赖）。
-// `AuditEntry` / `AuditQuery` / `AuditLogListener` 需 `audit-log` + `db-sqlite` feature
-// （映射 SQL 表行 / 查询条件 / 持久化监听器）。
 
 /// 审计日志配置（掩码字段 + 保留天数 + 异步写入开关）。
 #[cfg(feature = "audit-log")]
@@ -615,18 +458,7 @@ pub use listener::audit::AuditLogListener;
 #[cfg(feature = "audit-log")]
 pub use listener::audit_chain::{AuditChainEntry, AuditEventChain};
 
-// ============================================================================
 // 社交登录
-// ============================================================================
-//
-// 业务方可通过 `use garrison::{SocialLoginProvider, SocialUserInfo, ...}` 直接使用，
-// 无需写完整路径 `garrison::protocol::social::SocialLoginProvider`。
-//
-// - `SocialLoginProvider` / `SocialUserInfo` / `provider_names`：公共 trait/结构，无 feature 依赖
-// - `SocialLoginService`：注册中心，允许外部 crate 注册自定义 provider（如华为 Account Kit）
-// - `WechatProvider`：需 `social-wechat` feature（微信扫码登录）
-// - `AlipayProvider`：需 `social-alipay` feature（支付宝授权登录）
-// - `SocialBindingService`：需 `db-sqlite`/`db-postgres`/`db-mysql` 任一 feature（依赖 DbPool 查 social_bindings 表）
 
 /// 社交登录服务提供方 trait（get_authorization_url / exchange_token / get_user_info）。
 pub use protocol::social::SocialLoginProvider;
@@ -634,18 +466,13 @@ pub use protocol::social::SocialLoginProvider;
 /// 社交用户信息（provider + provider_user_id + union_id + raw JSON）。
 pub use protocol::social::SocialUserInfo;
 
-/// 内置社交登录平台名称常量模块（WECHAT / ALIPAY / WECHAT_MINI_APP）。
-///
-/// 外部 crate 自定义 provider 应使用自己的常量（如 `pub const HUAWEI: &str = "huawei"`），
-/// 避免与内置 provider 冲突。
+/// 内置社交登录平台名称常量模块（WECHAT / ALIPAY / WECHAT_MINI_APP）；外部 crate 自定义
+/// provider 应使用自己的常量（如 `pub const HUAWEI: &str = "huawei"`），避免与内置 provider 冲突。
 pub use protocol::social::provider_names;
 
-/// 社交登录注册中心（register / unregister / get / list + 委托调用 + SocialProviderResolver 实现）。
-///
-/// 允许外部 crate 注册自定义 `SocialLoginProvider` 实现（如华为 Account Kit），
-/// 实现 OCP 扩展点架构。扩展点契约类型（`SocialLoginProvider` / `SocialUserInfo` /
-/// `SocialLoginService` / `provider_names`）无 feature 门控，始终可用。
-/// 内置 provider 实现（`WechatProvider` / `AlipayProvider`）仍需对应 feature。
+/// 社交登录注册中心（register / unregister / get / list + 委托调用 + SocialProviderResolver 实现）；
+/// 允许外部 crate 注册自定义 `SocialLoginProvider` 实现（如华为 Account Kit），扩展点契约类型
+/// 无 feature 门控，内置 provider 实现（`WechatProvider` / `AlipayProvider`）仍需对应 feature。
 pub use protocol::social::registry::SocialLoginService;
 
 /// 微信扫码登录 provider（需 `social-wechat` feature）。
@@ -668,14 +495,7 @@ pub use protocol::social::alipay::AlipayProvider;
 ))]
 pub use protocol::social::SocialBindingService;
 
-// ============================================================================
 // Keycloak OIDC RP
-// ============================================================================
-//
-// 业务方可通过 `use garrison::{KeycloakConfig, KeycloakProvider, ...}` 直接使用，
-// 无需写完整路径 `garrison::protocol::oauth2::keycloak::KeycloakConfig`。
-//
-// 全部类型需 `keycloak-oidc` feature（依赖 `protocol-oidc` → `protocol-jwt` + `protocol-oauth2`）。
 
 /// Keycloak OIDC RP 配置（base_url / client_id / client_secret / redirect_uri）。
 #[cfg(feature = "keycloak-oidc")]
@@ -697,17 +517,7 @@ pub use protocol::oauth2::keycloak::KeycloakTokenSet;
 #[cfg(feature = "keycloak-oidc")]
 pub use protocol::oauth2::keycloak::RealmAccess;
 
-// ============================================================================
 // 安全防护套件
-// ============================================================================
-//
-// 业务方可通过 `use garrison::{GarrisonFirewallStrategy, FirewallContext, ...}` 直接使用，
-// 无需写完整路径 `garrison::strategy::firewall::GarrisonFirewallStrategy`。
-//
-// - `firewall` feature：基础 trait + Context + StrategyRegistration（inventory 注册）
-// - `firewall-bruteforce` / `firewall-ratelimit` / `firewall-anomalous` / `firewall-ddos` / `firewall-geoip`：
-// 5 个独立 strategy 实现，各自 feature 门控
-// - `GeoCoord` / `GeoLookup` / `CountryLookup`：共享地理查询抽象（anomalous / geoip 共用）
 
 /// 防火墙策略 trait（IP 级安全检查契约）。
 #[cfg(feature = "firewall")]
@@ -745,20 +555,11 @@ pub use strategy::firewall::{GeoIPConfig, GeoIPStrategy};
 #[cfg(any(feature = "firewall-anomalous", feature = "firewall-geoip"))]
 pub use strategy::firewall::{CountryLookup, GeoCoord, GeoLookup};
 
-// ============================================================================
 // 过程宏注解
-// ============================================================================
 
-/// 过程宏注解模块（feature = "annotation-macros"）。
-///
-/// 启用 `annotation-macros` feature 时，re-export `garrison-macros` crate 的 10 个
-/// `#[proc_macro_attribute]`：
-/// - `#[check_login]` / `#[check_permission]` / `#[check_role]`
-/// - `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]`
-/// - `#[check_api_key]`
-/// - `#[check_mfa]` / `#[check_abac]`
-/// - `#[check_disable]`
-///
+/// 过程宏注解模块（`annotation-macros` feature）：re-export `garrison-macros` 的
+/// `#[proc_macro_attribute]` 宏（check_login / check_permission / check_role / check_access_token /
+/// check_client_token / check_temp_token / check_api_key / check_mfa / check_abac / check_disable 等）。
 /// 宏将 async fn 包装为 wrapper，在 body 前插入 `GarrisonUtil::check_*()` 调用，
 /// 失败时返回 `axum::response::Response`（401/403）。
 ///

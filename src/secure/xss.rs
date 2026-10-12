@@ -1,25 +1,17 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! XSS 防护子模块。
-//!
-//! 提供 [`XssProtector`](crate::secure::xss::XssProtector) 对 HTML 输入进行转义/白名单过滤，防止 XSS 攻击。零外部依赖。
+//! XSS 防护子模块：`XssProtector` 对 HTML 输入转义/白名单过滤，零外部依赖。
 //!
 //! ## 设计
 //!
-//! - [`XssMode::EscapeAll`](crate::secure::xss::XssMode::EscapeAll)：转义所有 HTML 特殊字符（`<` / `>` / `&` / `"` / `'`）
-//! - [`XssMode::Whitelist`](crate::secure::xss::XssMode::Whitelist)：白名单内的标签保留原样（属性值中的特殊字符仍转义），
-//! 非白名单标签全部转义，纯文本内容中的特殊字符也转义
-//! - 转义顺序：`&` 必须最先转义，避免二次转义
+//! `EscapeAll` 转义所有 HTML 特殊字符（`<` `>` `&` `"` `'`）；`Whitelist` 保留白名单标签
+//! （属性值中的特殊字符仍转义），其余标签与纯文本中的特殊字符全部转义；`&` 必须最先转义，避免二次转义。
 //!
 //! ## 使用指南
 //!
-//! `XssProtector` 需在**应用层**对用户输入显式调用转义，框架不会自动处理响应中的 XSS。
-//!
-//! - **JSON 响应**：认证服务器响应为 JSON（`Content-Type: application/json`），
-//! 浏览器不会将其解析为 HTML，通常不需要 HTML 转义。
-//! - **HTML 页面**：OAuth2 authorize 授权页、SSO 重定向页等返回 HTML 的场景，
-//! 必须对所有用户可控输入（如 `redirect_uri`、`state`、用户名）调用 `sanitize`。
+//! 需在**应用层**对用户输入显式调用，框架不会自动处理响应中的 XSS：JSON 响应通常无需 HTML 转义；
+//! HTML 页面（OAuth2 authorize 授权页、SSO 重定向页等）必须对全部用户可控输入（`redirect_uri`、`state`、用户名）调用 `sanitize`。
 //!
 //! ### EscapeAll 模式（纯文本场景）
 //!
@@ -42,23 +34,16 @@
 //! // 白名单标签的 on* 事件属性和 javascript: URI 也会被自动移除
 //! ```
 
-/// XSS 防护模式枚举。
-///
-/// - [`EscapeAll`](Self::EscapeAll)：全量转义所有 HTML 特殊字符
-/// - [`Whitelist`](Self::Whitelist)：仅保留白名单内的标签，其余转义
+/// XSS 防护模式：`EscapeAll` 全量转义所有 HTML 特殊字符；`Whitelist` 仅保留白名单标签，其余转义。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum XssMode {
     /// 全量转义模式：转义 `<` / `>` / `&` / `"` / `'`。
     EscapeAll,
-    /// 白名单模式：保留指定的标签名，其余标签全部转义。
-    ///
-    /// 白名单标签的属性值中的特殊字符仍会转义。
+    /// 白名单模式：保留指定标签名，其余标签全部转义；白名单标签的属性值仍转义特殊字符。
     Whitelist(Vec<&'static str>),
 }
 
-/// XSS 防护器。
-///
-/// 持有 [`XssMode`] 配置，通过 [`sanitize`](Self::sanitize) 对 HTML 输入进行转义/过滤。
+/// XSS 防护器：持 [`XssMode`] 配置，经 [`sanitize`](Self::sanitize) 对 HTML 输入转义/过滤。
 ///
 /// # 示例
 ///
@@ -74,23 +59,12 @@ pub struct XssProtector {
 }
 
 impl XssProtector {
-    /// 创建 XSS 防护器。
-    ///
-    /// # 参数
-    /// - `mode`: 防护模式（[`XssMode::EscapeAll`] 或 [`XssMode::Whitelist`]）。
+    /// 按指定模式创建防护器。
     pub fn new(mode: XssMode) -> Self {
         Self { mode }
     }
 
-    /// 对输入字符串进行 XSS 防护处理。
-    ///
-    /// 根据 [`XssMode`] 执行全量转义或白名单过滤，返回处理后的字符串。
-    ///
-    /// # 参数
-    /// - `input`: 待处理的 HTML 输入。
-    ///
-    /// # 返回
-    /// 处理后的安全字符串。
+    /// 按 [`XssMode`] 全量转义或白名单过滤，返回处理后的安全字符串。
     pub fn sanitize(&self, input: &str) -> String {
         match &self.mode {
             XssMode::EscapeAll => {
@@ -102,16 +76,7 @@ impl XssProtector {
         }
     }
 
-    /// 对 Owned 字符串进行 XSS 防护处理（避免重复分配）。
-    ///
-    /// 若输入不包含 HTML 特殊字符（`<` / `>` / `&` / `"` / `'`），直接返回原 String。
-    /// 否则调用 `sanitize` 重新分配。
-    ///
-    /// # 参数
-    /// - `input`: 待处理的 HTML 输入（Owned String）。
-    ///
-    /// # 返回
-    /// 处理后的安全字符串。
+    /// 消费 Owned 输入避免重复分配：无 HTML 特殊字符时直接返回原 String，否则委托 [`sanitize`](Self::sanitize)。
     pub fn sanitize_owned(&self, input: String) -> String {
         let needs_escape = input
             .chars()
@@ -123,10 +88,7 @@ impl XssProtector {
     }
 }
 
-/// 将字符串中的 HTML 特殊字符转义并追加到 `out`。
-///
-/// 转义映射：`&`→`&amp;`、`<`→`&lt;`、`>`→`&gt;`、`"`→`&quot;`、`'`→`&#x27;`。
-/// `&` 最先转义以避免二次转义。
+/// 将 HTML 特殊字符转义并追加到 `out`；`&` 最先转义以避免二次转义。
 fn escape_into(out: &mut String, s: &str) {
     for c in s.chars() {
         match c {
@@ -140,12 +102,9 @@ fn escape_into(out: &mut String, s: &str) {
     }
 }
 
-/// 解析从 `rest` 开头的 HTML 标签，返回 `(标签名, 是否闭合标签, 属性文本, 标签后的剩余字符串)`。
+/// 解析 `rest` 开头的 HTML 标签，返回 `(标签名, 是否闭合, 属性文本, 剩余字符串)`；无法解析为有效标签返回 `None`。
 ///
-/// `rest` 必须以 `<` 开头。若无法解析为有效标签（无标签名或无闭合 `>`）返回 `None`。
-///
-/// 扫描属性段时跟踪引号状态：引号内的 `>` 不视为标签结束
-/// （防 `<a href="a>b">text</a>` 在内嵌 `>` 处被截断产生畸变输出）。
+/// 属性扫描跟踪引号状态：引号内的 `>` 不视为标签结束（防 `<a href="a>b">text</a>` 在内嵌 `>` 处截断产生畸变输出）。
 fn parse_tag(rest: &str) -> Option<(&str, bool, &str, &str)> {
     let bytes = rest.as_bytes();
     if bytes.is_empty() || bytes[0] != b'<' {
@@ -199,16 +158,10 @@ fn parse_tag(rest: &str) -> Option<(&str, bool, &str, &str)> {
     Some((name, is_closing, attrs, after))
 }
 
-/// 从属性段中移除 `on*` 事件处理器属性。
+/// 移除属性段中的 `on*` 事件处理器（`name=value` 整段，值支持双引号/单引号/无引号）。
 ///
-/// 扫描属性字符串，识别 `on` 开头后跟字母数字再跟 `=` 的属性名，移除整个
-/// `name=value` 片段。支持三种值形式：双引号、单引号、无引号（到空白为止）。
-///
-/// 防绕过场景：
-/// - 属性名与 `=` 之间的空白：`onclick =alert(1)`
-/// - 属性间无空格：`href="x"onclick="..."`
-///
-/// 不引入 regex crate，使用字节扫描实现。
+/// 防绕过：`onclick =alert(1)`（属性名与 `=` 间空白）、`href="x"onclick="..."`（属性间无空格）；
+/// 用字节扫描实现，不引入 regex crate。
 fn strip_event_handlers(attrs: &str) -> String {
     let bytes = attrs.as_bytes();
     let mut out = String::with_capacity(attrs.len());
@@ -239,15 +192,12 @@ fn strip_event_handlers(attrs: &str) -> String {
     out
 }
 
-/// 判断位置 `i` 是否为属性起始位置。
-/// 属性起始：位置 0、前一字符为空白、或前一字符为 `"`/`'`（处理属性间无空格场景，
-/// 如 `href="x"onclick="..."`）。
+/// 判断 `i` 是否为属性起始位置：位置 0、前一字符为空白、或前一字符为 `"`/`'`（覆盖属性间无空格场景）。
 fn is_attr_start_pos(bytes: &[u8], i: usize) -> bool {
     i == 0 || bytes[i - 1].is_ascii_whitespace() || bytes[i - 1] == b'"' || bytes[i - 1] == b'\''
 }
 
-/// 检查 `bytes[i..]` 是否匹配 `on` + 字母数字（事件处理器属性名前缀）。
-/// 匹配成功返回属性名结束位置（`on` 后的字母数字序列末尾）。
+/// 匹配 `on` + 字母数字前缀（事件处理器属性名）；成功返回属性名结束位置。
 fn match_event_handler_prefix(bytes: &[u8], i: usize) -> Option<usize> {
     if i + 2 > bytes.len()
         || !bytes[i].eq_ignore_ascii_case(&b'o')
@@ -319,8 +269,7 @@ fn sanitize_whitelist(input: &str, allowed: &[&'static str]) -> String {
                         out.push('/');
                     }
                     out.push_str(name);
-                    // 先 strip event handlers，再 strip dangerous URI（顺序保证 on* 属性
-                    // 被移除后，剩余 href/src/xlink:href 中的危险 scheme 被替换为 #）
+                    // 先移事件处理器再移危险 URI：保证 on* 移除后剩余 href/src/xlink:href 的危险 scheme 仍被替换为 #
                     let cleaned = strip_event_handlers(attrs);
                     let cleaned = strip_dangerous_uri(&cleaned);
                     escape_into(&mut out, &cleaned);
@@ -344,35 +293,12 @@ fn sanitize_whitelist(input: &str, allowed: &[&'static str]) -> String {
     out
 }
 
-/// 从属性段中移除危险 URI scheme。
+/// 移除危险 URI scheme：`href`/`src`/`xlink:href`/`action`/`formaction`/`poster`/`background` 的值
+/// 不在白名单（`http(s)://` / `mailto:` / `#` / `/` / `./` / `../` / 无 scheme）时替换为 `#`，
+/// 防 `javascript:`/`data:`/`vbscript:` 等执行 XSS（scheme 判定大小写不敏感）。
 ///
-/// 扫描 `href=`/`src=`/`xlink:href=`/`action=`/`formaction=`/`poster=`/`background=`
-/// 属性值，若 scheme 不在安全白名单
-/// （`http`/`https`/`mailto`/`#`/`/`/`./`/`../`/相对路径无 scheme）则将值替换为 `#`。
-/// 防止 `javascript:`/`data:`/`vbscript:` 等 URI scheme 执行 XSS。
-///
-/// # 安全白名单（大小写不敏感）
-///
-/// - `http://` / `https://`：标准 HTTP(S) URL
-/// - `mailto:`：邮件协议
-/// - `#`：锚点
-/// - `/`：绝对路径
-/// - `./` / `../`：相对路径
-/// - 无 scheme（不以 `scheme:` 开头）：相对路径或无 scheme 的 URL
-///
-/// # 处理的绕过场景
-///
-/// - 大小写绕过：`JavaScript:`/`JAVASCRIPT:`/`java\tscript:`（前导空白和控制字符）
-/// - 前导空白：` javascript:alert(1)`
-/// - 三种引号形式：双引号、单引号、无引号
-/// - `=` 与引号间空白：`href= "javascript:alert(1)"`（值解析前先跳过空白）
-/// - 属性紧跟引号无空白：`<a title="x"href="javascript:alert(1)">`
-///   （属性边界识别含 `"`/`'`，与 `strip_event_handlers` 一致）
-///
-/// # 实现策略
-///
-/// 参照 `strip_event_handlers` 的字节扫描模式，识别属性名后跟 `=`，提取属性值，
-/// strip 前导空白和控制字符后检查 scheme。
+/// 覆盖的绕过：前导空白与控制字符（`java\tscript:`）、双引号/单引号/无引号值、`=` 与值间空白、
+/// 属性紧跟引号无空白（`<a title="x"href="javascript:...">`，边界识别同 `strip_event_handlers`）。
 fn strip_dangerous_uri(attrs: &str) -> String {
     let bytes = attrs.as_bytes();
     let mut out = String::with_capacity(attrs.len());
@@ -380,12 +306,10 @@ fn strip_dangerous_uri(attrs: &str) -> String {
     let mut last_copy = 0;
 
     while i < bytes.len() {
-        // 属性边界与 strip_event_handlers 一致：位置 0、空白、或 `"`/`'` 之后
-        // （防 `title="x"href="javascript:..."` 引号后无空白的绕过）
+        // 属性边界同 strip_event_handlers：位置 0、空白或 `"`/`'` 之后（防 `title="x"href="javascript:..."` 绕过）
         if is_attr_start_pos(bytes, i) {
             if let Some(eq_end) = match_target_attr(bytes, i) {
-                // 跳过 `=` 与值之间的空白（防 `href= "javascript:..."` 绕过：
-                // 原实现无引号分支遇空白立即返回空串，is_safe_uri("")=true 漏检）
+                // 跳过 `=` 与值间空白：防 `href= "javascript:..."`（空白会使无引号值解析为空串，is_safe_uri("") 漏检）
                 let mut value_start = eq_end;
                 while value_start < bytes.len() && bytes[value_start].is_ascii_whitespace() {
                     value_start += 1;
@@ -412,11 +336,8 @@ fn strip_dangerous_uri(attrs: &str) -> String {
     out
 }
 
-/// 匹配 `bytes[i..]` 是否为危险 URI 属性（大小写不敏感）：
-/// `href`/`src`/`xlink:href`（a/img/svg 等）与
-/// `action`（form）/`formaction`（input/button）/`poster`（video）/
-/// `background`（body/td，HTML4）。
-/// 返回 `=` 之后的位置或 `None`。
+/// 匹配危险 URI 属性（大小写不敏感）：`href`/`src`/`xlink:href`（a/img/svg）、
+/// `action`（form）/`formaction`（input、button）/`poster`（video）/`background`（body、td）；返回 `=` 之后位置或 `None`。
 fn match_target_attr(bytes: &[u8], i: usize) -> Option<usize> {
     match_attr_name(bytes, i, b"href")
         .or_else(|| match_attr_name(bytes, i, b"src"))
@@ -427,8 +348,7 @@ fn match_target_attr(bytes: &[u8], i: usize) -> Option<usize> {
         .or_else(|| match_attr_name(bytes, i, b"background"))
 }
 
-/// 检查从 `bytes[i..]` 开始是否匹配目标属性名（大小写不敏感），后跟 `=` 或空白+`=`。
-/// 返回匹配后的位置（指向 `=` 之后）或 `None`。
+/// 匹配属性名（大小写不敏感）及其后的 `=`（允许中间空白），返回 `=` 之后位置或 `None`。
 fn match_attr_name(bytes: &[u8], i: usize, target: &[u8]) -> Option<usize> {
     if i + target.len() > bytes.len() {
         return None;
@@ -486,12 +406,7 @@ fn write_uri_replacement(out: &mut String, bytes: &[u8], value_start: usize) {
     }
 }
 
-/// 从 `bytes[start..]` 开始提取属性值，返回 `(值结束位置, 值字符串)`。
-///
-/// 支持三种形式：
-/// - 双引号：`"value"` → 返回 `"value"` 全长（含引号）
-/// - 单引号：`'value'` → 返回 `'value'` 全长（含引号）
-/// - 无引号：`value` → 到空白为止
+/// 提取属性值，返回 `(结束位置, 值字符串)`；返回值含闭合引号，无引号形式到空白为止。
 fn extract_attr_value(bytes: &[u8], start: usize) -> (usize, &str) {
     if start >= bytes.len() {
         return (start, "");
@@ -531,9 +446,7 @@ fn extract_attr_value(bytes: &[u8], start: usize) -> (usize, &str) {
 mod tests {
     use super::*;
 
-    // ========================================================================
     // EscapeAll 模式测试
-    // ========================================================================
 
     /// EscapeAll 转义尖括号：`<script>alert(1)</script>` → `&lt;script&gt;alert(1)&lt;/script&gt;`。
     #[test]
@@ -573,13 +486,9 @@ mod tests {
         assert_eq!(p.sanitize(""), "");
     }
 
-    // ========================================================================
     // Whitelist 模式测试
-    // ========================================================================
 
-    /// 白名单保留允许的标签，转义非白名单标签。
-    /// 白名单 `["b","i"]`，输入 `<b>bold</b><script>x</script>`
-    /// → `<b>bold</b>&lt;script&gt;x&lt;/script&gt;`。
+    /// 白名单 ["b","i"]：`<b>bold</b><script>x</script>` → `<b>bold</b>&lt;script&gt;x&lt;/script&gt;`。
     #[test]
     fn whitelist_keeps_allowed_tags() {
         let p = XssProtector::new(XssMode::Whitelist(vec!["b", "i"]));
@@ -589,9 +498,7 @@ mod tests {
         );
     }
 
-    /// 白名单标签的属性值中的特殊字符也要转义。
-    /// 白名单 `["b"]`，输入 `<b class="x">text</b>`
-    /// → `<b class=&quot;x&quot;>text</b>`。
+    /// 白名单 ["b"]：`<b class="x">text</b>` → `<b class=&quot;x&quot;>text</b>`（属性值转义）。
     #[test]
     fn whitelist_escapes_attributes() {
         let p = XssProtector::new(XssMode::Whitelist(vec!["b"]));
@@ -601,8 +508,7 @@ mod tests {
         );
     }
 
-    /// 白名单标签内的纯文本内容中的特殊字符也要转义。
-    /// 白名单 `["b"]`，输入 `<b>a & b</b>` → `<b>a &amp; b</b>`。
+    /// 白名单 ["b"]：标签内纯文本的特殊字符也转义：`<b>a & b</b>` → `<b>a &amp; b</b>`。
     #[test]
     fn whitelist_escapes_text_content() {
         let p = XssProtector::new(XssMode::Whitelist(vec!["b"]));
@@ -616,8 +522,7 @@ mod tests {
         assert_eq!(p.sanitize(""), "");
     }
 
-    /// 白名单标签的事件处理器属性（on*）应被移除。
-    /// 输入 `<b onclick=alert(1)>text</b>`，onclick 不应出现在输出中。
+    /// 白名单标签的 on* 事件处理器属性应被移除（如 `<b onclick=alert(1)>`）。
     #[test]
     fn whitelist_strips_event_handler_attributes() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["b"]));
@@ -689,9 +594,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // sanitize_owned 测试
-    // ========================================================================
 
     /// sanitize_owned 无特殊字符直接返回原 String（零分配）。
     #[test]
@@ -718,9 +621,7 @@ mod tests {
         assert_eq!(result, "");
     }
 
-    // ========================================================================
     // strip_dangerous_uri 测试
-    // ========================================================================
 
     /// `javascript:` URI scheme 在 href 中应被替换为 `#`。
     #[test]
@@ -953,22 +854,18 @@ mod tests {
         );
     }
 
-    /// 同一标签中同时有安全和不安全 URI，仅不安全 URI 被替换。
-    /// 注意：HTML 规范中同名属性只取第一个，但这里测试 src（安全）和 href（不安全）共存。
+    /// 同标签内安全 src 与不安全 href 共存（HTML 规范同名属性只取第一个）时，仅不安全 URI 被替换。
     #[test]
     fn whitelist_strips_only_dangerous_uri_keeps_safe_uri() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["img"]));
         let result = protector
             .sanitize(r#"<img src="https://safe.com/img.png" data-href="javascript:alert(1)">"#);
-        // src 是安全 URL，应保留
+        // 安全 src 保留；data-href 非目标属性，不触发替换
         assert!(
             result.contains("https://safe.com/img.png"),
             "安全 src 应保留，实际: {}",
             result
         );
-        // data-href 不是 href/src/xlink:href，不会被 strip_dangerous_uri 处理
-        // 但 javascript: 在 data-href 中，不应触发 strip（因为不是目标属性）
-        // 这个测试验证 strip_dangerous_uri 只处理 href/src/xlink:href
     }
 
     /// `xlink:href` 属性（SVG 中使用）的危险 URI 也应被替换。
@@ -983,9 +880,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // XSS 绕过回归测试
-    // ========================================================================
 
     /// 绕过 #1: `onclick =alert(1)` — 属性名与 `=` 之间有空格。
     #[test]
@@ -1035,12 +930,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // strip_dangerous_uri 绕过回归测试（quote 边界 / =与引号间空白 / 新增危险属性）
-    // ========================================================================
+    // strip_dangerous_uri 绕过回归测试
 
-    /// 绕过 #5: `title="x"href="javascript:..."` — href 紧跟引号（无空白），
-    /// is_attr_start 需识别 `"`/`'` 边界，否则 URI 过滤被跳过。
+    /// 绕过 #5: `title="x"href="javascript:..."` — href 紧跟引号无空白，`is_attr_start_pos` 需识别 `"`/`'` 边界。
     #[test]
     fn bypass_strips_dangerous_uri_after_quoted_attr_no_space() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -1076,8 +968,7 @@ mod tests {
         );
     }
 
-    /// 绕过 #8: `href= "javascript:..."` — `=` 与引号间有空白，
-    /// 值解析需跳过空白后再取值，否则 is_safe_uri("") 恒真漏检。
+    /// 绕过 #8: `href= "javascript:..."` — `=` 与值间空白，取值需跳过空白，否则 is_safe_uri("") 漏检。
     #[test]
     fn bypass_strips_dangerous_uri_with_space_between_equals_and_quote() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -1160,8 +1051,7 @@ mod tests {
         );
     }
 
-    /// parse_tag 引号感知：属性值中的内嵌 `>` 不应截断标签。
-    /// `<a href="a>b">text</a>` → `<a href=&quot;a&gt;b&quot;>text</a>`（结构完整）。
+    /// parse_tag 引号感知：属性值中的内嵌 `>` 不截断标签 → `<a href=&quot;a&gt;b&quot;>text</a>`（结构完整）。
     #[test]
     fn parse_tag_keeps_gt_inside_quoted_attr_value() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
@@ -1173,9 +1063,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // strip_event_handlers 直接单元测试
-    // ========================================================================
 
     /// 无事件处理器的属性原样保留。
     #[test]
@@ -1292,9 +1180,7 @@ mod tests {
         assert!(result.contains(r#"class="ok""#), "class 应保留");
     }
 
-    // ========================================================================
     // strip_dangerous_uri 直接单元测试
-    // ========================================================================
 
     /// `javascript:` 替换为 `#`。
     #[test]

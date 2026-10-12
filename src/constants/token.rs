@@ -5,12 +5,7 @@
 
 use std::fmt;
 
-/// OAuth2 token 类型（RFC 6749 §7.1）。
-///
-/// 统一管理 token 类型字符串，避免硬编码。
-/// - `Bearer`：RFC 6750 Bearer Token
-/// - `Access`：access_token 记录类型（内部存储用）
-/// - `Refresh`：refresh_token 记录类型（内部存储用）
+/// OAuth2 token 类型（RFC 6749 §7.1）：Bearer（RFC 6750）/ access / refresh（后两者为内部存储记录类型）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenType {
     /// Bearer Token（RFC 6750）。

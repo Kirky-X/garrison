@@ -3,10 +3,8 @@
 
 //! API Key 多租户命名空间示例。
 //!
-//! 演示 `ApiKeyHandler` 的多租户命名空间 API：
-//! - `generate_with_namespace`：在指定 namespace 下生成 key
-//! - `verify_with_namespace`：严格 namespace 校验（不跨 namespace）
-//! - `list_by_namespace`：列出 namespace 下所有未吊销 key
+//! 演示 `ApiKeyHandler` 命名空间 API：generate_with_namespace 在指定 namespace 下生成 key，
+//! verify_with_namespace 严格校验（不跨 namespace），list_by_namespace 列出未吊销 key。
 //!
 //! 运行方式：
 //! ```sh

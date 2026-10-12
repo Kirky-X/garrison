@@ -3,27 +3,9 @@
 
 //! 可观测性模块，提供 Prometheus 指标、结构化 JSON 日志与 OpenTelemetry 分布式追踪。
 //!
-//! ## 三层架构
-//!
-//! - **Metrics**（`GarrisonMetrics`）：Prometheus 格式指标，覆盖登录成功率 / Token 验证延迟 /
-//! 权限查询 QPS / 角色查询 QPS。启用 `metrics-prometheus` feature。
-//! - **Logs**（[`init_inklog_logging`](crate::observability::inklog::init_inklog_logging) /
-//! [`init_inklog_logging_with_fallback`](crate::observability::inklog::init_inklog_logging_with_fallback)）：
-//! inklog 结构化日志（含降级到 tracing-subscriber JSON）。启用 `audit-inklog` feature；
-//! 降级路径在 `metrics-prometheus` 或 `tracing-log` 启用时使用 tracing-subscriber JSON。
-//! - **Traces**（[`init_otlp_tracing`](crate::observability::otlp::init_otlp_tracing)）：
-//! OpenTelemetry 分布式追踪，OTLP gRPC 导出。启用 `otlp` feature。
-//!
-//! ## 集成点
-//!
-//! `GarrisonMetrics` 通过 `GarrisonLogicDefault::with_metrics` builder 注入，未注入时零开销。
-//!
-//! ## Feature 门控
-//!
-//! - `metrics-prometheus`：编译期包含 `GarrisonMetrics`，并为 inklog 降级路径提供 tracing-subscriber 依赖
-//! - `audit-inklog`：编译期包含 inklog 初始化与降级 API
-//! - `otlp`：编译期包含 OTLP 导出器
-//! - 未启用任一 feature：模块仍可导入但所有 API 返回 `None` / no-op
+//! 三层均为 feature 门控：`metrics-prometheus`（指标，经 `GarrisonLogicDefault::with_metrics`
+//! 注入，未注入时 no-op）、`audit-inklog`（inklog 日志，失败降级 tracing-subscriber JSON）、
+//! `otlp`（OTLP gRPC 追踪）；未启用任一 feature 时所有 API 返回 `None` / no-op。
 
 #[cfg(feature = "metrics-prometheus")]
 pub use prometheus;
@@ -52,9 +34,8 @@ pub struct GarrisonMetrics {
     pub(crate) permission_query_total: prometheus::CounterVec,
     /// 角色查询总数 Counter（标签：result=allow|deny）
     pub(crate) role_query_total: prometheus::CounterVec,
-    /// 实例级 registry 引用（`gather()` 从此 registry 收集，而非全局 default registry）。
-    ///
-    /// 修复：`gather()` 读全局 registry 导致自定义 registry 场景返回空数据。
+    /// 实例级 registry 引用：`gather()` 从此 registry 收集，而非全局 default registry
+    /// （否则自定义 registry 场景返回空数据）。
     pub(crate) registry: prometheus::Registry,
 }
 
@@ -74,9 +55,7 @@ pub mod otlp;
 #[cfg(feature = "otlp")]
 pub mod errors;
 
-// ============================================================================
 // 公共 re-export（扁平 API）
-// ============================================================================
 
 #[cfg(feature = "audit-inklog")]
 pub use inklog::{init_inklog_logging, init_inklog_logging_with_fallback};
@@ -110,10 +89,8 @@ pub enum GarrisonOtelError {
     Provider(String),
 }
 
-/// 指标集合的 feature-gated 别名。
-///
-/// - `metrics-prometheus` 启用：解析为 [`GarrisonMetrics`]
-/// - 未启用：不可用（调用方使用 `Option<Arc<GarrisonMetrics>>` 时仍可编译）
+/// 指标集合的 feature-gated 别名：`metrics-prometheus` 启用时解析为 [`GarrisonMetrics`]，
+/// 未启用时调用方仍可靠 `Option<Arc<GarrisonMetrics>>` 编译。
 #[cfg(not(feature = "metrics-prometheus"))]
 pub type GarrisonMetrics = ();
 

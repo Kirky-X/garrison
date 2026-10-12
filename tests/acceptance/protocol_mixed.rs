@@ -1,37 +1,25 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! protocol 混合域验收。
-//! sso / sign / apikey / temp 四个协议处理器「正常 + 异常」成对
-//! 覆盖。
+//! protocol 混合域验收：sso / sign / apikey / temp 四个协议处理器「正常 + 异常」成对覆盖。
 //!
-//! 全部场景直构处理器 + 产品 `InMemoryDao`（参考 tests/protocol/{sso,sign,apikey,temp}
-//! 的已知良好装配），不触碰 `GarrisonManager` 全局单例，故不加 `#[serial]`；
-//! 一次性消费竞争场景统一使用 `multi_thread` flavor（与 tests/acceptance/storage.rs
-//! 的并发惯例一致）。
+//! 全部场景直构处理器 + 产品 `InMemoryDao`，不触碰 `GarrisonManager` 全局单例，故不加
+//! `#[serial]`；一次性消费竞争场景统一使用 `multi_thread` flavor。覆盖 ticket 销毁/
+//! 多 client/无效格式、sign 空/非法签名、apikey 命名空间隔离、temp scope 越权等场景。
 //!
-//! 吸收 tests/protocol/{sso_integration,sso_edge_cases,
-//! sign_edge_cases,apikey_edge_cases,temp_edge_cases}.rs 的未覆盖用例
-//!（ticket 销毁/多 client/无效格式、sign 空/非法签名、apikey 命名空间隔离、
-//! temp scope 越权）。
-//!
-//! 去重说明：单元层过期 apikey 用例由 覆盖（过期 key 被拒语义
-//! 等价；单元层 mock DAO 返回 `ExpiredToken`、产品 `InMemoryDao` 返回
-//! `InvalidToken("apikey-not-found")`，API 偏差见文件头记录，两者均拒绝过期 key）。
+//! 去重说明：单元层过期 apikey 用例与本域覆盖等价（单元层 mock DAO 返回 `ExpiredToken`、
+//! 产品 `InMemoryDao` 返回 `InvalidToken("apikey-not-found")`，两者均拒绝过期 key）。
 //!
 //! # SSO 模拟说明
 //!
-//! `SsoClient` 为纯 DAO 实现（HMAC 验签与 ticket 存储均在本地共享 DAO，无网络
-//! 路径，见 src/protocol/sso/client.rs），按任务「参考 tests/protocol/sso 的做法」
-//! 以共享 `InMemoryDao` 模拟 SSO server 域（签发 / 校验双方持有同一 DAO），
-//! 不需要 wiremock。
+//! `SsoClient` 为纯 DAO 实现（HMAC 验签与 ticket 存储均在本地共享 DAO，无网络路径），
+//! 以共享 `InMemoryDao` 模拟 SSO server 域（签发 / 校验双方持有同一 DAO），不需要 wiremock。
 //!
 //! # API 偏差记录
 //!
-//! 产品 `InMemoryDao::get` 在读取时清理已过期键（src/dao/in_memory.rs:52-66），
-//! 故 apikey 过期后 `verify` 返回 `InvalidToken("apikey-not-found")` 而非
-//! 处理器内部的 `ExpiredToken`（后者需 mock DAO 的「get 不清理过期键」语义，
-//! 与 tests/protocol/apikey_edge_cases.rs 的说明一致）；两者均拒绝过期 key。
+//! 产品 `InMemoryDao::get` 在读取时清理已过期键，故 apikey 过期后 `verify` 返回
+//! `InvalidToken("apikey-not-found")` 而非处理器内部的 `ExpiredToken`（后者需 mock DAO
+//! 的「get 不清理过期键」语义）。
 
 use async_trait::async_trait;
 use garrison::dao::{GarrisonDao, InMemoryDao};
@@ -599,10 +587,8 @@ async fn acc_mixed_016_temp_concurrent_consume_exactly_once() {
 // sso 销毁/多 client、sign 参数、apikey 隔离、temp scope
 // ------------------------------------------------------------------------
 
-/// （正常+异常）：`destroy_ticket` 销毁后跨子系统不可校验
-/// （另一共享 DAO 的 client 校验失败）；销毁不存在的 ticket 幂等返回 Ok。
-/// 迁自 tests/protocol/sso_integration.rs::destroy_ticket_affects_subsystem_b、
-/// destroy_nonexistent_ticket_is_idempotent（2 例合并）
+/// （正常+异常）：`destroy_ticket` 销毁后跨子系统不可校验（另一共享 DAO 的 client
+/// 校验失败）；销毁不存在的 ticket 幂等返回 Ok。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_017_sso_destroy_ticket_and_idempotent() {
     let dao: Arc<dyn GarrisonDao> = make_dao();
@@ -627,10 +613,8 @@ async fn acc_mixed_017_sso_destroy_ticket_and_idempotent() {
         .expect("销毁不存在 ticket 应幂等 Ok");
 }
 
-/// （正常）：多 client_id / login_id 独立签发互不影响——
-/// 同一签发方为不同 client_id / 不同 login_id 签发 ticket 互不相同，
-/// 各自在对应 client_id 下校验成功。
-/// 迁自 tests/protocol/sso_integration.rs::multiple_clients_issue_independent_tickets
+/// （正常）：多 client_id / login_id 独立签发互不影响——同一签发方为不同 client_id /
+/// 不同 login_id 签发的 ticket 互不相同，各自在对应 client_id 下校验成功。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_018_sso_multiple_clients_independent_tickets() {
     let dao: Arc<dyn GarrisonDao> = make_dao();
@@ -660,9 +644,8 @@ async fn acc_mixed_018_sso_multiple_clients_independent_tickets() {
     );
 }
 
-/// （异常）：无效格式 ticket 被拒绝——短字符串 / 非 hex 字符串
-/// 校验均返回 `InvalidToken`（DAO 查找不命中，fail-closed）。
-/// 迁自 tests/protocol/sso_edge_cases.rs::ticket_invalid_format_returns_error
+/// （异常）：无效格式 ticket 被拒绝——短字符串 / 非 hex 字符串校验均返回
+/// `InvalidToken`（DAO 查找不命中，fail-closed）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_019_sso_invalid_ticket_format_rejected() {
     let client = SsoClient::new(make_dao(), "acceptance-sso-secret-0123456789abcdef")
@@ -683,11 +666,8 @@ async fn acc_mixed_019_sso_invalid_ticket_format_rejected() {
     }
 }
 
-/// （异常）：缺失/非法签名参数拒绝——空 signature（Base64 解码
-/// 失败）与无效 Base64 signature 均返回 `InvalidToken`；body 篡改（sign-mismatch）
-/// 已由 覆盖（见去重清单，不重复移植）。
-/// 迁自 tests/protocol/sign_edge_cases.rs::missing_required_params_returns_error
-///（空/非法签名两例；签名不匹配例与 语义等价）
+/// （异常）：缺失/非法签名参数拒绝——空 signature（Base64 解码失败）与无效 Base64
+/// signature 均返回 `InvalidToken`。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_020_sign_empty_or_invalid_signature_rejected() {
     let handler = SignHandler::new(
@@ -724,10 +704,8 @@ async fn acc_mixed_020_sign_empty_or_invalid_signature_rejected() {
     );
 }
 
-/// （正常+异常）：API Key 命名空间隔离——key 经 `login_id`
-/// 绑定业务命名空间，verify 返回各自的 login_id；跨命名空间（login_id 不匹配
-/// 另一 namespace）访问可被业务方据此阻断。
-/// 迁自 tests/protocol/apikey_edge_cases.rs::namespace_isolation_blocks_cross_namespace_access
+/// （正常+异常）：API Key 命名空间隔离——key 经 `login_id` 绑定业务命名空间，verify
+/// 返回各自的 login_id；跨命名空间（login_id 不匹配另一 namespace）访问可被业务方据此阻断。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_021_apikey_namespace_isolation() {
     let handler = ApiKeyHandler::new(make_dao()).with_allow_global_verify(true);
@@ -759,11 +737,9 @@ async fn acc_mixed_021_apikey_namespace_isolation() {
     );
 }
 
-/// （异常）：临时凭证 scope 越权拒绝——凭证 value 携带业务 scope
-///（JSON），业务方读取后校验：scope="read" 的凭证不允许 "write" 操作，
-/// 允许 "read" 操作（应用层 scope 检查语义；协议层无 scope 字段，
-/// 同 tests/protocol/temp_edge_cases.rs::scope_exceeded_access_denied 的模拟方式）。
-/// 迁自 tests/protocol/temp_edge_cases.rs::scope_exceeded_access_denied
+/// （异常）：临时凭证 scope 越权拒绝——凭证 value 携带业务 scope（JSON），业务方读取后
+/// 校验：scope="read" 的凭证不允许 "write" 操作、允许 "read" 操作（应用层 scope 检查
+/// 语义；协议层无 scope 字段）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_022_temp_credential_scope_privilege_rejected() {
     let handler = TempCredentialHandler::new(make_dao());

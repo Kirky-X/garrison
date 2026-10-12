@@ -1,13 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! API Key 协议层测试 mock 实现。
-//!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `MockDao`（基于 `tokio::sync::Mutex<HashMap>` 模拟 DAO），
-//! 供 `protocol::apikey::tests` API Key 生成/校验测试复用。
-//!
-//! `keys` 方法复用 `crate::dao::glob_match`。
+//! API Key 协议层测试 mock 实现（仅 `cfg(test)` 编译）：`MockDao`（`tokio::sync::Mutex<HashMap>`
+//! 模拟 DAO）供 `protocol::apikey::tests` 生成/校验测试复用；`keys` 复用
+//! `crate::dao::glob_match`。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};

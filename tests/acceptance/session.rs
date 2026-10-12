@@ -1,14 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! session 域验收。
-//! 双模会话读写 / TTL 续期 / 过期监听 / IP 安全监听 / 设备绑定 MFA /
+//! session 域验收：双模会话读写 / TTL 续期 / 过期监听 / IP 安全监听 / 设备绑定 MFA /
 //! 匿名会话边界 / 过期读取为空，「正常 + 异常」成对覆盖。
 //!
-//! 全部场景基于独立 `GarrisonSession` / `GarrisonLogicDefault` 实例构造，
-//! 不触碰 `GarrisonManager` 全局单例，故不加 `#[serial]`；并发场景统一使用
-//! `multi_thread` flavor（与 tests/integration/strategy_registry.rs 的 make_logic
-//! 直构惯例一致）。
+//! 全部场景基于独立 `GarrisonSession` / `GarrisonLogicDefault` 实例构造，不触碰
+//! `GarrisonManager` 全局单例，故不加 `#[serial]`；并发场景统一使用 `multi_thread` flavor。
 
 use garrison::constants::DaoKeyPrefix;
 use garrison::dao::{GarrisonDao, InMemoryDao};
@@ -37,15 +34,14 @@ impl GarrisonInterface for NoopInterface {
 }
 
 // ============================================================================
-// 辅助：TTL 盲读 DAO（ 续期语义观察）
+// 辅助：TTL 盲读 DAO（renew 续期语义观察）
 // ============================================================================
 
 /// 对 `get_with_ttl` 隐藏剩余 TTL 的 DAO 包装。
 ///
-/// `GarrisonSession::touch`（`renew` 的底层实现）优先读取旧键剩余 TTL 回写；
-/// 本包装令 `get_with_ttl` 返回 `(value, None)`，使续期落入「重置为完整 timeout」
-/// 语义（与 src 单元测试 MockDao 语义一致），从而可观察「renew 重置 TTL」契约
-/// （见 报告中的 API 偏差说明：TTL 感知型 DAO 下 touch 保留剩余 TTL）。
+/// `GarrisonSession::touch`（`renew` 的底层实现）优先读取旧键剩余 TTL 回写；本包装令
+/// `get_with_ttl` 返回 `(value, None)`，使续期落入「重置为完整 timeout」语义，从而可
+/// 观察「renew 重置 TTL」契约（TTL 感知型 DAO 下 touch 实际保留剩余 TTL）。
 struct TtlBlindDao {
     inner: Arc<InMemoryDao>,
 }
@@ -544,8 +540,8 @@ async fn acc_sess_008_expired_token_reads_empty() {
 /// 登录后，`TokenSession` 对应字段完整写入（get-session 语义）；created_at /
 /// last_active_at 为正（get-token-info 语义）；按 token 反查 login_id 一致。
 ///
-/// 合并三个 e2e 原用例（login device/ip/ua 写入 + get-token-info/get-session）：
-/// 原版经 HTTP 断言字段，本场景在逻辑层直接断言 TokenSession 存储内容（不可弱化）。
+/// 由 e2e HTTP 断言移植（login device/ip/ua 写入 + get-token-info/get-session 三例），
+/// 改在逻辑层直接断言 `TokenSession` 存储内容（不可弱化）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sess_019_login_metadata_written_to_token_session() {
     let dao = Arc::new(InMemoryDao::new());
@@ -608,11 +604,9 @@ async fn acc_sess_019_login_metadata_written_to_token_session() {
     );
 }
 
-/// （异常）： 超设备上限踢出最早会话（语义偏差记录：
-/// 代码库无自动 device-limit 踢出，以 `kickout_by_device` 手动
-/// 设备级踢出验证同语义）——被踢设备 token 失效、另一设备 token 仍有效。
-///
-/// 对应（并发登录踢出最早会话）验收标准，断言语义原样保留。
+/// （异常）：超设备上限踢出最早会话（代码库无自动 device-limit 踢出，以
+/// `kickout_by_device` 手动设备级踢出验证同语义）——被踢设备 token 失效、
+/// 另一设备 token 仍有效。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sess_017_bw_ac_003_kickout_by_device_isolates_device() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
@@ -667,16 +661,10 @@ async fn acc_sess_017_bw_ac_003_kickout_by_device_isolates_device() {
     );
 }
 
-/// （正常）： OIDC 登录创建新账号并返回有效 Token——
-/// 登录链路（所有登录方式共享）双写 Account-Session 与 Token-Session，DAO key
-/// key 格式：`account:session:` / `token:session:` 前缀）。
-///
-/// # 冲突说明（原版注释保留）
-/// OIDC 登录流程需网络调用 Keycloak/OIDC provider，集成测试不依赖外部服务；
-/// 本测试验证 OIDC 登录的核心产出——会话创建（`account:session:{login_id}` +
-/// `token:session:{token}`），该逻辑由所有登录方式共享的登录链路实现。
-///
-/// 对应（OIDC 登录创建账户与 token）验收标准，断言语义原样保留。
+/// （正常）：OIDC 登录创建新账号并返回有效 Token——登录链路（所有登录方式共享）双写
+/// Account-Session 与 Token-Session，DAO key 格式：`account:session:` /
+/// `token:session:` 前缀。OIDC 登录流程需网络调用 provider，集成测试不依赖外部服务，
+/// 故本测试只验证会话创建这一所有登录方式共享的核心产出。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sess_018_bw_ac_001_login_creates_account_and_token_keys() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
@@ -835,9 +823,8 @@ fn acc_sess_010_plugin_manager_collects_registered_plugins() {
     );
 }
 
-/// （正常+异常）：plugin 三大钩子被调用且可累计——
-/// `on_login` / `on_logout` / `on_permission_check` 各触发 ≥1 次，5 次 `on_login`
-/// 累计 ≥5（无状态可重入；原 plugin_on_*_invoked + plugin_multiple_calls 合并）。
+/// （正常+异常）：plugin 三大钩子被调用且可累计——`on_login` / `on_logout` /
+/// `on_permission_check` 各触发 ≥1 次，5 次 `on_login` 累计 ≥5（无状态可重入）。
 #[cfg(feature = "listener")]
 #[tokio::test]
 #[serial]
@@ -884,9 +871,8 @@ fn acc_sess_012_listener_manager_collects_registered_listeners() {
     );
 }
 
-/// （正常）：`broadcast` 将 Login / Logout / PermissionCheck 事件
-/// 分发到 listener 且可累计——三种事件各 ≥1 次，3 次 Login 广播 ≥3
-///（原 listener_receives_*_event + listener_multiple_broadcasts 合并）。
+/// （正常）：`broadcast` 将 Login / Logout / PermissionCheck 事件分发到 listener 且可
+/// 累计——三种事件各 ≥1 次，3 次 Login 广播 ≥3。
 #[cfg(feature = "listener")]
 #[tokio::test]
 #[serial]
@@ -951,10 +937,8 @@ async fn acc_sess_013_listener_receives_events_and_accumulates() {
     );
 }
 
-/// （正常）：完整生命周期 plugin + listener 协同——login →
-/// permission_check → logout 各钩子与各事件全部触发；PermissionCheck 事件只进
-/// listener 不经过 plugin 钩子之外的通道（原 full_lifecycle 与
-/// permission_check_event_only_goes_to_listener 合并）。
+/// （正常）：完整生命周期 plugin + listener 协同——login → permission_check → logout
+/// 各钩子与各事件全部触发；PermissionCheck 事件只进 listener。
 #[cfg(feature = "listener")]
 #[tokio::test]
 #[serial]
@@ -966,7 +950,7 @@ async fn acc_sess_014_full_lifecycle_plugin_and_listener_cooperate() {
     let plugin_manager = GarrisonPluginManager::new();
     let listener_manager = GarrisonListenerManager::new();
 
-    // 1. 模拟登录：plugin on_login + Login 事件
+    // 模拟登录：plugin on_login + Login 事件
     plugin_manager.on_login("1001", "T1");
     listener_manager
         .broadcast(&GarrisonEvent::Login {
@@ -977,7 +961,7 @@ async fn acc_sess_014_full_lifecycle_plugin_and_listener_cooperate() {
         })
         .await;
 
-    // 2. 模拟权限校验：plugin on_permission_check + PermissionCheck 事件
+    // 模拟权限校验：plugin on_permission_check + PermissionCheck 事件
     plugin_manager.on_permission_check("1001", "user:read");
     listener_manager
         .broadcast(&GarrisonEvent::PermissionCheck {
@@ -987,7 +971,7 @@ async fn acc_sess_014_full_lifecycle_plugin_and_listener_cooperate() {
         })
         .await;
 
-    // 3. 模拟登出：plugin on_logout + Logout 事件
+    // 模拟登出：plugin on_logout + Logout 事件
     plugin_manager.on_logout("1001", "T1");
     listener_manager
         .broadcast(&GarrisonEvent::Logout {
@@ -1023,10 +1007,8 @@ async fn acc_sess_014_full_lifecycle_plugin_and_listener_cooperate() {
     );
 }
 
-/// （正常）：auto-wire——`GarrisonManager` 构建后 `login_simple` 自动
-/// 触发 plugin `on_login` 钩子并广播 Login 事件到 listener（builder
-/// 自动注入两组管理器；原 auto_wire_login_triggers_plugin_on_login +
-/// auto_wire_login_broadcasts_listener_login_event 合并）。
+/// （正常）：auto-wire——`GarrisonManager` 构建后 `login_simple` 自动触发 plugin
+/// `on_login` 钩子并广播 Login 事件到 listener（builder 自动注入两组管理器）。
 #[cfg(feature = "listener")]
 #[tokio::test]
 #[serial]
@@ -1057,9 +1039,8 @@ async fn acc_sess_015_auto_wire_login_triggers_plugin_and_listener() {
     );
 }
 
-/// （正常）：auto-wire logout——`with_current_token` 内
-/// `GarrisonUtil::logout` 自动触发 plugin `on_logout` 钩子 + listener Logout 事件
-///（原 auto_wire_logout_triggers_hooks）。
+/// （正常）：auto-wire logout——`with_current_token` 内 `GarrisonUtil::logout` 自动
+/// 触发 plugin `on_logout` 钩子 + listener Logout 事件。
 #[cfg(feature = "listener")]
 #[tokio::test]
 #[serial]
@@ -1184,7 +1165,7 @@ async fn acc_sess_020_tenant_isolation_with_audit_log_and_decision_trace() {
         resolved_from: TenantSource::Header,
     };
 
-    // 1. 租户作用域内登录
+    // 租户作用域内登录
     let token = TENANT
         .scope(tenant_ctx.clone(), async {
             logic
@@ -1195,7 +1176,7 @@ async fn acc_sess_020_tenant_isolation_with_audit_log_and_decision_trace() {
         .await;
     assert!(!token.is_empty(), "token 不应为空");
 
-    // 2. check_permission 全链路通过
+    // check_permission 全链路通过
     let check_result = TENANT
         .scope(
             tenant_ctx,
@@ -1210,7 +1191,7 @@ async fn acc_sess_020_tenant_isolation_with_audit_log_and_decision_trace() {
         check_result.err()
     );
 
-    // 3. authorize 返回 ExplicitAllow Decision
+    // authorize 返回 ExplicitAllow Decision
     let auth_request = AuthRequest {
         login_id: "1001".to_string(),
         tenant_id: 42,
@@ -1226,7 +1207,7 @@ async fn acc_sess_020_tenant_isolation_with_audit_log_and_decision_trace() {
         "Decision.reason 应为 ExplicitAllow"
     );
 
-    // 4. 审计日志落库：tenant_id=42 / event_type=permission_check / login_id=1001
+    // 审计日志落库：tenant_id=42 / event_type=permission_check / login_id=1001
     let query = AuditQuery {
         tenant_id: Some(42),
         event_type: Some("permission_check".to_string()),

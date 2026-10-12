@@ -1,10 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! actix-web 框架的健康检查路由集成。
-//!
-//! 从 `mod.rs` 迁移而出（mod.rs 接口隔离）。
-//! 提供 `/health/live` 与 `/health/ready` 端点。
+//! actix-web 框架的健康检查路由集成：提供 `/health/live` 与 `/health/ready` 端点。
 
 use super::{HealthRegistry, HealthStatus};
 use actix_web::http::StatusCode;
@@ -18,9 +15,9 @@ pub async fn live() -> impl Responder {
 
 /// Readiness 探针 handler。
 ///
-/// 单项检查的超时护栏（默认 5 秒）由 [`HealthRegistry::check_all`]
-/// 内部强制执行（`HealthRegistry::with_check_timeout` 可配置），挂起/panic 的检查按
-/// `Unhealthy` 聚合，不会阻塞 actix worker 线程。
+/// 单项检查超时护栏（默认 5 秒，[`HealthRegistry::with_check_timeout`] 可配置）由
+/// [`HealthRegistry::check_all`] 内部强制执行：挂起/panic 的检查按 `Unhealthy` 聚合，
+/// 不会阻塞 actix worker 线程。
 pub async fn ready(registry: web::Data<Arc<HealthRegistry>>) -> HttpResponse {
     let report = registry.check_all().await;
     let status = match report.overall {

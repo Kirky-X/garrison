@@ -34,7 +34,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
             conn
         );
 
-        // 1. 检查是否已存在（幂等：相同 tenant_id + login_id + identifier 返回已有 ID）
+        // 幂等：相同 tenant_id + login_id + identifier 返回已有 ID
         let find_sql = "SELECT id FROM app_user_device \
                         WHERE tenant_id = ? AND login_id = ? AND device_identifier = ?";
         let stmt = make_statement(
@@ -456,10 +456,8 @@ mod tests {
         assert_eq!(count, 1, "注册 1 个后应为 1");
     }
 
-    // ========================================================================
     // 纯函数测试：parse_device_name / detect_browser / detect_os
     // （不依赖数据库，验证 UA 解析逻辑）
-    // ========================================================================
 
     /// parse_device_name 从 Chrome on Windows UA 提取 "Chrome on Windows"。
     #[test]
@@ -630,9 +628,7 @@ mod tests {
         assert!(detect_os("UnknownOS").is_none());
     }
 
-    // ========================================================================
     // DB 边界场景测试
-    // ========================================================================
 
     /// register_device 空 UA 字符串时 device_name 为 None，但仍能注册。
     #[tokio::test(flavor = "multi_thread")]
@@ -751,9 +747,7 @@ mod tests {
         assert_eq!(count_2, 1, "tenant 2 应有 1 个设备");
     }
 
-    // ========================================================================
     // DROP TABLE 错误路径测试：覆盖 map_err 闭包
-    // ========================================================================
 
     /// 删除 app_user_device 表后 register_device 应返回 Dao 错误。
     #[tokio::test(flavor = "multi_thread")]

@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! `GarrisonAuthServer` 的实现下沉（builder 方法、路由构建、listen），
-//! 与 [`crate::server`] 中的类型定义（struct/config）分离，遵循 mod 接口隔离原则。
+//! `GarrisonAuthServer` 的实现下沉（builder 方法、路由构建、listen），与 [`crate::server`]
+//! 的类型定义分离（mod 接口隔离原则）。
 
 #[cfg(feature = "tls")]
 use std::path::PathBuf;
@@ -22,9 +22,8 @@ use crate::backend::types::ApiResponse;
 use crate::backend::AuthBackend;
 use crate::error::{GarrisonError, GarrisonResult};
 
-/// 优雅停机 drain 上限（秒）：信号后等待在途请求完成的最长时间，超时强制中止。
-/// 与 TLS 路径 `axum_server::Handle::graceful_shutdown(Some(30s))` 的既有上限对齐；
-/// 非 TLS 路径（axum::serve 无内建 drain 上限）消费本常量实现同等语义。
+/// 优雅停机 drain 上限（秒）：信号后等待在途请求完成的最长时间，超时强制中止；
+/// 与 TLS 路径 `axum_server::Handle::graceful_shutdown` 上限对齐，非 TLS 路径消费本常量实现同等语义。
 const SHUTDOWN_DRAIN_TIMEOUT_SECS: u64 = 30;
 
 /// 生产 drain 上限（两站点经此取参；取值由 graceful_shutdown_tests 锁定）。
@@ -33,10 +32,8 @@ fn drain_timeout() -> std::time::Duration {
     std::time::Duration::from_secs(SHUTDOWN_DRAIN_TIMEOUT_SECS)
 }
 
-/// 在 drain 上限内驱动 serve future：`serve` 先完成返回 `Some(输出)`；
-/// 停机信号到达后超过 `timeout` 仍未完成返回 `None`。
-///
-/// 外/内网两条非 TLS 路径共用（timeout 注入使回归测试无需真实等待 30s）。
+/// 在 drain 上限内驱动 serve future：serve 先完成返回 `Some(输出)`，停机信号后超过 `timeout`
+/// 仍未完成返回 `None`。外/内网两条非 TLS 路径共用（timeout 注入使回归测试无需真实等待 30s）。
 #[cfg(feature = "server-graceful-shutdown")]
 async fn drive_with_drain_deadline<S, D>(
     serve: S,
@@ -57,12 +54,8 @@ where
     }
 }
 
-/// 将 `GarrisonResult<T>` 转换为 `ApiResponse<T>`。
-///
-/// Ok → `ApiResponse::ok(data)`
-/// Err → `ApiResponse::err(error_code, message)`，error_code 来自 `response_parts_i18n()`
-///
-/// `message` 字段通过 i18n 层翻译为当前 locale 文本，避免硬编码中文泄露到响应体。
+/// 将 `GarrisonResult<T>` 转换为 `ApiResponse<T>`：Ok → `ok(data)`，Err → `err(error_code, message)`，
+/// error_code 来自 `response_parts_i18n()`，message 经 i18n 翻译为当前 locale 文本（避免硬编码中文泄露）。
 pub fn to_api_response<T>(result: Result<T, GarrisonError>) -> ApiResponse<T> {
     match result {
         Ok(data) => ApiResponse::ok(data),
@@ -75,15 +68,10 @@ pub fn to_api_response<T>(result: Result<T, GarrisonError>) -> ApiResponse<T> {
 
 /// OAuth2 启动期维护：reconcile 引用已删 client 的孤儿 consent 行。
 ///
-/// `listen()` 在监听端口前调用（R18 / R-consent-004「启动 reconcile 清理
-/// 已删 client 的 consent 行」）。内联 await 而非后台 spawn：清理在首个
-/// authorize 请求前完成（确定性语义），代价是启动耗时受 consent 键数量
-/// 约束（keys 扫描 + 逐键比对，低频启动路径可接受）。
-///
-/// 维护性操作 fail-open：失败仅告警不阻断启动——孤儿行只是垃圾数据
-/// （已删 client 的 authorize 过不了 client 存活校验，残留行不影响鉴权
-/// 正确性），下次启动或运维显式调用 `AuthorizeHandler::reconcile_consents`
-/// 可重试。
+/// `listen()` 在监听端口前调用（R-consent-004），内联 await 保证清理在首个 authorize 请求前完成
+/// （确定性语义；代价是启动耗时受 consent 键数量约束，低频启动路径可接受）。维护性操作 fail-open：
+/// 失败仅告警不阻断启动——孤儿行只是垃圾数据（已删 client 的 authorize 过不了 client 存活校验），
+/// 下次启动或显式调用 `AuthorizeHandler::reconcile_consents` 可重试。
 #[cfg(feature = "oauth2-server")]
 async fn oauth2_consent_startup_reconcile(state: &oauth2_routes::OAuth2State) {
     match state.authorize_handler.reconcile_consents().await {
@@ -108,10 +96,7 @@ async fn oauth2_consent_startup_reconcile(state: &oauth2_routes::OAuth2State) {
 }
 
 impl GarrisonAuthServer {
-    /// 创建 Auth Server 实例。
-    ///
-    /// # 参数
-    /// - `backend`：认证后端（BackendEmbedded 或 BackendRemote）
+    /// 创建 Auth Server 实例；`backend` 为认证后端（`BackendEmbedded` 或 `BackendRemote`）。
     pub fn new(backend: Arc<dyn AuthBackend>) -> Self {
         Self {
             backend,
@@ -127,16 +112,10 @@ impl GarrisonAuthServer {
         }
     }
 
-    /// 用 trait-kit AsyncKit 构建后端（可选路径，feature = "backend-kit"）。
+    /// 用 trait-kit AsyncKit 构建后端（feature = "backend-kit"）。
     ///
-    /// 从已构建的 `AsyncKit<Ready>` 中 require `BackendModule` 的 capability
-    /// （`Arc<dyn AuthBackend>`），委托给 [`Self::new`]。
-    ///
-    /// # 参数
-    /// - `kit`：已调用 `kit.build().await` 完成的 `AsyncKit<Ready>`
-    ///
-    /// # 错误
-    /// - `GarrisonError::Internal`：kit 中未注册/未构建 `BackendModule`
+    /// 从已构建的 `AsyncKit<Ready>` require `BackendModule` 的 `Arc<dyn AuthBackend>` 并委托
+    /// [`Self::new`]；kit 中未注册/未构建时返回 `GarrisonError::Internal`。
     ///
     /// # 示例
     ///
@@ -166,10 +145,9 @@ impl GarrisonAuthServer {
         self
     }
 
-    /// 设置外网端口绑定地址（默认 **0.0.0.0**，向后兼容）。
+    /// 设置外网端口绑定地址（默认 **0.0.0.0**，保持既有下游行为）。
     ///
-    /// 框架默认通配绑定保持既有下游行为；安全敏感部署应显式收口绑定面
-    /// （如 127.0.0.1 仅本机可达）。TCP 与 TLS 两条路径均使用该地址。
+    /// TCP 与 TLS 两条路径均使用该地址；安全敏感部署应显式收口（如 127.0.0.1 仅本机可达）。
     pub fn with_external_bind(mut self, addr: std::net::IpAddr) -> Self {
         self.config.external_bind = addr;
         self
@@ -195,26 +173,21 @@ impl GarrisonAuthServer {
 
     /// 是否启用外网登录端点（默认 `false`，secure-by-default）。
     ///
-    /// 框架的 login 端点不校验任何凭证（Sa-Token 模型：业务层先验密码、
-    /// 框架只负责签发会话）。禁用时外网端口对 `POST /api/v1/auth/login`
-    /// 一律返回 404。开启前请确保业务侧已注入凭证校验，否则任何主体
-    /// 都能获取任意用户的有效会话；开启后 `listen()` 启动时输出 warn。
+    /// 框架 login 端点不校验任何凭证（Sa-Token 模型：业务层先验密码、框架只签发会话），禁用时
+    /// 外网端口对 `POST /api/v1/auth/login` 一律 404。开启前须确保业务侧已注入凭证校验，否则
+    /// 任何主体都能获取任意用户的有效会话；开启后 `listen()` 启动时输出 warn。
     pub fn with_external_login_enabled(mut self, enabled: bool) -> Self {
         self.config.external_login_enabled = enabled;
         self
     }
 
-    /// 设置限速 HashMap 最大条目数（默认 100_000）。
-    ///
-    /// 超过此值时 LRU 淘汰最久未访问的 bucket，防 DoS 内存耗尽。
+    /// 设置限速 HashMap 最大条目数（默认 100_000）：超限 LRU 淘汰最久未访问的 bucket，防 DoS 内存耗尽。
     pub fn with_rate_limit_max_entries(mut self, max_entries: usize) -> Self {
         self.config.rate_limit_max_entries = max_entries;
         self
     }
 
-    /// 设置可信代理 IP 列表。
-    ///
-    /// 仅来自这些 IP 的请求的 X-Forwarded-For 头被信任，其余使用连接 IP。
+    /// 设置可信代理 IP 列表：仅这些 IP 的请求其 X-Forwarded-For 被信任，其余使用连接 IP。
     pub fn with_trusted_proxies(mut self, proxies: Vec<std::net::IpAddr>) -> Self {
         self.config.rate_limit_trusted_proxies = proxies;
         self
@@ -226,64 +199,50 @@ impl GarrisonAuthServer {
         self
     }
 
-    /// 设置内网 API Key 认证失败锁定（GAR-25）。
-    ///
-    /// # 参数
-    /// - `threshold`：同源 IP 连续失败阈值，达到后窗口期内一律 429；`0` 禁用
-    /// - `window_secs`：锁定窗口秒数
+    /// 设置内网 API Key 认证失败锁定：`threshold` 为同源 IP 连续失败阈值（达到后窗口期内一律
+    /// 429，`0` 禁用），`window_secs` 为锁定窗口秒数。
     pub fn with_api_key_lockout(mut self, threshold: u32, window_secs: u64) -> Self {
         self.config.api_key_lockout_threshold = threshold;
         self.config.api_key_lockout_window_secs = window_secs;
         self
     }
 
-    /// 是否透传内网 `/readyz` 的 `checks[].details`（默认 **false**，GAR-14）。
+    /// 是否透传内网 `/readyz` 的 `checks[].details`（默认 **false**）。
     ///
-    /// details 可能包含内部依赖拓扑（host、延迟等），默认剥离仅保留
-    /// name/healthy；显式开启后方可在内网探针中输出诊断细节。
+    /// details 可能包含内部依赖拓扑（host、延迟等），默认剥离仅保留 name/healthy；显式开启后方可输出。
     pub fn with_health_details(mut self, enabled: bool) -> Self {
         self.config.health_details_enabled = enabled;
         self
     }
 
-    /// 是否启用严格安全档（默认 **false**，只告警不拒绝，1.0 翻转）。
+    /// 是否启用严格安全档（默认 **false**，只告警不拒绝）。
     ///
-    /// `true` 时短内网 API Key 与未确认的外网登录暴露在 `validate()`
-    /// 直接返回错误；参考部署 bin 缺省 `true`（fail-closed）。
+    /// `true` 时短内网 API Key 与未确认的外网登录暴露在 `validate()` 直接返回错误；参考部署 bin 缺省 `true`。
     pub fn with_strict_security(mut self, enabled: bool) -> Self {
         self.config.strict_security = enabled;
         self
     }
 
-    /// 设置外网登录暴露确认串（默认 `None`）。
-    ///
-    /// 启用外网登录端点且绑定非回环时，须传入与
+    /// 设置外网登录暴露确认串（默认 `None`）：启用外网登录且绑定非回环时，须传入与
     /// [`crate::server::EXTERNAL_LOGIN_ACK`] 完全相等的确认串。
     pub fn with_external_login_ack(mut self, ack: Option<String>) -> Self {
         self.config.external_login_ack = ack;
         self
     }
 
-    /// 整体注入 `AuthServerConfig`（与逐项 builder 等价）。
-    ///
-    /// 用于配置对象整体注入，避免字段清单在多处重复（如参考部署
-    /// bin 的引导装配）。与逐项 builder 混用时后调用者生效。
+    /// 整体注入 `AuthServerConfig`（与逐项 builder 等价，混用时后调用者生效）。
     pub fn with_config(mut self, config: crate::server::AuthServerConfig) -> Self {
         self.config = config;
         self
     }
 
-    /// 设置外网请求体大小上限（字节，默认 256KB）。
-    ///
-    /// 超过此限制的请求返回 `413 Payload Too Large`。
+    /// 设置外网请求体大小上限（字节，默认 256KB），超限返回 `413 Payload Too Large`。
     pub fn with_external_body_limit(mut self, limit: usize) -> Self {
         self.config.external_body_limit = limit;
         self
     }
 
-    /// 设置内网请求体大小上限（字节，默认 1MB）。
-    ///
-    /// 超过此限制的请求返回 `413 Payload Too Large`。
+    /// 设置内网请求体大小上限（字节，默认 1MB），超限返回 `413 Payload Too Large`。
     pub fn with_internal_body_limits(mut self, limit: usize) -> Self {
         self.config.internal_body_limit = limit;
         self
@@ -291,16 +250,10 @@ impl GarrisonAuthServer {
 
     /// 注入租户解析器（feature = "tenant-isolation"）。
     ///
-    /// `Some(resolver)` 时，`external_router` / `internal_router` 自动注入
-    /// `tenant_resolution_middleware`，从请求 headers 解析 `TenantContext` 并
-    /// 在 `TENANT` task_local scope 内执行下游 handler——使 `check_permission`
-    /// / `check_role` / 审计日志等能通过 `current_tenant_id_or_error()` 读取租户上下文。
-    ///
-    /// `None` 表示未启用租户隔离（单租户部署），不注入租户中间件。
-    ///
-    /// # 参数
-    /// - `resolver`：`Arc<dyn TenantResolver>`（如 `HeaderTenantResolver` /
-    ///   `SubdomainTenantResolver` / `ClaimTenantResolver`）
+    /// `Some` 时 `external_router` / `internal_router` 自动注入 `tenant_resolution_middleware`，
+    /// 使 `check_permission` / `check_role` / 审计日志可经 `current_tenant_id_or_error()` 读取租户
+    /// 上下文；`None` 表示未启用租户隔离（单租户部署）。`resolver` 可为 `HeaderTenantResolver` /
+    /// `SubdomainTenantResolver` / `ClaimTenantResolver`。
     ///
     /// # 示例
     ///
@@ -320,18 +273,14 @@ impl GarrisonAuthServer {
         self
     }
 
-    /// 注入 OAuth2 状态，启用 4 个 OAuth2 端点（feature = "oauth2-server"）。
-    ///
-    /// 外网端口添加 authorize/token/revoke，内网端口添加 introspect。
+    /// 注入 OAuth2 状态，启用 4 个 OAuth2 端点（外网 authorize/token/revoke，内网 introspect）。
     #[cfg(feature = "oauth2-server")]
     pub fn with_oauth2(mut self, state: Arc<oauth2_routes::OAuth2State>) -> Self {
         self.oauth2_state = Some(state);
         self
     }
 
-    /// 注入扫码登录状态，启用 4 个扫码登录端点（feature = "protocol-qrlogin"）。
-    ///
-    /// 外网端口添加 create/poll/scan/confirm。
+    /// 注入扫码登录状态，外网端口启用 create/poll/scan/confirm 4 个端点。
     #[cfg(feature = "protocol-qrlogin")]
     pub fn with_qrlogin(mut self, state: Arc<qrlogin_routes::QrLoginHttpState>) -> Self {
         self.qrlogin_state = Some(state);
@@ -340,12 +289,7 @@ impl GarrisonAuthServer {
 
     /// 启用 HTTPS/TLS 终止（feature = "tls"）。
     ///
-    /// 设置证书和私钥文件路径后，`listen()` 使用 `axum_server::bind_rustls`
-    /// 替代 `axum::serve`，对外网和内网端口均启用 TLS。
-    ///
-    /// # 参数
-    /// - `cert_path`：PEM 格式证书文件路径
-    /// - `key_path`：PEM 格式私钥文件路径
+    /// `listen()` 使用 `axum_server::bind_rustls` 替代 `axum::serve`，对外网和内网端口均启用 TLS。
     ///
     /// # 示例
     ///
@@ -365,15 +309,11 @@ impl GarrisonAuthServer {
 
     /// 构建外网路由（sdforge + path-filter + rate_limit + audit_log + tenant_resolution）。
     ///
-    /// 用 `sdforge::http::build()` 收集所有 `#[forge]` 路由（15 基础 + metrics-prometheus 时 +1），
-    /// 通过 `external_path_filter` 中间件仅放行 3 个外网路径（login/logout/refresh），
-    /// 其余内网路径返回 404。
+    /// `sdforge::http::build()` 收集所有 `#[forge]` 路由（15 基础 + metrics-prometheus 时 +1），
+    /// `external_path_filter` 仅放行 3 个外网路径（login/logout/refresh），其余 404。
     ///
-    /// 中间件栈（从外到内）：
-    /// `audit_log → rate_limit → external_path_filter → tenant_resolution? → handler`
-    ///
-    /// `tenant_resolution_middleware` 仅在 `tenant-isolation` feature 启用且
-    /// `with_tenant_resolver(Some(..))` 设置时注入。
+    /// 中间件栈（从外到内）：`audit_log → rate_limit → external_path_filter → tenant_resolution? → handler`；
+    /// tenant_resolution 仅在 `tenant-isolation` 启用且 `with_tenant_resolver(Some(..))` 时注入。
     ///
     /// 用于测试时通过 `tower::ServiceExt::oneshot` 发送请求，避免实际 listen。
     pub fn external_router(&self) -> Router {
@@ -383,30 +323,29 @@ impl GarrisonAuthServer {
             self.config.rate_limit_max_entries,
             self.config.rate_limit_trusted_proxies.clone(),
         ));
-        // fix-security-gaps: 可信代理列表注入 Extension，供 inject_client_ip middleware 读取
+        // 可信代理列表注入 Extension，供 inject_client_ip middleware 读取
         let trusted_proxies =
             middleware::TrustedProxies(self.config.rate_limit_trusted_proxies.clone());
         let router = sdforge::http::build()
             .layer(Extension(self.backend.clone()))
-            // C-1: 外网 login 端点默认关闭（secure-by-default）。
-            // 框架 login 不校验凭证，业务方注入凭证校验后经
-            // with_external_login_enabled(true) 显式开启。
+            // 外网 login 端点默认关闭（secure-by-default）：框架 login 不校验凭证，
+            // 业务方注入凭证校验后经 with_external_login_enabled(true) 显式开启。
             .layer(axum::middleware::from_fn_with_state(
                 middleware::ExternalLoginGate(self.config.external_login_enabled),
                 middleware::external_login_gate,
             ))
             .layer(axum::middleware::from_fn(middleware::external_path_filter))
-            // fix-security-gaps: IP 自动注入 middleware（path_filter 之后、rate_limit 之前）
+            // IP 自动注入（path_filter 之后、rate_limit 之前）
             .layer(axum::middleware::from_fn(
                 middleware::inject_login_client_ip,
             ))
-            // GAR-27: Json extractor rejection（400/413/415/422）统一清洗，
+            // Json extractor rejection（400/413/415/422）统一清洗，
             // 不向调用方回显内部类型名/字段名/字节偏移
             .layer(axum::middleware::from_fn(
                 middleware::sanitize_json_rejection_middleware,
             ))
             .layer(axum::middleware::from_fn(middleware::inject_client_ip))
-            // User-Agent 注入 middleware（在 inject_client_ip 之后）
+            // User-Agent 注入（在 inject_client_ip 之后）
             .layer(axum::middleware::from_fn(middleware::inject_user_agent))
             .layer(Extension(trusted_proxies))
             .layer(axum::middleware::from_fn_with_state(
@@ -414,7 +353,7 @@ impl GarrisonAuthServer {
                 rate_limit_middleware,
             ));
 
-        // 安全头中间件：rate_limit 之后、audit_log 之前
+        // 安全头中间件位于 rate_limit 之后、audit_log 之前
         // （axum layer 反序执行：audit_log → security_headers → rate_limit → path_filter）
         #[cfg(feature = "web-security-headers")]
         let router = router.layer(axum::middleware::from_fn(
@@ -445,9 +384,8 @@ impl GarrisonAuthServer {
                     ))
                     .layer(Extension(self.backend.clone()));
 
-                // 租户中间件：axum merge 不合并 layer，必须为 OAuth2 router 单独注入。
-                // 否则 login 写入 key 含 tenant 前缀（`tenant:0:session:xxx`），
-                // 而 OAuth2 端点（principal_inject_middleware → backend.get_session）
+                // axum merge 不合并 layer，OAuth2 router 必须单独注入租户中间件；否则 login 写入的 key
+                // 带 tenant 前缀（`tenant:0:session:xxx`），而 OAuth2 端点（principal_inject → get_session）
                 // 读时无 TENANT scope 导致 key 不带前缀（`session:xxx`），命中失败。
                 #[cfg(feature = "tenant-isolation")]
                 let oauth2_router = {
@@ -470,14 +408,11 @@ impl GarrisonAuthServer {
         #[cfg(feature = "protocol-qrlogin")]
         let router = {
             if let Some(state) = &self.qrlogin_state {
-                // 注：qrlogin 存储键为全局命名空间（garrison:qrlogin:*，租户记在
-                // 会话 JSON 内），刻意不注入 tenant_resolution_middleware——匿名
-                // create/poll 与带租户头的 scan/confirm 必须命中同一批 key。
+                // qrlogin 存储键为全局命名空间（garrison:qrlogin:*，租户记在会话 JSON 内），刻意不注入
+                // tenant_resolution_middleware——匿名 create/poll 与带租户头的 scan/confirm 必须命中同一批 key。
                 //
-                // axum merge 不继承 layer：qrlogin router 必须在 merge 前自带与
-                // 主栈同构的中间件（rate_limit / client_ip / user_agent /
-                // audit_log），否则 4 个端点将绕过外网限流与审计（与下方
-                // oauth2 router 单独注入同一语义）。
+                // axum merge 不继承 layer：必须在 merge 前自带与主栈同构的中间件（rate_limit / client_ip /
+                // user_agent / audit_log），否则 4 个端点将绕过外网限流与审计。
                 let qrlogin_router = qrlogin_routes::qrlogin_external_router(state.clone())
                     .layer(axum::middleware::from_fn(middleware::inject_client_ip))
                     .layer(axum::middleware::from_fn(middleware::inject_user_agent))
@@ -500,9 +435,9 @@ impl GarrisonAuthServer {
             self.config.external_body_limit,
         ));
 
-        // server-health-check：K8s liveness 探针 merge 在最外层——axum merge 不继承
-        // layer，探针绕过 path_filter/rate_limit/audit 全部中间件（K8s 探针惯例）。
-        // GAR-14：外网端口仅暴露最小化 /healthz（无版本号），/readyz 仅挂内网。
+        // server-health-check：K8s 探针 merge 在最外层——axum merge 不继承 layer，探针绕过
+        // path_filter/rate_limit/audit 全部中间件（K8s 探针惯例）。外网端口仅暴露最小化
+        // /healthz（无版本号），/readyz 仅挂内网。
         #[cfg(feature = "server-health-check")]
         let router = router.merge(Self::external_health_probe_router());
 
@@ -511,8 +446,8 @@ impl GarrisonAuthServer {
 
     /// 外网健康探针路由（server-health-check feature）。
     ///
-    /// GAR-14 最小语义：外网仅 `/healthz`，响应只含 `{"status":"healthy"}`——
-    /// 不暴露 sdforge 版本号，不暴露 `/readyz`（readiness 拓扑仅限内网）。
+    /// 最小语义：外网仅 `/healthz`，响应只含 `{"status":"healthy"}`——不暴露 sdforge 版本号，
+    /// 不暴露 `/readyz`（readiness 拓扑仅限内网）。
     #[cfg(feature = "server-health-check")]
     fn external_health_probe_router() -> Router {
         use axum::routing::get;
@@ -521,8 +456,8 @@ impl GarrisonAuthServer {
 
     /// 内网健康探针路由（server-health-check feature）。
     ///
-    /// `/healthz` 最小语义同外网；`/readyz` 依据已注册 readiness check 返回
-    /// 200/503（业务方经 `sdforge::health::register_readiness_check_fn` 注册），
+    /// `/healthz` 同外网最小语义；`/readyz` 按已注册 readiness check
+    /// （`sdforge::health::register_readiness_check_fn`）返回 200/503，
     /// `checks[].details` 仅在 `health_details_enabled=true` 时透传（默认剥离）。
     #[cfg(feature = "server-health-check")]
     fn internal_health_probe_router(&self) -> Router {
@@ -537,25 +472,22 @@ impl GarrisonAuthServer {
 
     /// 构建内网路由（sdforge + path-filter + api_key_auth + rate_limit + audit_log + tenant_resolution）。
     ///
-    /// 用 `sdforge::http::build()` 收集所有 `#[forge]` 路由（15 基础 + metrics-prometheus 时 +1），
-    /// 通过 `internal_path_filter` 中间件拒绝 3 个外网路径（login/logout/refresh），
-    /// 其余内网路径放行（由 api_key_auth 保护）。
+    /// `sdforge::http::build()` 收集所有 `#[forge]` 路由（15 基础 + metrics-prometheus 时 +1），
+    /// `internal_path_filter` 拒绝 3 个外网路径（login/logout/refresh），其余由 api_key_auth 保护。
     ///
     /// # 内网路由保护
     ///
-    /// - 内网路由同样挂载 `rate_limit_middleware`（限速参数复用外网配置：
-    ///   `external_rate_limit_per_ip` / `rate_limit_max_entries` / `rate_limit_trusted_proxies`），
-    ///   防止持有合法 API Key 的调用方无限速打满后端资源。
-    /// - OAuth2 内网路由（introspect）**先 merge 再统一挂中间件**：axum `merge` 不继承
-    ///   layer，若 introspect 路由在挂 layer 后 merge 会绕过 `api_key_auth`。
+    /// - 同样挂载 `rate_limit_middleware`（参数复用外网配置：`external_rate_limit_per_ip` /
+    ///   `rate_limit_max_entries` / `rate_limit_trusted_proxies`），防止持有合法 API Key 的调用方
+    ///   无限速打满后端资源。
+    /// - OAuth2 内网路由（introspect）**先 merge 再统一挂中间件**：axum `merge` 不继承 layer，
+    ///   若 introspect 在挂 layer 后 merge 会绕过 `api_key_auth`。
     ///
-    /// 中间件栈（从外到内）：
-    /// `tenant_resolution? → audit_log → rate_limit → api_key_auth → internal_path_filter → handler`
-    ///
+    /// 中间件栈（从外到内）：`tenant_resolution? → audit_log → rate_limit → api_key_auth → internal_path_filter → handler`。
     /// 用于测试时通过 `tower::ServiceExt::oneshot` 发送请求，避免实际 listen。
     pub fn internal_router(&self) -> Router {
         use axum::Extension;
-        // GAR-25: 认证失败锁定由配置驱动（threshold=0 禁用）
+        // 认证失败锁定由配置驱动（threshold=0 禁用）
         let api_key_state = Arc::new(middleware::ApiKeyState {
             api_key: self.config.internal_api_key.clone(),
             lockout: Arc::new(super::api_key_lockout::ApiKeyLockout::new(
@@ -572,9 +504,8 @@ impl GarrisonAuthServer {
 
         let router = sdforge::http::build().layer(Extension(self.backend.clone()));
 
-        // OAuth2 内网路由（introspect）先 merge，再统一在内网 router 上
-        // 挂 path_filter / api_key_auth / rate_limit / audit_log，
-        // 确保 merge 进来的路由不绕过 api_key_auth（axum merge 不继承 layer）。
+        // OAuth2 introspect 先 merge 再统一挂中间件：axum merge 不继承 layer，
+        // 先挂 layer 再 merge 会绕过 api_key_auth。
         #[cfg(feature = "oauth2-server")]
         let router = {
             if let Some(state) = &self.oauth2_state {
@@ -590,8 +521,8 @@ impl GarrisonAuthServer {
                 api_key_state,
                 api_key_auth_middleware,
             ))
-            // GAR-27: 内网端点同样统一清洗 Json rejection（类型名不因内网信任
-            // 边界而豁免——单 key 泄露即可触达）
+            // 内网端点同样统一清洗 Json rejection（类型名不因内网信任边界而豁免——
+            // 单 key 泄露即可触达）
             .layer(axum::middleware::from_fn(
                 middleware::sanitize_json_rejection_middleware,
             ))
@@ -621,38 +552,34 @@ impl GarrisonAuthServer {
         ));
 
         // server-health-check：内网探针同样 merge 在最外层（绕过 api_key_auth，
-        // K8s 探针不持有 API Key）；/readyz 的 details 经配置门控（GAR-14）
+        // K8s 探针不持有 API Key）；/readyz 的 details 经配置门控
         #[cfg(feature = "server-health-check")]
         let router = router.merge(self.internal_health_probe_router());
 
         router
     }
 
-    /// 同时启动外网和内网两个 axum 服务器。
-    ///
-    /// 两个服务器并行运行，任一服务器异常退出时整体返回错误。
+    /// 同时启动外网和内网两个 axum 服务器，任一服务器异常退出时整体返回错误。
     ///
     /// # 绑定地址
     ///
-    /// 由配置驱动：默认 **0.0.0.0**（向后兼容），经 `with_external_bind` /
-    /// `with_internal_bind` 显式收口绑定面；TCP 与 TLS 两条路径使用同一地址。
+    /// 由配置驱动：默认 **0.0.0.0**，经 `with_external_bind` / `with_internal_bind` 显式收口；
+    /// TCP 与 TLS 两条路径使用同一地址。
     ///
     /// # TLS 终止
     ///
-    /// 启用 `tls` feature 且调用 `with_tls()` 后，两个端口均使用
-    /// `axum_server::bind_rustls` 替代 `axum::serve`，实现 HTTPS/TLS 终止。
+    /// 启用 `tls` feature 且调用 `with_tls()` 后，两个端口均用 `axum_server::bind_rustls` 替代
+    /// `axum::serve`，实现 HTTPS/TLS 终止。
     ///
     /// # 优雅停机（feature = "server-graceful-shutdown"）
     ///
-    /// SIGTERM / SIGINT 触发后：停止接收新连接，等待在途请求完成（drain），
-    /// 复用 manager cleanup task 的 watch 基建语义。TLS 路径经
+    /// SIGTERM / SIGINT 触发后停止接收新连接并 drain 在途请求；TLS 路径经
     /// `axum_server::Handle::graceful_shutdown`（30s 上限）等效实现。
     pub async fn listen(self) -> GarrisonResult<()> {
         // 启动前校验配置合法性
         self.config.validate().map_err(GarrisonError::Config)?;
 
-        // 启动期维护（R18 R-consent-004）：清理引用已删 client 的孤儿 consent 行。
-        // fail-open：维护失败仅告警，不阻断启动（见函数文档）。
+        // 启动期维护：清理引用已删 client 的孤儿 consent 行（fail-open，失败仅告警，见函数文档）
         #[cfg(feature = "oauth2-server")]
         if let Some(state) = &self.oauth2_state {
             oauth2_consent_startup_reconcile(state).await;
@@ -670,8 +597,8 @@ impl GarrisonAuthServer {
             notify
         };
 
-        // 绑定地址由配置驱动（默认 0.0.0.0 向后兼容；with_external_bind/
-        // with_internal_bind 可收口），TCP 与 TLS 路径共用同一 SocketAddr
+        // 绑定地址由配置驱动（默认 0.0.0.0；with_external_bind/with_internal_bind 可收口），
+        // TCP 与 TLS 路径共用同一 SocketAddr
         let external_addr =
             std::net::SocketAddr::new(self.config.external_bind, self.config.external_port);
         let internal_addr =
@@ -692,7 +619,7 @@ impl GarrisonAuthServer {
             internal_port = self.config.internal_port,
             "GarrisonAuthServer starting"
         );
-        // C-1: 显式开启外网 login 时提醒业务方凭证校验责任
+        // 显式开启外网 login 时提醒业务方凭证校验责任
         if self.config.external_login_enabled {
             tracing::warn!(
                 external_port = self.config.external_port,
@@ -754,9 +681,8 @@ impl GarrisonAuthServer {
                 external_listener,
                 external_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
             );
-            // 信号触发后停止接收新连接并 drain 在途请求；drain 最长 30s（与 TLS 路径
-            // axum_server 上限对齐，同一常量）。超时后停止等待并返回：本调用不再被
-            // 卡死连接无限拖延（随附 bin 场景下进程退出收尾在途连接任务）
+            // 信号触发后停止接收新连接并 drain 在途请求，drain 最长 30s（与 TLS 路径同一常量）；
+            // 超时后停止等待并返回，避免被卡死连接无限拖延（随附 bin 场景下进程退出收尾在途连接任务）
             #[cfg(feature = "server-graceful-shutdown")]
             {
                 let drain_notify = std::sync::Arc::clone(&shutdown_notify);
@@ -833,8 +759,8 @@ impl GarrisonAuthServer {
                 let bind = bind.handle(handle);
                 return bind
                     .serve(
-                        // 内网 TLS 路径同样注入 ConnectInfo，
-                        // 与外网路径对齐（限速/IP 提取中间件依赖 ConnectInfo<SocketAddr>）
+                        // 内网 TLS 路径同样注入 ConnectInfo，与外网对齐
+                        // （限速/IP 提取中间件依赖 ConnectInfo<SocketAddr>）
                         internal_router
                             .into_make_service_with_connect_info::<std::net::SocketAddr>(),
                     )
@@ -852,9 +778,8 @@ impl GarrisonAuthServer {
                 // 内网非 TLS 路径同样注入 ConnectInfo（与外网对齐）
                 internal_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
             );
-            // 信号触发后停止接收新连接并 drain 在途请求；drain 最长 30s（与 TLS 路径
-            // axum_server 上限对齐，同一常量）。超时后停止等待并返回：本调用不再被
-            // 卡死连接无限拖延（随附 bin 场景下进程退出收尾在途连接任务）
+            // 信号触发后停止接收新连接并 drain 在途请求，drain 最长 30s（与 TLS 路径同一常量）；
+            // 超时后停止等待并返回，避免被卡死连接无限拖延（随附 bin 场景下进程退出收尾在途连接任务）
             #[cfg(feature = "server-graceful-shutdown")]
             {
                 let drain_notify = std::sync::Arc::clone(&shutdown_notify);
@@ -915,9 +840,7 @@ impl GarrisonAuthServer {
     }
 }
 
-// ============================================================================
 // 优雅停机（feature = "server-graceful-shutdown"）
-// ============================================================================
 
 #[cfg(feature = "server-graceful-shutdown")]
 async fn shutdown_signal() {
@@ -1084,10 +1007,9 @@ mod oauth2_startup_reconcile_tests {
         .unwrap()
     }
 
-    /// listen() 启动接线的实测：删除 client 后启动清理对应 consent 行，
-    /// 存活 client 的记录原样保留（R-consent-004「删除 client 后启动清理
-    /// 对应行」的启动路径用例；reconcile 本体的分支语义见
-    /// authorize.rs `reconcile_removes_orphan_consent_and_keeps_live`）。
+    /// listen() 启动接线的实测：删除 client 后启动清理对应 consent 行，存活 client 的记录原样保留
+    /// （R-consent-004 的启动路径用例；reconcile 本体分支语义见 authorize.rs 的
+    /// `reconcile_removes_orphan_consent_and_keeps_live`）。
     #[tokio::test]
     async fn startup_reconcile_removes_orphan_and_keeps_live() {
         let dao = Arc::new(InMemoryDao::new());
@@ -1154,8 +1076,8 @@ mod oauth2_startup_reconcile_tests {
         crate::atomic_test_fallback!();
     }
 
-    /// reconcile 失败 fail-open：DAO 故障（keys() Err）不向启动路径传播
-    /// 错误、不 panic——listen() 不因维护性清理失败而拒绝启动。
+    /// reconcile 失败 fail-open：DAO 故障（keys() Err）不向启动路径传播错误、不 panic——
+    /// listen() 不因维护性清理失败而拒绝启动。
     #[tokio::test]
     async fn startup_reconcile_failure_is_fail_open() {
         let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(ReconcileFailingDao);

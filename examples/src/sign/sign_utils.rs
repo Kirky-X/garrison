@@ -13,9 +13,7 @@
 use garrison::error::GarrisonResult;
 use garrison::secure::sign::Signer;
 
-/// 运行签名工具示例。
-///
-/// 演示 HMAC-SHA256 / HMAC-SHA512 签名、Base64 编解码互逆、密钥隔离。
+/// 运行签名工具示例：HMAC-SHA256 / HMAC-SHA512 签名、Base64 编解码互逆、密钥隔离。
 pub fn run() -> GarrisonResult<()> {
     println!("=== Garrison 签名工具示例 ===\n");
 

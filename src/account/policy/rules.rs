@@ -1,40 +1,14 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 密码策略规则实现。
-//! 提供 9 条可插拔密码策略规则。
-//! 分为核心规则与扩展规则两类。
-//!
-//! # 核心规则
-//!
-//! | 规则 | `name()` | 说明 |
-//! |:---|:---|:---|
-//! | `LengthRule` | `"length"` | 长度规则（min/max，含边界） |
-//! | `HistoryRule` | `"history"` | 密码历史规则（最近 N 条 hash 比对） |
-//! | `BlacklistRule` | `"blacklist"` | 黑名单规则（精确匹配） |
-//! | `NotUsernameRule` | `"not_username"` | 用户名相似规则（大小写不敏感子串） |
-//! | `NotCommonPasswordRule` | `"not_common_password"` | 常见密码规则（精确匹配） |
-//!
-//! # 扩展规则
-//!
-//! | 规则 | `name()` | 说明 |
-//! |:---|:---|:---|
-//! | `MaxAgeRule` | `"max_age"` | 密码过期规则（检测 `password_created_at`） |
-//! | `DictionaryRule` | `"dictionary"` | 字典规则（精确匹配） |
-//! | `NotEmailRule` | `"not_email"` | 邮箱规则（大小写不敏感子串检测邮箱前缀） |
-//! | `RegexRule` | `"regex"` | 自定义正则规则（匹配即报错） |
+//! 密码策略规则实现：核心规则（Length/History/Blacklist/NotUsername/NotCommonPassword）与扩展规则
+//! （MaxAge/Dictionary/NotEmail/Regex）共 9 条，`name()` 与规则语义一一对应。
 
 use super::{PasswordPolicyRule, PolicyContext, PolicyError};
 use crate::account::credential::PasswordVerifier;
 use crate::loc;
 
-// ============================================================================
-// LengthRule
-// ============================================================================
-
-/// 长度规则。
-///
-/// 校验密码长度在 `[min, max]` 范围内（含边界）。
+/// 长度规则：校验密码长度在 `[min, max]` 范围内（含边界）。
 ///
 /// # 示例
 ///
@@ -55,11 +29,7 @@ pub struct LengthRule {
 }
 
 impl LengthRule {
-    /// 创建长度规则。
-    ///
-    /// # 参数
-    /// - `min`: 最小长度（含）
-    /// - `max`: 最大长度（含）
+    /// 创建长度规则（`min` / `max` 均含边界）。
     pub fn new(min: u32, max: u32) -> Self {
         Self { min, max }
     }
@@ -89,34 +59,15 @@ impl PasswordPolicyRule for LengthRule {
     }
 }
 
-// ============================================================================
-// HistoryRule
-// ============================================================================
-
-/// `HistoryRule` 允许的最大历史比对条数（硬上限，DoS 防护）。
-///
-/// 每条历史 hash 的比对是 Argon2/Bcrypt KDF（数十毫秒/次）；`count` 无上限时，
-/// 攻击者触发频繁密码修改可放大为 CPU 耗尽。超过上限的 `count` 被钳制到 24
-/// （业界常见密码历史窗口 10~24 条）。
+/// `HistoryRule` 允许的最大历史比对条数（硬上限，DoS 防护）：每条历史 hash 比对为 Argon2/Bcrypt KDF
+/// （数十毫秒/次），`count` 无上限时攻击者可借频繁改密放大为 CPU 耗尽；超过上限钳制到 24（业界常见窗口 10~24）。
 const MAX_HISTORY_COUNT: u32 = 24;
 
-/// 密码历史规则。
+/// 密码历史规则：校验密码不与 `ctx.password_history` 最近 `count` 条 hash 相同（`PasswordVerifier`
+/// 自动识别 Argon2/Bcrypt）。
 ///
-/// 校验密码不允许与 `ctx.password_history` 最近 `count` 条 hash 相同。
-/// 使用 `PasswordVerifier` 自动识别 hash 格式（Argon2/Bcrypt）进行校验。
-///
-/// # hash 比对
-///
-/// `password_history` 存储 hash（非明文），规则使用 `PasswordVerifier::verify`
-/// 逐一校验明文密码与历史 hash 是否匹配。无效格式的 hash 会被跳过
-/// （不阻塞密码修改，避免历史数据损坏影响正常使用），跳过时记录
-/// `tracing::warn` 保持可观测（fail-open 但不静默）。
-///
-/// # 性能上限
-///
-/// 每条比对为同步 KDF 校验（Argon2id m=19456 约数十毫秒），`count` 在
-/// [`HistoryRule::new`] 中被钳制到 `MAX_HISTORY_COUNT`（24），单次密码修改
-/// 的最坏校验耗时可控。
+/// hash 无效格式会被跳过（fail-open，避免历史数据损坏阻塞改密），但记录 `tracing::warn`（不静默）；
+/// `count` 在 [`HistoryRule::new`] 中钳制到 `MAX_HISTORY_COUNT`，最坏校验耗时可控。
 ///
 /// # 示例
 ///
@@ -135,12 +86,7 @@ pub struct HistoryRule {
 }
 
 impl HistoryRule {
-    /// 创建密码历史规则。
-    ///
-    /// # 参数
-    /// - `count`: 比对的历史 hash 数量（从 `password_history` 末尾取最近
-    ///   `count` 条）。超过 `MAX_HISTORY_COUNT`（24）时钳制到上限，
-    ///   防止热路径无上限循环 KDF 校验（DoS/阻塞风险）。
+    /// 创建密码历史规则；`count` 超过 [`MAX_HISTORY_COUNT`]（24）时钳制到上限，防热路径无上限 KDF 校验。
     pub fn new(count: u32) -> Self {
         Self {
             count: count.min(MAX_HISTORY_COUNT),
@@ -163,11 +109,8 @@ impl PasswordPolicyRule for HistoryRule {
             .len()
             .saturating_sub(self.count as usize);
         for hash in &ctx.password_history[start..] {
-            // PasswordVerifier::verify 返回 GarrisonResult<bool>:
-            // - Ok(true): 密码匹配历史 hash → 规则失败
-            // - Ok(false): 不匹配 → 继续检查下一条
-            // - Err(_): hash 格式无效 → 跳过（fail-open，不阻塞密码修改），
-            // 但记录 warn 保持可观测（不静默吞掉）
+            // Ok(true)=匹配 → 规则失败；Ok(false)=不匹配 → 继续；Err=hash 格式无效 → 跳过
+            // （fail-open，不阻塞改密）但记录 warn 保持可观测（不静默吞掉）
             match PasswordVerifier::verify(password, hash) {
                 Ok(true) => {
                     return Err(PolicyError::new(
@@ -189,23 +132,14 @@ impl PasswordPolicyRule for HistoryRule {
     }
 }
 
-// ============================================================================
-// BlacklistRule
-// ============================================================================
-
-/// 黑名单规则。
-///
-/// 校验密码不在黑名单列表中（精确匹配，非子串匹配）。
+/// 黑名单规则：校验密码不在黑名单列表中（精确匹配，非子串匹配）。
 pub struct BlacklistRule {
     /// 黑名单密码列表。
     passwords: Vec<String>,
 }
 
 impl BlacklistRule {
-    /// 创建黑名单规则。
-    ///
-    /// # 参数
-    /// - `passwords`: 黑名单密码列表（精确匹配）
+    /// 创建黑名单规则（`passwords` 精确匹配）。
     pub fn new(passwords: Vec<String>) -> Self {
         Self { passwords }
     }
@@ -227,14 +161,8 @@ impl PasswordPolicyRule for BlacklistRule {
     }
 }
 
-// ============================================================================
-// NotUsernameRule
-// ============================================================================
-
-/// 用户名相似规则。
-///
-/// 校验密码不包含 `ctx.username`（大小写不敏感子串检测）。
-/// `ctx.username` 为 `None` 或空字符串时规则通过。
+/// 用户名相似规则：校验密码不包含 `ctx.username`（大小写不敏感子串检测）；
+/// `ctx.username` 为 `None` 或空字符串时通过。
 pub struct NotUsernameRule;
 
 impl NotUsernameRule {
@@ -262,7 +190,6 @@ impl PasswordPolicyRule for NotUsernameRule {
         if username.is_empty() {
             return Ok(());
         }
-        // 大小写不敏感子串检测
         let password_lower = password.to_lowercase();
         let username_lower = username.to_lowercase();
         if password_lower.contains(&username_lower) {
@@ -275,13 +202,7 @@ impl PasswordPolicyRule for NotUsernameRule {
     }
 }
 
-// ============================================================================
-// NotCommonPasswordRule
-// ============================================================================
-
-/// 常见密码规则。
-///
-/// 校验密码不在常见密码列表中（精确匹配，非子串匹配）。
+/// 常见密码规则：校验密码不在常见密码列表中（精确匹配，非子串匹配）；
 /// `common_list` 通常为 top 10000 常见密码列表。
 pub struct NotCommonPasswordRule {
     /// 常见密码列表。
@@ -289,10 +210,7 @@ pub struct NotCommonPasswordRule {
 }
 
 impl NotCommonPasswordRule {
-    /// 创建常见密码规则。
-    ///
-    /// # 参数
-    /// - `common_list`: 常见密码列表（精确匹配）
+    /// 创建常见密码规则（`common_list` 精确匹配）。
     pub fn new(common_list: Vec<String>) -> Self {
         Self { common_list }
     }
@@ -314,29 +232,17 @@ impl PasswordPolicyRule for NotCommonPasswordRule {
     }
 }
 
-// ============================================================================
-// MaxAgeRule
-// ============================================================================
-
-/// 密码过期规则。
+/// 密码过期规则：校验密码是否超过 `days` 天未修改（`days = 0` 表示立即过期）。
 ///
-/// 校验密码是否超过 `days` 天未修改。
-///
-/// # 过期检测
-///
-/// 通过 `PolicyContext::password_created_at`（Unix 秒）判断密码年龄：
-/// - `None` → **fail-open**（创建时间未知，无法判断过期，不阻塞密码修改）
-/// - `Some(ts)` → 计算 `now - ts > days * 86400`，过期则返回 `PolicyError`
+/// 经 `ctx.password_created_at`（Unix 秒）判断年龄：`None` 时 fail-open（创建时间未知，
+/// 不阻塞改密）；`Some(ts)` 时 `now - ts > days * 86400` 即报错。
 pub struct MaxAgeRule {
     /// 密码最大有效天数。
     days: u32,
 }
 
 impl MaxAgeRule {
-    /// 创建密码过期规则。
-    ///
-    /// # 参数
-    /// - `days`: 密码最大有效天数（0 表示立即过期）
+    /// 创建密码过期规则（`days` 为最大有效天数）。
     pub fn new(days: u32) -> Self {
         Self { days }
     }
@@ -349,7 +255,6 @@ impl PasswordPolicyRule for MaxAgeRule {
 
     fn validate(&self, ctx: &PolicyContext, _password: &str) -> Result<(), PolicyError> {
         let Some(created_at) = ctx.password_created_at else {
-            // fail-open: PolicyContext 未提供密码创建时间时不阻塞密码修改
             return Ok(());
         };
 
@@ -365,25 +270,15 @@ impl PasswordPolicyRule for MaxAgeRule {
     }
 }
 
-// ============================================================================
-// DictionaryRule
-// ============================================================================
-
-/// 字典规则。
-///
-/// 校验密码不在字典单词列表中（精确匹配，非子串匹配）。
-/// 与 `BlacklistRule` 语义不同：`DictionaryRule` 面向字典攻击防护
-/// （加载系统词典/常见单词列表），`BlacklistRule` 面向已知泄露密码。
+/// 字典规则：校验密码不在字典单词列表中（精确匹配，非子串匹配）。
+/// 与 `BlacklistRule` 区别：本规则面向字典攻击防护（系统词典/常见单词），后者面向已知泄露密码。
 pub struct DictionaryRule {
     /// 字典单词列表。
     dictionary: Vec<String>,
 }
 
 impl DictionaryRule {
-    /// 创建字典规则。
-    ///
-    /// # 参数
-    /// - `dictionary`: 字典单词列表（精确匹配）
+    /// 创建字典规则（`dictionary` 精确匹配）。
     pub fn new(dictionary: Vec<String>) -> Self {
         Self { dictionary }
     }
@@ -405,14 +300,8 @@ impl PasswordPolicyRule for DictionaryRule {
     }
 }
 
-// ============================================================================
-// NotEmailRule
-// ============================================================================
-
-/// 邮箱规则。
-///
-/// 校验密码不包含 `ctx.email` 的 `@` 前部分（大小写不敏感子串检测）。
-/// `ctx.email` 为 `None`、无 `@` 或 `@` 前部分为空时规则通过。
+/// 邮箱规则：校验密码不包含 `ctx.email` 的 `@` 前部分（大小写不敏感子串检测）；
+/// `ctx.email` 为 `None`、无 `@` 或前缀为空时通过。
 pub struct NotEmailRule;
 
 impl NotEmailRule {
@@ -444,7 +333,6 @@ impl PasswordPolicyRule for NotEmailRule {
         if local_part.is_empty() {
             return Ok(());
         }
-        // 大小写不敏感子串检测
         let password_lower = password.to_lowercase();
         let local_lower = local_part.to_lowercase();
         if password_lower.contains(&local_lower) {
@@ -457,14 +345,7 @@ impl PasswordPolicyRule for NotEmailRule {
     }
 }
 
-// ============================================================================
-// RegexRule
-// ============================================================================
-
-/// 自定义正则规则。
-///
-/// 校验密码是否匹配 `pattern`（语义：`pattern.is_match(password)` 为 `true` 时报错，
-/// 错误信息使用 `error_msg`）。
+/// 自定义正则规则：`pattern.is_match(password)` 为 `true` 时报错，错误信息使用 `error_msg`。
 ///
 /// # 示例
 ///
@@ -486,11 +367,7 @@ pub struct RegexRule {
 }
 
 impl RegexRule {
-    /// 创建自定义正则规则。
-    ///
-    /// # 参数
-    /// - `pattern`: 正则表达式（`is_match` 为 `true` 时报错）
-    /// - `error_msg`: 匹配时返回的错误信息
+    /// 创建自定义正则规则（`pattern` 匹配即报错，错误信息用 `error_msg`）。
     pub fn new(pattern: regex::Regex, error_msg: String) -> Self {
         Self { pattern, error_msg }
     }
@@ -509,34 +386,11 @@ impl PasswordPolicyRule for RegexRule {
     }
 }
 
-// ============================================================================
-// NistComplianceRule（NIST SP 800-63B 密码策略合规）
-// ============================================================================
-
-/// NIST SP 800-63B 密码策略合规规则。
+/// NIST SP 800-63B 密码策略合规规则：基于 §5.1.1.2 推荐实践，仅校验最小长度（默认 ≥ 8），
+/// 不强制大小写/数字/特殊字符混合（NIST 指出强制复杂度反而降低安全性，用户倾向 `P@ssw0rd` 类替换）。
 ///
-/// 基于 NIST SP 800-63B §5.1.1.2 推荐实践：
-/// - **仅校验最小长度**（默认 ≥ 8 字符），不强制复杂度
-/// - **不强制大写/小写/数字/特殊字符混合**（NIST 不推荐此类规则）
-/// - **HIBP（Have I Been Pwned）检查**由 `policy-hibp` feature 门控（k-anonymity range search），未启用时显性报错
-///
-/// # 设计
-///
-/// NIST SP 800-63B 明确指出强制复杂度规则（混合大小写、数字、特殊字符）反而
-/// 降低密码安全性（用户倾向使用可预测的替换模式如 `P@ssw0rd`）。推荐做法是：
-/// 1. 仅校验最小长度（8 字符以上，鼓励长密码）
-/// 2. 检查密码是否在已知泄露密码库中（HIBP）
-/// 3. 不强制复杂度规则
-///
-/// # HIBP stub
-///
-/// 启用 `policy-hibp` 时经 range search k-anonymity 协议调用真实 HIBP API；
+/// HIBP（Have I Been Pwned）泄露检查由 `policy-hibp` feature 门控（k-anonymity range search）；
 /// 未启用时返回显性 `PolicyError`（fail-closed，不静默放行）。
-///
-/// # 替代关系
-///
-/// `NistComplianceRule` 替代已移除的 `ComplexityRule`（NIST SP 800-63B 不推荐强制复杂度）。
-/// 不需要替代 [`LengthRule`]（NIST 规则内部就是长度校验）。
 ///
 /// # 示例
 ///
@@ -556,10 +410,7 @@ pub struct NistComplianceRule {
 }
 
 impl NistComplianceRule {
-    /// 创建 NIST 合规规则。
-    ///
-    /// # 参数
-    /// - `min_length`: 最小密码长度（含）。NIST SP 800-63B §5.1.1.2 推荐 ≥ 8。
+    /// 创建 NIST 合规规则（`min_length` 为最小长度，NIST SP 800-63B §5.1.1.2 推荐 ≥ 8）。
     ///
     /// # 示例
     ///
@@ -596,18 +447,11 @@ impl NistComplianceRule {
     #[cfg(feature = "policy-hibp")]
     const HIBP_TIMEOUT_SECS: u64 = 3;
 
-    /// HIBP 检查（k-anonymity range search）。
-    ///
-    /// 仅上传本地 SHA-1 哈希的前 5 个 hex 字符（不传明文/完整哈希）；
+    /// HIBP 检查（k-anonymity range search）：仅上传本地 SHA-1 哈希前 5 个 hex 字符（不传明文/完整哈希），
     /// 响应为 `SUFFIX:COUNT` 行，比对剩余 35 字符后缀并累计次数。
     ///
-    /// # 失败策略（proposal 澄清 C-2）
-    ///
-    /// 网络不可达/超时/响应解析失败 → **fail-open**：返回未泄露 + `service_available=false`
-    /// + `warn!` 日志（HIBP 不可达不应锁死全部密码修改），调用方可据
-    /// `service_available` 决定补充审计。
-    ///
-    /// feature `policy-hibp` 关闭时返回显性错误（而非静默通过）。
+    /// 网络不可达/超时/响应解析失败 → fail-open（返回未泄露 + `service_available=false` + `warn!` 日志，
+    /// HIBP 不可达不应锁死全部改密），调用方可据 `service_available` 补充审计；feature 关闭时返回显性错误。
     #[cfg(feature = "policy-hibp")]
     pub async fn check_hibp(&self, password: &str) -> Result<HibpVerdict, PolicyError> {
         self.check_hibp_with_base(password, Self::HIBP_URL).await
@@ -734,10 +578,6 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // LengthRule 测试
-    // ========================================================================
-
     /// 长度在范围内 → 通过。
     #[test]
     fn length_rule_passes_within_range() {
@@ -782,10 +622,6 @@ mod tests {
         let rule = LengthRule::new(8, 128);
         assert_eq!(rule.name(), "length");
     }
-
-    // ========================================================================
-    // HistoryRule 测试
-    // ========================================================================
 
     /// 密码不匹配任何历史 hash → 通过。
     #[test]
@@ -835,7 +671,6 @@ mod tests {
         let h2 = hasher.hash("recent").unwrap();
         let rule = HistoryRule::new(1);
         let ctx = make_ctx(None, vec![&h1, &h2]);
-        // count=1 → 仅检查 h2（最近一条）
         assert!(
             rule.validate(&ctx, "very-old").is_ok(),
             "very-old 不在最近 1 条中，应通过"
@@ -864,7 +699,6 @@ mod tests {
             clamped.count, MAX_HISTORY_COUNT,
             "count 超上限应被钳制到 MAX_HISTORY_COUNT"
         );
-        // 上限以内不钳制
         assert_eq!(HistoryRule::new(5).count, 5);
         assert_eq!(HistoryRule::new(MAX_HISTORY_COUNT).count, MAX_HISTORY_COUNT);
     }
@@ -875,10 +709,6 @@ mod tests {
         let rule = HistoryRule::new(3);
         assert_eq!(rule.name(), "history");
     }
-
-    // ========================================================================
-    // BlacklistRule 测试
-    // ========================================================================
 
     /// 密码不在黑名单 → 通过。
     #[test]
@@ -921,10 +751,6 @@ mod tests {
         let rule = BlacklistRule::new(vec![]);
         assert_eq!(rule.name(), "blacklist");
     }
-
-    // ========================================================================
-    // NotUsernameRule 测试
-    // ========================================================================
 
     /// ctx.username 为 None → 通过。
     #[test]
@@ -974,10 +800,6 @@ mod tests {
         assert_eq!(rule.name(), "not_username");
     }
 
-    // ========================================================================
-    // NotCommonPasswordRule 测试
-    // ========================================================================
-
     /// 密码不在常见密码列表 → 通过。
     #[test]
     fn not_common_password_rule_passes_not_in_list() {
@@ -1019,10 +841,6 @@ mod tests {
         let rule = NotCommonPasswordRule::new(vec![]);
         assert_eq!(rule.name(), "not_common_password");
     }
-
-    // ========================================================================
-    // MaxAgeRule 测试
-    // ========================================================================
 
     /// `password_created_at=None` → fail-open，通过。
     #[test]
@@ -1082,10 +900,6 @@ mod tests {
         assert_eq!(rule.name(), "max_age");
     }
 
-    // ========================================================================
-    // DictionaryRule 测试
-    // ========================================================================
-
     /// 密码不在字典 → 通过。
     #[test]
     fn dictionary_rule_passes_not_in_dictionary() {
@@ -1127,10 +941,6 @@ mod tests {
         let rule = DictionaryRule::new(vec![]);
         assert_eq!(rule.name(), "dictionary");
     }
-
-    // ========================================================================
-    // NotEmailRule 测试
-    // ========================================================================
 
     /// ctx.email 为 None → 通过。
     #[test]
@@ -1212,10 +1022,6 @@ mod tests {
         assert_eq!(rule.name(), "not_email");
     }
 
-    // ========================================================================
-    // RegexRule 测试
-    // ========================================================================
-
     /// 正则不匹配 → 通过。
     #[test]
     fn regex_rule_passes_no_match() {
@@ -1258,10 +1064,6 @@ mod tests {
         let rule = RegexRule::new(regex::Regex::new(r".").unwrap(), "test".to_string());
         assert_eq!(rule.name(), "regex");
     }
-
-    // ========================================================================
-    // 全部 9 个规则可作 Box<dyn PasswordPolicyRule> 使用（对象安全验证）
-    // ========================================================================
 
     /// 9 个规则均可作 `Box<dyn PasswordPolicyRule>` 使用。
     #[test]
@@ -1311,7 +1113,7 @@ mod hibp_tests {
     #[tokio::test]
     async fn hibp_hit_reports_pwned() {
         let server = MockServer::start().await;
-        let hex = sha1_hex(format!("{}_{}", "i_am_leaked", 2024));
+        let hex = sha1_hex(&format!("{}_{}", "i_am_leaked", 2024));
         let suffix = &hex[5..];
         Mock::given(method("GET"))
             .and(path_regex(r"/range/[0-9a-f]{5}".to_string()))
@@ -1324,7 +1126,7 @@ mod hibp_tests {
         let rule = NistComplianceRule::new(8);
         let verdict = rule
             .check_hibp_with_base(
-                format!("{}_{}", "i_am_leaked", 2024),
+                &format!("{}_{}", "i_am_leaked", 2024),
                 &format!("{}/range", server.uri()),
             )
             .await
@@ -1351,7 +1153,7 @@ mod hibp_tests {
         let rule = NistComplianceRule::new(8);
         let verdict = rule
             .check_hibp_with_base(
-                format!("{}_{}", "totally_clean_password", "xyz"),
+                &format!("{}_{}", "totally_clean_password", "xyz"),
                 &format!("{}/range", server.uri()),
             )
             .await
@@ -1374,7 +1176,7 @@ mod hibp_tests {
         let rule = NistComplianceRule::new(8);
         let verdict = rule
             .check_hibp_with_base(
-                format!("{}_pw", "whatever"),
+                &format!("{}_pw", "whatever"),
                 &format!("{}/range", server.uri()),
             )
             .await
@@ -1396,7 +1198,7 @@ mod hibp_tests {
         let rule = NistComplianceRule::new(8);
         let verdict = rule
             .check_hibp_with_base(
-                format!("{}_pw", "malformed_response"),
+                &format!("{}_pw", "malformed_response"),
                 &format!("{}/range", server.uri()),
             )
             .await
@@ -1415,7 +1217,7 @@ mod hibp_tests {
 
         let rule = NistComplianceRule::new(8);
         let verdict = rule
-            .check_hibp_with_base(format!("{}_pw", "unreachable"), &format!("http://{addr}"))
+            .check_hibp_with_base(&format!("{}_pw", "unreachable"), &format!("http://{addr}"))
             .await
             .unwrap();
         assert!(!verdict.pwned);

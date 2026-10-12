@@ -1,10 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! [`PasswordPolicyEngine`] 实现。
-//!
-//! 引擎按 [`ErrorMode`] 执行规则校验，支持 `FirstError`（短路）/ `AllErrors`（收集）两种模式。
-//! 实现自父模块迁移（mod.rs 接口隔离）。
+//! [`PasswordPolicyEngine`] 实现：按 [`ErrorMode`] 执行规则校验，`FirstError` 短路、`AllErrors` 收集。
 
 #[cfg(feature = "metrics-prometheus")]
 use std::sync::Arc;
@@ -12,11 +9,7 @@ use std::sync::Arc;
 use super::{ErrorMode, PasswordPolicyEngine, PasswordPolicyRule, PolicyContext, PolicyError};
 
 impl PasswordPolicyEngine {
-    /// 创建密码策略引擎。
-    ///
-    /// # 参数
-    /// - `rules`: 规则列表（按顺序执行）
-    /// - `mode`: 错误返回模式
+    /// 创建密码策略引擎：`rules` 按顺序执行，`mode` 控制错误返回模式。
     pub fn new(rules: Vec<Box<dyn PasswordPolicyRule>>, mode: ErrorMode) -> Self {
         Self {
             rules,
@@ -26,10 +19,8 @@ impl PasswordPolicyEngine {
         }
     }
 
-    /// 注入账号安全指标（builder 模式，需启用 `metrics-prometheus` feature）。
-    ///
-    /// 注入后 `validate` 对每条规则计时，调用 `observe_policy_validate(rule.name(), duration)`。
-    /// 未注入时校验逻辑不变，仅不记录指标。
+    /// 注入指标（builder，需 `metrics-prometheus` feature）：注入后 `validate` 对每条规则计时并
+    /// 调用 `observe_policy_validate(rule.name(), duration)`；未注入时校验逻辑不变，仅不记录指标。
     #[cfg(feature = "metrics-prometheus")]
     pub fn with_metrics(mut self, metrics: Arc<crate::account::metrics::AccountMetrics>) -> Self {
         self.metrics = Some(metrics);
@@ -38,15 +29,8 @@ impl PasswordPolicyEngine {
 
     /// 校验密码是否符合所有规则。
     ///
-    /// # 参数
-    /// - `ctx`: 策略上下文
-    /// - `password`: 待校验密码
-    ///
-    /// # 返回
-    /// - `Ok(())`: 所有规则通过（或空规则集）
-    /// - `Err(Vec<PolicyError>)`: 规则失败
-    /// - `FirstError` 模式：`Vec` 含 1 个元素（首条失败规则）
-    /// - `AllErrors` 模式：`Vec` 含所有失败规则的错误
+    /// `FirstError` 模式返回首个失败规则的错误（`Vec` 单元素），`AllErrors` 收集全部失败；
+    /// 规则集为空视为通过。
     pub fn validate(&self, ctx: &PolicyContext, password: &str) -> Result<(), Vec<PolicyError>> {
         let mut errors = Vec::new();
         for rule in &self.rules {

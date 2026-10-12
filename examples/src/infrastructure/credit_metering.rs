@@ -5,13 +5,7 @@
 //!
 //! 对应模块：`src/credit/`（`credit-metering` feature 开启时可用）。
 //!
-//! 流程：
-//! 1. 构造 CreditConfig（配额上限 + 周期模式 + 资源权重 + 告警阈值）
-//! 2. 创建 CreditMeter 计量引擎
-//! 3. 消费 credit（按资源权重扣减）
-//! 4. 查询使用情况
-//! 5. 触发告警阈值
-//! 6. 手动重置
+//! 流程：构造 CreditConfig → 创建 CreditMeter → 消费 credit（按资源权重扣减）→ 查询使用情况 → 触发告警阈值 → 手动重置。
 //!
 //! 运行方式：
 //! ```sh

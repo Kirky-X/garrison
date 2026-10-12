@@ -1,11 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 监听器层测试 mock 实现。
-//!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `OkListener` / `ErrListener` 两个 GarrisonListener mock（通过 `inventory` 编译期注册），
-//! 供 `listener::tests` 事件广播与监听器管理测试复用。
+//! 监听器层测试 mock 实现（`cfg(test)`）：`OkListener` / `ErrListener` 两个
+//! GarrisonListener mock（inventory 编译期注册），供 `listener::tests` 复用。
 
 use super::{GarrisonEvent, GarrisonListener, GarrisonListenerEntry};
 use crate::error::{GarrisonError, GarrisonResult};

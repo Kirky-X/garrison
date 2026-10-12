@@ -1,12 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! ABAC 模块测试（从 mod.rs 迁移）。
+//! ABAC 模块测试。
 
 use super::*;
 use std::sync::Arc;
 
-/// 全局引擎未初始化时 check_abac_with_policy fail-closed 返回 Err(Config)。
 #[tokio::test]
 #[serial_test::serial]
 async fn check_abac_with_policy_no_engine_returns_err() {
@@ -31,7 +30,6 @@ async fn check_abac_with_policy_no_engine_returns_err() {
     reset_abac_for_test();
 }
 
-/// init_abac_engine 重复调用返回错误。
 #[tokio::test]
 #[serial_test::serial]
 async fn init_abac_engine_duplicate_fails() {
@@ -54,7 +52,6 @@ async fn init_abac_engine_duplicate_fails() {
     reset_abac_for_test();
 }
 
-/// init_abac_engine 成功初始化后 get_abac_engine 返回 Some。
 #[tokio::test]
 #[serial_test::serial]
 async fn init_abac_engine_success_then_get_returns_some() {
@@ -79,7 +76,6 @@ async fn init_abac_engine_success_then_get_returns_some() {
     reset_abac_for_test();
 }
 
-/// get_abac_engine 未初始化时返回 Ok(None)。
 #[tokio::test]
 #[serial_test::serial]
 async fn get_abac_engine_returns_none_when_not_initialized() {
@@ -94,7 +90,6 @@ async fn get_abac_engine_returns_none_when_not_initialized() {
     reset_abac_for_test();
 }
 
-/// init_abac_engine 重复调用返回 Config 错误（验证错误类型）。
 #[tokio::test]
 #[serial_test::serial]
 async fn init_abac_engine_duplicate_returns_config_error() {
@@ -128,7 +123,6 @@ async fn init_abac_engine_duplicate_returns_config_error() {
     reset_abac_for_test();
 }
 
-/// reset_abac_for_test 清除引擎后 get_abac_engine 返回 None。
 #[tokio::test]
 #[serial_test::serial]
 async fn reset_abac_for_test_clears_engine() {
@@ -146,7 +140,6 @@ async fn reset_abac_for_test_clears_engine() {
     assert!(get_abac_engine().unwrap().is_none(), "reset 后应返回 None");
 }
 
-/// check_abac_with_policy 在引擎未初始化时对任意 action 均返回 Err(Config)。
 #[tokio::test]
 #[serial_test::serial]
 async fn check_abac_with_policy_no_engine_various_actions() {
@@ -170,12 +163,9 @@ async fn check_abac_with_policy_no_engine_various_actions() {
     reset_abac_for_test();
 }
 
-// ========================================================================
 // check_abac_with_policy 实际求值路径测试（引擎已初始化）
-// 覆盖 lines 126-157：engine 求值 + Allow/Deny/NotLogin 分支
-// ========================================================================
 
-/// 测试用 Cedar schema JSON（与 engine.rs 测试一致）。
+/// 测试用 Cedar schema（与 engine.rs 测试一致）。
 const EVAL_SCHEMA_JSON: &str = r#"{
         "": {
             "entityTypes": {
@@ -227,9 +217,6 @@ async fn init_manager_for_abac() {
         .unwrap();
 }
 
-/// 引擎已初始化且用户已登录时，abac_expr "1 == 1" 求值 Allow → 返回 Ok。
-///
-/// 覆盖 lines 126-131, 138-153（engine 获取 + principal/action 构造 + evaluate + Allow 分支）。
 #[tokio::test]
 #[serial_test::serial]
 async fn check_abac_with_policy_engine_initialized_allow() {
@@ -261,9 +248,6 @@ async fn check_abac_with_policy_engine_initialized_allow() {
     crate::manager::GarrisonManager::reset_for_test();
 }
 
-/// 引擎已初始化且用户已登录时，abac_expr "principal != principal" 求值 Deny → 返回 Err(NotPermission)。
-///
-/// 覆盖 lines 154-157（Deny 分支 → Err(NotPermission)）。
 #[tokio::test]
 #[serial_test::serial]
 async fn check_abac_with_policy_engine_initialized_deny() {
@@ -302,9 +286,6 @@ async fn check_abac_with_policy_engine_initialized_deny() {
     crate::manager::GarrisonManager::reset_for_test();
 }
 
-/// 引擎已初始化但未登录时（无 token 上下文）→ 返回 Err(NotLogin)。
-///
-/// 覆盖 lines 132-136（get_login_id 返回 None → NotLogin 分支）。
 #[tokio::test]
 #[serial_test::serial]
 async fn check_abac_with_policy_not_logged_in_returns_not_login() {
@@ -338,17 +319,9 @@ async fn check_abac_with_policy_not_logged_in_returns_not_login() {
     crate::manager::GarrisonManager::reset_for_test();
 }
 
-// ========================================================================
 // resource 注入防御测试
-// 验证恶意 resource 字符串被 Cedar 解析器拒绝（fail-closed，返回 Err 而非 Allow）
-// ========================================================================
 
-/// resource 注入尝试 `Resource::"x"); forbid(principal); //"` 应被 Cedar 解析拒绝。
-///
-/// resource 由调用方显式传入，移除硬编码。
-/// 蓝军视角：若攻击者能控制 resource 字符串，可能注入 Cedar 策略语法。
-/// 防御层：`evaluate_with_temp_policy` 内部 `EntityUid::parse` 拒绝非合法 EntityUid 字符串。
-/// 预期：返回 `Err(InvalidParam)`（Cedar 解析失败），而非 `Ok(())` 或 `Err(NotPermission)`。
+/// 恶意 resource 字符串（如 `Resource::"x"); forbid(principal); //"`）应被 Cedar `EntityUid::parse` 拒绝为 `InvalidParam`（fail-closed），不得 Ok/NotPermission。
 #[tokio::test]
 #[serial_test::serial]
 async fn check_abac_with_policy_rejects_resource_injection() {
@@ -395,9 +368,6 @@ async fn check_abac_with_policy_rejects_resource_injection() {
     crate::manager::GarrisonManager::reset_for_test();
 }
 
-/// 合法 resource 参数（如 `Resource::"order"`）应正常通过 Cedar 解析。
-///
-/// 验证合法场景不被破坏：resource 参数为合法 EntityUid 时正常求值。
 #[tokio::test]
 #[serial_test::serial]
 async fn check_abac_with_policy_accepts_legitimate_resource() {
@@ -426,12 +396,8 @@ async fn check_abac_with_policy_accepts_legitimate_resource() {
     crate::manager::GarrisonManager::reset_for_test();
 }
 
-// ========================================================================
-// A3: validate_abac_expr — 防御 Cedar 策略注入
-// 验证 abac_expr 参数中的恶意模式被拒绝，合法表达式被接受
-// ========================================================================
+// validate_abac_expr — 防御 Cedar 策略注入
 
-/// 合法 abac_expr 应通过校验。
 #[test]
 fn validate_abac_expr_accepts_legitimate_expressions() {
     assert!(validate_abac_expr("resource.owner == principal.id").is_ok());
@@ -443,7 +409,6 @@ fn validate_abac_expr_accepts_legitimate_expressions() {
     .is_ok());
 }
 
-/// 拒绝 `};` 模式（尝试闭合 when 块并注入新策略）。
 #[test]
 fn validate_abac_expr_rejects_policy_termination() {
     let payloads = [
@@ -461,7 +426,6 @@ fn validate_abac_expr_rejects_policy_termination() {
     }
 }
 
-/// 拒绝显式 `permit(` / `forbid(` 关键字（不允许在表达式内声明新策略）。
 #[test]
 fn validate_abac_expr_rejects_policy_declarations() {
     let payloads = [
@@ -479,7 +443,6 @@ fn validate_abac_expr_rejects_policy_declarations() {
     }
 }
 
-/// 拒绝纯字面量（无 principal/resource/action 引用）。
 #[test]
 fn validate_abac_expr_rejects_pure_literal() {
     let payloads = ["1 == 1", "true", "false", "0", "\"hello\""];
@@ -492,21 +455,18 @@ fn validate_abac_expr_rejects_pure_literal() {
     }
 }
 
-/// 拒绝空表达式。
 #[test]
 fn validate_abac_expr_rejects_empty() {
     assert!(validate_abac_expr("").is_err());
     assert!(validate_abac_expr("   ").is_err());
 }
 
-/// 拒绝超长表达式（>512 字符，DoS 防御）。
 #[test]
 fn validate_abac_expr_rejects_overlong() {
     let long_expr = "a".repeat(513);
     assert!(validate_abac_expr(&long_expr).is_err());
 }
 
-/// 包含 principal/resource/action 关键字但含 `};` 仍应被拒绝。
 #[test]
 fn validate_abac_expr_rejects_injection_with_keywords() {
     let payload = "principal.id == resource.owner }; permit(principal, action, resource);";

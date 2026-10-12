@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! FlowBuilder 流式构建 DSL。
-//! 提供链式 API 构建 [`AuthenticationFlow`]，每个方法返回 `Self`（除 [`FlowBuilder::build`]）。
+//! FlowBuilder 流式构建 DSL：链式 API 构建 [`AuthenticationFlow`]，
+//! 各方法返回 `Self`（除 [`FlowBuilder::build`]）。
 //!
 //! # 示例
 //!
@@ -23,13 +23,8 @@
 
 use super::{AuthCondition, AuthStep, AuthenticationFlow};
 
-/// 认证流程流式构建器。
-///
-/// 通过链式调用追加 [`AuthStep`]，最终 [`build`](Self::build) 生成 [`AuthenticationFlow`]。
-///
-/// # 默认值
-///
-/// - `allow_skip` 默认 `false`，需显式调用 [`allow_skip`](Self::allow_skip) 开启。
+/// 认证流程流式构建器：链式调用追加 [`AuthStep`]，最终 [`build`](Self::build) 生成
+/// [`AuthenticationFlow`]；`allow_skip` 默认 `false`，需显式调用 [`allow_skip`](Self::allow_skip) 开启。
 ///
 /// # 示例
 ///
@@ -242,7 +237,6 @@ mod tests {
             .build();
         assert!(flow.allow_skip);
 
-        // 未调用 allow_skip 时默认 false
         let flow_default = FlowBuilder::new("not-skippable").login("password").build();
         assert!(!flow_default.allow_skip);
     }

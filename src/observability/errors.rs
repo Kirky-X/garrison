@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! `GarrisonOtelError` 转换实现（从 mod.rs 迁移，spec R-L7-003）。
+//! `GarrisonOtelError` 转换实现。
 
 #[cfg(feature = "otlp")]
 use super::GarrisonOtelError;

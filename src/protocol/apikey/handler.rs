@@ -30,9 +30,8 @@ pub(crate) fn default_namespace() -> String {
     "default".to_string()
 }
 
-/// 计算 `sha256(input)` 的 hex 编码（64 字符小写）。
-///
-/// 用于将 `key_secret` 哈希后存储（CWE-916 修复）：明文 secret 永不落库。
+/// 计算 `sha256(input)` 的 hex 编码（64 字符小写）：`key_secret` 哈希后存储
+/// （CWE-916），明文 secret 永不落库。
 fn sha256_hex(input: &str) -> String {
     use sha2::{Digest, Sha256};
     use std::fmt::Write;
@@ -47,30 +46,17 @@ fn sha256_hex(input: &str) -> String {
     out
 }
 
-/// E4: 构造 API Key 反向索引的存储 key。
-///
-/// 反向索引格式：`garrison:apikey:idx:<key_id>`，value 为对应的 dao_key
-/// （`garrison:apikey:<namespace>:<key_id>`），使 `verify` / `revoke` 能以 O(1)
-/// 查询替代 `keys("garrison:apikey:*:<key_id>")` 全表扫描。
-///
-/// # 设计说明
-///
-/// 索引 key 使用**公开的 `key_id`**（非机密的 `key_secret`），因此索引本身不泄露 secret。
-/// `key_id` 为 32 字符随机 hex（UUID v4 simple），固定长度、高熵、URL 安全（仅 `[0-9a-f]`）。
-///
-/// # 参数
-/// - `key_id`: API Key 的公开标识（32 字符 hex 字符串）。
+/// 构造 API Key 反向索引的存储 key：`garrison:apikey:idx:<key_id>` → dao_key
+/// （`garrison:apikey:<namespace>:<key_id>`），使 `verify` / `revoke` 以 O(1) 查询
+/// 替代 `keys("garrison:apikey:*:<key_id>")` 全表扫描。索引使用公开的 `key_id`
+/// （32 字符随机 hex，非机密），本身不泄露 secret。
 pub(crate) fn idx_key_for(key_id: &str) -> String {
     format!("garrison:apikey:idx:{}", key_id)
 }
 
-/// 提取 API Key 的**可安全记录**公开引用（用于事件广播 / 审计日志）。
-///
-/// CWE-916 不变量「key_secret 永不落库」要求任何持久化路径（含审计日志）
-/// 都不得写入明文 secret：
-/// - 双段格式 `key_id.key_secret`：仅返回 `key_id`（公开标识，永不含 secret）；
-/// - 不含 `.` 的输入（格式异常）：截断为前 8 hex 字符 + `…`，
-///   避免将完整凭证写入审计层（8/64 hex ≈ 32 bit，不足以暴力还原剩余 224 bit）。
+/// 提取 API Key 的可安全记录公开引用（事件广播 / 审计日志用）。CWE-916「key_secret
+/// 永不落库」要求任何持久化路径都不得写入明文 secret：双段格式只返回 `key_id`；
+/// 不含 `.` 的异常输入截断为前 8 hex 字符 + `…`（不足以暴力还原完整凭证）。
 ///
 /// 仅 `listener` 启用时编译（唯一调用方是 rotate 的 TokenRotate 事件广播）。
 #[cfg(feature = "listener")]
@@ -84,14 +70,7 @@ pub(crate) fn public_key_ref(key: &str) -> String {
     }
 }
 
-/// 校验 namespace 合法性。
-///
-/// 规则：
-/// - 长度 1-64 字符
-/// - 仅允许 `[a-zA-Z0-9_-]`
-///
-/// # 错误
-/// - `GarrisonError::InvalidParam`: namespace 为空、过长或包含非法字符。
+/// 校验 namespace 合法性：长度 1-64、仅 `[a-zA-Z0-9_-]`；非法返回 `InvalidParam`。
 fn validate_namespace(namespace: &str) -> GarrisonResult<()> {
     if namespace.is_empty() {
         return Err(GarrisonError::InvalidParam(
@@ -153,60 +132,40 @@ impl ApiKeyHandler {
         self
     }
 
-    /// 注入 `GarrisonListenerManager`，启用 TokenRotate 事件广播
-    ///
-    ///
-    /// 注入后 `rotate` 成功时广播 `GarrisonEvent::TokenRotate`。
-    /// 未注入时不广播事件（`listener` 为可选观测 feature）。需启用 `listener` feature。
+    /// 注入 `GarrisonListenerManager`：`rotate` 成功时广播 `GarrisonEvent::TokenRotate`
+    /// （未注入时不广播；需启用 `listener` feature）。
     #[cfg(feature = "listener")]
     pub fn with_listener_manager(mut self, lm: Arc<GarrisonListenerManager>) -> Self {
         self.listener_manager = Some(lm);
         self
     }
 
-    /// 设置作用域允许列表（opt-in，#6）。
-    ///
-    /// 设置后，`generate*` 会拒绝不在列表中的 scope（返回 `InvalidParam`），
-    /// 防止拼写错误或越权 scope 写入。未设置时不校验 scope（允许任意 scope）。
-    ///
-    /// 可用 [`super::ApiKeyScope`] 构建规范列表，如
-    /// `vec![ApiKeyScope::Read.as_str().into(), ApiKeyScope::Write.as_str().into()]`。
+    /// 设置作用域允许列表（opt-in）：设置后 `generate*` 拒绝列表外 scope
+    /// （`InvalidParam`，防拼写错误/越权）；未设置允许任意 scope。可用
+    /// [`super::ApiKeyScope`] 构建规范列表。
     pub fn with_allowed_scopes(mut self, allowed: Vec<String>) -> Self {
         self.allowed_scopes = Some(allowed);
         self
     }
 
-    /// 启用 `last_used_at` 追踪（opt-in，#7-b）。
-    ///
-    /// 启用后 `verify` / `verify_with_namespace` 成功时节流更新 `last_used_at`
-    /// （距上次记录超过 `LAST_USED_UPDATE_THROTTLE_SECS` 秒才写回，避免写放大）。
-    /// 默认关闭以保持 `verify` 只读语义。
+    /// 启用 `last_used_at` 追踪（opt-in）：verify 成功时节流更新（距上次记录超过
+    /// `LAST_USED_UPDATE_THROTTLE_SECS` 秒才写回，避免写放大）；默认关闭保持
+    /// `verify` 只读语义。
     pub fn with_last_used_tracking(mut self, enabled: bool) -> Self {
         self.track_last_used = enabled;
         self
     }
 
-    /// 设置 API Key 最大生命周期（秒）。
-    ///
-    /// 设置后 `verify` 检查 `created_at + secs >= now`，超期返回 `TokenExpired`。
-    /// 未设置时不检查（仅依赖 `expire_at`）。
+    /// 设置 API Key 最大生命周期（秒）：设置后 `verify` 检查
+    /// `created_at + secs >= now`，超期返回 `TokenExpired`；未设置仅依赖 `expire_at`。
     pub fn with_max_age(mut self, secs: i64) -> Self {
         self.max_age_secs = Some(secs);
         self
     }
 
-    /// 生成 API Key。
-    ///
-    /// 返回 `key_id.key_secret` 双段格式（各 32 hex，`.` 分隔）。`key_secret` 不落库，
-    /// 仅存储 `sha256(key_secret)`。存储于 `garrison:apikey:default:<key_id>`，TTL 为 `timeout` 秒。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识（同时作为默认 `owner_id`）。
-    /// - `scopes`: 作用域列表。
-    /// - `timeout`: 过期秒数（必须 > 0）。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: timeout <= 0。
+    /// 生成 API Key：返回 `key_id.key_secret` 双段格式（各 32 hex，`.` 分隔），
+    /// `key_secret` 不落库（仅存 sha256）；存于 `garrison:apikey:default:<key_id>`，
+    /// TTL = `timeout` 秒。`timeout <= 0` 返回 `InvalidParam`。
     pub async fn generate(
         &self,
         login_id: impl Into<String>,
@@ -217,21 +176,10 @@ impl ApiKeyHandler {
             .await
     }
 
-    /// 生成带 namespace 的 API Key。
-    ///
-    /// 返回 `key_id.key_secret` 双段格式；存储于 `garrison:apikey:<namespace>:<key_id>`，
-    /// value 为 JSON `ApiKeyInfo`（含 `secret_hash`），TTL 为 `timeout` 秒。
-    /// 同步写入反向索引 `garrison:apikey:idx:<key_id> -> <dao_key>`（TTL 与主 key 一致），
-    /// 使 `verify` / `revoke` 能以 O(1) 查询。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识（同时作为默认 `owner_id`）。
-    /// - `namespace`: 命名空间（1-64 字符，仅 `[a-zA-Z0-9_-]`）。
-    /// - `scopes`: 作用域列表。
-    /// - `timeout`: 过期秒数（必须 > 0）。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: timeout <= 0、namespace 非法或 scope 不在允许列表。
+    /// 生成带 namespace 的 API Key：存 `garrison:apikey:<namespace>:<key_id>`（JSON
+    /// `ApiKeyInfo`，TTL = `timeout` 秒），并同步写反向索引（TTL 与主 key 一致）使
+    /// `verify` / `revoke` 以 O(1) 查询。`timeout <= 0`、namespace 非法或 scope 不在
+    /// 允许列表返回 `InvalidParam`。
     pub async fn generate_with_namespace(
         &self,
         login_id: impl Into<String>,
@@ -243,17 +191,8 @@ impl ApiKeyHandler {
             .await
     }
 
-    /// 生成带完整选项的 API Key（显式 owner_id + 每 key rate_limit）。
-    ///
-    /// 用于需要将 key 归属到 `login_id` 以外主体（#3）、或设置每 key 速率上限（#7-b）的场景。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `namespace`: 命名空间。
-    /// - `scopes`: 作用域列表。
-    /// - `timeout`: 过期秒数（必须 > 0）。
-    /// - `owner_id`: 归属主体（`None` 时默认等于 `login_id`）。
-    /// - `rate_limit`: 每 key 速率上限（`None` 表示不限制）。
+    /// 生成带完整选项的 API Key（显式 `owner_id` + 每 key `rate_limit`）：用于把
+    /// key 归属到 `login_id` 以外主体，或设置每 key 速率上限。
     pub async fn generate_with_options(
         &self,
         login_id: impl Into<String>,
@@ -284,7 +223,7 @@ impl ApiKeyHandler {
             ));
         }
         validate_namespace(namespace)?;
-        // #6: opt-in scope 校验
+        // opt-in scope 校验
         if let Some(allowed) = &self.allowed_scopes {
             for scope in &scopes {
                 if !allowed.iter().any(|a| a == scope) {
@@ -346,24 +285,14 @@ impl ApiKeyHandler {
         Ok(format!("{}.{}", key_id, key_secret))
     }
 
-    /// 校验 API Key。
+    /// 校验 API Key：`key_id.key_secret` → 查反向索引得 dao_key → 常量时间比较
+    /// `sha256(key_secret)` 与 `secret_hash`（O(1)）；不含 `.` 的输入直接 `InvalidToken`。
+    /// key 不存在/不匹配/已吊销返回 `InvalidToken`，过期返回 `ExpiredToken`。
     ///
-    /// 校验逻辑（哈希 + O(1) 反向索引查找）：
-    /// `token = key_id.key_secret` → 查 idx(`key_id`) → dao_key →
-    /// 常量时间比较 `sha256(key_secret)` 与存储的 `secret_hash`。
-    /// 不含 `.` 分隔符的输入无法定位存储记录，直接返回 `InvalidToken`。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidToken`: key 不存在、secret 不匹配或已吊销。
-    /// - `GarrisonError::ExpiredToken`: key 已过期。
-    ///
-    /// # 归属校验（owner_id / IDOR，应用层契约）
-    ///
-    /// 本方法**不校验** `ApiKeyInfo::owner_id` 与调用方主体的关系（框架不持有
-    /// 主体上下文）：A 的 key 在此通过校验后，授权决策由应用层完成。调用方应
-    /// 在业务入口自行比较返回的 `info.owner_id` 与请求主体，再放行资源访问。
+    /// **不校验** `ApiKeyInfo::owner_id` 与调用方主体的关系（框架不持有主体上下文）
+    /// ——归属（IDOR）校验属应用层契约：调用方应自行比较 `owner_id` 与请求主体再授权。
     pub async fn verify(&self, key: &str) -> GarrisonResult<ApiKeyInfo> {
-        // fail-closed：无命名空间校验可跨租户命中任意 key，默认禁用（T017）。
+        // fail-closed：无命名空间校验可跨租户命中任意 key，默认禁用。
         // rotate / update_last_used 等管理操作走 verify_internal 不受影响。
         if !self.allow_global_verify {
             return Err(GarrisonError::InvalidParam(
@@ -382,15 +311,9 @@ impl ApiKeyHandler {
         Ok(info)
     }
 
-    /// 校验指定 namespace 下的 API Key。
-    ///
-    /// 严格匹配 `garrison:apikey:<namespace>:<key_id>`（双段格式），不跨 namespace。
-    /// 这是 IDOR 防护的核心：namespace A 的 key 无法在 namespace B 校验通过。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: namespace 非法。
-    /// - `GarrisonError::InvalidToken`: key 不存在、secret 不匹配、已吊销或 namespace 不一致。
-    /// - `GarrisonError::ExpiredToken`: key 已过期。
+    /// 校验指定 namespace 下的 API Key：严格匹配 `garrison:apikey:<namespace>:<key_id>`，
+    /// 不跨 namespace（IDOR 防护核心）。namespace 非法返回 `InvalidParam`；key 不存在/
+    /// 不匹配/已吊销/namespace 不一致返回 `InvalidToken`；过期返回 `ExpiredToken`。
     pub async fn verify_with_namespace(
         &self,
         key: &str,
@@ -420,10 +343,8 @@ impl ApiKeyHandler {
         Ok(info)
     }
 
-    /// 内部：反查存储记录，返回 `(dao_key, value, provided_secret)`。
-    ///
-    /// 仅支持双段格式 `key_id.key_secret`：先查 idx(`key_id`) 得 dao_key，再取 value。
-    /// 不含 `.` 的输入、索引缺失或记录缺失均返回 `InvalidToken`。
+    /// 内部：反查存储记录，返回 `(dao_key, value, provided_secret)`。仅支持双段格式
+    /// `key_id.key_secret`：不含 `.`、索引缺失或记录缺失均返回 `InvalidToken`。
     async fn lookup(&self, key: &str) -> GarrisonResult<(String, String, String)> {
         let (key_id, key_secret) = key
             .split_once('.')
@@ -466,10 +387,8 @@ impl ApiKeyHandler {
         Ok(info)
     }
 
-    /// 检查 API Key 是否超过最大生命周期。
-    ///
-    /// 仅当 `max_age_secs` 已设置时检查（`created_at` 为必填字段，始终可校验）。
-    /// 超期返回 `GarrisonError::TokenExpired`。
+    /// 检查 API Key 是否超过最大生命周期：仅当 `max_age_secs` 已设置时检查
+    /// （`created_at` 为必填字段始终可校验），超期返回 `TokenExpired`。
     fn check_max_age(&self, info: &ApiKeyInfo) -> GarrisonResult<()> {
         if let Some(max_age) = self.max_age_secs {
             let now = current_ts()?;
@@ -482,18 +401,14 @@ impl ApiKeyHandler {
         Ok(())
     }
 
-    /// 节流更新 `last_used_at`（仅在启用追踪且距上次记录超过阈值时写回）。
+    /// 节流更新 `last_used_at`（启用追踪且距上次记录超阈值时写回）：写回失败
+    /// **不影响校验结果**（availability 优先），但以 `warn` 记录、不静默吞掉。
     ///
-    /// 写回失败**不影响校验结果**（元数据更新失败不应拒绝有效 key，availability 优先），
-    /// 但会以 `warn` 级别记录，避免静默吞掉。
-    ///
-    /// # lost-revoke 防护
-    ///
-    /// 不复用 `verify` 进入时读到的 `info`（可能已过期于并发 `revoke`），而是 **re-read
-    /// 最新值**；若发现 `revoked == true` 则放弃写回，避免整 JSON 覆盖把已吊销状态回退
-    /// 为 false。残留：re-read 与 `update` 之间仍有 micro-race 窗口，但 60s 节流 + revoke
-    /// 优先 + revoked 前置检查将概率与影响降到可接受（`GarrisonDao` trait 无 CAS/字段级
-    /// 更新，此为架构上限；如需强一致，调用方应在 rotate/revoke 入口加互斥）。
+    /// lost-revoke 防护：不复用 verify 进入时的旧 `info`（可能已过期于并发
+    /// `revoke`），而是 re-read 最新值，发现 `revoked == true` 即放弃写回——防
+    /// 整 JSON 覆盖把已吊销状态回退为 false。残留：re-read 与 `update` 间仍有
+    /// micro-race 窗口，靠 60s 节流 + revoked 前置检查把概率与影响降到可接受
+    /// （`GarrisonDao` trait 无 CAS/字段级更新，此为架构上限）。
     async fn maybe_touch_last_used(&self, dao_key: &str, info: &ApiKeyInfo) {
         if !self.track_last_used {
             return;
@@ -541,12 +456,8 @@ impl ApiKeyHandler {
         }
     }
 
-    /// 吊销 API Key。
-    ///
-    /// 通过反向索引查找定位 dao_key，将 `revoked` 设为 `true` 并写回（保留 TTL）。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidToken`: key 不存在。
+    /// 吊销 API Key：经反向索引定位 dao_key，置 `revoked = true` 写回（保留 TTL）；
+    /// key 不存在返回 `InvalidToken`。
     pub async fn revoke(&self, key: &str) -> GarrisonResult<()> {
         let (dao_key, _value, _secret) = self.lookup(key).await?;
         self.revoke_at(&dao_key).await
@@ -566,21 +477,9 @@ impl ApiKeyHandler {
         self.dao.update(dao_key, &new_value).await
     }
 
-    /// 列出指定 namespace 下所有未吊销的 ApiKeyInfo。
-    ///
-    /// 通过 `GarrisonDao::keys("garrison:apikey:<namespace>:*")` 扫描所有 key，
-    /// 反序列化 value 为 `ApiKeyInfo`，过滤已吊销的。
-    ///
-    /// # 依赖
-    /// 依赖 `GarrisonDao::keys`。`GarrisonDaoOxcache` 需启用 `dao-key-index` feature
-    /// （由 `protocol-apikey` 传递启用），否则返回 `NotImplemented`。
-    ///
-    /// # 性能警告
-    /// 大规模 key 场景下性能差（全量扫描 + 过滤），属管理面操作。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: namespace 非法。
-    /// - `GarrisonError::Internal`: 反序列化失败。
+    /// 列出指定 namespace 下所有未吊销的 ApiKeyInfo（`keys` 全量扫描 + 过滤，管理面
+    /// 操作，大规模 key 下性能差）。依赖 `GarrisonDao::keys`：`GarrisonDaoOxcache` 需
+    /// `dao-key-index` feature（由 `protocol-apikey` 传递启用），否则返回 `NotImplemented`。
     pub async fn list_by_namespace(&self, namespace: &str) -> GarrisonResult<Vec<ApiKeyInfo>> {
         validate_namespace(namespace)?;
         let pattern = format!("garrison:apikey:{}:*", namespace);
@@ -599,17 +498,8 @@ impl ApiKeyHandler {
         Ok(result)
     }
 
-    /// 列出指定 namespace 下"陈旧"的未吊销 key（基于时间的轮换策略，#7-b）。
-    ///
-    /// "陈旧"定义：`last_used_at < cutoff_ts`，或从未使用（`last_used_at == None`）。
-    /// 用于识别应轮换/回收的 key。
-    ///
-    /// # 参数
-    /// - `namespace`: 命名空间。
-    /// - `cutoff_ts`: 时间阈值（秒）；`last_used_at` 早于此值视为陈旧。
-    ///
-    /// # 错误
-    /// - 同 [`list_by_namespace`](Self::list_by_namespace)。
+    /// 列出指定 namespace 下"陈旧"的未吊销 key（`last_used_at < cutoff_ts` 或从未
+    /// 使用），用于识别应轮换/回收的 key。错误同 [`list_by_namespace`](Self::list_by_namespace)。
     pub async fn get_keys_older_than(
         &self,
         namespace: &str,
@@ -622,19 +512,12 @@ impl ApiKeyHandler {
             .collect())
     }
 
-    /// 显式更新 API Key 的 `last_used_at` 为当前时间（保留 TTL）。
+    /// 显式更新 API Key 的 `last_used_at` 为当前时间（保留 TTL），供校验之外的
+    /// 场景（如异步审计）主动记录使用时间。
     ///
-    /// 供调用方在校验之外的场景（如异步审计）主动记录使用时间。
-    ///
-    /// # 安全语义（CWE-916）
-    ///
-    /// 必须先通过 [`Self::verify`] 的完整校验（secret 常量时间比较 + revoked/expire
-    /// fail-closed）才允许写回——**不校验 secret、仅凭 `key_id` 即可更新**会构成
-    /// 越权写：任何持有裸 `key_id` 的调用方都能篡改使用记录。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidToken`: key 不存在、secret 不匹配或已吊销。
-    /// - `GarrisonError::ExpiredToken`: key 已过期。
+    /// CWE-916：必须先通过 [`Self::verify`] 的完整校验（secret 常量时间比较 +
+    /// revoked/expire fail-closed）才允许写回——仅凭 `key_id` 即可更新会构成越权写。
+    /// key 不存在/不匹配/已吊销返回 `InvalidToken`，过期返回 `ExpiredToken`。
     pub async fn update_last_used(&self, key: &str) -> GarrisonResult<()> {
         // CWE-916：走全量校验（含 secret 哈希常量时间比较），不得绕过。
         // 管理操作持有完整 key，不受 allow_global_verify 开关约束。
@@ -659,32 +542,18 @@ impl ApiKeyHandler {
         self.dao.update(&dao_key, &new_value).await
     }
 
-    /// 轮换 API Key。
+    /// 轮换 API Key：校验 old_key → 生成新 key（保留 login_id/scopes/owner_id/
+    /// rate_limit/剩余 TTL）并持久化 → 吊销 old_key → 返回新 key（双段格式）。成功时
+    /// 若注入 listener 则广播 `TokenRotate`（需 `listener` feature）。
     ///
-    /// 轮换逻辑：(1) 校验 old_key 有效；(2) 生成新 key（保留
-    /// login_id/scopes/owner_id/rate_limit/剩余 TTL）并持久化；(3) 吊销 old_key；
-    /// (4) 返回新 key（双段格式）。
+    /// 先 generate 后 revoke：generate 失败/任务被取消时原 key 仍完整有效可直接重试，
+    /// 消除"revoke 成功后 generate 失败 → 原 key 永久丢失"的不可恢复窗口；代价是吊销
+    /// 前存在极短 double-valid 窗口。
     ///
-    /// 成功时若注入了 `listener_manager`，广播 `GarrisonEvent::TokenRotate`
-    ///（需启用 `listener` feature）。
-    ///
-    /// # 失败顺序（先 generate 后 revoke）
-    ///
-    /// 新 key 生成并持久化成功后才吊销原 key：若 generate 失败/任务在 generate
-    /// 处被取消，原 key 仍完整有效，调用方可直接重试——消除"revoke 成功后
-    /// generate 失败 → 原 key 永久丢失且无替代"的不可恢复窗口。代价是吊销前
-    /// 存在极短的 double-valid 窗口，安全性远优于单向丢 key。
-    ///
-    /// # 并发警告
-    ///
-    /// `rotate` 非原子（verify → generate → revoke 跨 await）。并发 rotate 同一 old_key
-    /// 会各自成功并生成不同新 key（old_key 被吊销一次）。调用方应在 rotate 入口加
-    /// 分布式锁/互斥，避免重复轮换。库层不内置锁（rotate 属低频管理操作，加全局锁
-    /// 反而引入竞争与死锁面）。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidToken`: old_key 不存在或已吊销。
-    /// - `GarrisonError::ExpiredToken`: old_key 已过期。
+    /// `rotate` 非原子（verify → generate → revoke 跨 await），并发 rotate 同一 old_key
+    /// 会各自成功并生成不同新 key；调用方应在入口加分布式锁/互斥（库层不内置锁：低频
+    /// 管理操作加全局锁反而引入竞争与死锁面）。old_key 不存在/已吊销返回 `InvalidToken`，
+    /// 过期返回 `ExpiredToken`。
     pub async fn rotate(&self, old_key: &str) -> GarrisonResult<String> {
         // (1) 校验 old_key（管理操作，不受 allow_global_verify 开关约束）
         let info = self.verify_internal(old_key).await?;
@@ -739,11 +608,11 @@ mod lost_revoke_tests {
     use crate::error::GarrisonError;
     use std::sync::Arc;
 
-    /// 回归测试：并发 revoke 后，`maybe_touch_last_used` 用 verify 进入时的旧快照
-    /// 写回时，必须 re-read 发现 `revoked` 并放弃，不得把已吊销状态回退（lost-revoke）。
+    /// 回归测试：并发 revoke 后，`maybe_touch_last_used` 用旧快照写回时必须 re-read
+    /// 发现 `revoked` 并放弃，不得把已吊销状态回退（lost-revoke）。
     ///
-    /// 修复前实现（`info.clone()` 整 JSON 覆盖）会让此断言失败：旧快照 revoked=false
-    /// 覆盖了并发 revoke 写入的 revoked=true，导致已吊销 key 复活。
+    /// 整 JSON 覆盖（旧快照 revoked=false 覆盖并发 revoke 的 revoked=true）会让此
+    /// 断言失败——已吊销 key 复活。
     #[tokio::test]
     async fn maybe_touch_does_not_resurrect_revoked_key() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());

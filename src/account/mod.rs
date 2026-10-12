@@ -1,73 +1,47 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 账号安全引擎模块（吸收 keycloak 安全能力）。
-//! 本模块吸收 Keycloak 安全能力，提升 Garrison 原生账号安全能力。
-//! 与 `secure/` 模块（密码学原语）互补：`secure/` 提供 TOTP/签名/Basic/Digest
-//! 等底层原语，`account/` 提供账号生命周期安全能力。
+//! 账号安全引擎模块（吸收 Keycloak 安全能力）：与 `secure/`（密码学原语：TOTP/签名/Basic/Digest）
+//! 互补，提供账号生命周期安全能力。
 //!
-//! # 子模块
+//! 子模块与 feature：`credential`（`account-credential`，统一凭证 SPI）、`policy`（`account-policy`，
+//! 12+ 密码规则）、`lockout`（`account-lockout`，用户级双态锁定）、`authflow`（`account-authflow`，
+//! 认证流程 DSL）、`password_reset`（`account-password-reset`，ActionToken 一次性消费/防枚举/防竞态）。
 //!
-//! | 子模块 | Feature | 说明 |
-//! |--------|---------|------|
-//! | `credential` | `account-credential` | 统一凭证模型 SPI（Credential trait + PasswordCredential + TotpCredential） |
-//! | `policy` | `account-policy` | 密码策略套件（12+ PasswordPolicyRule） |
-//! | `lockout` | `account-lockout` | 用户级双态账号锁定（temporary + permanent） |
-//! | `authflow` | `account-authflow` | AuthenticationFlow DSL（全认证流程编排） |
-//! | `password_reset` | `account-password-reset` | 找回密码流程（ActionToken 一次性消费/防枚举/防竞态） |
-//!
-//! # 与现有模块的关系
-//!
-//! - `secure/`：保留 totp/sign/httpbasic/httpdigest/confusable 子模块（密码学原语）
-//! - `stp/`：不变，authflow DSL 在 SessionLogic/MfaLogic 之上编排
-//! - `strategy/firewall/`：BruteForceStrategy 保留，UserLockoutStrategy 组合到 Firewall 执行链
+//! 模块关系：`stp/` 的 SessionLogic/MfaLogic 之上由 authflow DSL 编排；`strategy/firewall/` 保留
+//! IP 级 `BruteForceStrategy`，用户级 `UserLockoutStrategy` 组合进 Firewall 执行链。
 
-/// 凭证模型 SPI 子模块（`account-credential` feature）。
-///
-/// 提供 `Credential` trait + `CredentialModel` + `CredentialRepository` 统一凭证抽象，
-/// 含 `PasswordCredential`（吸收 secure/password/）和 `TotpCredential`（复用 secure/totp/）。
+/// 凭证模型 SPI 子模块（`account-credential` feature）：`Credential` trait + `CredentialModel` +
+/// `CredentialRepository`，含 `PasswordCredential` 与 `TotpCredential` 实现。
 #[cfg(feature = "account-credential")]
 pub mod credential;
 
-/// 密码策略套件子模块（`account-policy` feature）。
-///
-/// 提供 `PasswordPolicyRule` trait + `PasswordPolicyEngine` + 12+ 规则实现
-/// （长度/复杂度/历史/黑名单/用户名相似/常见密码/过期/字典/重复字符/序列/邮箱/正则）。
+/// 密码策略套件子模块（`account-policy` feature）：`PasswordPolicyRule` trait + `PasswordPolicyEngine`
+/// + 12+ 规则（长度/复杂度/历史/黑名单/用户名相似/常见密码/过期/字典/重复字符/序列/邮箱/正则）。
 #[cfg(feature = "account-policy")]
 pub mod policy;
 
-/// 用户级双态账号锁定子模块（`account-lockout` feature）。
-///
-/// 提供 `UserLockoutStrategy` 实现 `GarrisonFirewallStrategy` trait，
-/// 支持 temporary + permanent 双态锁定，与 `BruteForceStrategy`（IP 级）组合使用。
+/// 用户级双态账号锁定子模块（`account-lockout` feature）：`UserLockoutStrategy` 实现
+/// `GarrisonFirewallStrategy`（temporary + permanent），与 IP 级 `BruteForceStrategy` 组合使用。
 #[cfg(feature = "account-lockout")]
 pub mod lockout;
 
-/// AuthenticationFlow DSL 子模块（`account-authflow` feature）。
-///
-/// 提供声明式认证流程编排：`AuthenticationFlow` + `AuthStep` + `AuthExecutor`，
-/// 覆盖登录 + MFA + 社交登录 + SSO 全认证流程。
+/// AuthenticationFlow DSL 子模块（`account-authflow` feature）：`AuthenticationFlow` + `AuthStep` +
+/// `AuthExecutor`，覆盖登录 + MFA + 社交登录 + SSO 全认证流程。
 #[cfg(feature = "account-authflow")]
 pub mod authflow;
 
-/// 找回密码/可恢复流程子模块（`account-password-reset` feature）。
-///
-/// 提供 ActionToken 签发/校验（自包含 JWT，复用 `protocol::jwt`）、jti 一次性
-/// 消费登记（DAO `set_if_absent` 原子语义）、两段式防竞态、防枚举 dummy token
-/// 路径与 restricted 会话端点约束。
+/// 找回密码/可恢复流程子模块（`account-password-reset` feature）：ActionToken 签发/校验（自包含 JWT）、
+/// jti 一次性消费登记（`set_if_absent` 原子语义）、两段式防竞态、防枚举 dummy token 与 restricted 会话约束。
 #[cfg(feature = "account-password-reset")]
 pub mod password_reset;
 
-/// 账号安全能力 Prometheus 指标子模块（`metrics-prometheus` feature）。
-///
-/// 提供 `AccountMetrics`：4 个指标覆盖凭证验证 / 策略校验 / 锁定触发 / 认证流程执行。
-/// 未启用 `metrics-prometheus` 时 `AccountMetrics` 为 `()` unit type 别名。
+/// 账号安全 Prometheus 指标子模块（`metrics-prometheus` feature）：`AccountMetrics` 4 个指标覆盖
+/// 凭证验证 / 策略校验 / 锁定触发 / 认证流程执行；未启用 feature 时为 `()` unit type 别名。
 pub mod metrics;
 
-/// 封禁库子模块，提供账号封禁/解封/查询能力。
-///
-/// 提供 `DisableEntry` struct + `DisableRepository` trait（独立于 `GarrisonDao`，
-/// 通过持有 `Arc<dyn GarrisonDao>` 委托实现）。非 feature-gated，依赖核心 `GarrisonDao` trait。
+/// 封禁库子模块：`DisableEntry` struct + `DisableRepository` trait（持 `Arc<dyn GarrisonDao>` 委托实现，
+/// 非 feature-gated）。
 pub mod disable;
 
 #[cfg(test)]

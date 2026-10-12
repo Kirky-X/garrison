@@ -3,26 +3,10 @@
 
 //! 健康检查模块，提供 liveness/readiness 探针与依赖项健康检测。
 //!
-//! ## 设计
-//!
-//! - `HealthCheck` trait：单项健康检查契约（name + async check）
-//! - `HealthRegistry`：聚合器，注册多个检查器，并发执行并聚合结果
-//! - `HealthStatus`：三态枚举（Healthy / Degraded / Unhealthy）
-//! - 内置检查器：`ConfigHealthCheck`（always on）、`CacheHealthCheck`（cache feature）、`DbHealthCheck`（db feature）
-//!
-//! ## Web 端点
-//!
-//! - `/health/live`：liveness 探针，进程存活即返回 200
-//! - `/health/ready`：readiness 探针，调用 `HealthRegistry::check_all()` 聚合结果
-//!
-//! ## 子模块
-//!
-//! - `registry`：`HealthRegistry` impl 块（构造 / 注册 / 并发执行 / 聚合）
-//! - `report`：`HealthReport` impl 块
-//! - `checks`：内置 `HealthCheck` 实现（ConfigHealthCheck / CacheHealthCheck / DbHealthCheck）
-//! - `axum_routes`：axum 框架的健康检查路由集成
-//! - `actix_routes`：actix-web 框架的健康检查路由集成
-//! - `warp_routes`：warp 框架的健康检查路由集成
+//! `HealthCheck` trait 定义单项检查契约，`HealthRegistry` 并发执行并聚合为 `HealthReport`
+//! （overall 取最差状态）；内置 Config/Cache/Db 检查器，Web 端点 `/health/live`（进程存活
+//! 即 200）与 `/health/ready`（聚合结果）由 `axum_routes` / `actix_routes` / `warp_routes`
+//! 按 feature 提供，impl 拆分在 `registry` / `report` / `checks` 子模块。
 
 use crate::error::GarrisonResult;
 use serde::{Deserialize, Serialize};
@@ -45,8 +29,6 @@ pub enum HealthStatus {
 pub type HealthResult<T> = GarrisonResult<T>;
 
 /// 单项健康检查 trait。
-///
-/// 实现方提供 `name()` 标识检查项，`check()` 异步执行检查逻辑。
 pub trait HealthCheck: Send + Sync {
     /// 检查项名称（如 "config"、"cache"、"database"）。
     fn name(&self) -> &str;
@@ -83,14 +65,11 @@ pub struct HealthReport {
 /// 注册多个 `HealthCheck`，通过 `check_all()` 并发执行并聚合结果。
 pub struct HealthRegistry {
     pub(crate) checks: Vec<Box<dyn HealthCheck>>,
-    /// 单项检查超时（请求级护栏，默认 5 秒）。
-    /// 超时的检查按 `Unhealthy` 聚合，不会无限阻塞 readiness 探针。
+    /// 单项检查超时（默认 5 秒）：超时的检查按 `Unhealthy` 聚合，不会无限阻塞 readiness 探针。
     pub(crate) check_timeout: Duration,
 }
 
-// ============================================================================
 // 内置健康检查器（类型声明；impl 在 checks.rs）
-// ============================================================================
 
 /// 配置健康检查器，验证 `GarrisonConfig` 已加载且通过 `validate()`。
 pub struct ConfigHealthCheck {
@@ -104,20 +83,15 @@ pub struct CacheHealthCheck;
 /// 数据库健康检查器（feature-gated），探测 dbnexus 连接。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub struct DbHealthCheck {
-    /// SQL 连接池句柄（db-postgres / db-mysql 探测路径用）。
-    ///
-    /// `None`（`new()` 默认）时探测路径返回 `Degraded`——不再误报 `Healthy`
-    /// （原实现探测内存 KV DAO，Postgres 宕机 readiness 仍 Healthy，
-    /// K8s 摘流失效）。部署方应经 [`DbHealthCheck::with_pool`] 注入真实连接池。
+    /// SQL 连接池句柄（db-postgres / db-mysql 探测路径用）；`None`（`new()` 默认）时探测
+    /// 返回 `Degraded`——不误报 `Healthy`，部署方应经 [`DbHealthCheck::with_pool`] 注入真实连接池。
     #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
     pool: Option<std::sync::Arc<dbnexus::DbPool>>,
     #[cfg(not(any(feature = "db-postgres", feature = "db-mysql")))]
     _priv: (),
 }
 
-// ============================================================================
 // 子模块（impl 块与路由集成，接口隔离）
-// ============================================================================
 
 /// 内置 `HealthCheck` 实现子模块（ConfigHealthCheck / CacheHealthCheck / DbHealthCheck）。
 pub mod checks;

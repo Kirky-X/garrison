@@ -7,36 +7,19 @@ use super::*;
 
 impl GarrisonLogicDefault {
     /// 获取底层 DAO 引用（JWT 黑名单读写 / firewall 计数封禁使用）。
-    ///
-    /// cfg 与调用方严格对齐（编译矩阵已验证）：黑名单路径
-    /// （helpers.rs blacklist_* / check_login_stateless）在 protocol-jwt 下，
-    /// 封禁计数（session/mod.rs login）在 firewall-bruteforce 下；
-    /// protocol-apikey / db-* / cache-redis 的消费方直接走 `session.dao()`。
+    /// cfg 与调用方严格对齐（编译矩阵已验证）：protocol-jwt 与 firewall-bruteforce 两条路径生效，其余消费方直接走 `session.dao()`。
     #[cfg(any(feature = "protocol-jwt", feature = "firewall-bruteforce"))]
     pub(crate) fn dao(&self) -> std::sync::Arc<dyn crate::dao::GarrisonDao> {
         self.session.dao().clone()
     }
 
-    /// 诊断：builder 是否已将防火墙 hook 注入（自检）。
-    ///
-    /// 唯一调用方为 firewall_tests::builder_auto_wires_firewall_hook
-    /// （`cfg(all(test, firewall-bruteforce))`），按调用方同款 cfg 全隔离。
+    /// 诊断 builder 是否已注入防火墙 hook；唯一调用方 firewall_tests，按同款 cfg 全隔离。
     #[cfg(all(test, feature = "firewall-bruteforce"))]
     pub(crate) fn firewall_hook_injected(&self) -> bool {
         self.firewall.firewall_hook_injected()
     }
 
-    /// 创建默认实现实例。
-    ///
-    /// # 参数
-    /// - `session`: 会话管理器。
-    /// - `config`: 全局配置。
-    /// - `firewall`: 权限策略（默认 `GarrisonPermissionStrategyDefault`，持有 `GarrisonInterface` 回调）。
-    /// - `disable_repository`: 封禁库（`check_disable` 委托其查询当前账号封禁状态）。
-    ///   通用场景传 `Arc::new(DefaultDisableRepository::new(dao))`。
-    ///
-    /// # 返回
-    /// 新建的 `GarrisonLogicDefault` 实例。
+    /// 创建默认实现实例；`disable_repository` 交给 `check_disable` 查询封禁状态，通用场景传 `Arc::new(DefaultDisableRepository::new(dao))`。
     pub fn new(
         session: Arc<GarrisonSession>,
         config: Arc<GarrisonConfig>,
@@ -79,55 +62,39 @@ impl GarrisonLogicDefault {
         }
     }
 
-    /// 注入插件管理器（builder 模式，返回 Self 便于链式调用）。
-    ///
-    /// 注入后 `login` / `logout` 将触发 `on_login` / `on_logout` 钩子。
+    /// 注入插件管理器（builder 模式）；注入后 `login` / `logout` 触发 `on_login` / `on_logout` 钩子。
     pub fn with_plugin_manager(mut self, pm: Arc<GarrisonPluginManager>) -> Self {
         self.plugin_manager = Some(pm);
         self
     }
 
-    /// 注入监听器管理器（builder 模式，需启用 `listener` feature）。
-    ///
-    /// 注入后 `login` / `logout` / `kickout` 将广播 `GarrisonEvent` 事件。
+    /// 注入监听器管理器（builder 模式，需 `listener` feature）；注入后 `login` / `logout` / `kickout` 广播 `GarrisonEvent`。
     #[cfg(feature = "listener")]
     pub fn with_listener_manager(mut self, lm: Arc<GarrisonListenerManager>) -> Self {
         self.listener_manager = Some(lm);
         self
     }
 
-    /// 注入认证逻辑（builder 模式）。
-    ///
-    /// 注入后 `login_by_token` 优先委托 `auth_logic.verify_token` 校验 token。
+    /// 注入认证逻辑（builder 模式）；`login_by_token` 优先委托 `auth_logic.verify_token` 校验。
     pub fn with_auth_logic(mut self, auth: Arc<dyn AuthLogic>) -> Self {
         self.auth_logic = Some(auth);
         self
     }
 
-    /// 注入权限校验器（builder 模式）。
-    ///
-    /// 注入后 `check_permission` 优先委托 `PermissionChecker::authorize`（走 Decision 路径），
-    /// 并广播 `PermissionCheck` 事件供 `AuditLogListener` 记录审计日志。
-    /// 未注入时回退到 `firewall.check_permission`。
+    /// 注入权限校验器（builder 模式）；`check_permission` 优先走 `PermissionChecker::authorize`（Decision 路径）并广播 `PermissionCheck` 事件供审计，未注入时回退 `firewall.check_permission`。
     pub fn with_permission_checker(mut self, pc: Arc<dyn PermissionChecker>) -> Self {
         self.permission_checker = Some(pc);
         self
     }
 
-    /// 注入 Prometheus 指标采集器（builder 模式，需启用 `metrics-prometheus` feature）。
-    ///
-    /// 注入后 `login` / `check_login` / `check_permission` / `check_role` 将自动 emit
-    /// Prometheus 指标。未注入时所有指标调用为 no-op。
+    /// 注入 Prometheus 指标采集器（builder 模式，需 `metrics-prometheus` feature）；注入后 login/check_login/check_permission/check_role 自动 emit 指标，未注入时 no-op。
     #[cfg(feature = "metrics-prometheus")]
     pub fn with_metrics(mut self, metrics: Arc<crate::observability::GarrisonMetrics>) -> Self {
         self.metrics = Some(metrics);
         self
     }
 
-    /// 注入密码哈希器（builder 模式，需启用 `account-credential` + `db-sqlite` feature）。
-    ///
-    /// 注入后 `login_with_password` 委托此 `PasswordHasher::verify` 校验密码哈希。
-    /// 未注入时 `login_with_password` 返回 `GarrisonError::Config("stp-password-hasher-not-configured")`。
+    /// 注入密码哈希器（builder 模式，需 `account-credential` + `db-sqlite` feature）；`login_with_password` 委托其 verify，未注入时返回 `Config("stp-password-hasher-not-configured")`。
     #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     pub fn with_password_hasher(
         mut self,
@@ -137,10 +104,7 @@ impl GarrisonLogicDefault {
         self
     }
 
-    /// 注入用户 Repository（builder 模式，需启用 `account-credential` + `db-sqlite` feature）。
-    ///
-    /// 注入后 `login_with_password` 委托此 `UserRepository::find_by_username` 查询用户。
-    /// 未注入时 `login_with_password` 返回 `GarrisonError::Config("stp-user-repo-not-configured")`。
+    /// 注入用户 Repository（builder 模式，需 `account-credential` + `db-sqlite` feature）；`login_with_password` 委托其 find_by_username，未注入时返回 `Config("stp-user-repo-not-configured")`。
     #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     pub fn with_user_repository(
         mut self,
@@ -150,14 +114,8 @@ impl GarrisonLogicDefault {
         self
     }
 
-    /// 设置默认 login_type（builder 模式）。
+    /// 设置权限/角色查询的默认 `login_type`（builder 模式），未设置时 "default"。
     ///
-    /// 注入后作为权限/角色查询的默认 `login_type` 上下文。未设置时默认 "default"。
-    ///
-    /// # 参数
-    /// - `login_type`: 登录类型字符串（业务方自定义，如 "admin"/"user"/"merchant"）。
-    ///
-    /// # 示例
     /// ```ignore
     /// let logic = GarrisonLogicDefault::new(session, config, firewall)
     /// .with_login_type("admin");
@@ -167,22 +125,9 @@ impl GarrisonLogicDefault {
         self
     }
 
-    /// 设置 JWT 校验模式（builder 模式）。
+    /// 设置 JWT 校验模式（builder 模式）：`Stateless` 仅 JWT verify，`Mixin`（默认）JWT + session 二级校验，`Simple` 仅 session。
+    /// `Stateless`/`Mixin` 的 JWT verify 需 `protocol-jwt`，否则 `Stateless` 返回 `Config` 错误；编译期配置，运行时不可切换。
     ///
-    /// 控制 `check_login` 在 JWT verify 与 session 查询之间的组合策略：
-    ///
-    /// - `JwtMode::Stateless`：仅 JWT verify，不查询 oxcache session（高可用场景）
-    /// - `JwtMode::Mixin`（默认）：JWT verify + session 二级校验（推荐）
-    /// - `JwtMode::Simple`：仅 session，JWT 仅作为 token 字符串载体
-    ///
-    /// 未设置时默认 `JwtMode::Mixin`。运行时不可切换（编译期配置）。
-    /// `JwtMode` 字段不依赖 `protocol-jwt` feature，但 `Stateless`/`Mixin` 中的
-    /// JWT verify 调用需启用 `protocol-jwt` feature，否则 `Stateless` 返回 `Config` 错误。
-    ///
-    /// # 参数
-    /// - `mode`: JWT 校验模式。
-    ///
-    /// # 示例
     /// ```ignore
     /// let logic = GarrisonLogicDefault::new(session, config, firewall)
     /// .with_jwt_mode(JwtMode::Stateless);
@@ -192,19 +137,13 @@ impl GarrisonLogicDefault {
         self
     }
 
-    /// 注入时钟（builder 模式）。
-    ///
-    /// 默认使用 `SystemClock`（委托 `chrono::Utc::now()`）。
-    /// 测试中可注入 `MockClock` 手动控制时间推进，消除依赖 `tokio::time::sleep` 的 flaky 测试。
+    /// 注入时钟（builder 模式）；默认 `SystemClock`，测试可注入 `MockClock` 控制时间推进，避免 sleep 型 flaky 测试。
     pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
         self.clock = clock;
         self
     }
 
-    /// 注入 Refresh Token 轮换器（builder 模式，需启用 `protocol-jwt` + `db-sqlite` feature）。
-    ///
-    /// 注入后 `refresh_access_token` 委托 `RefreshTokenRotation::rotate` 实现轮换。
-    /// 未注入时 `refresh_access_token` 返回 `GarrisonError::NotImplemented`。
+    /// 注入 Refresh Token 轮换器（builder 模式，需 `protocol-jwt` + `db-sqlite` feature）；`refresh_access_token` 委托其 rotate，未注入时返回 `NotImplemented`。
     #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
     pub fn with_refresh_token_rotation(
         mut self,
@@ -214,10 +153,7 @@ impl GarrisonLogicDefault {
         self
     }
 
-    /// 注入异常检测器（builder 模式，需启用 `security-alert` feature）。
-    ///
-    /// 可链式调用注入多个检测器，`login` / `check_login` 时按注入顺序依次调用。
-    /// 未注入时跳过异常检测（功能关闭）。检测失败只 `tracing::warn!` 不中断主流程。
+    /// 注入异常检测器（builder 模式，需 `security-alert` feature）；可注入多个，按序在 login/check_login 调用，检测失败只 warn 不中断主流程。
     #[cfg(feature = "security-extra")]
     pub fn with_anomaly_detector(
         mut self,
@@ -229,10 +165,7 @@ impl GarrisonLogicDefault {
         self
     }
 
-    /// 注入告警监听器管理器（builder 模式，需启用 `security-alert` feature）。
-    ///
-    /// 注入后异常检测产生的事件通过 `AlertListenerManager::broadcast_alert` 广播。
-    /// 未注入时异常事件不广播（未部署告警系统）。
+    /// 注入告警监听器管理器（builder 模式，需 `security-alert` feature）；异常事件经 `AlertListenerManager::broadcast_alert` 广播，未注入时不广播。
     #[cfg(feature = "security-extra")]
     pub fn with_alert_listener_manager(
         mut self,
@@ -242,12 +175,7 @@ impl GarrisonLogicDefault {
         self
     }
 
-    /// 注入设备绑定策略（builder 模式，需启用 `device-binding` feature）。
-    ///
-    /// 注入后 `login` 流程在创建 session 前调用 `DeviceBindingPolicy::is_new_device`
-    /// + `require_secondary_auth`，新设备且要求二级认证时设置 `LoginParams.require_mfa = true`。
-    ///
-    /// 未注入时跳过检测（功能关闭）。检测失败只 `tracing::warn!` 不中断 login。
+    /// 注入设备绑定策略（builder 模式，需 `device-binding` feature）；login 创建 session 前检测新设备，要求二级认证时置 `LoginParams.require_mfa`，检测失败只 warn 不中断。
     #[cfg(feature = "device-binding")]
     pub fn with_device_binding_policy(
         mut self,
@@ -257,51 +185,24 @@ impl GarrisonLogicDefault {
         self
     }
 
-    /// 注入用户缓存服务（builder 模式，需启用 `three-tier-cache` feature）。
-    ///
-    /// 注入后 `logout` / `logout_by_login_id` 在销毁会话后调用
-    /// `UserCacheService::invalidate(login_id)` 失效用户的三层缓存（权限/角色/用户）。
-    /// 未注入时 logout 不失效缓存（缓存失效功能关闭）。失效失败只 `tracing::warn!` 不中断 logout。
+    /// 注入用户缓存服务（builder 模式，需 `three-tier-cache` feature）；logout 销毁会话后调用 `UserCacheService::invalidate(login_id)` 失效权限/角色/用户三层缓存，失败只 warn。
     #[cfg(feature = "three-tier-cache")]
     pub fn with_user_cache_service(mut self, service: Arc<crate::cache::UserCacheService>) -> Self {
         self.user_cache_service = Some(service);
         self
     }
 
-    /// 设置标记字段（builder 模式）。
-    ///
-    /// 用于测试 / 工厂扩展点标记 logic 来源（如自定义 factory 构造的实例），
-    /// 默认 `None`，不影响运行时行为。
+    /// 设置标记字段（builder 模式）；测试/工厂扩展点标记 logic 来源，不影响运行时行为。
     pub fn with_marker(mut self, marker: &'static str) -> Self {
         self.marker = Some(marker);
         self
     }
 
-    /// 校验 API Key。
-    ///
-    /// 从当前请求上下文（task_local `CURRENT_TOKEN`）获取 API Key 字符串，
-    /// 委托 `protocol::apikey::ApiKeyHandler::verify_with_namespace` 校验。
-    ///
-    /// # 参数
-    /// - `namespace`: 命名空间标识，用于隔离不同业务的 API Key。
-    ///
-    /// # 返回
-    /// - `Ok(())`: API Key 有效（存在、未吊销、未过期、namespace 匹配）。
-    /// - `Err(GarrisonError::NotLogin)`: 未设置当前请求上下文（无 API Key 提供）。
-    /// - `Err(GarrisonError::InvalidToken)`: API Key 不存在或已吊销。
-    /// - `Err(GarrisonError::ExpiredToken)`: API Key 已过期。
-    /// - `Err(GarrisonError::InvalidParam)`: namespace 非法。
-    ///
-    /// # 兼容性
-    ///
-    /// `protocol-apikey` feature 关闭时，本方法返回
-    /// `Err(GarrisonError::Config)`（fail-closed：杜绝"编译通过但校验
-    /// 全部放行"的安全假象，对齐 SimpleTokenStyle 的修复模式）。
+    /// 校验 API Key：从 task_local `CURRENT_TOKEN` 取 key，委托 `ApiKeyHandler::verify_with_namespace`。
+    /// `protocol-apikey` 关闭时 fail-closed 返回 `Err(Config)`（杜绝"编译通过但校验全部放行"的安全假象）。
     #[cfg(feature = "protocol-apikey")]
     pub async fn check_api_key(&self, namespace: &str) -> GarrisonResult<()> {
-        // 无 token 上下文 = 请求未携带 API Key，返回 NotLogin（映射 401）
-        // 与 check_login 不同：check_api_key 返回 Result<()> 而非 Result<bool>，
-        // 无法用 Ok(false) 表达"未通过"，必须返回错误。
+        // 无 token 上下文 = 未携带 API Key，返回 NotLogin（映射 401）；本方法返回 Result<()>，无法用 Ok(false) 表达未通过。
         let key = match current_token() {
             Ok(t) => t,
             Err(_) => {
@@ -310,16 +211,12 @@ impl GarrisonLogicDefault {
         };
         let handler = crate::protocol::apikey::ApiKeyHandler::new(self.session.dao().clone());
 
-        // IP 级认证失败限速（CWE-307）。
-        // 仅在 firewall-bruteforce 启用且存在客户端 IP 上下文时生效（fail-open 兼容）：
-        // 校验前检查是否已封禁（短路）；仅在校验失败时计入失败次数（成功路径零写入）。
+        // IP 级认证失败限速（CWE-307）：校验前查封禁短路，仅失败计入（成功路径零写入）；无 IP 上下文时 fail-open 跳过。
         #[cfg(feature = "firewall-bruteforce")]
         if let Some(ip) = crate::stp::current_ip() {
             use crate::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
             use crate::strategy::firewall::FirewallContext;
-            // 复用惰性初始化的 BruteForceStrategy 实例，
-            // 不再每次调用 `BruteForceStrategy::new(BruteForceConfig::default(), dao)`
-            // 重新分配 ban_storage / limiter 两个 Arc 适配器并丢弃已配置实例。
+            // 复用惰性初始化的策略实例，避免每次调用重建 ban_storage / limiter 并丢弃已配置实例。
             let strategy = self.brute_force_strategy.get_or_init(|| {
                 Arc::new(BruteForceStrategy::new(
                     BruteForceConfig::default(),
@@ -336,8 +233,7 @@ impl GarrisonLogicDefault {
             return match handler.verify_with_namespace(&key, namespace).await {
                 Ok(_) => Ok(()),
                 Err(e) => {
-                    // 记录失败（超阈值则封禁）；record_failure 自身失败（如 DAO 瞬时故障）
-                    // 不得覆盖原始认证错误 e——否则会把 401/403 误报为 500 并丢失原因。
+                    // 记录失败（超阈值封禁）；record_failure 自身失败不得覆盖原始认证错误 e，否则 401/403 会误报为 500。
                     if let Err(record_err) = strategy.record_failure(&fw_ctx).await {
                         tracing::warn!(
                             ip = %ip,
@@ -354,11 +250,7 @@ impl GarrisonLogicDefault {
         Ok(())
     }
 
-    /// 校验 API Key（`protocol-apikey` feature 关闭时的兼容实现）。
-    ///
-    /// fail-closed 返回配置错误。
-    /// 原实现静默返回 `Ok(())`——宏在任意 feature 组合下都会生成对本方法的调用，
-    /// feature 缺失时所有携带任意字符串的请求均通过校验（API Key 认证完全失效）。
+    /// fail-closed 返回配置错误：宏在任意 feature 组合下都调用本方法，feature 缺失时若放行则 API Key 认证完全失效。
     #[cfg(not(feature = "protocol-apikey"))]
     pub async fn check_api_key(&self, _namespace: &str) -> GarrisonResult<()> {
         Err(GarrisonError::Config(

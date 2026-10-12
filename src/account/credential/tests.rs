@@ -7,19 +7,11 @@ use super::mock::MockCredentialRepository;
 use super::*;
 use crate::dao::tests::MockDao;
 
-// ========================================================================
-// Credential trait 对象安全测试
-// ========================================================================
-
-/// `Credential` trait 可作 `Box<dyn Credential>` 使用（对象安全编译验证）。
-///
-/// 若 `Credential` trait 非对象安全（如使用了泛型方法），此测试无法编译。
+/// `Credential` trait 可作 `Box<dyn Credential>` 使用（对象安全编译验证：若 trait 非对象安全则无法编译）。
 #[test]
 fn credential_trait_is_object_safe() {
-    // 编译期验证：trait 可作 dyn 使用
     fn _assert_object_safe(_cred: Box<dyn Credential>) {}
     fn _assert_arc_object_safe(_cred: std::sync::Arc<dyn Credential>) {}
-    // 空函数，仅验证类型签名编译通过
 }
 
 /// `CredentialRepository` trait 可作 `Arc<dyn CredentialRepository>` 使用。
@@ -27,10 +19,6 @@ fn credential_trait_is_object_safe() {
 fn credential_repository_trait_is_object_safe() {
     fn _assert_object_safe(_repo: std::sync::Arc<dyn CredentialRepository>) {}
 }
-
-// ========================================================================
-// CredentialModel 序列化测试
-// ========================================================================
 
 /// `CredentialModel` serde 序列化输出包含全部 8 字段。
 #[test]
@@ -157,13 +145,9 @@ fn credential_model_clone_preserves_fields() {
     assert_eq!(cloned.priority, model.priority);
 }
 
-// ========================================================================
-// CredentialRepository mock CRUD 测试
-// ========================================================================
-
 /// 辅助函数：构造测试用 CredentialModel。
 ///
-/// `secret_data` 默认取过导入校验门的 PHC 形态串（password 类型写入
+/// `secret_data` 默认取可通过导入校验门的 PHC 形态串（password 类型写入
 /// DaoCredentialRepository 时须通过参数上限门）。
 fn make_model(id: &str, user: &str, cred_type: &str, priority: i32) -> CredentialModel {
     CredentialModel {
@@ -311,10 +295,6 @@ async fn repository_usable_as_trait_object() {
     assert_eq!(found.len(), 1);
 }
 
-// ========================================================================
-// DaoCredentialRepository 测试（基于 MockDao）
-// ========================================================================
-
 /// 辅助函数：构造 DaoCredentialRepository（基于 MockDao）。
 fn make_dao_repo() -> DaoCredentialRepository {
     DaoCredentialRepository::new(Arc::new(MockDao::new()))
@@ -380,7 +360,6 @@ async fn dao_repo_update_overwrites_and_errors_on_missing() {
         .await
         .unwrap();
 
-    // 覆盖写已存在凭证
     let updated = CredentialModel {
         id: "c1".to_string(),
         user_id: "alice".to_string(),
@@ -402,10 +381,6 @@ async fn dao_repo_update_overwrites_and_errors_on_missing() {
     let result = repo.update("alice", missing).await;
     assert!(result.is_err(), "更新不存在的凭证应返回错误");
 }
-
-// ========================================================================
-// 导入哈希校验门接线（password 类型凭据写路径）
-// ========================================================================
 
 /// password 类型凭据 `create` 拒绝参数越界的导入哈希（错误显性）。
 #[tokio::test]
@@ -622,14 +597,8 @@ async fn dao_repo_usable_as_trait_object() {
     assert_eq!(found.len(), 1);
 }
 
-// ========================================================================
-// IDOR 防护测试
-//
-// 验证 CredentialRepository 的 find_by_user / update / delete 在 caller_login_id
-// 与目标凭证 owner 不一致时返回 GarrisonError::NotPermission（403 Forbidden）。
-// 同时验证 update 不得改变 user_id 字段（防止凭证跨用户转移）。
-// 覆盖 MockCredentialRepository + DaoCredentialRepository 两个实现。
-// ========================================================================
+// IDOR 防护测试：find_by_user / update / delete 在 caller 与目标 owner 不一致时返回
+// NotPermission（403）；update 不得改变 user_id（防跨用户转移）。覆盖 Mock + DAO 两个实现。
 
 /// 辅助：断言 err 是 NotPermission（IDOR 拒绝）。
 fn assert_idor_denied(err: GarrisonError, ctx: &str) {
@@ -641,9 +610,7 @@ fn assert_idor_denied(err: GarrisonError, ctx: &str) {
     );
 }
 
-// ------------------------------------------------------------------------
 // IDOR: find_by_user 跨用户查询拒绝
-// ------------------------------------------------------------------------
 
 /// IDOR: Mock - alice 调用 find_by_user 查询 bob 的凭证应被拒绝。
 #[tokio::test]
@@ -690,9 +657,7 @@ async fn dao_find_by_user_succeeds_when_caller_is_owner() {
     assert_eq!(found.len(), 2, "alice 查询自己的凭证应成功返回 2 条");
 }
 
-// ------------------------------------------------------------------------
 // IDOR: delete 跨用户删除拒绝
-// ------------------------------------------------------------------------
 
 /// IDOR: Mock - alice 尝试删除 bob 的凭证应被拒绝。
 #[tokio::test]
@@ -744,15 +709,12 @@ async fn dao_delete_succeeds_when_caller_is_owner() {
     assert!(remaining.is_empty(), "alice 删除自己的凭证后应查不到");
 }
 
-// ------------------------------------------------------------------------
 // IDOR: update 跨用户修改拒绝
-// ------------------------------------------------------------------------
 
 /// IDOR: Mock - alice 尝试更新 bob 的凭证应被拒绝。
 ///
-/// forged 使用与原凭证不同的 `secret_data`（"attacker-hash"），
-/// 使事后断言（remaining[0].secret_data 保持 make_model 的值）具备鉴别力——若 update 意外
-/// 成功，secret_data 会变成 attacker-hash 而非 hash，断言即可捕获。
+/// forged 使用与原凭证不同的 `secret_data`（"attacker-hash"），使事后断言
+/// （remaining[0].secret_data 保持 make_model 的值）具备鉴别力。
 #[tokio::test]
 async fn mock_update_denied_when_caller_not_owner() {
     let repo = MockCredentialRepository::default();
@@ -816,9 +778,7 @@ async fn dao_update_denied_when_caller_not_owner() {
     );
 }
 
-// ------------------------------------------------------------------------
 // IDOR: update 禁止 user_id 转移
-// ------------------------------------------------------------------------
 
 /// IDOR: Mock - alice 尝试通过 update 把自己的凭证 user_id 改成 bob（跨用户转移）应被拒绝。
 #[tokio::test]
@@ -906,9 +866,7 @@ async fn dao_update_succeeds_when_caller_is_owner_and_user_id_unchanged() {
     assert_eq!(found[0].priority, 5);
 }
 
-// ------------------------------------------------------------------------
 // IDOR: trait object 动态分发也生效
-// ------------------------------------------------------------------------
 
 /// IDOR: 通过 `Arc<dyn CredentialRepository>` 调用也应执行 IDOR 校验。
 #[tokio::test]
@@ -940,16 +898,13 @@ async fn trait_object_enforces_idor_on_find_by_user() {
     assert_idor_denied(err, "trait object find_by_user alice→bob");
 }
 
-// ------------------------------------------------------------------------
 // IDOR: find_by_user_and_type / create 覆盖缺口
-// ------------------------------------------------------------------------
 
 /// IDOR: `find_by_user_and_type` 严格按 user_id 隔离，不泄露他人凭证。
 ///
-/// 该方法签名无 `caller_login_id` 参数（认证上下文内部
-/// 受信接口，见 trait 文档「安全语义」），caller-vs-owner 拒绝路径不存在；
-/// 此处验证其可测的安全性质——查询结果严格限定在给定 user_id 内，跨用户
-/// 数据不会泄露（alice/bob 各自的 password 凭证互不可见）。
+/// 签名无 `caller_login_id`（认证上下文内部受信接口，见 trait 文档「安全语义」），
+/// caller-vs-owner 拒绝路径不存在；此处验证可测的安全性质——查询结果严格限定在给定
+/// user_id 内（alice/bob 各自的 password 凭证互不可见）。
 #[tokio::test]
 async fn mock_find_by_user_and_type_isolated_per_user() {
     let repo = MockCredentialRepository::default();
@@ -976,7 +931,6 @@ async fn mock_find_by_user_and_type_isolated_per_user() {
         "find_by_user_and_type 不得返回其他用户的凭证（跨用户泄露）"
     );
 
-    // alice 的 password 查询同理
     let alice_passwords = repo
         .find_by_user_and_type("alice", "password")
         .await
@@ -1017,11 +971,9 @@ async fn dao_find_by_user_and_type_isolated_per_user() {
 
 /// IDOR: `create` 是受信边界 API——仓库层不做 caller 校验（设计文档化测试）。
 ///
-/// `create(credential)` 签名无 caller 参数，IDOR 边界在**调用方**：
-/// `CredentialModel.user_id` 必须由服务端从认证会话构造，绝不接受外部输入的
-/// user_id 直传（否则即跨用户创建/提权）。仓库层以 `set_if_absent` 保证
-/// key（`cred:{user_id}:{cred_id}`）唯一性。本测试固化该设计行为：
-/// 仓库层按 model 原样落库且可被 owner 查询，调用方校验责任见 trait 文档。
+/// `create(credential)` 签名无 caller 参数，IDOR 边界在调用方：`CredentialModel.user_id`
+/// 必须由服务端从认证会话构造，绝不接受外部输入的 user_id 直传（否则即跨用户创建/提权）；
+/// 仓库层以 `set_if_absent` 保证 key（`cred:{user_id}:{cred_id}`）唯一性。本测试固化该行为。
 #[tokio::test]
 async fn dao_create_is_trusted_boundary_stores_model_as_given() {
     let repo = make_dao_repo();
@@ -1042,16 +994,11 @@ async fn dao_create_is_trusted_boundary_stores_model_as_given() {
     assert_idor_denied(err, "create trusted boundary: alice→bob find_by_user");
 }
 
-// ========================================================================
-// Argon2id 默认策略锁定（ADR-0001）
-// ========================================================================
-
-/// Argon2Hasher::default() 参数锁定：m=19456 KiB / t=2 / p=1（OWASP 建议最低档）。
+/// Argon2Hasher::default() 参数锁定：m=19456 KiB / t=2 / p=1（OWASP 建议最低档）；
 /// 默认策略无声漂移（降参数、换算法）会被本测试阻断。
 #[test]
 fn argon2_default_policy_is_owasp_baseline() {
-    // 参数经 PHC 字符串锁定（见 argon2_hash_phc_prefix_locks_algorithm_and_params），
-    // 字段为模块私有，此处仅锁定默认构造行为的可观测输出
+    // 字段为模块私有，此处仅锁定默认构造行为的可观测 PHC 输出
     let hasher = crate::account::credential::password::Argon2Hasher::default();
     let hash = hasher.hash("policy-lock-probe").unwrap();
     assert!(

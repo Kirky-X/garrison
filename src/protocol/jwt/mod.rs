@@ -1,10 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! JWT 协议插件模块。
-//!
-//! 对应 JWT 协议支持，
-//! 基于 `jsonwebtoken` 10 crate 实现签发、校验与刷新。
+//! JWT 协议插件模块：基于 `jsonwebtoken` 10 实现签发、校验与刷新。
 //!
 //! 仅在启用 `protocol-jwt` 特性时编译。
 
@@ -55,18 +52,17 @@ pub struct GarrisonJwtClaims {
 
     /// JWT 唯一标识（RFC 7519 §4.1.7）。
     ///
-    /// `sign` 时自动生成 UUID；字段为 `Option` 以兼容不含 `jti` 的外部签发 token
-    /// （RFC 7519 中 `jti` 本身为可选 claim）。用于保证同一秒内为同一用户签发的
-    /// token 仍唯一，支持 token rotation 语义。
+    /// `sign` 时自动生成 UUID；`Option` 兼容不含 `jti` 的外部签发 token（该
+    /// claim 本身可选），保证同一秒内为同一用户签发的 token 仍唯一（rotation 语义）。
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub jti: Option<String>,
 
     /// Not Before（RFC 7519 §4.1.5）。
     ///
     /// `sign` 时自动设置为当前时间。`verify` 启用 `validate_nbf = true` 后，
-    /// `nbf` 为未来时间时拒绝 token（ImmatureSignature）。
-    /// 字段为 `Option` 以兼容不含 `nbf` 的外部签发 token（RFC 7519 中 `nbf`
-    /// 本身为可选 claim）；`nbf` 缺失时 jsonwebtoken 跳过 nbf 校验。
+    /// `nbf` 为未来时间时拒绝 token（ImmatureSignature）。字段为 `Option` 以
+    /// 兼容不含 `nbf` 的外部签发 token（该 claim 可选，缺失时 jsonwebtoken
+    /// 跳过 nbf 校验）。
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub nbf: Option<i64>,
 
@@ -86,15 +82,12 @@ pub struct GarrisonJwtClaims {
 
     /// 签发租户绑定（多租户部署的 Stateless JWT 补口）。
     ///
-    /// 租户上下文存在时签发写入签发租户 ID（`GarrisonLogicDefault::generate_token`
-    /// 经 `JwtHandler::with_tid` 接线）；`check_login_stateless` 从首次验签的
-    /// claims 直接读取并校验与请求租户一致（客户端可控的请求租户头不得携他
-    /// 租户签发的 JWT 跨租户复用，否则 jti 黑名单随请求租户物理命名空间错位
-    /// 形成吊销逃逸）。字段为 `Option` 以向后兼容两类存量 token：
-    /// - 无租户上下文签发：`tid` 不序列化（`skip_serializing_if` 保持载荷与
-    ///   既有格式逐字节一致，即「不带 tid」）；
-    /// - 历史签发（本字段引入前）：载荷无 `tid`，serde default 解析为 `None`，
-    ///   `verify` 对旧 token 行为不变。
+    /// 签发时写入签发租户 ID（`GarrisonLogicDefault::generate_token` 经
+    /// `JwtHandler::with_tid` 接线）；`check_login_stateless` 从验签 claims 直接
+    /// 读取并校验与请求租户一致——客户端可控的请求租户头不得携他租户签发的
+    /// JWT 跨租户复用，否则 jti 黑名单随请求租户命名空间错位形成吊销逃逸。
+    /// `Option` 向后兼容存量 token：无租户签发时不序列化（载荷与既有格式逐字节
+    /// 一致），历史 token 无 `tid` 解析为 `None`（verify 行为不变）。
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub tid: Option<i64>,
     // 找回密码扩展 claim（password_owner/password_token_type/password_purpose）
@@ -112,11 +105,10 @@ pub struct JwtHandler {
     ///
     /// # 安全注意
     ///
-    /// 任何持有 `JwtHandler` 的代码都能直接读出原始密钥——调用方应将 handler
-    /// 视为敏感对象，仅在可信边界内传递，不要写入日志或序列化输出。
-    /// Drop 零化仅在 `protocol-zeroize` feature 下生效（见 `handler.rs` 的
-    /// `Drop` impl）：未启用该 feature 时，密钥内存随普通 `String` 释放，
-    /// 不保证被覆写。
+    /// 任何持有 handler 的代码都能直接读出原始密钥——视为敏感对象，仅在可信
+    /// 边界内传递，不写日志或序列化输出。Drop 零化仅在 `protocol-zeroize`
+    /// feature 下生效（见 `handler.rs`）：未启用时密钥内存随普通 `String`
+    /// 释放，不保证被覆写。
     pub secret: String,
     /// 签名算法（默认 HS256）。
     pub algorithm: Algorithm,

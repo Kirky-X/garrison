@@ -1,19 +1,12 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Repository 层模块。
-//!
-//! 为 9 张核心表定义 Repository trait，提供 CRUD 抽象。
-//! SQLite 实现见 `sqlite` 子模块（启用 `db-sqlite` feature）。
+//! Repository 层模块：为 9 张核心表定义 Repository trait（CRUD 抽象），SQLite 实现见 `sqlite` 子模块（`db-sqlite`）。
 //!
 //! ## 设计要点
 //!
-//! - `tenant_id` 统一采用 `i64`：性能更优（INTEGER 索引/存储紧凑）、
-//!   类型安全（避免字符串业务码解析）、与 spec/tenant-isolation `TenantContext.tenant_id: i64` 一致。
-//!   原始设计将 `VARCHAR(64)` 视为可偏离项；若需保留业务码（如 `tenant_001`），
-//!   由调用方维护 `i64 ↔ String` 映射表，DAO 层只认 i64。
-//! - `create` 返回 `String` 而非 `LoginId`：dao 模块不应依赖 stp 模块（分层原则），
-//!   采用 `String` 返回新插入的 ID（UUID 字符串）。
+//! - `tenant_id` 统一 `i64`（INTEGER 索引紧凑、类型安全、与 `TenantContext.tenant_id` 一致）；需业务码（`tenant_001`）时由调用方维护映射，DAO 只认 i64。
+//! - `create` 返回 `String`（UUID）而非 `LoginId`：dao 模块不依赖 stp 模块（分层原则）。
 //!
 //! ## 9 张核心表
 //!
@@ -28,13 +21,11 @@
 //! | app_session | [`SessionRepository`] | 是 | 会话表 |
 //! | app_login_log | [`LoginLogRepository`] | 是 | 登录日志表 |
 //! | app_user_ext | [`UserExtRepository`] | 是 | 用户扩展字段表 |
-//! | app_user_device | [`UserDeviceRepository`] | 是 | 用户设备表（M2） |
+//! | app_user_device | [`UserDeviceRepository`] | 是 | 用户设备表 |
 
 use crate::error::GarrisonResult;
 
-// ============================================================================
 // Row struct 定义
-// ============================================================================
 
 /// 用户表行（app_user）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -59,11 +50,8 @@ pub struct UserRow {
 
 /// 用户列表行（app_user，不含 password_hash 的投影）。
 ///
-/// [`UserRepository::list`] 专用于管理后台分页展示等场景，返回本类型
-/// 而非 [`UserRow`]——从类型上排除 `password_hash`，杜绝凭证数据经
-/// 分页/浏览接口被意外序列化到 API 响应或日志（编译期防护，替代此前
-/// 仅文档警告的做法）。需要哈希的认证查询请使用 `find_by_id` /
-/// `find_by_username`（返回 [`UserRow`]）。
+/// [`UserRepository::list`] 专用：从类型上排除 `password_hash`，杜绝凭证经分页/浏览接口
+/// 序列化到 API 响应或日志（编译期防护）；需要哈希的认证查询用 `find_by_id` / `find_by_username`。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UserListRow {
     /// 用户 ID（UUID 字符串）。
@@ -106,10 +94,7 @@ pub struct UpdateUser {
     pub last_login_at: Option<String>,
 }
 
-// ============================================================================
-// 导入哈希参数防御上限（防单次登录 OOM / CPU DoS）。
-// 实现见 `hash_import`——mod 接口隔离：mod.rs 只保留声明与 re-export。
-// ============================================================================
+// 导入哈希参数防御上限（防单次登录 OOM / CPU DoS）；实现见 `hash_import`，此处仅声明与 re-export。
 
 mod hash_import;
 pub use hash_import::{
@@ -342,11 +327,7 @@ pub struct UserExtRow {
     pub tenant_id: i64,
 }
 
-/// 用户设备表行（app_user_device）。
-///
-/// 记录用户登录设备指纹与 UA 信息，支持设备阻断与多设备管理。
-/// 时间字段用 i64（epoch seconds）。
-/// `login_id` 为字符串类型（与全局 login_id 类型一致）。
+/// 用户设备表行（app_user_device）：设备指纹与 UA 信息，供设备阻断与多设备管理；时间字段为 epoch seconds。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UserDeviceRow {
     /// 设备 ID（UUID v4）。
@@ -369,9 +350,7 @@ pub struct UserDeviceRow {
     pub created_at: i64,
 }
 
-// ============================================================================
 // Repository trait 定义
-// ============================================================================
 
 /// 用户表 Repository trait。
 ///
@@ -677,20 +656,15 @@ pub trait UserExtRepository: Send + Sync {
     ) -> GarrisonResult<Vec<UserExtRow>>;
 }
 
-// ============================================================================
 // 登录标识唯一性（app_user_identifier）
-// ============================================================================
 
 /// 标识注册结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegisterOutcome {
     /// 注册成功（该标识此前未被占用）。
     ///
-    /// # 租户隔离语义（渗透-租户隔离-标识符注册表-1 修复）
-    ///
     /// 全局主键 `(id_type, id_value)` 冲突但命中行属**其他租户**时同样返回本变体
-    /// （中性「已注册」，不带 `by_user_id`）：调用方视作注册完成即可，
-    /// 不得从返回值推断该标识在当前租户可用。
+    /// （中性「已注册」，不带 `by_user_id`）——不得从返回值推断该标识在当前租户可用。
     Registered,
     /// 标识已被占用（携带占用者 user_id）。
     ///
@@ -701,28 +675,17 @@ pub enum RegisterOutcome {
     },
 }
 
-/// 登录标识 Repository trait。
+/// 登录标识 Repository trait：`(id_type, id_value)` 为全局主键（数据库唯一约束兜底并发注册），
+/// `register` 返回 [`RegisterOutcome`] 供业务方决定冲突语义（拒绝注册 / 引导登录 / 账号合并）。
 ///
-/// 提供 phone/email 等登录标识的**数据库级原子防重**：`(id_type, id_value)` 为全局主键
-/// （设计使然，登录标识数据库级防重），数据库唯一约束兜底并发注册。
-/// `register` 返回 [`RegisterOutcome`] 供业务方决定冲突语义
-/// （拒绝注册 / 引导登录 / 走账号合并流程）。
+/// # 租户隔离
 ///
-/// # 租户隔离（渗透-租户隔离-标识符注册表-1）
-///
-/// 全局主键意味着不同租户无法注册同一标识：冲突命中他租户行时
-/// `register` 返回中性 [`RegisterOutcome::Registered`]（不带 `by_user_id`，
-/// 不向其他租户泄露 user_id）；同租户冲突才返回
-/// [`RegisterOutcome::Taken`]。租户感知归属查询用
-/// [`find_owner_in_tenant`](Self::find_owner_in_tenant)。
+/// 全局主键意味着不同租户无法注册同一标识；冲突命中他租户行时返回中性 `Registered`
+///（不带 `by_user_id`，不泄露 user_id），仅同租户冲突返回 `Taken`；租户感知归属查询用 [`find_owner_in_tenant`](Self::find_owner_in_tenant)。
 #[async_trait::async_trait]
 pub trait UserIdentifierRepository: Send + Sync {
-    /// 注册登录标识。
-    ///
-    /// `id_value` 由调用方归一化（框架提供 trim；格式校验属业务层）。
-    /// INSERT 冲突时按租户作用域回查归属：同租户冲突返回 `Taken { by_user_id }`；
-    /// 他租户占用（或冲突行并发消失）返回中性 `Registered`——不泄露其他租户的
-    /// 记录归属。
+    /// 注册登录标识；`id_value` 由调用方归一化（框架提供 trim，格式校验属业务层）。
+    /// INSERT 冲突时按租户作用域回查归属：同租户返回 `Taken { by_user_id }`，他租户占用（或冲突行并发消失）返回中性 `Registered`（不泄露归属）。
     async fn register(
         &self,
         tenant_id: i64,
@@ -735,17 +698,12 @@ pub trait UserIdentifierRepository: Send + Sync {
     ///
     /// # 泄露警告
     ///
-    /// 本方法无租户谓词（全局主键的反查原语）：多租户部署中调用方必须
-    /// 自行确保 `id_value` 不来自不可信输入，否则返回的 `user_id` 会向
-    /// 调用方泄露该标识在**其他租户**的归属。租户上下文场景请改用
-    /// [`find_owner_in_tenant`](Self::find_owner_in_tenant)。
+    /// 无租户谓词（全局主键反查原语）：调用方必须确保 `id_value` 不来自不可信输入，
+    /// 否则返回的 `user_id` 会泄露该标识在**其他租户**的归属；租户上下文场景改用 [`find_owner_in_tenant`](Self::find_owner_in_tenant)。
     async fn find_owner(&self, id_type: &str, id_value: &str) -> GarrisonResult<Option<String>>;
 
-    /// 查询标识在指定租户内的归属（租户感知，未注册或属他租户返回 `Ok(None)`）。
-    ///
-    /// 与 [`find_owner`](Self::find_owner) 的区别：SQL 带 `tenant_id` 谓词，
-    /// 跨租户命中一律返回 `None`（不泄露归属），供 `register` 冲突回查与
-    /// 多租户找回密码等租户上下文场景使用。
+    /// 查询标识在指定租户内的归属（SQL 带 `tenant_id` 谓词，跨租户命中一律 `None`）；
+    /// 供 `register` 冲突回查与多租户找回密码等租户上下文场景使用。
     async fn find_owner_in_tenant(
         &self,
         tenant_id: i64,
@@ -754,32 +712,20 @@ pub trait UserIdentifierRepository: Send + Sync {
     ) -> GarrisonResult<Option<String>>;
 }
 
-/// 单用户最大设备数。
-///
-/// `register_device` 在 (tenant_id, login_id) 下设备数达到此值时拒绝新注册。
+/// 单用户最大设备数：`register_device` 在 (tenant_id, login_id) 下设备数达到此值时拒绝新注册。
 pub const MAX_DEVICES: usize = 5;
 
-/// 用户设备 Repository trait。
-///
-/// 提供设备注册 / 阻断 / 查询能力，`register_device` 在设备数超过 [`MAX_DEVICES`] 时
-/// 返回 `GarrisonError::InvalidParam`。重复注册同一设备（相同 identifier）幂等返回已有 ID。
-///
-/// `login_id` 为 `&str`（与全局 login_id 类型一致）。
+/// 用户设备 Repository trait：设备注册 / 阻断 / 查询；`register_device` 设备数超过 [`MAX_DEVICES`] 时返回 `InvalidParam`，
+/// 重复注册同一设备（相同 identifier）幂等返回已有 ID。
 #[async_trait::async_trait]
 pub trait UserDeviceRepository: Send + Sync {
-    /// 注册设备，返回设备 ID（UUID）。
-    ///
-    /// - 若 (tenant_id, login_id, identifier) 已存在，更新 last_seen_at 并返回已有 ID（幂等）。
-    /// - 若当前设备数 >= [`MAX_DEVICES`]，返回 `GarrisonError::InvalidParam`。
+    /// 注册设备返回设备 ID（UUID）：已存在则更新 last_seen_at 返回已有 ID；设备数 >= [`MAX_DEVICES`] 返回 `InvalidParam`。
     ///
     /// # 原子性（MAX_DEVICES 上限）
     ///
-    /// 参考实现（`DbnexusUserDeviceRepository`）将「设备计数检查 + 插入」合并为
-    /// 单条条件 `INSERT ... SELECT ... WHERE (SELECT COUNT(*)) < MAX_DEVICES` 语句，
-    /// 消除 check-then-act TOCTOU：SQLite（单写者）下完全原子；PostgreSQL / MySQL
-    /// 在 READ COMMITTED 及以上隔离级别下，两条并发语句仍可能各自看到语句级快照
-    /// 而同时插入（极小窗口）——彻底封死需 DB 级触发器 / 计数约束或更高隔离级别，
-    /// DAO 层无跨语句事务 API，故按此最小化方案实现并在此声明剩余窗口。
+    /// 参考实现把「计数检查 + 插入」合并为单条条件 `INSERT ... WHERE (COUNT) < MAX_DEVICES`（消除 check-then-act TOCTOU）：
+    /// SQLite（单写者）完全原子；PostgreSQL / MySQL 在 READ COMMITTED 下两条并发语句仍可能各按语句级快照同时插入（极小窗口）——
+    /// 彻底封死需 DB 级触发器 / 计数约束，DAO 层无跨语句事务 API，在此声明剩余窗口。
     async fn register_device(
         &self,
         tenant_id: i64,
@@ -788,16 +734,10 @@ pub trait UserDeviceRepository: Send + Sync {
         ua: &str,
     ) -> GarrisonResult<String>;
 
-    /// 阻止设备（设置 is_blocked = 1）。
-    ///
-    /// 必须同时传 `tenant_id` 与 `device_id`（SQL `WHERE tenant_id = ? AND id = ?`）：
-    /// 这是 `app_user_device` 唯一的按 id 直写路径，缺租户谓词会构成跨租户封禁
-    /// 原语（渗透-租户隔离-设备接口-1）。跨租户 `device_id` 命中 0 行（no-op 幂等）。
+    /// 阻止设备（is_blocked = 1）；必须同时传 `tenant_id` 与 `device_id`——缺租户谓词会构成跨租户封禁原语，跨租户命中 0 行（no-op 幂等）。
     async fn block_device(&self, tenant_id: i64, device_id: &str) -> GarrisonResult<()>;
 
-    /// 解除阻止（设置 is_blocked = 0）。
-    ///
-    /// 租户谓词契约同 [`block_device`](Self::block_device)。
+    /// 解除阻止（is_blocked = 0），租户谓词契约同 [`block_device`](Self::block_device)。
     async fn unblock_device(&self, tenant_id: i64, device_id: &str) -> GarrisonResult<()>;
 
     /// 列出用户的所有设备（按 tenant_id + login_id 过滤）。
@@ -811,11 +751,8 @@ pub trait UserDeviceRepository: Send + Sync {
     async fn count_user_devices(&self, tenant_id: i64, login_id: &str) -> GarrisonResult<usize>;
 }
 
-/// WebAuthn 凭据绑定结果。
-///
-/// `(tenant_id, credential_id)` 为主键，数据库唯一约束兜底并发绑定；
-/// `create` 冲突时回查归属返回 `AlreadyBound`（与登录标识注册同款语义），
-/// 供业务方决定处置（拒绝注册 / 引导登录）。
+/// WebAuthn 凭据绑定结果：`(tenant_id, credential_id)` 为主键，唯一约束兜底并发；
+/// `create` 冲突时回查归属返回 `AlreadyBound`（与登录标识注册同款语义）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WebauthnBindOutcome {
     /// 绑定成功（该凭据此前未被占用）。
@@ -827,11 +764,8 @@ pub enum WebauthnBindOutcome {
     },
 }
 
-/// WebAuthn 凭据行（app_webauthn_credential）。
-///
-/// 承载凭据模型核心字段：`credential_id` 唯一（主键成分）、公钥（COSEKey
-/// JSON）、sign_count（克隆检测依据）、backup flags（BE 只升不降 / BS 跟随
-/// 最新断言）、attestation（注册期格式标识，可空）。
+/// WebAuthn 凭据行（app_webauthn_credential）：公钥（COSEKey JSON）、sign_count（克隆检测依据）、
+/// backup flags（BE 只升不降 / BS 跟随最新断言）、attestation（可空）。
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WebauthnCredentialRow {
     /// 租户 ID。
@@ -856,20 +790,12 @@ pub struct WebauthnCredentialRow {
     pub updated_at: i64,
 }
 
-/// WebAuthn 凭据 Repository trait。
+/// WebAuthn 凭据 Repository trait：绑定（数据库级原子防重）/ 按凭据查询 / 按用户列举 / 认证器状态更新 / 解绑（幂等）。
 ///
-/// 提供 Passkey 凭据的持久化能力：绑定（数据库级原子防重）/ 按凭据查询 /
-/// 按用户列举 / 认证器状态更新（sign_count + backup flags）/ 解绑（幂等）。
-///
-/// 业务不变式（DAO 层不裁决，由 protocol/webauthn service 执行）：
-/// - sign_count 单调性（count ≤ 上次 → 克隆嫌疑拒绝）；
-/// - backup_eligible 只升不降（BE 升级单向）。
+/// 业务不变式（DAO 层不裁决，由 protocol/webauthn service 执行）：sign_count 单调（count ≤ 上次 → 克隆嫌疑拒绝）；backup_eligible 只升不降。
 #[async_trait::async_trait]
 pub trait WebauthnCredentialRepository: Send + Sync {
-    /// 绑定凭据。
-    ///
-    /// `(tenant_id, credential_id)` 冲突时回查归属返回
-    /// [`WebauthnBindOutcome::AlreadyBound`]（数据库唯一约束兜底并发）。
+    /// 绑定凭据；`(tenant_id, credential_id)` 冲突时回查归属返回 [`WebauthnBindOutcome::AlreadyBound`]（唯一约束兜底并发）。
     async fn create(&self, row: &WebauthnCredentialRow) -> GarrisonResult<WebauthnBindOutcome>;
 
     /// 按凭据 ID 查询（未绑定返回 `Ok(None)`）。
@@ -886,9 +812,7 @@ pub trait WebauthnCredentialRepository: Send + Sync {
         user_id: &str,
     ) -> GarrisonResult<Vec<WebauthnCredentialRow>>;
 
-    /// 更新认证器状态（sign_count / backup flags），updated_at 同步刷新。
-    ///
-    /// 凭据不存在时返回 `GarrisonError::InvalidParam`（不静默吞错）。
+    /// 更新认证器状态（sign_count / backup flags）并同步刷新 updated_at；凭据不存在返回 `InvalidParam`（不静默吞错）。
     async fn update_authenticator_state(
         &self,
         tenant_id: i64,
@@ -902,15 +826,10 @@ pub trait WebauthnCredentialRepository: Send + Sync {
     async fn delete(&self, tenant_id: i64, credential_id: &str) -> GarrisonResult<()>;
 }
 
-// ============================================================================
 // 密码历史（app_password_history）
-// ============================================================================
 
-/// 密码历史 Repository trait。
-///
-/// 记录用户历史密码 hash（`PasswordHasher::hash` 产物，PHC 字符串），
-/// 供 `account-policy` 的 `HistoryRule` 拒绝重用最近 N 条历史密码。
-/// 追加时机：找回密码重置成功、常规改密与注册路径（host 责任）。
+/// 密码历史 Repository trait：记录用户历史密码 hash（PHC 字符串），供 `account-policy` 的 `HistoryRule` 拒绝重用最近 N 条；
+/// 追加时机：找回密码重置、常规改密与注册路径（host 责任）。
 #[async_trait::async_trait]
 pub trait PasswordHistoryRepository: Send + Sync {
     /// 追加一条历史 hash（created_at 取当前 epoch 秒）。
@@ -930,41 +849,24 @@ pub trait PasswordHistoryRepository: Send + Sync {
     ) -> GarrisonResult<Vec<String>>;
 }
 
-// ============================================================================
-// Dbnexus Repository 实现子模块。
-// 启用 db-sqlite 或 db-postgres feature 时编译，基于 dbnexus DbPool + sea-orm
-// Statement 参数化查询，通过 make_statement 运行时占位符转换支持两种后端。
-// ============================================================================
-/// Dbnexus Repository 实现子模块（backend-agnostic，支持 SQLite / PostgreSQL）。
+// Dbnexus Repository 实现子模块（db-sqlite / db-postgres / db-mysql 编译；基于 DbPool + sea-orm
+// Statement 参数化查询，经 make_statement 运行时占位符转换支持各后端）。
+/// Dbnexus Repository 实现子模块（backend-agnostic，支持 SQLite / PostgreSQL / MySQL）。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub mod sqlite;
 
-/// PostgreSQL Repository 实现子模块。
-///
-/// 复用 `sqlite` 模块的 backend-agnostic 实现（通过 `make_statement` 自动转换占位符），
-/// 仅以 Postgres 命名空间 re-export 类型别名，避免代码重复。详见 `postgres/mod.rs` 文档。
+/// PostgreSQL Repository 子模块：复用 `sqlite` 的 backend-agnostic 实现（占位符自动转换），仅 re-export 类型别名（详见 `postgres/mod.rs`）。
 #[cfg(feature = "db-postgres")]
 pub mod postgres;
 
-/// MySQL Repository 实现子模块。
-///
-/// 复用 `sqlite` 模块的 backend-agnostic 实现（通过 `make_statement` 自动转换占位符），
-/// 仅以 MySQL 命名空间 re-export 类型别名，避免代码重复。详见 `postgres/mod.rs` 文档。
+/// MySQL Repository 子模块：同上复用 `sqlite` 实现，仅 re-export 类型别名（详见 `mysql/mod.rs`）。
 #[cfg(feature = "db-mysql")]
 pub mod mysql;
 
-/// 角色层级子模块。
-///
-/// always compiled（`RoleHierarchyRecord` 不依赖 db-sqlite）。
-/// `RoleHierarchyService` 在 扩展时依赖 `GarrisonDao` trait（always compiled）。
+/// 角色层级子模块（always compiled：`RoleHierarchyRecord` 不依赖 db-sqlite；`RoleHierarchyService` 依赖 `GarrisonDao` trait）。
 pub mod role_hierarchy;
 
-// ============================================================================
-// SQL 方言适配（backend-agnostic 辅助函数）。
-// 启用 db-sqlite 或 db-postgres feature 时编译。
-// 实现（占位符转换 / Statement 构造）见 `dialect`——mod 接口隔离：
-// mod.rs 只保留模块声明与 re-export，实现函数不写在 mod.rs。
-// ============================================================================
+// SQL 方言适配（backend-agnostic 辅助函数）；实现见 `dialect`，此处仅模块声明与 re-export。
 
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 mod dialect;
@@ -975,9 +877,7 @@ pub use dialect::{convert_placeholders, make_statement};
 mod tests {
     use super::*;
 
-    // ========================================================================
     // Row struct 构造测试（验证字段可正确初始化）
-    // ========================================================================
 
     /// UserRow 可构造且字段正确。
     #[test]
@@ -1146,9 +1046,7 @@ mod tests {
         assert_eq!(MAX_DEVICES, 5);
     }
 
-    // ========================================================================
     // New* struct 构造测试
-    // ========================================================================
 
     /// NewUser 可构造。
     #[test]
@@ -1235,9 +1133,7 @@ mod tests {
         assert!(update.last_login_at.is_none());
     }
 
-    // ========================================================================
     // Row struct 序列化测试（验证 Serialize/Deserialize 派生）
-    // ========================================================================
 
     /// UserRow 可序列化为 JSON 且可反序列化。
     #[test]
@@ -1277,18 +1173,13 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // trait Send + Sync 编译期检查
-    // ========================================================================
 
-    /// 所有 Repository trait 为 Send + Sync（编译期检查）。
-    ///
-    /// 注：`?Sized` 允许 `dyn Trait` 作为类型参数（dyn Trait 不实现 Sized）。
+    /// 所有 Repository trait 为 Send + Sync（编译期检查；`?Sized` 允许 `dyn Trait` 作类型参数）。
     #[test]
     fn all_repository_traits_are_send_sync() {
         fn assert_send_sync<T: Send + Sync + ?Sized>() {}
-        // 这些 trait object 检查仅验证 trait 本身满足 Send + Sync 约束，
-        // 具体 impl 由各后端实现的测试单独验证
+        // 仅验证 trait 本身满足 Send + Sync；具体 impl 由各后端实现的测试验证
         assert_send_sync::<dyn UserRepository>();
         assert_send_sync::<dyn RoleRepository>();
         assert_send_sync::<dyn PermissionRepository>();
@@ -1301,23 +1192,10 @@ mod tests {
         assert_send_sync::<dyn UserDeviceRepository>();
     }
 
-    // ========================================================================
-    // PostgreSQL 后端集成测试
-    // ========================================================================
-    //
-    // 验证 DbnexusUserRepository 在 PostgreSQL 后端下能正确执行 find_by_id，
-    // 间接验证 make_statement 运行时占位符转换（? → $1, $2）在真实 PG 上工作。
-    //
-    // 此测试需要真实 PostgreSQL 实例，默认 #[ignore]。
-    // 运行方式：
-    // export DATABASE_URL=postgres://user:pass@localhost:5432/testdb
-    // cargo test --features db-postgres --lib \
-    // repository::tests::dbnexus_user_repository_works_with_postgres_backend -- --ignored
+    // PostgreSQL 后端集成测试（#[ignore]，需 DATABASE_URL 指向真实 PG）
 
-    /// 验证 DbnexusUserRepository 在 PostgreSQL 后端下 find_by_id 正确执行。
-    ///
-    /// 测试流程：建表 → 插入用户 → find_by_id → 断言字段 → 清理。
-    /// 如果占位符转换失败（? 未转为 $n），PostgreSQL 会返回语法错误。
+    /// 验证 DbnexusUserRepository 在 PostgreSQL 下 find_by_id 正确执行（含 `?` → `$1, $2` 占位符转换）；流程：建表 → 插入 → 查询 → 清理。
+    /// 运行：`DATABASE_URL=postgres://... cargo test --features db-postgres --lib -- --ignored`。
     #[cfg(feature = "db-postgres")]
     #[tokio::test(flavor = "multi_thread")]
     #[serial_test::serial]
@@ -1331,12 +1209,12 @@ mod tests {
             panic!("DATABASE_URL 未设置，请指向 PostgreSQL 连接字符串");
         });
 
-        // 1. 初始化 PostgreSQL 连接池
+        // 初始化 PostgreSQL 连接池
         let pool = init_dbnexus(&database_url)
             .await
             .expect("初始化 PostgreSQL 连接池失败");
 
-        // 2. 建表（PostgreSQL 兼容 DDL，用 BIGINT 匹配 i64）
+        // 建表：PostgreSQL 兼容 DDL，BIGINT 匹配 i64
         {
             let session = pool.get_session("admin").await.expect("获取 session 失败");
             let conn = session.connection().expect("获取 connection 失败");
@@ -1399,7 +1277,7 @@ mod tests {
             .await
             .expect("插入测试用户失败");
 
-        // 5. find_by_id 验证占位符转换（? → $1, $2 在真实 PG 上执行）
+        // 验证占位符转换（? → $1, $2 在真实 PG 上执行）
         let found = repo
             .find_by_id(tenant_id, &user_id)
             .await
@@ -1416,9 +1294,8 @@ mod tests {
             .await
             .expect("清理测试数据失败");
 
-        // 8. 删除手动建的表。本测试不经迁移器建表；若 app_user 残留，
-        //    run_embedded_postgres 的 001_init 将撞「表已存在」。两个 postgres
-        //    集成测试共用 DATABASE_URL（#[serial] 串行，先后顺序均可）。
+        // 删除手动建的表：本测试不经迁移器建表，残留会使 run_embedded_postgres 的 001_init 撞「表已存在」
+        //（两个 postgres 集成测试共用 DATABASE_URL，#[serial] 串行，先后顺序均可）。
         {
             let session = pool.get_session("admin").await.expect("获取 session 失败");
             let conn = session.connection().expect("获取 connection 失败");

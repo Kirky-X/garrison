@@ -121,10 +121,8 @@ impl IntrospectHandler {
             ));
         }
 
-        // 2. 按 token_type_hint 选择查找顺序（RFC 7662 §2.1：hint 仅用于优化
-        // 查找方向，查不到时 MAY 扩展搜索另一种类型）
-        // refresh token 存储于 `oauth2:rtoken:` 前缀 / rotation SQLite 表，
-        // 必须经 get_refresh_token_record 查找，而非恒查 access 记录。
+        // 按 token_type_hint 选择查找顺序（RFC 7662 §2.1：hint 仅优化查找方向，查不到时可扩展搜索另一种类型）；
+        // refresh token 存于 `oauth2:rtoken:` 前缀 / rotation SQLite 表，须经 get_refresh_token_record 查找
         let record = match req.token_type_hint.as_deref() {
             Some("refresh_token") => {
                 match self
@@ -156,8 +154,8 @@ impl IntrospectHandler {
             },
         };
 
-        // 3. 过期判定：DAO TTL 理论上已剔除过期记录，但 rotation 路径的
-        // expires_at 不经 TTL 控制，且防御时钟偏差——过期记录一律 inactive。
+        // 过期判定：DAO TTL 理论上已剔除过期记录，但 rotation 路径的 expires_at 不经 TTL 控制且需防御时钟偏差，
+        // 过期记录一律 inactive
         match record {
             Some(record) if record.expires_at > Utc::now() => {
                 Ok(Self::response_from_record(record))
@@ -173,7 +171,6 @@ impl IntrospectHandler {
         } else {
             Some(record.scopes.join(" "))
         };
-        // RFC 7662 §2.3：从 TokenRecord 填充完整字段
         let iat_ts = record.issued_at.timestamp();
         IntrospectResponse {
             active: true,
@@ -431,8 +428,7 @@ mod tests {
         assert!(resp.jti.is_none());
     }
 
-    /// refresh_token 内省：经 `oauth2:rtoken:` 前缀（fallback）/ rotation 表查找，
-    /// 不再恒查 access 记录导致 refresh token 恒返回 active=false（RFC 7662）。
+    /// refresh_token 内省：经 `oauth2:rtoken:` 前缀（fallback）/ rotation 表查找，使 refresh token 可返回 active=true。
     #[tokio::test]
     async fn introspect_refresh_token_returns_active() {
         let (handler, _, token_handler, authorize_handler) = make_handlers();
@@ -457,8 +453,8 @@ mod tests {
         assert_eq!(resp.scope.as_deref(), Some("read write"));
     }
 
-    /// token_type_hint 仅是查找提示：refresh token 即使带 access_token hint
-    /// 也应能被查到（RFC 7662 §2.1 允许扩展搜索），不得因 hint 错误返回 inactive。
+    /// token_type_hint 仅是查找提示：hint 与 token 实际类型不符时也须能查到（RFC 7662 §2.1 允许扩展搜索），
+    /// 不得因 hint 错误返回 inactive。
     #[tokio::test]
     async fn introspect_hint_is_only_a_hint_fallback_still_finds() {
         let (handler, _, token_handler, authorize_handler) = make_handlers();

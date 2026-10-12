@@ -1,29 +1,13 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! IP 级防火墙策略套件模块。
+//! IP 级防火墙策略套件模块（策略各自独立 feature）：`GarrisonFirewallStrategy` 定义 `check(ctx)` 拦截契约，
+//! `FirewallContext` 携带 IP / login_id / tenant_id 供策略决策，`StrategyRegistration` 经 inventory 编译期注册策略名。
 //!
-//! ## 设计
-//!
-//! - [`GarrisonFirewallStrategy`](crate::strategy::firewall::GarrisonFirewallStrategy) trait：定义 `check(&self, ctx: &FirewallContext) -> GarrisonResult<()>` 契约
-//! - [`FirewallContext`](crate::strategy::firewall::FirewallContext)：携带 IP / login_id / tenant_id 供策略决策
-//! - [`StrategyRegistration`](crate::strategy::firewall::StrategyRegistration)：inventory 注册项，5 个 strategy 通过 `inventory::submit!` 注册
-//!
-//! ## 5 个 strategy（各自独立 feature）
-//!
-//! | Strategy | Feature | 算法 |
-//! |----------|---------|------|
-//! | `BruteForceStrategy` | `firewall-bruteforce` | oxcache 计数 + 锁定 |
-//! | `RateLimitStrategy` | `firewall-ratelimit` | 滑动窗口 |
-//! | `AnomalousLoginStrategy` | `firewall-anomalous` | haversine + maxminddb |
-//! | `DDoSStrategy` | `firewall-ddos` | token bucket |
-//! | `GeoIPStrategy` | `firewall-geoip` | maxminddb 国家码 |
-//!
-//! ## 与现有 trait 的区分
-//!
-//! - [`GarrisonPermissionStrategy`](crate::strategy::GarrisonPermissionStrategy)：权限/角色校验
-//! - [`FirewallStrategy`](crate::strategy::registry::FirewallStrategy)：登录前钩子检查
-//! - [`GarrisonFirewallStrategy`](crate::strategy::firewall::GarrisonFirewallStrategy)（本 trait）：IP 级防火墙拦截
+//! 5 个策略：`BruteForceStrategy`（oxcache 计数 + 锁定）、`RateLimitStrategy`（滑动窗口）、`AnomalousLoginStrategy`
+//! （haversine + maxminddb）、`DDoSStrategy`（固定窗口计数）、`GeoIPStrategy`（maxminddb 国家码）。
+//! 与同名 trait 区分：`GarrisonPermissionStrategy` 做权限/角色校验，registry 的 `FirewallStrategy` 是登录前钩子检查，
+//! 本模块的 `GarrisonFirewallStrategy` 是 IP 级防火墙拦截。
 
 use crate::error::GarrisonResult;
 use async_trait::async_trait;
@@ -59,9 +43,7 @@ pub mod waf;
 #[cfg(feature = "firewall-waf")]
 pub mod waf_hooks;
 
-// ============================================================================
 // 模块重导出：通过 mod 路径访问子模块类型（避免外部代码引用具体文件路径）
-// ============================================================================
 
 #[cfg(feature = "firewall-bruteforce")]
 pub use brute_force::{BruteForceConfig, BruteForceStrategy};
@@ -90,17 +72,9 @@ pub use waf::{WafContext, WafHookChain};
 #[cfg(feature = "firewall-waf")]
 pub use waf_hooks::{BlackPathHook, DangerCharacterHook};
 
-// ============================================================================
 // FirewallContext：防火墙策略上下文
-// ============================================================================
 
 /// 防火墙策略上下文，携带请求级信息供策略决策使用。
-///
-/// # 字段
-///
-/// - `ip`：请求来源 IP（必须，所有策略依赖）
-/// - `login_id`：登录主体标识（可选，AnomalousLogin / RateLimit scope=User 依赖）
-/// - `tenant_id`：租户标识（可选，RateLimit scope=Tenant 依赖）
 ///
 /// # 构造
 ///
@@ -123,91 +97,38 @@ pub struct FirewallContext {
 
 mod context_impl;
 
-// ============================================================================
 // GarrisonFirewallStrategy trait：IP 级防火墙策略契约
-// ============================================================================
 
 /// IP 级防火墙策略 trait，定义请求级安全检查的可插拔契约。
 ///
-/// 5 个实现（各自独立 feature）：
-/// - `BruteForceStrategy`：暴力破解防护（oxcache 计数 + 锁定）
-/// - `RateLimitStrategy`：速率限制（滑动窗口）
-/// - `AnomalousLoginStrategy`：异地登录检测（haversine + maxminddb）
-/// - `DDoSStrategy`：DDoS 防护（token bucket）
-/// - `GeoIPStrategy`：地理位置拦截（maxminddb）
-///
-/// # 返回
-///
-/// - `Ok(())`：检查通过，允许请求。
-/// - `Err(GarrisonError::FirewallBlocked)`：检查未通过，拦截请求。
-/// - `Err(other)`：内部错误（如 DAO 故障）。
+/// `Ok(())` 放行；`Err(FirewallBlocked)` 拦截；`Err(other)` 为内部错误（如 DAO 故障）。5 个实现见模块文档。
 #[async_trait]
 pub trait GarrisonFirewallStrategy: Send + Sync {
-    /// 执行防火墙安全检查。
-    ///
-    /// # 参数
-    /// - `ctx`: 防火墙上下文（IP / login_id / tenant_id）。
+    /// 执行防火墙安全检查（`ctx` 携带 IP / login_id / tenant_id）。
     async fn check(&self, ctx: &FirewallContext) -> GarrisonResult<()>;
 }
 
-// ============================================================================
 // CaptchaChallenge trait：验证码挑战契约
-// ============================================================================
 
-/// 验证码挑战 trait，定义"接近阈值时触发挑战 + 验证答案"的可插拔契约。
+/// 验证码挑战 trait，定义"接近阈值时触发挑战 + 验证答案"的可插拔契约（实现方如 `RateLimitStrategy`）。
 ///
-/// 实现方（如 [`RateLimitStrategy`])
-/// 根据自身状态决定何时触发挑战，并在 `verify_challenge` 中验证用户提交的答案。
-///
-/// # 与 [`GarrisonFirewallStrategy`] 的区分
-///
-/// - `GarrisonFirewallStrategy::check`：硬拦截，直接返回 `FirewallBlocked`。
-/// - `CaptchaChallenge::should_challenge`：软挑战，返回 true 时调用方应弹出验证码，
-/// 用户通过 `verify_challenge` 后才允许后续请求。
-///
-/// # 调用流程
-///
-/// 1. 调用 `should_challenge(ctx)` 判断是否需要挑战。
-/// 2. 需要挑战时，调用方（如 web 中间件）弹出验证码并接收用户答案。
-/// 3. 调用 `verify_challenge(ctx, answer)` 验证答案。
+/// 与 `GarrisonFirewallStrategy::check` 的硬拦截不同，`should_challenge` 为软挑战：返回 true 时调用方弹出验证码，
+/// 用户经 `verify_challenge` 通过后才允许后续请求。
 #[async_trait]
 pub trait CaptchaChallenge: Send + Sync {
-    /// 判断当前上下文是否应触发验证码挑战。
-    ///
-    /// # 参数
-    /// - `ctx`: 防火墙上下文（IP / login_id / tenant_id）。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 应触发挑战（如请求计数接近阈值）。
-    /// - `Ok(false)`: 无需挑战。
-    /// - `Err(_)`: 内部错误（如 DAO 故障）。
+    /// 判断当前上下文是否应触发验证码挑战（如请求计数接近阈值）；`Err` 为内部错误（如 DAO 故障）。
     async fn should_challenge(&self, ctx: &FirewallContext) -> GarrisonResult<bool>;
 
-    /// 验证用户提交的验证码答案。
-    ///
-    /// # 参数
-    /// - `ctx`: 防火墙上下文（用于定位期望答案）。
-    /// - `answer`: 用户提交的答案。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 答案正确，挑战通过。
-    /// - `Ok(false)`: 答案错误或未设置期望答案，挑战失败。
-    /// - `Err(_)`: 内部错误（如 DAO 故障）。
+    /// 验证用户提交的验证码答案（`ctx` 用于定位期望答案）；答案错误或未设置期望答案返回 `Ok(false)`，`Err` 为内部错误。
     async fn verify_challenge(&self, ctx: &FirewallContext, answer: &str) -> GarrisonResult<bool>;
 }
 
-// ============================================================================
 // StrategyRegistration：inventory 编译期注册
-// ============================================================================
 
-/// 防火墙策略注册条目，用于 `inventory` 收集。
+/// 防火墙策略注册条目，用于 `inventory` 收集；仅注册策略名称（声明存在），不含 factory——strategy 需依赖注入
+/// dao/lookup，无参 factory 无法创建可用实例，调用方按 name 判断哪些 strategy 可用后手动用 `new(config, dao)` 构造。
 ///
-/// 仅注册策略名称（声明存在），不含 factory —— strategy 需依赖注入 dao/lookup，
-/// 无参 factory 无法创建可用实例。调用方通过 name 知道哪些 strategy 可用后，
-/// 手动用 `new(config, dao)` 构造实际实例。
-///
-/// 通过 `inventory::submit! { StrategyRegistration { name: "bruteforce" } }` 注册策略，
-/// 运行期通过 `inventory::iter::<StrategyRegistration>()` 遍历。
+/// 经 `inventory::submit! { StrategyRegistration { name: "bruteforce" } }` 注册，运行期经 `inventory::iter::<StrategyRegistration>()` 遍历。
 pub struct StrategyRegistration {
     /// 策略名称（唯一标识，如 `"bruteforce"` / `"ratelimit"`）。
     pub name: &'static str,
@@ -230,8 +151,7 @@ mod tests {
     fn all_five_strategies_registered_via_inventory() {
         use super::*;
         use std::iter::Iterator;
-        // 显式引用每个 strategy 类型，强制链接器保留 inventory::submit! 静态变量
-        //（inventory 静态变量未被引用时可能被链接器优化丢弃）
+        // 显式引用每个 strategy 类型，强制链接器保留 inventory::submit! 静态变量（未被引用时可能被链接器优化丢弃）
         use super::AnomalousLoginStrategy;
         use super::BruteForceStrategy;
         use super::DDoSStrategy;

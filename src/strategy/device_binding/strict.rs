@@ -1,16 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 严格设备绑定策略实现。
-//!
-//! [`StrictBinding`] 实现 [`DeviceBindingPolicy`]（super::DeviceBindingPolicy）：
-//! - `is_new_device`：遍历 `login_id` 的所有 `TokenSession`，若全部 session 的
-//! `device` 字段都不等于 `device_id`，则视为新设备
-//! - `require_secondary_auth`：直接返回 `Ok(true)`（调用方已通过 `is_new_device` 确认是新设备）
-//!
-//! 设计参考 [`crate::strategy::alert::IpChangeDetector`]：持有 `Arc<GarrisonSession>`，
-//! 通过 `get_tokens_by_login_id` + `get_token_session` 遍历历史 session，
-//! 不依赖 `device` 模块（避免 feature gate 耦合）。
+//! 严格设备绑定策略实现:`StrictBinding` 经 `get_tokens_by_login_id` + `get_token_session` 遍历历史
+//! session 判断新设备(不依赖 `device` 模块,避免 feature gate 耦合);`require_secondary_auth` 直接
+//! 返回 `Ok(true)`(调用方已先经 `is_new_device` 确认)。
 
 use crate::error::GarrisonResult;
 use crate::session::GarrisonSession;
@@ -21,36 +14,10 @@ use super::DeviceBindingPolicy;
 
 /// 严格设备绑定策略：新设备强制触发二级认证。
 ///
-/// 持有 [`GarrisonSession`] 引用，通过遍历历史 `TokenSession.device` 字段
-/// 判断当前 `device_id` 是否为新设备。新设备时 `require_secondary_auth` 返回 `Ok(true)`，
-/// 阻断登录流程并要求二级认证；旧设备返回 `Ok(false)` 直接放行。
-///
-/// # 空设备标识
-///
-/// `is_new_device` 对空 `device_id` 返回 `Ok(false)`（无设备标识不视为新设备），
-/// 避免无设备信息的登录被错误阻断。
-///
-/// # 行为修复说明
-///
-/// `require_secondary_auth` 不再重复调用 `is_new_device`（调用方已先调用过，避免重复 DAO 查询）。
-/// 调用方（`session.rs` login 流程）仅在 `is_new_device == true` 时才调用此方法，
-/// 因此直接返回 `Ok(true)`。
-///
-/// # `require_secondary_auth` 契约（显式声明）
-///
-/// 本方法**无条件返回 `Ok(true)`**，完全忽略 `login_id` / `device_id` 参数，
-/// 无任何运行时前置校验——"仅在新设备确认后调用"是**隐式调用方契约**，
-/// 无编译期或运行期强制。语义要点：
-///
-/// - **设计意图**：no-op 断言器。真正的"是否新设备"判定在 `is_new_device`，
-///   本方法只表达"严格模式下新设备必须二级认证"这一常量决策。
-/// - **调用方责任**：必须先调 `is_new_device` 且结果为 `true` 才调用本方法
-///   （stp 层 `check_device_binding` 已按此顺序接线）。每次登录都调用本方法
-///   会导致全部登录被要求二级认证（过度阻断，**fail-closed 方向**——本方法
-///   不可能错误放行，只可能错误拦截）。
-/// - **限制**：`is_new_device` 对空 `device_id` 返回 `Ok(false)`（见 `policies`），
-///   空设备标识的登录不经过本方法即可通过——fail-closed 部署应在上游拒绝
-///   空设备标识。
+/// `is_new_device` 遍历历史 `TokenSession.device` 判断新颖性(空 `device_id` 返回 `Ok(false)`,见 `policies`)。
+/// `require_secondary_auth` 无条件返回 `Ok(true)`、忽略两个参数且无任何运行时前置校验——"仅在新设备确认后调用"
+/// 是隐式调用方契约(stp 层 `check_device_binding` 已按此顺序接线);误用后果是全部登录被要求二级认证,方向为
+/// fail-closed(只可能错误拦截,不可能错误放行),fail-closed 部署还必须在上游拒绝空设备标识。
 pub struct StrictBinding {
     /// 会话管理器引用，用于查询历史 session 的 device 字段。
     session: Arc<GarrisonSession>,
@@ -58,9 +25,6 @@ pub struct StrictBinding {
 
 impl StrictBinding {
     /// 创建 [`StrictBinding`] 实例。
-    ///
-    /// # 参数
-    /// - `session`: 会话管理器引用（`Arc<GarrisonSession>`）。
     pub fn new(session: Arc<GarrisonSession>) -> Self {
         Self { session }
     }
@@ -72,20 +36,14 @@ impl DeviceBindingPolicy for StrictBinding {
         super::policies::check_is_new_device(&self.session, login_id, device_id).await
     }
 
-    /// 是否需要二级认证：**无条件返回 `Ok(true)`**（严格模式常量决策）。
-    ///
-    /// # 契约（no-op 语义）
-    ///
-    /// 本方法忽略两个参数、不做任何 DAO 查询——"仅在新设备确认后调用"是隐式
-    /// 调用方契约，无编译期/运行期强制（详见类型文档 `require_secondary_auth` 契约节）。
-    /// 误用后果是过度阻断（所有登录都被要求二级认证），方向为 fail-closed。
+    /// 是否需要二级认证：**无条件返回 `Ok(true)`**（严格模式常量决策，忽略参数、不查 DAO）；
+    /// "仅在新设备确认后调用"是隐式调用方契约(详见类型文档),误用方向为 fail-closed(过度阻断全部登录)。
     async fn require_secondary_auth(
         &self,
         login_id: &str,
         _device_id: &str,
     ) -> GarrisonResult<bool> {
-        // 调用方已通过 is_new_device 确认是新设备，直接返回 true（强制二级认证）。
-        // debug! 留痕：使该 no-op 决策在审计日志中可观测（含调用方传入的 login_id）。
+        // 调用方已通过 is_new_device 确认是新设备,直接返回 true;debug! 留痕使该 no-op 决策可审计。
         tracing::debug!(
             login_id,
             "StrictBinding::require_secondary_auth: unconditional true (new-device confirmed by caller contract)"
@@ -124,9 +82,7 @@ mod tests {
             .unwrap();
     }
 
-    // ========================================================================
     // is_new_device 测试
-    // ========================================================================
 
     /// 历史 session 中不存在 device_id 时返回 true（新设备）。
     #[tokio::test]
@@ -180,9 +136,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // require_secondary_auth 测试
-    // ========================================================================
 
     /// 新设备时 require_secondary_auth 返回 true（强制二级认证）。
     #[tokio::test]
@@ -208,8 +162,7 @@ mod tests {
         create_session_with_device(&session, "1001", "T1", "web-chrome").await;
 
         let policy = StrictBinding::new(session);
-        // 即使传入已知设备，require_secondary_auth 也返回 true
-        // 因为调用方（session.rs login 流程）仅在 is_new_device == true 时才调用此方法
+        // 即使传入已知设备也返回 true:调用方(session.rs login 流程)仅在 is_new_device == true 后调用本方法。
         let require = policy
             .require_secondary_auth("1001", "web-chrome")
             .await
@@ -243,13 +196,11 @@ mod tests {
         create_session_with_device(&session, "1001", "T3", "api-client").await;
 
         let policy = StrictBinding::new(session);
-        // mobile-ios 在 T2 中存在 → 不是新设备
         let is_new = policy.is_new_device("1001", "mobile-ios").await.unwrap();
         assert!(
             !is_new,
             "多 session 中任一 device 匹配时应返回 false（已知设备）"
         );
-        // 不存在的设备仍返回 true
         let is_new = policy
             .is_new_device("1001", "tablet-android")
             .await

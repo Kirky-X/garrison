@@ -78,10 +78,7 @@ fn now_ts() -> i64 {
         .as_secs() as i64
 }
 
-/// 运行 API 签名协议示例。
-///
-/// 演示 SignHandler 的 sign 生成签名、validate 校验签名（时间戳窗口 + nonce 防重放）、
-/// nonce 重放被拒绝、签名不匹配被拒绝、时间戳超出窗口被拒绝。
+/// 运行 API 签名协议示例：sign 生成签名、validate 校验（时间戳窗口 + nonce 防重放），重放 / 伪造 / 超窗均被拒绝。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison API 签名协议示例 ===\n");
 

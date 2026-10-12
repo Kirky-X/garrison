@@ -1,17 +1,10 @@
-// Copyright (c) 2026 Kirky.X🌠
-// SPDX-License-Identifier: Apache-2.0
-
 //! Logout 事件 → logout token 入队 listener。
 //!
-//! 消费 `GarrisonEvent::Logout`，对每个配置的 RP 签发 logout token 并写入
-//! `oauth2_backchannel_queue`。两档派发均可达（两档共用同一监听器集合）：
+//! 对每个配置的 RP 签发 logout token 并写入 `oauth2_backchannel_queue`。
 //!
-//! - **OnCommit 档**：事务内登出经 `GarrisonEventTx::on_commit` 缓冲 Logout
-//!   事件，commit 成功后派发到本 listener——回滚 / 丢弃 guard 则不入队，
-//!   队列行与业务写同生共死。
-//! - **Immediately 档**：session 登出路径为 auto-commit 会话写、无事务上下文，
-//!   登出完成后直接广播（入队时点会话写已持久），见
-//!   `stp::session` 登出实现处的档位说明注释。
+//! 两档派发共用同一监听器集合：OnCommit 档经 `GarrisonEventTx::on_commit` 缓冲，commit 成功后派发
+//! （回滚 / 丢弃 guard 则不入队，队列行与业务写同生共死）；Immediately 档用于 auto-commit 的 session
+//! 登出路径，登出完成后直接广播。
 
 use super::queue::BackChannelQueue;
 use super::token::LogoutTokenIssuer;
@@ -38,10 +31,7 @@ pub struct BackChannelLogoutListener {
 }
 
 impl BackChannelLogoutListener {
-    /// 构造入队 listener。
-    ///
-    /// `max_ttl_secs` 为入队行投递窗口（生产默认 24h）。非 Logout 事件直接
-    /// 忽略（触发仅挂 session 登出路径，Kickout 等事件不投递）。
+    /// 构造入队 listener；`max_ttl_secs` 为入队行投递窗口（生产默认 24h）。非 Logout 事件直接忽略（Kickout 等事件不投递）。
     pub fn new(
         pool: DbPool,
         issuer: Arc<LogoutTokenIssuer>,
@@ -64,8 +54,7 @@ impl BackChannelLogoutListener {
 #[async_trait]
 impl GarrisonListener for BackChannelLogoutListener {
     async fn on_event(&self, event: &GarrisonEvent) -> GarrisonResult<()> {
-        // 事件载荷 token 为掩码形式（CWE-532 契约），登出主体取 login_id 写入
-        // logout token 的 sub；掩码 token 不参与任何投递数据。
+        // 事件载荷 token 为掩码形式（CWE-532 契约）：登出主体取 login_id 写入 sub，掩码 token 不参与投递
         let GarrisonEvent::Logout { login_id, .. } = event else {
             return Ok(());
         };
@@ -129,8 +118,8 @@ mod tests {
         tx.on_commit(logout_event("alice"));
         tx.commit().await.expect("提交应成功");
 
-        // 提交后派发入队（测试构建下 manager 混有 inventory ErrListener 桩，
-        // DispatchOutcome 计数被污染，验收语义以队列状态为准）
+        // 提交后派发入队（测试构建下 manager 混有 inventory ErrListener 桩，DispatchOutcome 计数被污染，
+        // 验收语义以队列状态为准）
         let queue = BackChannelQueue::new(pool, 3600);
         assert_eq!(
             queue.count_by_status(STATUS_PENDING).await.unwrap(),

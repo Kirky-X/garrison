@@ -4,25 +4,17 @@
 //! JWT 三模式集成测试。
 //!
 //! 验证 `JwtHandler`（HS256/HS512 + refresh）+ `GarrisonLogicDefault` 三模式
-//! （Stateless / Mixin / Simple）的端到端行为：
-//! 1. `JwtHandler` HS256/HS512 sign → verify roundtrip
-//! 2. `JwtHandler` refresh 产出新 token
-//! 3. `JwtMode::Stateless`：仅 JWT verify，不查 session
-//! 4. `JwtMode::Mixin`：JWT verify + session 二级校验
-//! 5. `JwtMode::Simple`：仅 session 校验，不验证 JWT 签名
-//! 6. 跨模式场景：Mixin 下 session 失效 → check_login 失败
+//! （Stateless / Mixin / Simple）的端到端行为：sign → verify roundtrip、refresh 产出
+//! 新 token、Stateless 仅 JWT verify 不查 session、Mixin 双校验、Simple 仅 session
+//! 校验、Mixin 下 session 失效即 check_login 失败。
 //!
-//! 运行：`cargo test --features "protocol-jwt cache-memory" --test jwt_modes_integration`
+//! 运行：`cargo test --features "protocol-jwt cache-memory" --test jwt_modes_integration`。
 //!
-//! # production-mock-purge
-//!
-//! NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化
-//! （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
-//! 本文件 `MockInterface` 替身仅满足 `GarrisonPermissionStrategyDefault::new` 构造，
-//! 不参与任何权限断言）。
+//! 库层无产品 `GarrisonInterface` 实现，本文件 `MockInterface` 替身仅满足策略构造，
+//! 不参与任何权限断言。
 
-// jwt_secret 的 `.into()` 是跨 feature 兼容的必要转换：protocol-zeroize 下字段
-// 类型为 Zeroizing<String>，feature 关闭时退化为 String，被 clippy 误报。
+// jwt_secret 的 `.into()` 是跨 feature 兼容的必要转换：protocol-zeroize 下字段类型为
+// Zeroizing<String>，feature 关闭时退化为 String，被 clippy 误报。
 
 use async_trait::async_trait;
 use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
@@ -85,7 +77,7 @@ async fn make_logic_with_mode(mode: JwtMode) -> Arc<GarrisonLogicDefault> {
 }
 
 // ============================================================================
-// 1. JwtHandler 直接 API：HS256 / HS512 / refresh
+// JwtHandler 直接 API：HS256 / HS512 / refresh
 // ============================================================================
 
 /// HS256 sign → verify roundtrip：claims 字段一致。
@@ -199,7 +191,7 @@ async fn sign_rejects_negative_timeout() {
 }
 
 // ============================================================================
-// 2. JwtMode::Stateless：仅 JWT verify，不查 session
+// JwtMode::Stateless：仅 JWT verify，不查 session
 // ============================================================================
 
 /// Stateless 模式下，用 JwtHandler 直接签发的 token（无 session）也能通过 check_login。
@@ -236,7 +228,7 @@ async fn stateless_mode_rejects_invalid_jwt() {
 }
 
 // ============================================================================
-// 3. JwtMode::Mixin：JWT verify + session 二级校验
+// JwtMode::Mixin：JWT verify + session 二级校验
 // ============================================================================
 
 /// Mixin 模式：login 创建 session 后 check_login 通过。
@@ -276,7 +268,7 @@ async fn mixin_mode_fails_with_jwt_only_no_session() {
 }
 
 // ============================================================================
-// 4. JwtMode::Simple：仅 session 校验，不验证 JWT 签名
+// JwtMode::Simple：仅 session 校验，不验证 JWT 签名
 // ============================================================================
 
 /// Simple 模式：login 创建 session 后 check_login 通过（不验证 JWT 签名）。
@@ -352,7 +344,7 @@ async fn simple_mode_fails_without_session() {
 }
 
 // ============================================================================
-// 5. JwtMode::default() == Mixin
+// JwtMode::default() == Mixin
 // ============================================================================
 
 /// JwtMode::default() 返回 Mixin（推荐模式为默认）。

@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! jwt_modes 示例测试（protocol-jwt + cache-memory feature）。
-//!
-//! 验证 run() 完整执行：JwtMode 三模式（Mixin/Stateless/Simple）+ JwtHandler 独立校验。
+//! jwt_modes 示例测试（protocol-jwt + cache-memory feature）：验证 run() 完整执行（JwtMode 三模式 Mixin/Stateless/Simple + JwtHandler 独立校验）。
 
 #![cfg(all(feature = "protocol-jwt", feature = "cache-memory"))]
 

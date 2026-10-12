@@ -3,23 +3,16 @@
 
 //! 密钥轮换运维接口：change-key（全量重加密）与 check-key（可解密性校验）。
 //!
-//! 二者实现为 [`FieldEncryptionDao`] 方法（而非自由函数接 `&dyn GarrisonDao`）：
-//! 操作对象恒为装饰器持有的**底层存储 DAO**（落库 key 直达），误把装饰器
-//! 实例当存储传入导致的「解密后再加密」双重加密在类型上不可表达。
-//! 面向运维 CLI（garrison-cli）暴露——garrison-cli 子命令接线依赖
-//! R16（段 10）合入基线后补齐，本模块即其接口层。
+//! 二者实现为 [`FieldEncryptionDao`] 方法（而非自由函数接 `&dyn GarrisonDao`）：操作对象恒为装饰器持有的**底层存储 DAO**
+//! （落库 key 直达），「误把装饰器实例当存储传入导致解密后再加密」在类型上不可表达。面向运维 CLI（garrison-cli）暴露，本模块即其接口层。
 //!
-//! - change-key：敏感命名空间全部行重加密到新 [`FieldCipher`] 主钥；
-//!   明文遗留行补加密；遗留 raw key 行（升级前裸 token key 名）迁移到
-//!   摘要化 key 名并删除原行；已新主钥的行跳过（幂等）。报告 `failed`
-//!   非空时**不切换**当前门面（保持旧钥可读失败行），调用方据报告处置；
-//!   全部成功才切换，此后写入走新主钥。
-//! - check-key：按当前门面逐行校验，产出结构化健康报告（可解密 / 明文遗留 /
-//!   遗留 raw key / 损坏行逐 key 列出，不静默）。
+//! - change-key：敏感命名空间全部行重加密到新 [`FieldCipher`] 主钥；明文遗留行补加密；遗留 raw key 行（升级前裸 token key 名）
+//!   迁移到摘要化 key 名并删除原行；已新主钥的行跳过（幂等）。报告 `failed` 非空时**不切换**当前门面（保持旧钥可读失败行），
+//!   调用方据报告处置；全部成功才切换，此后写入走新主钥。
+//! - check-key：按当前门面逐行校验，产出结构化健康报告（可解密 / 明文遗留 / 遗留 raw key / 损坏行逐 key 列出，不静默）。
 //!
-//! 批处理：`batch_size` 切分扫描结果以限制单批内存占用；行级失败记录进报告
-//! 后继续，单坏行不阻塞全量轮换。多实例部署应停写或加互斥后执行
-//! （`GarrisonDao` 抽象不提供跨行事务，单行 `update` / `set` 原子）。
+//! 批处理：`batch_size` 切分扫描结果以限制单批内存；行级失败记入报告后继续，单坏行不阻塞全量轮换。
+//! 多实例部署应停写或加互斥后执行（`GarrisonDao` 抽象不提供跨行事务，单行 `update` / `set` 原子）。
 
 use crate::error::{GarrisonError, GarrisonResult};
 
@@ -66,10 +59,7 @@ pub struct CheckKeyReport {
 }
 
 impl FieldEncryptionDao {
-    /// 全量重加密到 `new_cipher` 的主钥（change-key）。
-    ///
-    /// 成功（`failed` 为空）后当前门面切换为 `new_cipher`；否则保持旧门面，
-    /// 失败行明细见报告。幂等：重跑收敛。
+    /// 全量重加密到 `new_cipher` 主钥（change-key）；成功（`failed` 为空）后切换当前门面，否则保持旧门面，失败行明细见报告；幂等，重跑收敛。
     pub async fn change_key(
         &self,
         new_cipher: super::cipher::FieldCipher,
@@ -114,8 +104,7 @@ impl FieldEncryptionDao {
         Ok(report)
     }
 
-    /// 可解密性校验（check-key）：按当前门面逐行检查敏感命名空间，
-    /// `pattern` 限定扫描范围（如 `oauth2:atoken:*`）。
+    /// 可解密性校验（check-key）：按当前门面逐行检查敏感命名空间，`pattern` 限定扫描范围（如 `oauth2:atoken:*`）。
     pub async fn check_key(&self, pattern: &str) -> GarrisonResult<CheckKeyReport> {
         let cipher = self.current_cipher();
         let keys = self.filtered_sensitive_keys(pattern).await?;
@@ -151,12 +140,10 @@ impl FieldEncryptionDao {
         Ok(keys)
     }
 
-    /// 单行重加密。返回 `Ok(None)` = 已新主钥且 key 形态最新（跳过）；
-    /// `Ok(Some(outcome))` = 处理完成；`Err(reason)` = 行级失败（进报告）。
+    /// 单行重加密：`Ok(None)` = 已新主钥且 key 形态最新（跳过），`Ok(Some)` = 处理完成，`Err(reason)` = 行级失败（进报告）。
     ///
-    /// 遗留 raw key 行（摘要化命名空间内非 64-hex 余段）重加密后写入摘要化
-    /// key 并删除原行（TTL 经 get_with_ttl 保留；后端不支持 TTL 查询时该行
-    /// 记为失败——显性化，不静默丢 TTL）。
+    /// 遗留 raw key 行（摘要化命名空间内非 64-hex 余段）重加密后写入摘要化 key 并删除原行
+    /// （TTL 经 get_with_ttl 保留；后端不支持 TTL 查询时该行记为失败——显性化，不静默丢 TTL）。
     async fn reencrypt_row(
         &self,
         old_cipher: &super::cipher::FieldCipher,
@@ -288,8 +275,7 @@ mod tests {
         digest.iter().map(|b| format!("{b:02x}")).collect()
     }
 
-    /// change-key 后全部行可被新钥解密、旧 key_id 行清零；非敏感行不动；
-    /// 成功后新写入走新主钥（门面已切换）。
+    /// change-key 后全部行可被新钥解密、旧 key_id 行清零；非敏感行不动；成功后新写入走新主钥（门面已切换）。
     #[tokio::test]
     async fn change_key_reencrypts_all_rows_to_new_primary() {
         let dao = seeded_dao().await;
@@ -336,8 +322,7 @@ mod tests {
         );
     }
 
-    /// 摘要化命名空间遗留 raw key 行：change-key 迁移到摘要化 key 名并删除
-    /// 原行，TTL 保留；按原 token 读取仍可达。
+    /// 摘要化命名空间遗留 raw key 行：change-key 迁移到摘要化 key 名并删除原行，TTL 保留，按原 token 读取仍可达。
     #[tokio::test]
     async fn change_key_migrates_legacy_raw_keys() {
         let inner: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());

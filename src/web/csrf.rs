@@ -1,31 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! CSRF 跨站请求伪造防护中间件模块。
-//!
-//! 采用 Double-Submit Cookie 模式：安全方法（GET/HEAD/OPTIONS）懒生成 CSRF token 并写入 Cookie，
-//! 受保护方法（POST/PUT/PATCH/DELETE）校验 Header 与 Cookie 中的 token 是否一致。
-//!
-//! # 行为
-//!
-//! - **安全方法**（不在 `protected_methods` 中的方法）：
-//! - 若请求中不存在 CSRF cookie，生成新 token 并在响应中设置 `Set-Cookie`。
-//! - 若已存在 CSRF cookie，直接放行。
-//! - 始终放行到 handler。
-//! - **受保护方法**（在 `protected_methods` 中的方法）：
-//! - `enabled == false`：直接放行。
-//! - 路径命中 `excluded_paths`：直接放行。
-//! - Origin/Referer 同源校验失败返回 403。
-//! 注意：Origin 与 Referer **均缺失**时同样 403（fail-closed）——
-//! 移动端 / curl / 服务间调用等非浏览器客户端需发送与 Host 一致的 Origin
-//! header，或将端点加入 `excluded_paths`（见 `validate_same_origin` 文档）。
-//! - 从 Cookie 和 Header 提取 token，任一缺失返回 403。
-//! - `validate_csrf_token` 校验失败返回 403。
-//! - 校验通过放行。
-//!
-//! # 配置
-//!
-//! 通过 [`CsrfConfig`](crate::web::csrf::CsrfConfig) 控制，集成到 [`crate::config::GarrisonConfig`]。
+//! CSRF 防护中间件（Double-Submit Cookie）：安全方法懒生成 token 写 Cookie 后放行；
+//! 受保护方法校验 Origin/Referer 与 Host 同源 + Header/Cookie token 常量时间一致。
+//! fail-closed：Origin 与 Referer 均缺失即 403（非浏览器客户端需显式发与 Host 一致的 Origin
+//! 或加入 `excluded_paths`）；`enabled == false` 或路径命中 `excluded_paths` 时放行。
+//! 配置见 [`CsrfConfig`](crate::web::csrf::CsrfConfig)。
 
 use crate::context::{build_set_cookie_value, CookiePath, CookieScope, CookieType};
 use crate::error::GarrisonResult;
@@ -33,23 +13,10 @@ use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 
-/// CSRF cookie 默认有效期（秒）。
-///
-/// 通过 `Max-Age` 属性限制 CSRF token 的生命周期，防止 XSS/日志泄露的 token 被无限 replay。
+/// CSRF cookie 默认有效期（秒）：`Max-Age` 限制 token 生命周期，防 XSS/日志泄露的 token 被无限 replay。
 const CSRF_TOKEN_TTL_SECS: i64 = 3600;
 
-/// CSRF 防护配置。
-///
-/// 控制 CSRF 防护的启用、Cookie/Header 名称、排除路径与受保护方法。
-///
-/// # 默认值
-///
-/// - `enabled`: `true`（默认启用，secure-by-default）
-/// - `cookie_name`: `"garrison_csrf_token"`
-/// - `header_name`: `"X-CSRF-Token"`
-/// - `excluded_paths`: 空列表
-/// - `protected_methods`: `["POST", "PUT", "PATCH", "DELETE"]`
-/// - `cookie_domain`: `None`（不设置 Domain 属性，Cookie 仅对当前 host 生效）
+/// CSRF 防护配置（默认启用，secure-by-default；受保护方法默认 POST/PUT/PATCH/DELETE）。
 ///
 /// # 配置示例
 ///
@@ -75,23 +42,14 @@ pub struct CsrfConfig {
     pub protected_methods: Vec<String>,
     /// 是否在 Cookie 中设置 Secure 标志（默认 `true`，与 GarrisonConfig 一致）。
     pub cookie_secure: bool,
-    /// CSRF Cookie 的 Domain 属性（C3 修复）。
-    ///
-    /// - `None`（默认）：不设置 Domain，Cookie 仅对设置它的 host 生效（最严格作用域，secure-by-default）。
-    /// - `Some(d)`：设置 `Domain=<d>`，Cookie 对 `<d>` 及其所有子域生效。
-    ///
-    /// # 安全注意
-    ///
-    /// 设置 Domain 会扩大 Cookie 作用域到子域。若子域不可信（如用户托管页面），
-    /// 应保持 `None`。仅在确需跨子域共享 CSRF token 时设置（如 `example.com`
-    /// 同时服务 `api.example.com` 与 `www.example.com`）。
+    /// CSRF Cookie 的 Domain 属性：`None`（默认）不设置（Cookie 仅对当前 host 生效，最严格作用域）；
+    /// `Some(d)` 设置 `Domain=<d>` 并扩大到全部子域——子域不可信（如用户托管页面）时应保持 `None`。
     pub cookie_domain: Option<String>,
 }
 
 impl Default for CsrfConfig {
     fn default() -> Self {
         Self {
-            // secure-by-default，默认启用 CSRF 防护
             enabled: true,
             cookie_name: "garrison_csrf_token".to_string(),
             header_name: "X-CSRF-Token".to_string(),
@@ -103,24 +61,14 @@ impl Default for CsrfConfig {
                 "DELETE".to_string(),
             ],
             cookie_secure: true,
-            // C3: 默认 None，不设置 Domain，Cookie 仅对当前 host 生效（最严格作用域）
             cookie_domain: None,
         }
     }
 }
 
-// ============================================================================
 // generate_csrf_token + validate_csrf_token
-// ============================================================================
 
-/// 生成 CSRF token。
-///
-/// 直接读 OS CSPRNG（`getrandom::fill`）生成 32 个随机字节，编码为 URL-safe Base64（无填充）。
-/// 结果长度约为 43 个字符。
-///
-/// # 返回
-///
-/// Base64 编码的 token 字符串。
+/// 生成 CSRF token：读 OS CSPRNG（`getrandom::fill`）32 字节，URL-safe Base64 无填充（约 43 字符）。
 pub fn generate_csrf_token() -> GarrisonResult<String> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
@@ -131,40 +79,22 @@ pub fn generate_csrf_token() -> GarrisonResult<String> {
     Ok(URL_SAFE_NO_PAD.encode(bytes))
 }
 
-/// 校验 CSRF token（常量时间比较）。
-///
-/// 对 `header_token` 与 `cookie_token` 执行常量时间比较，防止时序攻击。
-///
-/// # 常量时间策略
-///
-/// - 长度 + 逐字节比较统一委托公共原语
-///   [`crate::secure::ct_eq::constant_time_eq`]（ADR-0003 决策 2：消除本地第二
-///   实现）：长度比较不 early return，字节比较遍历到 `max_len`（短方 0 padding），
-///   不因内容不匹配或长度差异提前返回。
-/// - 空 token 视为非法输入（输入校验语义，公共原语不包含）：长度非密钥数据，
-///   且原语循环次数本就随 `max_len` 变化，空/非空检查无需常量时间伪装；
-///   以非短路 `&` 聚合，不影响已完成的常量时间比较。
-///
-/// # 返回
-///
-/// 任一 token 为空时返回 `false`（空 token 视为非法输入）；
-/// 否则长度一致且所有字节匹配时返回 `true`，否则返回 `false`。
+/// 校验 CSRF token（常量时间比较，防时序攻击）：长度 + 逐字节比较统一委托
+/// [`crate::secure::ct_eq::constant_time_eq`]（ADR-0003 决策 2：消除本地第二实现，不提前返回）；
+/// 任一 token 为空视为非法输入返回 `false`，否则长度一致且逐字节匹配返回 `true`。
 pub fn validate_csrf_token(header_token: &str, cookie_token: &str) -> bool {
     let h = header_token.as_bytes();
     let c = cookie_token.as_bytes();
 
-    // 空 token 视为非法输入：双方都非空（非短路 &，与后续比较无条件聚合）
+    // 空 token 非法：非短路 & 保证与后续比较无条件聚合
     let non_empty = !h.is_empty() & !c.is_empty();
 
-    // 长度 + 逐字节比较统一委托公共原语（ADR-0003 决策 2）
     let bytes_eq = crate::secure::ct_eq::constant_time_eq(h, c);
 
     non_empty & bytes_eq
 }
 
-// ============================================================================
 // garrison_csrf_middleware
-// ============================================================================
 
 /// 从请求 headers 中提取指定名称的 Cookie 值。
 fn extract_cookie_value(headers: &HeaderMap, cookie_name: &str) -> Option<String> {
@@ -180,9 +110,8 @@ fn extract_cookie_value(headers: &HeaderMap, cookie_name: &str) -> Option<String
     None
 }
 
-/// CSRF cookie 的单一构建点输入（SameSite=Lax 固定，Max-Age 为 CSRF token TTL）。
-///
-/// Secure 上下文不进入本构造——前缀在读取名/构建值阶段按 `cookie_secure` 解析。
+/// CSRF cookie 构建点输入：SameSite=Lax 固定，Max-Age 为 token TTL；Secure 上下文不进入本构造，
+/// 前缀在读取名/构建值阶段按 `cookie_secure` 解析。
 fn csrf_cookie_type(cookie_name: &str, cookie_domain: Option<&str>) -> CookieType {
     CookieType {
         name: cookie_name.to_string(),
@@ -193,20 +122,10 @@ fn csrf_cookie_type(cookie_name: &str, cookie_domain: Option<&str>) -> CookieTyp
     }
 }
 
-/// 构建 Set-Cookie 值字符串（委托 context 层单一构建点 [`build_set_cookie_value`]）。
-///
-/// 属性顺序、SameSite、`__Host-` / `__Secure-` 前缀决策统一由构建点强制：
-/// production + Secure 上下文下无 Domain 为 `__Host-<name>`，有 Domain 为 `__Secure-<name>`。
-///
-/// # 安全注意
-///
-/// `Domain` 属性会扩大 Cookie 作用域到子域。调用方应仅在确需跨子域共享
-/// CSRF token 时传入 `Some`，否则传 `None`（最严格作用域，secure-by-default）。
-///
-/// # 错误
-///
-/// 构建失败（如 name / domain 含注入字符）时返回 [`GarrisonError::Context`]，
-/// 调用方不得产出任何 Set-Cookie 头（fail-fast，与续签路径的 Result 风格一致）。
+/// 构建 Set-Cookie 值（委托 context 层单一构建点 [`build_set_cookie_value`]）：属性顺序与
+/// `__Host-`/`__Secure-` 前缀由构建点强制（production + Secure 下无 Domain 为 `__Host-<name>`，
+/// 有 Domain 为 `__Secure-<name>`）。`Domain` 扩大作用域到子域，仅确需跨子域共享时传 `Some`；
+/// 构建失败（name/domain 含注入字符等）返回 [`GarrisonError::Context`]，调用方不得产出 Set-Cookie 头（fail-fast）。
 fn build_set_cookie(
     cookie_name: &str,
     token: &str,
@@ -217,13 +136,9 @@ fn build_set_cookie(
     build_set_cookie_value(&cookie, token, cookie_secure)
 }
 
-/// 从绝对 URI（Origin/Referer header 值）中提取 `host[:port]`。
-///
-/// 输入应为 `scheme://host[:port]/path` 形式。返回 `host[:port]` 字符串；
-/// 显式默认端口（https + `:443` / http + `:80`）被归一化去除——浏览器对
-/// `https://example.com:443/` 与 `https://example.com/` 发送的 Host 一致，
-/// 不归一化会造成同源请求被误拒。
-/// 解析失败或无 host 时返回 `None`。
+/// 从绝对 URI（Origin/Referer header 值）提取 `host[:port]`：归一化去除显式默认端口
+/// （https:443 / http:80——浏览器对带/不带默认端口发送的 Host 一致，不归一化会误拒同源请求）；
+/// 解析失败或无 host 返回 `None`。
 fn extract_origin_host(uri_str: &str) -> Option<String> {
     let uri: axum::http::Uri = uri_str.parse().ok()?;
     let host = uri.host()?;
@@ -239,12 +154,9 @@ fn extract_origin_host(uri_str: &str) -> Option<String> {
     }
 }
 
-/// 归一化 Host header 值：去除默认端口（`:80` / `:443`）。
-///
-/// Host header 不含 scheme，故对 `:80` / `:443` 一律视为默认端口去除，
-/// 与 [`extract_origin_host`] 的归一化结果对齐（代理
-/// 场景下 `Host: example.com:443` 与 `Origin: https://example.com` 应视为同源）。
-/// 非 80/443 的显式端口保留（不同端口即不同源）。IPv6（`[::1]:8080`）安全处理。
+/// 归一化 Host header：一律去除 `:80`/`:443`（Host 不含 scheme），与 [`extract_origin_host`] 对齐
+/// （代理场景 `Host: example.com:443` 与 `Origin: https://example.com` 视为同源）；
+/// 非默认端口保留（不同端口即不同源），IPv6（`[::1]:8080`）安全处理。
 fn normalize_host(host: &str) -> String {
     if let Some(rest) = host.strip_prefix('[') {
         // IPv6 字面量：[addr] 或 [addr]:port
@@ -268,31 +180,10 @@ fn normalize_host(host: &str) -> String {
     }
 }
 
-/// 校验请求的 Origin/Referer 是否与 Host header 同源。
-///
-/// 优先检查 `Origin` header；若不存在则回退到 `Referer` header。
-/// 两者都不存在时返回 `false`（受保护方法要求同源校验，secure-by-default）。
-///
-/// # 比较策略
-///
-/// - 提取 Host header 值作为期望源（`host[:port]`），并归一化默认端口（`:80`/`:443`）。
-/// - 从 Origin/Referer 解析出 `host[:port]`（同样归一化默认端口），与 Host 严格比较。
-/// - Host header 缺失时返回 `false`（无法确定期望源）。
-///
-/// # 非 HTTP 客户端（fail-closed）
-///
-/// Origin 与 Referer **均缺失**时本函数返回 `false` → 请求以 403 拒绝
-/// （即使 CSRF token 校验正确）。这是刻意的 secure-by-default 取舍：
-/// CSRF 的核心威胁模型是浏览器跨站携带凭证，浏览器在跨站/同站 POST 中
-/// 均会发送 Origin（或 Referer）；既无 Origin 又无 Referer 的受保护方法请求
-/// 不属于浏览器常规行为。移动端 / curl / 服务间调用等非浏览器客户端需：
-/// 1. 显式发送与 Host 一致的 `Origin` header；或
-/// 2. 将相关端点加入 [`CsrfConfig::excluded_paths`]（配合其他鉴权手段）。
-///
-/// # 返回
-///
-/// - Origin 或 Referer 存在且归一化 host 与归一化 Host header 一致：`true`
-/// - 都不存在、host 不一致或 Host header 缺失：`false`
+/// 校验 Origin/Referer 与 Host 是否同源：优先 `Origin`，缺失回退 `Referer`，双方归一化默认端口后严格比较；
+/// Host 缺失或两者均缺失返回 `false`。后者是刻意的 fail-closed（即使 token 校验正确也 403）：
+/// 浏览器跨站 POST 必带 Origin/Referer，非浏览器客户端需显式发与 Host 一致的 `Origin`
+/// 或加入 [`CsrfConfig::excluded_paths`]。
 fn validate_same_origin(headers: &HeaderMap) -> bool {
     let host = match headers
         .get(axum::http::header::HOST)
@@ -302,7 +193,7 @@ fn validate_same_origin(headers: &HeaderMap) -> bool {
         None => return false,
     };
 
-    // 优先检查 Origin header
+    // 优先 Origin
     if let Some(origin) = headers
         .get(axum::http::header::ORIGIN)
         .and_then(|v| v.to_str().ok())
@@ -312,7 +203,6 @@ fn validate_same_origin(headers: &HeaderMap) -> bool {
             .unwrap_or(false);
     }
 
-    // Origin 不存在，回退到 Referer header
     if let Some(referer) = headers
         .get(axum::http::header::REFERER)
         .and_then(|v| v.to_str().ok())
@@ -322,13 +212,11 @@ fn validate_same_origin(headers: &HeaderMap) -> bool {
             .unwrap_or(false);
     }
 
-    // Origin 和 Referer 都不存在：受保护方法拒绝
+    // Origin/Referer 均缺失 → false → 403（fail-closed）
     false
 }
 
-/// CSRF 防护中间件。
-///
-/// 基于 [`CsrfConfig`] 对请求执行 CSRF 校验。
+/// CSRF 防护中间件：基于 [`CsrfConfig`] 校验请求（安全方法懒生成 token 写 Cookie，受保护方法同源 + 双份 token 校验）。
 ///
 /// # 使用
 ///
@@ -354,8 +242,7 @@ pub async fn garrison_csrf_middleware(
     use axum::response::IntoResponse;
 
     let method = req.method().as_str().to_string();
-    // 写读同名：读侧查找名与 build_set_cookie 走同一前缀解析
-    // （production + Secure 上下文为 __Host-/__Secure- 前缀名）
+    // 写读同名：读侧查找名与 build_set_cookie 走同一前缀解析（production + Secure 下为 __Host-/__Secure-）
     let cookie_name = csrf_cookie_type(&config.cookie_name, config.cookie_domain.as_deref())
         .resolved_name(config.cookie_secure);
     let is_protected = config
@@ -412,7 +299,14 @@ pub async fn garrison_csrf_middleware(
                     },
                     // 静默丢 cookie 是可观测事件：构建点拒绝（name/domain 注入等）warn 显性化
                     Err(e) => {
-                        tracing::warn!(error = %e, "CSRF Set-Cookie 构建失败，已跳过");
+                        tracing::warn!(
+                            error = %e,
+                            "{}",
+                            crate::i18n::translate_detail(
+                                "logs-csrf-set-cookie-build-failed",
+                                &[]
+                            )
+                        );
                     },
                 }
             }
@@ -503,9 +397,7 @@ mod tests {
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
     }
 
-    // ========================================================================
-    // generate_csrf_token + validate_csrf_token 单元测试（8 个）
-    // ========================================================================
+    // generate_csrf_token + validate_csrf_token 单元测试
 
     #[test]
     fn token_length_is_43_chars() {
@@ -562,9 +454,7 @@ mod tests {
         assert!(!validate_csrf_token("", "abc"));
     }
 
-    // ========================================================================
-    // CsrfConfig 单元测试（5 个）
-    // ========================================================================
+    // CsrfConfig 单元测试
 
     #[test]
     fn csrf_config_default_values() {
@@ -578,7 +468,6 @@ mod tests {
             vec!["POST", "PUT", "PATCH", "DELETE"]
         );
         assert!(config.cookie_secure, "cookie_secure 默认应为 true");
-        // C3: 默认 cookie_domain 为 None（不设置 Domain 属性，最严格作用域）
         assert!(
             config.cookie_domain.is_none(),
             "C3: 默认 cookie_domain 应为 None"
@@ -602,7 +491,6 @@ mod tests {
         assert_eq!(config.excluded_paths, vec!["/webhook"]);
         assert_eq!(config.protected_methods, vec!["POST"]);
         assert!(!config.cookie_secure);
-        // C3: 自定义 cookie_domain 应正确设置
         assert_eq!(
             config.cookie_domain.as_deref(),
             Some("example.com"),
@@ -636,9 +524,7 @@ mod tests {
         assert_eq!(config.protected_methods, vec!["POST", "PUT"]);
     }
 
-    // ----------------------------------------------------------------
     // CsrfConfig 默认启用测试
-    // ----------------------------------------------------------------
 
     /// CsrfConfig::default() 应默认启用 CSRF 防护（secure-by-default）。
     #[test]
@@ -650,9 +536,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // garrison_csrf_middleware 集成测试（12 个）
-    // ========================================================================
+    // garrison_csrf_middleware 集成测试
 
     #[tokio::test]
     async fn get_without_cookie_sets_csrf_cookie() {
@@ -859,9 +743,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
-    // ----------------------------------------------------------------
     // Origin/Referer 同源校验测试
-    // ----------------------------------------------------------------
 
     /// 受保护方法的跨源请求（Origin 不匹配 Host）应被拒绝。
     #[tokio::test]
@@ -872,7 +754,6 @@ mod tests {
         };
         let app = make_app(config);
         let token = generate_csrf_token().unwrap();
-        // Origin = evil.com，Host = example.com → 跨源
         let req = Request::builder()
             .method("POST")
             .uri("/api/test")
@@ -902,7 +783,6 @@ mod tests {
         };
         let app = make_app(config);
         let token = generate_csrf_token().unwrap();
-        // Origin = example.com，Host = example.com → 同源
         let req = Request::builder()
             .method("POST")
             .uri("/api/test")
@@ -923,9 +803,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // 默认端口归一化
-    // ========================================================================
 
     /// extract_origin_host 归一化默认端口：https:443 / http:80 → 不带端口。
     #[test]
@@ -964,8 +842,7 @@ mod tests {
         assert_eq!(normalize_host("[::1]"), "[::1]");
     }
 
-    /// 显式默认端口的同源请求（Origin https://example.com:443 vs Host example.com）
-    /// 不应被误拒。
+    /// 显式默认端口的同源请求（Origin https://example.com:443 vs Host example.com）不应被误拒。
     #[tokio::test]
     async fn csrf_middleware_allows_origin_with_default_port() {
         let config = CsrfConfig {
@@ -1023,9 +900,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // C3: cookie_domain 字段测试（8 个）
-    // ========================================================================
+    // cookie_domain 字段测试
 
     /// build_set_cookie 不传 cookie_domain 时不应包含 Domain 属性。
     #[test]
@@ -1170,12 +1045,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // 单一构建点：写读同名 roundtrip
-    // ========================================================================
 
-    /// 写读同名：build_set_cookie 产出的名字与读侧解析名一致
-    /// （覆盖 Secure×Domain 组合，production 下含 `__Host-`/`__Secure-` 前缀）。
+    /// 写读同名：build_set_cookie 产出的名字与读侧解析名一致（覆盖 Secure×Domain 组合，production 下含 `__Host-`/`__Secure-` 前缀）。
     #[test]
     fn csrf_cookie_write_read_name_roundtrip() {
         for (secure, domain) in [(true, None), (true, Some("example.com")), (false, None)] {
@@ -1191,5 +1063,7 @@ mod tests {
         }
     }
 
-    // 同形状 production 前缀断言已由 src/context/cookie.rs 的 production 测试模块在 production 门禁真实执行，csrf 写读 roundtrip 由上方 csrf_cookie_write_read_name_roundtrip 在 full 门禁覆盖（production 不含 web-csrf、full 不含 production，重复断言在两个标准门禁下均不可达）。
+    // production 前缀断言由 src/context/cookie.rs 的 production 测试模块在 production 门禁真实执行；
+    // csrf 写读 roundtrip 由上方 csrf_cookie_write_read_name_roundtrip 在 full 门禁覆盖
+    // （production 不含 web-csrf，full 不含 production，两门禁下重复断言均不可达）。
 }

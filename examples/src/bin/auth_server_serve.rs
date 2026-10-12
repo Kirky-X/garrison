@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 一键启动 GarrisonAuthServer 双端口服务。
-//!
-//! 用于 E2E / 性能 / 渗透测试的真实进程部署，对应 `infrastructure::auth_server::serve()`。
+//! 一键启动 GarrisonAuthServer 双端口服务，对应 `infrastructure::auth_server::serve()`，供 E2E / 性能 / 渗透测试部署。
 //!
 //! # 运行方式
 //!

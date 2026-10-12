@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! session 模块辅助函数（从 mod.rs 迁移）。
+//! session 模块辅助函数。
 
 use super::*;
 

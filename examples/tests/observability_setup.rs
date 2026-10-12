@@ -1,16 +1,10 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! observability_setup 示例测试（metrics-prometheus + otlp feature）。
-//!
-//! 验证 GarrisonMetrics 指标记录与收集：
-//! - `register_to` 注册到自定义 registry
-//! - `record_login` / `record_permission_query` / `record_role_query` 递增计数
-//! - `observe_token_validation` 记录延迟
-//! - `gather` 输出包含所有指标名
-//!
-//! 注：`init_otlp_tracing` 为全局一次性操作，且需要 OTLP collector，
-//! 此处不实际调用（避免污染全局 tracer provider）。
+//! observability_setup 示例测试（metrics-prometheus + otlp feature）：验证 GarrisonMetrics 指标记录与
+//! 收集——`register_to` 注册到自定义 registry、record_login/record_permission_query/record_role_query
+//! 递增计数、observe_token_validation 记录延迟、gather 输出包含所有指标名；`init_otlp_tracing` 为全局
+//! 一次性操作且需要 OTLP collector，此处不实际调用（避免污染全局 tracer provider）。
 
 #![cfg(all(feature = "metrics-prometheus", feature = "otlp"))]
 
@@ -189,13 +183,10 @@ fn test_gather_metrics_helper() {
     assert!(output.contains("garrison_login_total"));
 }
 
-/// 测试 init_otlp_tracing 函数可访问（不实际调用，避免全局状态污染）。
-///
-/// OTLP 初始化是全局一次性的，且需要 OTLP collector 运行。
-/// 此测试仅验证函数存在于公共 API 中。
+/// 测试 init_otlp_tracing 函数可访问（不实际调用，避免全局状态污染）：OTLP 初始化是全局一次性的，
+/// 且需要 OTLP collector 运行；此测试仅验证函数存在于公共 API 中。
 #[test]
 fn test_init_otlp_tracing_api_exists() {
-    // 仅验证函数指针可获取，不实际调用
     let _f: fn(&str) -> Result<(), garrison::observability::GarrisonOtelError> =
         garrison::observability::init_otlp_tracing;
 }

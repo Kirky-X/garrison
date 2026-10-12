@@ -1,32 +1,20 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 扫码登录 HTTP 端点路由（feature = "protocol-qrlogin"）。
+//! 扫码登录 HTTP 端点路由（feature = "protocol-qrlogin"）：将 `QrLoginService` 暴露为 4 个端点，
+//! 经 axum `Router::merge` 集成进 GarrisonAuthServer 外网路由（与 sdforge_routes / oauth2_routes 互补）。
 //!
-//! 将 `QrLoginService` 暴露为 4 个 HTTP 端点，集成到 GarrisonAuthServer
-//!（外网路由，与 sdforge_routes / oauth2_routes 互补，axum Router::merge 集成）。
+//! 端点与认证：`POST /qrlogin/create`、`/poll` 匿名（poll 双票轮询 qr_id + bind_token，Confirmed
+//! 时原子消费 bind_token 兑换并签发会话 token）；`/scan`、`/confirm` 需 **Bearer App 会话 token**
+//! （handler 内解析校验，失败 401；确认者必须就是扫码者）。
 //!
-//! # 端点与认证语义
+//! axum merge 不继承 layer：本 router 在 `external_router()` 中 merge 前自带与主栈同构的
+//! TrustedProxies / inject_client_ip / inject_user_agent / rate_limit / audit_log，不受
+//! external_path_filter 白名单管辖。已知取舍：`web-security-headers` 安全头层仅挂主栈。
 //!
-//! - `POST /qrlogin/create`：匿名（Web 端创建扫码会话，响应含 qr_id + bind_token）
-//! - `POST /qrlogin/poll`：匿名（双票轮询：qr_id + bind_token；Confirmed 时原子
-//!   消费 bind_token 兑换并签发会话 token）
-//! - `POST /qrlogin/scan`：**Bearer App 会话 token**（handler 内解析校验，失败 401）
-//! - `POST /qrlogin/confirm`：**Bearer App 会话 token**（同上；确认者必须就是扫码者）
-//!
-//! # 中间件覆盖
-//!
-//! axum merge 不继承 layer：本 router 在 `external_router()` 中 merge 前**自带**
-//! 与主栈同构的 TrustedProxies / inject_client_ip / inject_user_agent /
-//! rate_limit / audit_log（见 server_impl.rs），不依赖主栈、也不受
-//! external_path_filter 白名单管辖。已知取舍：`web-security-headers` feature
-//! 的安全头层仅挂主栈（JSON API 响应头影响有限，未随本 router 重复挂载）。
-//!
-//! # 安全要点
-//!
-//! - scan/confirm 必须持有效 App 会话：扫码 ≠ 确认，确认凭据仅在扫码后颁发
-//! - poll 的 Confirmed 分支以服务端存储的确认者 login_id 签发会话，不信任请求体
-//! - create 的 IP/UA 待登录端上下文仅落入会话（供确认页脱敏摘要），不回显给匿名方
+//! 安全要点：scan/confirm 必须持有效 App 会话（扫码 ≠ 确认，确认凭据仅在扫码后颁发）；poll 的
+//! Confirmed 分支以服务端存储的确认者 login_id 签发会话，不信任请求体；create 的 IP/UA 上下文
+//! 仅落入会话（供确认页脱敏摘要），不回显给匿名方。
 
 #![cfg(feature = "protocol-qrlogin")]
 
@@ -62,9 +50,9 @@ pub struct QrLoginHttpState {
 
 /// 基于 Stp 的默认会话签发端口实现。
 ///
-/// `resolve_app_login_id`：task_local 上下文内调 `get_login_id`；
-/// `issue_session`：走 `SessionLogic::login`（与密码登录同路径，device 固定 "qrlogin"），
-/// 使扫码登录会话继承权限/踢下线/续期/hijack 检测/审计等全部下游能力。
+/// `resolve_app_login_id` 在 task_local 上下文内调 `get_login_id`；`issue_session` 走
+/// `SessionLogic::login`（与密码登录同路径，device 固定 "qrlogin"），使扫码登录会话继承
+/// 权限/踢下线/续期/hijack 检测/审计等全部下游能力。
 pub struct StpQrLoginIssuer;
 
 #[async_trait]
@@ -101,9 +89,7 @@ pub fn qrlogin_external_router(state: Arc<QrLoginHttpState>) -> Router {
         .with_state(state)
 }
 
-// ============================================================================
 // 请求体
-// ============================================================================
 
 /// poll 请求体。
 #[derive(Deserialize)]
@@ -130,14 +116,12 @@ pub struct QrLoginConfirmRequest {
     pub action: String,
 }
 
-// ============================================================================
 // HTTP 端点（薄包装，错误统一映射）
-// ============================================================================
 
 /// POST /qrlogin/create — 创建扫码会话（匿名）。
 ///
-/// IP 取自 `inject_client_ip` 注入的 `Extension<ClientIp>`（rightmost-untrusted
-/// 解析在中间件统一完成）；扩展缺失（如裸路由测试）时为 None，不自行解析 XFF。
+/// IP 取自 `inject_client_ip` 注入的 `Extension<ClientIp>`（rightmost-untrusted 解析在中间件
+/// 统一完成）；扩展缺失（如裸路由测试）时为 None，不自行解析 XFF。
 async fn create_endpoint(
     State(state): State<Arc<QrLoginHttpState>>,
     ip_ext: Option<axum::Extension<crate::server::middleware::ClientIp>>,
@@ -182,8 +166,7 @@ async fn poll_endpoint(
             QrLoginPollOutcome::Cancelled => ok_json(json!({ "status": "cancelled" })),
             QrLoginPollOutcome::Expired => ok_json(json!({ "status": "expired" })),
             QrLoginPollOutcome::Confirmed { login_id, .. } => {
-                // 会话归属取自服务端存储的确认者，不信任请求体；
-                // login_id 不回显给匿名轮询方
+                // 会话归属取自服务端存储的确认者，不信任请求体；login_id 不回显给匿名轮询方
                 match state.issuer.issue_session(&login_id).await {
                     Ok(token) => ok_json(json!({ "status": "confirmed", "token": token })),
                     Err(e) => error_response(GarrisonError::Internal(loc!(
@@ -258,7 +241,7 @@ async fn confirm_endpoint(
         Some(token) => token,
         None => return unauthorized(),
     };
-    // 身份绑定：确认者 login_id 传入 service 与 scan 锁定值比对（不再仅做 401 判断）
+    // 身份绑定：确认者 login_id 传入 service 与 scan 锁定值比对
     let app_login_id = match state.issuer.resolve_app_login_id(&app_token).await {
         Ok(id) => id,
         Err(_) => return unauthorized(),
@@ -299,9 +282,7 @@ async fn confirm_endpoint(
     }
 }
 
-// ============================================================================
 // 工具
-// ============================================================================
 
 /// 200 JSON 响应。
 fn ok_json(value: serde_json::Value) -> Response {
@@ -349,9 +330,7 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
     }
 }
 
-// ============================================================================
 // 路由测试（MockIssuer 驱动，不初始化 GarrisonManager）
-// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -625,9 +604,8 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
-    /// 非法 action 的 400 错误消息走 Fluent i18n：zh locale 下返回
-    /// `qrlogin-action-invalid` 的中文翻译（与英文 fallback 文案可区分，
-    /// 命中即证明响应体未硬编码英文）。
+    /// 非法 action 的 400 错误消息走 Fluent i18n：zh locale 返回中文翻译
+    /// （与英文 fallback 可区分，命中即证明响应体未硬编码英文）。
     #[tokio::test]
     async fn confirm_invalid_action_message_is_localized() {
         let app = make_app();

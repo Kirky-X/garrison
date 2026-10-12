@@ -1,8 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! firewall_advanced 示例测试（firewall-anomalous + firewall-geoip + firewall-waf + cache-memory + web-axum feature）。
-//!
+//! firewall_advanced 示例测试（firewall-anomalous + firewall-geoip + firewall-waf + cache-memory + web-axum feature）：
 //! 验证 run() 完整执行（内部演示异地登录检测/GeoIP 拦截/WAF 校验）。
 
 #![cfg(all(

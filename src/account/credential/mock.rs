@@ -1,16 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 凭证层测试 mock 实现。
-//!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `MockCredentialRepository`（基于 `std::sync::Mutex<HashMap>` 模拟 `CredentialRepository`），
-//! 供 `account::credential::tests` 凭证 CRUD 契约测试复用。
-//!
-//! # IDOR 防护
+//! 凭证层测试 mock 实现（仅 `cfg(test)`）：`MockCredentialRepository` 基于
+//! `std::sync::Mutex<HashMap>` 模拟 `CredentialRepository`，供凭证 CRUD 契约测试复用。
 //!
 //! Mock 实现同步加入 `caller_login_id` 校验，与 `DaoCredentialRepository` 行为一致，
-//! 便于在 trait 契约测试中验证所有权拒绝路径。
+//! 便于验证所有权拒绝路径。
 
 use crate::account::credential::{CredentialModel, CredentialRepository};
 use crate::error::{GarrisonError, GarrisonResult};

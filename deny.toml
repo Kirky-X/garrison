@@ -1,24 +1,12 @@
 # Copyright (c) 2026 Kirky.X🌠
 # SPDX-License-Identifier: Apache-2.0
 
-# cargo-deny 配置 — `cargo deny check` 按此校验 漏洞/许可证/禁用源/重复依赖。
-# 完整字段见: https://embarkstudios.github.io/cargo-deny/
+# cargo-deny 配置 — `cargo deny check` 校验 漏洞/许可证/禁用源/重复依赖；字段见 embarkstudios.github.io/cargo-deny。
 
 [advisories]
 db-urls = ["https://github.com/RustSec/advisory-db"]
 yanked = "deny"
-# rsa 0.9.x 有 RUSTSEC-2023-0071（Marvin Attack 定时侧信道），但目前无 patched 版本。
-# garrison 使用 rsa 的路径全部为私钥签名/公钥验签，不存在解密路径：
-# 1. social-alipay feature：RSA 签名（SigningKey/Signer）。
-# 2. protocol-jwt 非对称扩展（RS256/RS384/RS512）：私钥签名 + 公钥验签（验证端
-#    经 pkcs1/pkcs8 纯 DER 解析提取 (n,e)，不走 rsa crate 解密 API）。
-# Marvin Attack 针对 RSA 解密操作的时序侧信道，签名/验签操作不受影响，漏洞不可达。
-# 另外 rsa 也作为 dev-dependency 用于 keycloak-oidc 测试生成 RSA 密钥对。
-# 官方状态：No patch available（截至 2026-07-13），显式忽略 advisory。
-# 参见 https://rustsec.org/advisories/RUSTSEC-2023-0071
-#
-# 已清理（2026-09-05）：RUSTSEC-2026-0173（proc-macro-error2 已随 base 升级退出依赖图）
-# 与 RUSTSEC-2026-0204（crossbeam-epoch 已升至 patched 0.9.20）不再需要忽略。
+# rsa 0.9.x 有 RUSTSEC-2023-0071（Marvin Attack 定时侧信道）且无 patched 版本（rustsec.org/advisories/RUSTSEC-2023-0071），显式忽略：garrison 使用 rsa 仅为私钥签名/公钥验签（alipay 签名、RS256/384/512 验签端经 pkcs1/pkcs8 纯 DER 提取 (n,e)），无解密路径；Marvin Attack 针对解密时序侧信道，本用法不可达。另作 dev-dependency 生成测试密钥对。
 ignore = [
     "RUSTSEC-2023-0071",
 ]
@@ -29,23 +17,19 @@ allow = [
     "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception",
     "BSD-3-Clause", "BSD-2-Clause", "ISC",
     "Unicode-3.0",
-    # Unicode-DFS-2016 已被 Unicode-3.0 替代，当前无依赖使用此许可证
-    # 若未来依赖升级后报 unlicensed，到时再加回来
     "Zlib", "CC0-1.0", "MPL-2.0",
-    # limiteron non-optional 后，oxcache/core 透传引入：
-    "BSL-1.0",                # xxhash-rust (via redis → oxcache/core)，OSI/FSF 认可
-    "CDLA-Permissive-2.0",    # webpki-root-certs (via reqwest → opentelemetry-otlp → oxcache/core/minimal/metrics)
-    "0BSD",                   # quoted_printable (via lettre → email-verification-smtp)，OSI 认可
+    # limiteron non-optional 后 oxcache/core 透传引入：
+    "BSL-1.0",                # xxhash-rust (via redis → oxcache/core)
+    "CDLA-Permissive-2.0",    # webpki-root-certs (via reqwest → opentelemetry-otlp → oxcache/core)
+    "0BSD",                   # quoted_printable (via lettre → email-verification-smtp)
 ]
-# 置信度阈值 0.5：自研 crate（sdforge-macros/trait-kit）Cargo.toml 缺 license 字段，
-# 仅 LICENSE 文件可被检测为 MIT（置信度 ~0.57）。正式修复需发布上游 crate 补 license 字段。
+# 置信度阈值 0.5：自研 crate（sdforge-macros/trait-kit）Cargo.toml 缺 license 字段，仅 LICENSE 文件可检测为 MIT（~0.57）
 confidence-threshold = 0.5
 
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
-# 允许 workspace 内 path 依赖无版本约束（如 garrison-macros dev-dep `garrison = { path = ".." }`）
-# 仅对 path 协议生效，registry 依赖仍受 wildcards = "deny" 约束
+# 放行 workspace 内 path 依赖的无版本约束（仅 path 协议，registry 依赖仍受 wildcards = "deny" 约束）
 allow-wildcard-paths = true
 
 [sources]

@@ -1,16 +1,7 @@
-// Copyright (c) 2026 Kirky.X🌠
-// SPDX-License-Identifier: Apache-2.0
-
-//! OAuth2 客户端管理模块。
+//! OAuth2 客户端管理模块：`OAuth2Client` + `OAuth2ClientStore` trait + `DaoOAuth2ClientStore` 实现。
 //!
-//! 提供 `OAuth2Client` struct + `OAuth2ClientStore` trait + `DaoOAuth2ClientStore` 实现。
-//!
-//! ## 设计
-//!
-//! - `client_secret` 使用 Argon2id 哈希存储，不明文
-//! - `pkce_required` 始终为 `true`（强制 PKCE）
-//! - `OAuth2ClientStore` 基于 `GarrisonDao`（key-value 存储），客户端配置序列化为 JSON
-//! - `DaoKeyPrefix::OAuth2Client` 提供 key 前缀（`oauth2:client:`）
+//! `client_secret` 以 Argon2id 哈希存储不明文，`pkce_required` 恒为 `true`；客户端配置序列化为 JSON
+//! 存于 `DaoKeyPrefix::OAuth2Client`（`oauth2:client:`）前缀下。
 
 use crate::constants::DaoKeyPrefix;
 use crate::dao::GarrisonDao;
@@ -23,9 +14,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// OAuth2 授权类型。
-///
-/// 对应 RFC 6749 定义的四种 grant_type。
+/// OAuth2 授权类型（RFC 6749 定义的四种 grant_type）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GrantType {
@@ -54,11 +43,8 @@ impl GrantType {
 impl std::str::FromStr for GrantType {
     type Err = GarrisonError;
 
-    /// 从字符串解析 grant_type（RFC 6749 §4）。
-    ///
-    /// 与项目内 `Annotation` / `DigestAlgorithm` 一致采用 `std::str::FromStr` trait，
-    /// 调用方用 `"authorization_code".parse::<GrantType>()` 而非 inherent method，
-    /// 避免遮蔽 std trait。
+    /// 从字符串解析 grant_type（RFC 6749 §4）：与 `Annotation` / `DigestAlgorithm` 一致采用 `std::str::FromStr`
+    /// trait，调用方用 `"authorization_code".parse::<GrantType>()`，避免遮蔽 std trait。
     fn from_str(s: &str) -> GarrisonResult<Self> {
         match s {
             "authorization_code" => Ok(Self::AuthorizationCode),
@@ -72,12 +58,7 @@ impl std::str::FromStr for GrantType {
     }
 }
 
-/// OAuth2 客户端配置。
-///
-/// 管理 OAuth2 客户端的元数据与凭证，对应 RFC 6749 §2 客户端凭证。
-///
-/// `client_secret` 使用 Argon2id 哈希存储，不明文保存。
-/// `pkce_required` 始终为 `true`（强制 PKCE）。
+/// OAuth2 客户端配置（RFC 6749 §2）：管理客户端元数据与凭证；`client_secret` 以 Argon2id 哈希存储，`pkce_required` 始终为 `true`（强制 PKCE）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuth2Client {
     /// 客户端 ID（唯一标识）。
@@ -95,17 +76,7 @@ pub struct OAuth2Client {
 }
 
 impl OAuth2Client {
-    /// 创建新的 OAuth2 客户端。
-    ///
-    /// 对 `client_secret` 执行 Argon2id 哈希后存储，不明文保存。
-    /// `pkce_required` 始终设为 `true`。
-    ///
-    /// # 参数
-    /// - `client_id`：客户端 ID
-    /// - `client_secret`：客户端明文密钥（哈希后存储）
-    /// - `redirect_uris`：允许的 redirect_uri 白名单
-    /// - `grant_types`：允许的 grant_type 列表
-    /// - `scopes`：允许的 scope 列表
+    /// 创建新的 OAuth2 客户端：对 `client_secret` 执行 Argon2id 哈希后存储，`pkce_required` 恒为 `true`。
     pub fn new(
         client_id: &str,
         client_secret: &str,
@@ -147,21 +118,12 @@ impl OAuth2Client {
         })
     }
 
-    /// 验证客户端密钥。
-    ///
-    /// 将明文 `client_secret` 与存储的 Argon2id 哈希比对。
-    ///
-    /// # 返回
-    /// - `Ok(true)`：密钥匹配
-    /// - `Ok(false)`：密钥不匹配
-    /// - `Err`：哈希格式无效
+    /// 验证客户端密钥：将明文与存储的 Argon2id 哈希比对；哈希格式无效返回 `Err`。
     pub fn verify_secret(&self, client_secret: &str) -> GarrisonResult<bool> {
         verify_secret(client_secret, &self.client_secret_hash)
     }
 
-    /// 校验 redirect_uri 是否在白名单中。
-    ///
-    /// 精确匹配（不支持通配符），防止 open redirect 攻击。
+    /// 校验 redirect_uri 是否在白名单中（精确匹配，不支持通配符），防 open redirect 攻击。
     pub fn is_redirect_uri_allowed(&self, redirect_uri: &str) -> bool {
         self.redirect_uris.iter().any(|uri| uri == redirect_uri)
     }
@@ -171,26 +133,13 @@ impl OAuth2Client {
         self.grant_types.iter().any(|gt| gt == grant_type)
     }
 
-    /// 校验是否允许指定 scope。
-    ///
-    /// fail-closed：空 allowed_scopes 表示不允许任何 scope（需显式配置）；
-    /// `"*"` 通配元素表示允许任意 scope（替代旧版空列表语义）。
+    /// 校验是否允许指定 scope：fail-closed（空 `scopes` 不允许任何 scope，需显式配置）；
+    /// `"*"` 通配元素表示允许任意 scope。
     pub fn allows_scope(&self, scope: &str) -> bool {
         self.scopes.iter().any(|s| s == "*" || s == scope)
     }
 
-    /// 批量校验 scope 列表是否全部在 allowed_scopes 内。
-    ///
-    /// fail-closed：空 allowed_scopes 拒绝一切非空 scope 请求；
-    /// `allowed_scopes = ["*"]` 表示允许任意 scope。
-    /// 任一 scope 不在 allowed_scopes 内则返回 `invalid_scope` 错误。
-    ///
-    /// # 参数
-    /// - `scopes`: 待校验的 scope 列表
-    ///
-    /// # 返回
-    /// - `Ok(())`: 所有 scope 均允许（或请求 scope 为空）
-    /// - `Err(GarrisonError::OAuth2)`: 存在不允许的 scope，错误消息含 `invalid_scope`
+    /// 批量校验 scope 列表是否全部被允许：任一不在 `scopes` 内即返回 `Err`（含 `invalid_scope`）。
     pub fn validate_scopes(&self, scopes: &[String]) -> GarrisonResult<()> {
         if scopes.is_empty() {
             return Ok(());
@@ -210,9 +159,7 @@ impl OAuth2Client {
     }
 }
 
-/// OAuth2 客户端存储 trait。
-///
-/// 提供 CRUD 操作抽象，`DaoOAuth2ClientStore` 基于 `GarrisonDao` 实现。
+/// OAuth2 客户端存储 trait：CRUD 操作抽象（`DaoOAuth2ClientStore` 基于 `GarrisonDao` 实现）。
 #[async_trait]
 pub trait OAuth2ClientStore: Send + Sync {
     /// 创建客户端（若 client_id 已存在则返回错误）。
@@ -231,10 +178,8 @@ pub trait OAuth2ClientStore: Send + Sync {
     async fn list(&self) -> GarrisonResult<Vec<OAuth2Client>>;
 }
 
-/// 基于 `GarrisonDao` 的 `OAuth2ClientStore` 实现。
-///
-/// 客户端配置序列化为 JSON 存储，key 格式：`oauth2:client:{client_id}`。
-/// 使用 `keys()` 扫描实现 `list()`。
+/// 基于 `GarrisonDao` 的 `OAuth2ClientStore` 实现：客户端配置序列化为 JSON，key 为 `oauth2:client:{client_id}`；
+/// `list()` 经 `keys()` 扫描实现。
 pub struct DaoOAuth2ClientStore {
     dao: Arc<dyn GarrisonDao>,
 }
@@ -258,8 +203,7 @@ impl OAuth2ClientStore for DaoOAuth2ClientStore {
         let json = serde_json::to_string(&client).map_err(|e| {
             GarrisonError::Internal(format!("oauth2-server-client-serialize::{}", e))
         })?;
-        // 原子 create-if-absent（SETNX 语义）：消除 get→set_permanent 的
-        // check-then-act TOCTOU 竞态（并发同 client_id 仅一个写入成功）。
+        // 原子 create-if-absent（SETNX 语义）：消除 get→set_permanent 的 check-then-act TOCTOU 竞态
         if !self.dao.set_if_absent(&key, &json, 0).await? {
             return Err(GarrisonError::OAuth2(format!(
                 "oauth2-server-client-exists::{}",
@@ -293,8 +237,7 @@ impl OAuth2ClientStore for DaoOAuth2ClientStore {
         let json = serde_json::to_string(&client).map_err(|e| {
             GarrisonError::Internal(format!("oauth2-server-client-serialize::{}", e))
         })?;
-        // 原子 compare-and-swap：仅当值仍为读取时的内容才写入，
-        // 消除 get→update 的 check-then-act TOCTOU（并发下丢失更新 / 覆盖他人写入）。
+        // 原子 compare-and-swap：仅当值仍为读取时的内容才写入，消除 get→update 的 TOCTOU（并发丢失更新 / 覆盖）
         if !self
             .dao
             .compare_and_swap(&key, Some(current.as_str()), &json, 0)
@@ -333,14 +276,10 @@ impl OAuth2ClientStore for DaoOAuth2ClientStore {
     }
 }
 
-// ============================================================================
 // 内部 Argon2 哈希工具
-// ============================================================================
 
-/// 共享 Argon2 构造：`hash_secret` 与 `verify_secret` 必须使用完全相同的
-/// 算法 / 版本 / 参数。若两侧构造路径不一致（一侧 `Argon2::default()`、
-/// 一侧显式 `Argon2::new`），crate 默认参数一旦调整，存量哈希校验会静默失败。
-/// 参数：Argon2id, V0x13, `Params::default()`（m=19456, t=2, p=1）。
+/// 共享 Argon2 构造：`hash_secret` 与 `verify_secret` 必须使用完全相同的算法 / 版本 / 参数，
+/// 否则 crate 默认参数一旦调整，存量哈希校验会静默失败。参数：Argon2id, V0x13, `Params::default()`（m=19456, t=2, p=1）。
 fn argon2_instance() -> Argon2<'static> {
     Argon2::new(
         Algorithm::Argon2id,
@@ -349,10 +288,8 @@ fn argon2_instance() -> Argon2<'static> {
     )
 }
 
-/// 使用 Argon2id 哈希密钥。
-///
-/// 与 `account::credential::Argon2Hasher` 独立（不同能力域，不引入 account-credential 依赖）。
-/// 参数与实例构造统一由 [`argon2_instance`] 提供。
+/// 使用 Argon2id 哈希密钥（与 `account::credential::Argon2Hasher` 独立，不引入 account-credential 依赖）；
+/// 实例构造统一由 [`argon2_instance`] 提供。
 fn hash_secret(secret: &str) -> GarrisonResult<String> {
     let hash = argon2_instance()
         .hash_password(secret.as_bytes())
@@ -360,10 +297,7 @@ fn hash_secret(secret: &str) -> GarrisonResult<String> {
     Ok(hash.to_string())
 }
 
-/// 验证明文密钥与 Argon2id 哈希是否匹配。
-///
-/// 与 `hash_secret` 共享同一 Argon2 构造（[`argon2_instance`]），保证哈希与
-/// 校验参数永远一致。
+/// 验证明文密钥与 Argon2id 哈希是否匹配（与 `hash_secret` 共享 [`argon2_instance`]，保证参数永远一致）。
 fn verify_secret(secret: &str, hash_str: &str) -> GarrisonResult<bool> {
     let parsed = PasswordHash::new(hash_str).map_err(|e| {
         GarrisonError::InvalidParam(format!("oauth2-server-client-hash-format::{}", e))
@@ -606,8 +540,7 @@ mod tests {
 
     #[test]
     fn validate_scopes_empty_request_ok_in_all_client_states() {
-        // R-oauth2-001 第 4 条（复查补证）：请求 scope 为空时无论 client
-        // allowed_scopes 为空/通配/显式列表均 Ok
+        // R-oauth2-001：请求 scope 为空时，无论 client allowed_scopes 为空/通配/显式列表均 Ok
         for scopes in [Vec::new(), vec!["*".to_string()], vec!["read".to_string()]] {
             let client = OAuth2Client::new("c1", "s", vec![], vec![], scopes).unwrap();
             let empty: Vec<String> = Vec::new();
@@ -678,8 +611,7 @@ mod tests {
         assert!(matches!(err, GarrisonError::OAuth2(_)));
     }
 
-    /// 并发 create 同一 client_id：set_if_absent（SETNX）保证仅一个成功，
-    /// 其余返回 client-exists 错误，杜绝 get→set TOCTOU 静默覆盖。
+    /// 并发 create 同一 client_id：set_if_absent（SETNX）保证仅一个成功，其余返回 client-exists 错误。
     #[tokio::test(flavor = "multi_thread")]
     async fn store_create_concurrent_only_one_wins() {
         let store = Arc::new(DaoOAuth2ClientStore::new(Arc::new(InMemoryDao::new())));

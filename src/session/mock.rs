@@ -3,9 +3,7 @@
 
 //! 会话层测试 mock 实现。
 //!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `MockExpiryListener`（记录回调调用，可选返回错误），
-//! 供 `session::tests` 过期监听器测试复用。
+//! 仅 `cfg(test)` 下编译，提供记录回调调用、可选返回错误的 `MockExpiryListener` 供测试复用。
 
 use super::SessionExpiryListener;
 use crate::error::{GarrisonError, GarrisonResult};

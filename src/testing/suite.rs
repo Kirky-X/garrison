@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! [`JsonTestSuite`] 实现：JSON 解析与测试套件运行逻辑。
-//!
-//! 从 `mod.rs` 迁移以遵守 mod.rs 接口隔离。
 
 use crate::core::permission::{Authorizer, Decision, DecisionReason};
 use crate::error::{GarrisonError, GarrisonResult};
@@ -11,32 +9,17 @@ use crate::error::{GarrisonError, GarrisonResult};
 use super::{JsonTestSuite, TestFailure, TestReport};
 
 impl JsonTestSuite {
-    /// 从 JSON 字符串解析测试套件。
-    ///
-    /// # 错误
-    ///
-    /// - JSON 语法错误：返回 [`GarrisonError::InvalidParam`]
-    /// - 缺失必填字段（`name` / `cases` / `request` / `expected`）：返回 [`GarrisonError::InvalidParam`]
+    /// 从 JSON 字符串解析测试套件（语法错误或缺必填字段返回 `InvalidParam`）。
     pub fn from_json(json: &str) -> GarrisonResult<Self> {
         serde_json::from_str::<Self>(json)
             .map_err(|e| GarrisonError::InvalidParam(format!("testing-json-parse-error::{}", e)))
     }
 
-    /// 运行测试套件，对每个用例调用 [`Authorizer::authorize`] 并比较决策。
+    /// 运行测试套件：逐用例调用 [`Authorizer::authorize`] 并比较决策。
     ///
-    /// # 比较策略
-    ///
-    /// 比较 `allowed` / `reason` / `errors` / `checked_permissions` / `matched_roles`，
-    /// **不比较 `trace_id`**（动态生成，不应作为测试断言依据）。
-    ///
-    /// # 错误处理
-    ///
-    /// 单个用例的 `authorize` 返回 `Err` 时，该用例记为失败（填充 `error` 字段），
-    /// 不影响其他用例执行。
-    ///
-    /// # 参数
-    ///
-    /// - `authorizer`: 实现 [`Authorizer`] trait 的授权器
+    /// 比较 `allowed`/`reason`/`errors`/`checked_permissions`/`matched_roles`，
+    /// **不比较 `trace_id`**（动态生成）；单用例 `authorize` 出错只记该用例失败
+    /// （`actual` 置 `None` 并填 `error`），不影响其他用例。
     pub async fn run(&self, authorizer: &dyn Authorizer) -> GarrisonResult<TestReport> {
         let total = self.cases.len();
         let mut passed = 0usize;
@@ -57,8 +40,7 @@ impl JsonTestSuite {
                     }
                 },
                 Err(e) => {
-                    // authorize 失败时没有实际决策——actual 置 None，
-                    // 不再用合成的 deny 占位（避免授权错误与真实拒绝混淆）
+                    // authorize 失败时无实际决策：actual 置 None，不用合成 deny 占位
                     failures.push(TestFailure {
                         case_name: case.name.clone(),
                         expected: case.expected.clone(),
@@ -80,17 +62,12 @@ impl JsonTestSuite {
     }
 }
 
-/// 比较期望决策与实际决策是否匹配（忽略 `trace_id`）。
+/// 比较期望决策与实际决策是否匹配（比较 `allowed`/`reason`/`errors`/
+/// `checked_permissions`/`matched_roles`，忽略动态生成的 `trace_id`）。
 ///
-/// 比较字段：`allowed` / `reason` / `errors` / `checked_permissions` / `matched_roles`。
-/// `trace_id` 通常是运行时动态生成，不应作为测试断言依据，故忽略。
-///
-/// # reason 前缀匹配
-///
-/// `reason` 字段支持部分匹配（前缀匹配，非精确匹配）：
-/// - 无数据变体（`ExplicitAllow` / `NoMatchingPermission` 等）：精确匹配
-/// - `FirewallBlocked(expected_msg)`：`actual_msg.starts_with(expected_msg)`，
-/// 允许 expected 只指定前缀（如 `"ip blocked"` 匹配 actual `"ip blocked: 1.2.3.4"`）
+/// `reason` 前缀匹配：无数据变体（`ExplicitAllow` 等）精确匹配；含消息变体
+/// （如 `FirewallBlocked`）用 `starts_with`，expected 可只指定前缀
+/// （如 `"ip blocked"` 匹配 `"ip blocked: 1.2.3.4"`）。
 fn decisions_match(expected: &Decision, actual: &Decision) -> bool {
     expected.allowed == actual.allowed
         && reason_matches(&expected.reason, &actual.reason)

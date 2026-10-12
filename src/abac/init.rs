@@ -1,14 +1,12 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! ABAC 全局引擎管理与策略校验（从 mod.rs 迁移）。
+//! ABAC 全局引擎管理与策略校验。
 
 #[cfg(feature = "abac")]
 use super::AbacEngine;
 
-// ============================================================================
 // 全局 AbacEngine 管理（abac feature 开启时）
-// ============================================================================
 
 #[cfg(feature = "abac")]
 use crate::error::{GarrisonError, GarrisonResult};
@@ -25,13 +23,7 @@ use std::sync::{Arc, Mutex};
 #[cfg(feature = "abac")]
 static CURRENT_ENGINE: Mutex<Option<Arc<AbacEngine>>> = Mutex::new(None);
 
-/// 初始化全局 AbacEngine。
-///
-/// 必须在使用 `#[check_permission(permission = "...", abac = "...")]` 宏前调用一次。
-/// 重复调用返回 `GarrisonError::Config`。
-///
-/// # 参数
-/// - `engine`: `AbacEngine` 实例（已加载 schema 和策略）
+/// 初始化全局 AbacEngine；必须在使用 `#[check_permission(..., abac = "...")]` 宏前调用一次，重复调用返回 `GarrisonError::Config`。
 ///
 /// # 示例
 ///
@@ -65,12 +57,7 @@ pub(crate) fn get_abac_engine() -> GarrisonResult<Option<Arc<AbacEngine>>> {
     Ok(guard.clone())
 }
 
-/// 重置全局 AbacEngine（仅测试用）。
-///
-/// 生产代码中严禁调用此函数。
-///
-/// 通过 `testing` feature 门控：单元测试（crate 内 `#[cfg(test)]`）与
-/// 显式启用 `testing` 特性的集成测试（外部二进制）可访问。
+/// 重置全局 AbacEngine（仅测试用，生产代码严禁调用）；经 `testing` feature 门控，供 crate 内单测与显式启用 `testing` 的集成测试访问。
 #[cfg(feature = "abac")]
 #[cfg(any(test, feature = "testing"))]
 pub fn reset_abac_for_test() {
@@ -79,35 +66,15 @@ pub fn reset_abac_for_test() {
     }
 }
 
-// ============================================================================
-// validate_abac_expr — Cedar 策略注入防御（A3）
-// ========================================================================
+// validate_abac_expr — Cedar 策略注入防御
 
 /// ABAC 表达式最大长度（512 字符），防止 DoS 攻击。
 #[cfg(feature = "abac")]
 const ABAC_EXPR_MAX_LEN: usize = 512;
 
-/// 校验 ABAC 表达式，防止 Cedar 策略注入。
+/// 校验 ABAC 表达式，拒绝 Cedar 策略注入（纵深防御：即便绕过宏属性注入恶意 `abac_expr`，本层也拒绝已知 payload；Cedar 解析器仍会再次校验语法）。
 ///
-/// 拒绝以下恶意模式：
-/// - 空表达式或仅空白
-/// - 超长表达式（>512 字符，DoS 防御；按 trim 后长度判定——
-///   原实现用未 trim 的原始长度，纯空白填充可导致合法表达式被误拒）
-/// - 含 `};`：尝试闭合 `when { ... }` 块并注入新策略
-/// - 含 `permit(` / `forbid(`：尝试在表达式内声明新策略
-/// - 纯字面量：无 `principal` / `resource` / `action` 引用（要求表达式绑定到上下文）
-///
-/// # 参数
-/// - `expr`: Cedar 条件表达式字符串（如 "resource.owner == principal.id"）
-///
-/// # 返回
-/// - `Ok(())`: 表达式通过校验
-/// - `Err(GarrisonError::InvalidParam)`: 表达式含恶意模式或为纯字面量
-///
-/// # 安全考量
-///
-/// 此校验为纵深防御层。即便攻击者绕过宏属性注入恶意 `abac_expr`，
-/// 本函数也会拒绝已知的策略注入 payload。Cedar 解析器仍会再次校验语法。
+/// 拒绝规则（命中返回 `Err(GarrisonError::InvalidParam)`）：空或仅空白；trim 后超长（>512 字符，DoS 防御）；含 `};`（闭合 when 块注入）；含 `permit(` / `forbid(`（声明新策略）；无 `principal` / `resource` / `action` 引用的纯字面量。
 #[cfg(feature = "abac")]
 pub fn validate_abac_expr(expr: &str) -> GarrisonResult<()> {
     let trimmed = expr.trim();
@@ -117,8 +84,7 @@ pub fn validate_abac_expr(expr: &str) -> GarrisonResult<()> {
             "abac_expr must not be empty"
         )));
     }
-    // 长度限制针对有效内容（trim 后），避免空白填充造成合法表达式误拒；
-    // DoS 防御不受影响——空白填充本身的处理开销可忽略，恶意超长 payload 无需空白即超限
+    // 长度限制按 trim 后内容判定，避免空白填充误拒合法表达式；空白填充开销可忽略，DoS 防御不受影响
     if trimmed.len() > ABAC_EXPR_MAX_LEN {
         return Err(GarrisonError::InvalidParam(loc!(
             "abac-expr-too-long",
@@ -129,7 +95,6 @@ pub fn validate_abac_expr(expr: &str) -> GarrisonResult<()> {
             ("max", ABAC_EXPR_MAX_LEN.to_string().as_str())
         )));
     }
-    // 拒绝策略终止符（闭合 when 块并注入新策略）
     if expr.contains("};") {
         return Err(GarrisonError::InvalidParam(loc!(
             "abac-expr-illegal-chars",
@@ -142,7 +107,6 @@ pub fn validate_abac_expr(expr: &str) -> GarrisonResult<()> {
             "abac_expr must not declare permit/forbid policies"
         )));
     }
-    // 要求至少含 principal/resource/action 之一，拒绝纯字面量
     let lower = expr.to_lowercase();
     if !lower.contains("principal") && !lower.contains("resource") && !lower.contains("action") {
         return Err(GarrisonError::InvalidParam(loc!(
@@ -153,37 +117,11 @@ pub fn validate_abac_expr(expr: &str) -> GarrisonResult<()> {
     Ok(())
 }
 
-// ============================================================================
 // check_abac_with_policy — 宏入口
-// ============================================================================
 
-/// ABAC 策略校验（宏入口）。
+/// ABAC 策略校验（宏入口，RBAC 通过后的增量校验）：引擎未初始化 → `Err(Config)`（fail-closed）；校验 `abac_expr` 防注入；`login_id` 缺失 → `Err(NotLogin)`；把表达式包装为 `permit(principal, action == Action::"<action>", resource) when { <abac_expr> };` 后经 `evaluate_with_temp_policy` 求值（不改共享策略集）；Allow → `Ok(())`，Deny → `Err(NotPermission)`，其他引擎错误透传。
 ///
-/// 供 `#[check_permission(permission = "...", resource = "...", abac = "...")]` 宏生成的代码调用。
-/// RBAC 校验通过后执行 ABAC 增量校验。
-///
-/// # 行为
-///
-/// 1. 全局 AbacEngine 未初始化 → 返回 `Err(GarrisonError::Config(...))`（fail-closed）
-/// 2. 校验 `abac_expr` 防止 Cedar 策略注入
-/// 3. 获取当前 `login_id` 作为 principal，未登录 → 返回 `Err(NotLogin)`
-/// 4. 将 `abac_expr` 包装为 Cedar 策略：
-///    `permit(principal, action == Action::"<action>", resource) when { <abac_expr> };`
-/// 5. 使用 `evaluate_with_temp_policy` 求值（不修改共享策略集），resource 由调用方显式传入
-/// 6. Allow → `Ok(())`，Deny → `Err(NotPermission)`
-///
-/// # 参数
-/// - `action`: 权限标识（如 "order:read"），作为 Cedar action
-/// - `resource`: Cedar resource EntityUid 字符串（如 `Resource::"default"`、`Resource::"order"`）。
-///   由宏属性 `resource = "..."` 注入，避免硬编码。
-///   非法格式由 Cedar 解析器拒绝（返回 `Err(InvalidParam)`，fail-closed）。
-/// - `abac_expr`: Cedar 条件表达式（如 "resource.user_id == principal.id"）
-///
-/// # 错误
-/// - `GarrisonError::NotLogin`: 未登录（`get_login_id` 返回 None）
-/// - `GarrisonError::NotPermission`: ABAC 策略拒绝
-/// - `GarrisonError::InvalidParam`: abac_expr 含恶意模式或 Cedar 策略解析失败（含 resource 注入尝试）
-/// - 其他: 透传 `GarrisonManager` / AbacEngine 错误
+/// `resource` 为 Cedar resource EntityUid 字符串（如 `Resource::"order"`），由宏属性 `resource = "..."` 注入；非法格式由 Cedar 解析器拒绝（`Err(InvalidParam)`，fail-closed）。`action` 为权限标识（如 "order:read"），作为 Cedar action。
 #[cfg(feature = "abac")]
 pub async fn check_abac_with_policy(
     action: &str,
@@ -199,7 +137,6 @@ pub async fn check_abac_with_policy(
             )))
         }, // 未初始化 fail-closed
     };
-    // 校验 abac_expr 防止 Cedar 策略注入
     validate_abac_expr(abac_expr)?;
     let login_id = crate::stp::GarrisonUtil::get_login_id().await?;
     let login_id = match login_id {
@@ -216,15 +153,14 @@ pub async fn check_abac_with_policy(
     let policy_src = format!(
         r#"permit(principal, action == Action::"{action}", resource) when {{ {abac_expr} }};"#
     );
-    // resource 由调用方显式传入，移除硬编码 Resource::"default"。
-    // 非法 resource 字符串（含注入尝试）由 evaluate_with_temp_policy 内部 EntityUid::parse 拒绝。
+    // resource 由调用方显式传入；非法 resource 字符串（含注入尝试）由 evaluate_with_temp_policy 内部 EntityUid::parse 拒绝
     let decision = engine
         .evaluate_with_temp_policy(&principal, &action_uid, resource, None, &policy_src)
         .await?;
     if decision.allowed {
         Ok(())
     } else {
-        // expr 不编码进错误消息（避免破坏 `parse_keyed_detail` 解析），仅记录日志保持可观测性
+        // expr 不编码进错误消息（避免破坏 parse_keyed_detail 解析），仅 debug 日志保持可观测性
         tracing::debug!(expr = %abac_expr, "ABAC policy denied");
         Err(GarrisonError::NotPermission(format!(
             "abac-policy-denied::{}::{}",
@@ -233,12 +169,7 @@ pub async fn check_abac_with_policy(
     }
 }
 
-/// ABAC 策略校验 stub（`abac` feature 关闭时）。
-///
-/// 始终返回 `Ok(())`，使宏生成的代码在不启用 `abac` feature 时无副作用。
-/// "`abac` feature 关闭时 stub 仍返回 `Ok(())`（no-op 语义不变）"——
-/// 虽然宏仍生成调用代码，但本 stub 使其成为 no-op。
-/// 注意：`abac` feature 开启时未初始化引擎走 fail-closed 路径（见上方 `#[cfg(feature = "abac")]` 版本）。
+/// ABAC 策略校验 stub（`abac` feature 关闭时，实际由 mod.rs 的同名 fail-closed 实现覆盖）：返回 `Ok(())` no-op；feature 开启时未初始化引擎走 fail-closed（见上方 feature 版本）。
 #[cfg(not(feature = "abac"))]
 pub async fn check_abac_with_policy(
     _action: &str,

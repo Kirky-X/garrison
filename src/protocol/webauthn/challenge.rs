@@ -3,11 +3,9 @@
 
 //! challenge 一次性暂存与原子消费。
 //!
-//! 仪式态（注册/认证）与完成仪式所需的上下文一起以 JSON 暂存：
 //! - 签发走 `set_if_absent`（SETNX）：同键位二次签发显性报错（防覆盖攻击）。
-//! - 消费走 `get_and_delete`（GETDEL）：键不存在（已消费/已过期/伪造）统一
-//!   判 [`WebauthnCeremonyError::ChallengeReplayed`]——一次性语义下不区分
-//!   重放与过期（都拒绝，不泄露状态差异）。
+//! - 消费走 `get_and_delete`（GETDEL）：键不存在（已消费/已过期/伪造）统一判
+//!   [`WebauthnCeremonyError::ChallengeReplayed`]——不区分重放与过期，不泄露状态差异。
 //! - TTL 由 `ttl_secs` 控制，随 SETNX 一并写入。
 //!
 //! 两原子的并发语义（SETNX 恰一赢家 / GETDEL 一次性消费）由 DAO 契约套件

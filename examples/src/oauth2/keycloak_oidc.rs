@@ -16,9 +16,7 @@
 use garrison::error::GarrisonResult;
 use garrison::{KeycloakConfig, KeycloakProvider};
 
-/// 运行 Keycloak OIDC RP 示例。
-///
-/// 演示 KeycloakConfig 构造 + KeycloakProvider 使用方式。
+/// 运行 Keycloak OIDC RP 示例：KeycloakConfig 构造 + KeycloakProvider 使用方式。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison Keycloak OIDC RP 示例 ===\n");
 

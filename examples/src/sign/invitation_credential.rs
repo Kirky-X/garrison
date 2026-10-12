@@ -44,10 +44,7 @@ impl InvitationRedeemHook for AccountProvisioningHook {
     }
 }
 
-/// 运行邀请码定向注册示例。
-///
-/// 演示 create（单/批量）/ validate（只读预检）/ redeem（原子消费 + hook 编排）/
-/// revoke（幂等吊销）与 list（管理面）全链路。
+/// 运行邀请码定向注册示例：create（单/批量）/ validate（只读预检）/ redeem（原子消费 + hook 编排）/ revoke / list 全链路。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 邀请码定向注册示例 ===\n");
 
@@ -155,8 +152,7 @@ pub async fn run() -> GarrisonResult<()> {
         "    admin-1 名下邀请码数 = {}（3 个团队码全部在库：2 可用 + 1 已耗尽）",
         listed.len()
     );
-    // list 为管理面全量视图：批量码耗尽后记录保留（仅单次码消费即删），
-    // 单次码 invitation.code 已在步骤 4 消费删除，故 admin-1 名下共 3 条。
+    // list 为管理面全量视图：单次码消费即删、批量码耗尽后记录保留，故 admin-1 名下共 3 条。
     assert_eq!(listed.len(), 3);
     // 吊销剩余团队码
     handler.revoke(&batch[1].code, "admin-1").await?;

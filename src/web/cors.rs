@@ -1,40 +1,15 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! CORS 跨域资源共享中间件模块。
-//!
-//! 提供 [`CorsConfig`](crate::web::cors::CorsConfig) 配置与 [`garrison_cors_middleware`](crate::web::cors::garrison_cors_middleware) axum 中间件，
-//! 支持 CORS 预检（OPTIONS）与实际请求的响应头注入。
-//!
-//! # 行为
-//!
-//! - **OPTIONS 预检请求**：无论 Origin 是否匹配均短路返回 204 No Content；
-//! Origin 匹配时注入 CORS 预检响应头，Origin 不匹配/缺失/空时返回 204 无 CORS 头。
-//! - **实际请求**（非 OPTIONS）：Origin 匹配时注入 CORS 响应头后继续到下一 handler；
-//! Origin 不匹配时透传。
-//! - **无 Origin header**：视为非 CORS 请求，直接透传。
-//!
-//! # 配置
-//!
-//! 通过 [`CorsConfig`](crate::web::cors::CorsConfig) 控制允许的源、方法、headers 等，集成到 [`crate::config::GarrisonConfig`]。
+//! CORS 跨域资源共享中间件（axum）：OPTIONS 预检一律短路 204，仅 Origin 匹配时注入 CORS 头；
+//! 实际请求仅 Origin 匹配时注入响应头（必带 `Vary: Origin` 供缓存区分），配置见 [`CorsConfig`](crate::web::cors::CorsConfig)。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use axum::extract::State;
 use axum::http::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 
-/// CORS 中间件配置。
-///
-/// 控制允许的跨域来源、方法、headers 等参数。
-///
-/// # 默认值
-///
-/// - `allowed_origins`：空列表（不允许任何跨域请求）
-/// - `allowed_methods`：`["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"]`
-/// - `allowed_headers`：`["Authorization", "Content-Type"]`
-/// - `exposed_headers`：空列表
-/// - `allow_credentials`：`false`
-/// - `max_age_secs`：`86400`（24 小时）
+/// CORS 中间件配置：默认收紧（`allowed_origins` 为空时不放行任何跨域，`allow_credentials` 默认 false）。
 ///
 /// # 配置示例
 ///
@@ -82,16 +57,7 @@ impl Default for CorsConfig {
 }
 
 impl CorsConfig {
-    /// 校验 CORS 配置合法性。
-    ///
-    /// # 校验规则
-    ///
-    /// - 若 `allow_credentials == true` 且 `allowed_origins` 包含 `"*"`，返回 `Err`：
-    ///   CORS 规范禁止 credentials 与通配符 origin 同时使用。
-    ///
-    /// # 错误
-    ///
-    /// - `GarrisonError::Config`：credentials 与通配符 origin 冲突。
+    /// 校验配置：credentials 与通配符 origin 不可同时使用（CORS 规范），冲突返回 `GarrisonError::Config`。
     pub fn validate(&self) -> GarrisonResult<()> {
         if self.allow_credentials && self.allowed_origins.iter().any(|o| o == "*") {
             return Err(GarrisonError::Config(
@@ -102,13 +68,7 @@ impl CorsConfig {
     }
 }
 
-/// 判断给定的 origin 是否在允许列表中。
-///
-/// # 匹配规则
-///
-/// 1. `allowed` 为空：返回 `false`（不允许任何来源）
-/// 2. `allowed` 包含 `"*"`：返回 `true`（通配允许所有来源）
-/// 3. 否则：精确匹配（大小写敏感）
+/// origin 是否命中允许列表：空列表不匹配，含 `"*"` 通配，否则大小写敏感精确匹配。
 pub fn origin_matches(origin: &str, allowed: &[String]) -> bool {
     if allowed.is_empty() {
         return false;
@@ -119,10 +79,7 @@ pub fn origin_matches(origin: &str, allowed: &[String]) -> bool {
     allowed.iter().any(|o| o == origin)
 }
 
-/// 计算响应中的 `Access-Control-Allow-Origin` 值。
-///
-/// - 通配符（allowed 包含 `"*"`）：返回 `"*"`
-/// - 否则：返回 origin 本身
+/// 计算 `Access-Control-Allow-Origin` 值：配置含 `"*"` 时返回 `"*"`，否则回显 origin。
 fn allow_origin_value<'a>(origin: &'a str, allowed: &'a [String]) -> &'a str {
     if allowed.iter().any(|o| o == "*") {
         "*"
@@ -138,31 +95,9 @@ fn join_headers(items: &[String]) -> HeaderValue {
     HeaderValue::from_str(&joined).unwrap_or(HeaderValue::from_static(""))
 }
 
-/// CORS 中间件。
-///
-/// 处理 CORS 预检请求（OPTIONS）与实际请求的响应头注入。
-///
-/// # 行为
-///
-/// ## OPTIONS 预检请求
-///
-/// 1. 无论 Origin 是否匹配均短路返回 204 No Content。
-/// 2. Origin 匹配时注入预检响应头：
-/// - `Access-Control-Allow-Origin`
-/// - `Access-Control-Allow-Methods`
-/// - `Access-Control-Allow-Headers`
-/// - `Access-Control-Allow-Credentials`（仅当 `allow_credentials == true`）
-/// - `Access-Control-Max-Age`
-/// 3. Origin 缺失/空/不匹配时返回 204 无 CORS 头。
-///
-/// ## 实际请求（非 OPTIONS）
-///
-/// 1. 提取 `Origin` header，若无则透传
-/// 2. Origin 匹配时注入响应头后继续到下一 handler：
-/// - `Access-Control-Allow-Origin`
-/// - `Access-Control-Expose-Headers`（仅当 `exposed_headers` 非空）
-/// - `Access-Control-Allow-Credentials`（仅当 `allow_credentials == true`）
-/// 3. Origin 不匹配时透传
+/// CORS 中间件：OPTIONS 一律短路 204——Origin 匹配时注入 Allow-Origin/Methods/Headers/Max-Age
+/// （`allow_credentials` 时加 Allow-Credentials），否则 204 无 CORS 头；实际请求仅 Origin 匹配时注入
+/// Allow-Origin/Expose-Headers/Credentials 并继续，否则透传。
 ///
 /// # 使用
 ///
@@ -201,8 +136,7 @@ pub async fn garrison_cors_middleware(
         if !origin.is_empty() && origin_matches(origin, &config.allowed_origins) {
             let allow_origin = allow_origin_value(origin, &config.allowed_origins);
             let mut headers = axum::http::HeaderMap::new();
-            // Vary: Origin —— 响应内容随 Origin 变化，缓存层必须按 Origin 区分
-            // （RFC 6454 §7.6，预检分支）
+            // Vary: Origin —— 响应随 Origin 变化，缓存层必须按 Origin 区分（RFC 6454 §7.6）
             headers.insert(
                 HeaderName::from_static("vary"),
                 HeaderValue::from_static("Origin"),
@@ -235,7 +169,6 @@ pub async fn garrison_cors_middleware(
         return StatusCode::NO_CONTENT.into_response();
     }
 
-    // 非 OPTIONS 实际请求
     let origin = match req.headers().get(axum::http::header::ORIGIN) {
         Some(v) => v.to_str().unwrap_or("").to_string(),
         None => return next.run(req).await,
@@ -251,11 +184,9 @@ pub async fn garrison_cors_middleware(
 
     let allow_origin = allow_origin_value(&origin, &config.allowed_origins);
 
-    // 实际请求：注入响应头后继续
     let mut resp = next.run(req).await;
     let headers = resp.headers_mut();
-    // Vary: Origin —— 响应内容随 Origin 变化，缓存层必须按 Origin 区分，
-    // 否则 origin A 的缓存响应可能被错发给 origin B（RFC 6454 §7.6）
+    // Vary: Origin —— 响应随 Origin 变化，缓存必须按 Origin 区分，否则 A 源缓存可能误发给 B 源（RFC 6454 §7.6）
     headers.insert(
         HeaderName::from_static("vary"),
         HeaderValue::from_static("Origin"),
@@ -289,9 +220,7 @@ mod tests {
     use std::sync::Arc;
     use tower::ServiceExt;
 
-    // ----------------------------------------------------------------
     // 辅助函数
-    // ----------------------------------------------------------------
 
     fn make_app(config: CorsConfig) -> Router {
         Router::new()
@@ -319,9 +248,7 @@ mod tests {
             .unwrap()
     }
 
-    // ========================================================================
-    // origin_matches 单元测试（10 个）
-    // ========================================================================
+    // origin_matches 单元测试
 
     #[test]
     fn origin_matches_exact_match() {
@@ -383,8 +310,7 @@ mod tests {
 
     #[test]
     fn origin_matches_wildcard_with_credentials_scenario() {
-        // 通配符场景：即使 allow_credentials=true，origin_matches 仍返回 true
-        // credentials 冲突由 validate() 检查，不在匹配逻辑中处理
+        // 通配符下 origin_matches 仍返回 true；credentials 冲突由 validate() 单独处理
         let allowed = vec!["*".to_string()];
         assert!(origin_matches("https://example.com", &allowed));
     }
@@ -392,14 +318,11 @@ mod tests {
     #[test]
     fn origin_matches_mixed_exact_and_wildcard() {
         let allowed = vec!["https://example.com".to_string(), "*".to_string()];
-        // 通配符存在，任何 origin 都应匹配
         assert!(origin_matches("https://anything.com", &allowed));
         assert!(origin_matches("https://example.com", &allowed));
     }
 
-    // ========================================================================
-    // 预检请求（OPTIONS）集成测试（8 个）
-    // ========================================================================
+    // OPTIONS 预检集成测试
 
     #[tokio::test]
     async fn preflight_matching_origin_returns_204() {
@@ -583,9 +506,7 @@ mod tests {
         assert_eq!(max_age, "3600");
     }
 
-    // ========================================================================
-    // 实际请求（非 OPTIONS）集成测试（6 个）
-    // ========================================================================
+    // 实际请求（非 OPTIONS）集成测试
 
     #[tokio::test]
     async fn actual_request_matching_origin_injects_headers() {
@@ -712,9 +633,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // Vary: Origin
-    // ========================================================================
 
     /// 实际请求（注入 ACAO）必须带 Vary: Origin，防止缓存跨 Origin 串用。
     #[tokio::test]
@@ -755,9 +674,7 @@ mod tests {
         assert_eq!(resp.headers().get("vary").unwrap(), "Origin");
     }
 
-    // ========================================================================
-    // CorsConfig::validate() 单元测试（5 个）
-    // ========================================================================
+    // CorsConfig::validate() 单元测试
 
     #[test]
     fn validate_valid_config_passes() {

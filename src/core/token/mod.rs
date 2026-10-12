@@ -1,18 +1,13 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Token 抽象模块，定义 Token 生成/验证/解析的 trait 与多种风格实现。
-//!
-//! 对应 Token 风格切换能力，
-//! 0.2.0 将 token 逻辑独立为 `core-token` 模块，
-//! 框架内部通过 `Token` trait 实现多种 token 风格切换。
-//!
-//! 支持 4 种风格：uuid / random_64 / simple / jwt。
+//! Token 抽象模块：定义 Token 生成 / 验证 / 解析的 trait 与 4 种风格实现
+//!（uuid / random_64 / simple / jwt），框架内部经 `Token` trait 切换风格。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use serde::{Deserialize, Serialize};
 
-/// Token 声明信息，承载 token 解析后的声明。
+/// Token 解析后的声明（login_id / expire_at / device）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenClaims {
     /// 登录主体标识。
@@ -23,29 +18,16 @@ pub struct TokenClaims {
     pub device: Option<String>,
 }
 
-/// Token 抽象 trait，定义 token 生成、验证与解析的契约。
-///
-/// 实现方需提供 `generate`、`verify`、`parse` 三个方法。
-/// `verify` 在 token 有效时返回 `Ok(Some(login_id))`，无效时返回 `Ok(None)`。
+/// Token 抽象 trait（生成 / 验证 / 解析三方法）：`verify` 在 token 有效时返回
+/// `Ok(Some(login_id))`，无效时返回 `Ok(None)`。
 pub trait Token: Send + Sync {
-    /// 生成 token，关联指定 login_id 与过期时间。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `timeout`: 有效期（秒）。
+    /// 生成 token，关联指定 login_id 与过期时间（timeout 秒）。
     fn generate(&self, login_id: &str, timeout: i64) -> GarrisonResult<String>;
 
-    /// 生成携带认证方法引用的 token（MFA 因子账本 → amr / auth_time claim）。
-    ///
-    /// 仅 JWT 风格有 claim 载体：JwtTokenStyle 将 `amr` / `auth_time` 写入
-    /// JWT 载荷；其余风格（uuid / random_64 / simple）无载体，默认实现忽略
-    /// 二者并委托 [`Token::generate`]（既有签发格式不变，账本仍以会话记录
-    /// 为权威来源）。签发路径应统一经由本方法传入账本映射结果
-    /// （`crate::stp::mfa::amr_claim`），禁止各路径自行硬编码 claim。
-    ///
-    /// # 参数
-    /// - `amr`: RFC 8176 认证方法引用；空切片不写 claim。
-    /// - `auth_time`: 主认证时刻（Unix 秒）；`None` 不写 claim。
+    /// 生成携带认证方法引用的 token（MFA 因子账本 → amr / auth_time claim）；仅 JWT 风格有
+    /// claim 载体（其余风格默认实现忽略二者并委托 [`Token::generate`]，账本仍以会话记录为权威）。
+    /// amr 空切片 / auth_time `None` 不写 claim；签发路径应统一经本方法传入账本映射结果
+    /// （`crate::stp::mfa::amr_claim`），禁止硬编码 claim。
     fn generate_with_amr(
         &self,
         login_id: &str,
@@ -57,93 +39,43 @@ pub trait Token: Send + Sync {
         self.generate(login_id, timeout)
     }
 
-    /// 校验 token，返回关联的 login_id（如果 token 有效且可解析）。
-    ///
-    /// # 返回
-    /// - `Ok(Some(login_id))`: token 有效且包含 login_id。
-    /// - `Ok(None)`: token 无效或不包含 login_id（如 UUID 风格）。
+    /// 校验 token：有效且含 login_id 返回 `Ok(Some(login_id))`，否则 `Ok(None)`（如 UUID 风格）。
     fn verify(&self, token: &str) -> GarrisonResult<Option<String>>;
 
-    /// 解析 token 为 `TokenClaims`。
-    ///
-    /// # 返回
-    /// - `Ok(TokenClaims)`: 解析成功。
-    /// - `Err(GarrisonError)`: 解析失败（token 风格不支持 parse / token 过期 / 格式错误）。
+    /// 解析 token 为 `TokenClaims`；不支持 parse / 过期 / 格式错误返回 `Err(GarrisonError)`。
     fn parse(&self, token: &str) -> GarrisonResult<TokenClaims>;
 }
 
-// ====================================================================
 // UuidTokenStyle
-// ====================================================================
 
-/// UUID v4 风格 Token。
-///
-/// 生成标准 UUID v4 格式 token（如 `6e56d6f8-2b31-4d8e-92c3-7a9c8f0d1234`）。
-/// UUID 不包含 login_id 或过期信息，`verify` 始终返回 `Ok(None)`。
+/// UUID v4 风格 Token（如 `6e56d6f8-2b31-4d8e-92c3-7a9c8f0d1234`）：不含 login_id / 过期信息，
+/// `verify` 始终返回 `Ok(None)`。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct UuidTokenStyle;
 
-// ====================================================================
 // Random64TokenStyle
-// ====================================================================
 
-/// 64 字符随机 hex 风格 Token。
-///
-/// 生成 64 字符随机十六进制串，多次调用返回不同 token。
-/// 不包含 login_id 或过期信息，`verify` 始终返回 `Ok(None)`。
+/// 64 字符随机 hex 风格 Token：不含 login_id / 过期信息，`verify` 始终返回 `Ok(None)`。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Random64TokenStyle;
 
-// ====================================================================
 // SimpleTokenStyle
-// ====================================================================
 
-/// Simple 风格 Token。
+/// Simple 风格 Token：`<login_id>\x1f<uuid>.<exp>.<hmac_sha256_base64(secret, login_id|uuid|exp)>`。
 ///
-/// 格式为 `<login_id>\x1f<uuid>.<exp>.<hmac_sha256_base64(secret, login_id|uuid|exp)>`，
-/// 通过 HMAC-SHA256 签名防止 token 伪造（CRITICAL 漏洞修复），并内嵌过期时间戳
-/// `exp`（Unix 秒）实现 token 级过期（对齐 JWT 语义）。
-///
-/// # 安全模型
-///
-/// - **生成**：服务端用 `secret` 对 `login_id|uuid|exp` 计算 HMAC-SHA256，附加到 token 末尾；
-///   `timeout <= 0` 时拒绝生成（fail-closed，杜绝无过期时间的永久 token）
-/// - **验证**：用公共常量时间比较原语 `secure::ct_eq::constant_time_eq`（ADR-0003）
-///   常数时间比较 HMAC，防止 timing side-channel；
-///   `exp` 已过期（`Utc::now() >= exp`）时视为无效
-/// - **fail-closed**：`secure-simple-token` feature 未启用时，`generate` 返回 `Err`，
-///   杜绝无签名的不安全 token 流入生产环境
-///
-/// # Feature 依赖
-///
-/// 需启用 `secure-simple-token` feature（已包含在 `auth-server` 中）。
-/// 未启用时 `generate` / `verify` / `parse` 均返回 `Err`。
-///
-/// # 迁移说明
-///
-/// 旧格式 `<login_id>-<uuid>`（无 HMAC）与 `<login_id>\x1f<uuid>.<hmac>`
-/// （无 exp 段）的 token 在 `verify` 时返回 `Ok(None)`，视为无效 token，
-/// 用户需重新登录获取新格式 token。
+/// HMAC-SHA256 签名防伪造，内嵌 `exp`（Unix 秒）实现 token 级过期（对齐 JWT 语义）。安全模型：
+/// 生成用 secret 签名，`timeout <= 0` 拒绝（fail-closed，杜绝无过期时间的永久 token）；验证用
+/// `secure::ct_eq::constant_time_eq` 常数时间比较 HMAC（防 timing side-channel），`exp` 过期视为
+/// 无效；`secure-simple-token` feature 未启用时 `generate` / `verify` / `parse` 均返回 `Err`。
+/// 旧格式（无 HMAC 或无 exp 段）在 `verify` 时返回 `Ok(None)`，用户需重新登录。
 #[derive(Clone, Default)]
 pub struct SimpleTokenStyle {
-    /// HMAC-SHA256 签名密钥（服务端保管，不随 token 下发）。
+    /// HMAC-SHA256 签名密钥（服务端保管，不随 token 下发；仅 `secure-simple-token` 下由 impl 读取）。
     ///
-    /// 仅在启用 `secure-simple-token` feature 时由 `Token` impl 读取。
-    ///
-    /// # 安全说明
-    ///
-    /// - **Debug 脱敏**：`Debug` 为手动实现，secret 以 `[REDACTED]` 输出，
-    ///   防止 `{:#?}` / `{:?}` 日志泄露 HMAC 密钥。
-    /// - **明文驻留（已知限制）**：当前使用 `String` 存储密钥，`String::drop`
-    ///   不会清零底层堆内存缓冲区，密钥可能残留（增加侧信道泄露面）；
-    ///   `Clone`（如 `TokenStyleFactory` 按值返回、调用方克隆）会复制出更多明文副本。
-    /// - **protocol-zeroize 迁移路径**：生产环境若对此有严格要求，应启用
-    ///   `protocol-zeroize` feature，将本字段类型切换为 `Zeroizing<String>`
-    ///   （Drop 时自动清零）或 `Vec<u8>` + 手动 `explicit_zero`，并为 `Clone`
-    ///   补充 zeroize-aware 分配。该类型切换会触及本模块全部 `self.secret`
-    ///   访问点（style_impl.rs 的 HMAC 路径），作为独立 change 落地。
-    // secret 仅被 style_impl.rs 的 HMAC 路径（secure-simple-token 门控）读取；
-    // stub impl（fail-closed）不消费密钥，按仓库 cfg_attr 先例定向豁免。
+    /// Debug 手动实现脱敏输出 `[REDACTED]`。已知限制：`String` 存储的明文在 `drop` 时不清零，
+    /// `Clone` 还会复制出更多副本（增加侧信道泄露面）；严格场景应启用 `protocol-zeroize`
+    /// feature 将字段换为 `Zeroizing<String>`（Drop 自动清零），作为独立 change 落地。
+    // secret 仅被 style_impl.rs 的 HMAC 路径读取；stub impl 不消费密钥，按 cfg_attr 先例定向豁免 dead_code。
     #[cfg_attr(not(feature = "secure-simple-token"), allow(dead_code))]
     secret: String,
 }
@@ -158,23 +90,15 @@ impl std::fmt::Debug for SimpleTokenStyle {
 }
 
 impl SimpleTokenStyle {
-    /// 创建 SimpleTokenStyle 实例。
-    ///
-    /// # 参数
-    /// - `secret`: HMAC-SHA256 签名密钥。空串时返回实例但 `generate` 会 fail-closed。
+    /// 创建 SimpleTokenStyle 实例；`secret` 为空串时 `generate` 会 fail-closed。
     pub fn new(secret: String) -> Self {
         Self { secret }
     }
 }
 
-// ====================================================================
 // JwtTokenStyle
-// ====================================================================
 
-/// JWT 风格 Token。
-///
-/// 委托 `protocol-jwt::JwtHandler` 实现签发与校验。
-/// 仅在启用 `protocol-jwt` feature 时编译。
+/// JWT 风格 Token（`protocol-jwt` feature）：委托 `protocol-jwt::JwtHandler` 实现签发与校验。
 #[cfg(feature = "protocol-jwt")]
 pub struct JwtTokenStyle {
     /// 内部 JWT 处理器。
@@ -183,9 +107,7 @@ pub struct JwtTokenStyle {
 
 mod style_impl;
 
-// ====================================================================
 // TokenStyleFactory
-// ====================================================================
 
 /// Token 风格工厂，依据 `GarrisonConfig.token_style` 创建对应的 `Token` 实现。
 pub struct TokenStyleFactory;

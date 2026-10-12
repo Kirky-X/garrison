@@ -17,37 +17,14 @@ impl TotpHandler {
             .map_err(|_| GarrisonError::InvalidParam("secure-totp-negative-now::".to_string()))
     }
 
-    /// 创建新的 TOTP 处理器。
-    ///
-    /// 使用 SHA1 算法（RFC 6238 默认），skew=1 允许 ±1 时间窗口偏差。
-    ///
-    /// # 参数
-    /// - `secret`: 原始密钥字节。
-    /// - `step`: 时间步长（秒），RFC 6238 默认 30。
-    /// - `digits`: 验证码位数，通常 6 或 8。
-    ///
-    /// # 返回
-    /// - `Ok(Self)`: 构造成功。
-    /// - `Err(GarrisonError::Internal)`: 密钥长度或位数不合法。
+    /// 创建 TOTP 处理器：SHA1（RFC 6238 默认），skew=1 允许 ±1 时间窗口偏差。
     pub fn new(secret: Vec<u8>, step: u64, digits: u32) -> GarrisonResult<Self> {
         Self::new_with_hash_algorithm(secret, step, digits, Algorithm::SHA1)
     }
 
-    /// 以指定哈希算法创建 TOTP 处理器（SHA1/SHA256/SHA512）。
-    ///
-    /// 默认构造器 [`new`](Self::new) 使用 SHA1（RFC 6238 默认，兼容主流
-    /// Authenticator App）；SHA256/SHA512 用于服务端间对齐 RFC 6238 完整算法组。
-    /// 算法必须在构造期选定（totp-rs 的 `TOTP` 构建后不可变更哈希算法）。
-    ///
-    /// # 参数
-    /// - `secret`: 原始密钥字节（RFC 6238 向量：SHA1/20 字节，SHA256/32 字节，SHA512/64 字节）。
-    /// - `step`: 时间步长（秒），RFC 6238 默认 30。
-    /// - `digits`: 验证码位数，通常 6 或 8。
-    /// - `algorithm`: 哈希算法。
-    ///
-    /// # 返回
-    /// - `Ok(Self)`: 构造成功。
-    /// - `Err(GarrisonError::Internal)`: 密钥长度或位数不合法。
+    /// 以指定哈希算法创建（SHA1/SHA256/SHA512）：默认 SHA1 兼容主流 Authenticator App，
+    /// SHA256/SHA512 供服务端对齐 RFC 6238 完整算法组；算法须构造期选定（totp-rs 构建后不可变更）。
+    /// `secret` 须匹配算法长度（SHA1 20 / SHA256 32 / SHA512 64 字节）。
     pub fn new_with_hash_algorithm(
         secret: Vec<u8>,
         step: u64,
@@ -65,78 +42,25 @@ impl TotpHandler {
         Ok(Self { totp, step })
     }
 
-    /// 生成 TOTP 验证码。
-    ///
-    /// # 参数
-    /// - `now`: 当前 Unix 时间戳（秒），必须 >= 0。
-    ///
-    /// # 返回
-    /// - `Ok(String)`: 指定位数的数字字符串。
-    /// - `Err(GarrisonError::InvalidParam)`: `now` 为负值（裸 `as u64` 会静默回绕
-    ///   为巨大计数器，产生错误时间窗口的验证码，故显式拒绝）。
+    /// 生成 TOTP 验证码；`now` 为负返回 `Err(GarrisonError::InvalidParam)`（裸 `as u64` 会静默回绕产生错误窗口的码）。
     pub fn generate(&self, now: i64) -> GarrisonResult<String> {
         let now = Self::check_now(now)?;
         Ok(self.totp.generate(now).to_string())
     }
 
-    /// 校验 TOTP 验证码。
-    ///
-    /// 允许 ±1 个时间窗口的偏差以容忍客户端与时钟漂移。
-    ///
-    /// # 参数
-    /// - `code`: 用户输入的验证码。
-    /// - `now`: 当前 Unix 时间戳（秒），必须 >= 0。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 校验通过。
-    /// - `Ok(false)`: 校验失败。
-    /// - `Err(GarrisonError::InvalidParam)`: `now` 为负值。
+    /// 校验 TOTP 验证码，允许 ±1 时间窗口偏差以容忍客户端与时钟漂移；`now` 为负返回 `Err(GarrisonError::InvalidParam)`。
     pub fn validate(&self, code: &str, now: i64) -> GarrisonResult<bool> {
         let now = Self::check_now(now)?;
         Ok(self.totp.check(code, now).is_some())
     }
 
-    /// 校验 TOTP 验证码并防止重放攻击。
+    /// 校验验证码并防重放（E3 修复：以 DAO `incr` 原子操作取代无界 `TOTP_LOCKS`
+    /// DashMap 锁表，内存由 DAO 后端自管理）：通过后用 [`GarrisonDao::incr`] 原子记录 `(login_id, code)`，TTL 内同一验证码不可复用。
     ///
-    /// 在 [`validate`](Self::validate) 的基础上增加重放防护：
-    /// 验证通过后通过 DAO 的原子 `incr` 操作记录 `(login_id, code)`，同一验证码在
-    /// TTL 内不可重复使用。
-    ///
-    /// # E3 修复：消除无界 DashMap
-    ///
-    /// 原实现使用 `static TOTP_LOCKS: Lazy<DashMap<String, Arc<TokioMutex<()>>>>` 存储
-    /// per-login_id 锁，无 TTL 且无容量上限，每个 login_id 创建一个永久条目，
-    /// 导致无界内存增长（攻击者可用大量 login_id OOM）。
-    ///
-    /// 新实现使用 [`GarrisonDao::incr`] 的原子性消除 TOCTOU 竞态：
-    /// - `incr` 在后端（`GarrisonDaoOxcache` 用 `parking_lot::Mutex`，`MockDao` 用
-    ///   `parking_lot::Mutex`，Redis 后端用 `INCR` 命令）保证进程内原子
-    /// - 首次调用返回 1（key 不存在 → 初始化为 "1"），后续调用返回 2+（递增）
-    /// - `incr` 返回 1 时视为首次使用，返回 >1 时视为重放
-    ///
-    /// 此方案完全消除 per-login_id 锁，内存由 DAO 后端（oxcache）自管理：
-    /// - replay_key 的 TTL = `step * 3`（覆盖 skew=1 的 3 个时间窗口）
-    /// - oxcache 后端的容量与淘汰策略由调用方通过 `GarrisonDaoOxcache::new()` 配置
-    /// - 不再需要 `DashMap` / `once_cell` / `Arc<TokioMutex>` 等进程内状态
-    ///
-    /// # TOCTOU 防护保留
-    ///
-    /// 原锁的目的是防止两个并发请求同时通过 `get → set` 序列（TOCTOU）。
-    /// `incr` 将 get + set 合并为单次原子操作，从语义上消除 TOCTOU 窗口：
-    /// - 两个并发 `incr` 调用，后端保证只有一个返回 1，另一个返回 2
-    /// - 无需进程内锁，跨进程（Redis 后端）也保证原子性
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识（用户 ID）。
-    /// - `code`: 用户输入的验证码。
-    /// - `now`: 当前 Unix 时间戳（秒），必须 >= 0。
-    /// - `dao`: DAO 抽象（用于原子记录已用验证码）。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 校验通过且首次使用（`incr` 返回 1）。
-    /// - `Ok(false)`: 校验失败或验证码已使用（重放拒绝，`incr` 返回 >1）。
-    /// - `Err(GarrisonError::InvalidParam)`: `now` 为负值。
-    /// - `Err(_)`: DAO 读写失败。
+    /// `incr` 由后端（Redis `INCR` / oxcache `Mutex`）保证原子，首次返回 1、重放返回 >1，把 get + set
+    /// 合并为单次原子操作，语义上消除 TOCTOU，无需进程内 per-login_id 锁。
+    /// replay_key 的 TTL = `step * 3`，覆盖 skew=1 的前/当前/后三个窗口；`checked_mul` 防大 step 溢出成短 TTL。
+    /// 返回 `true` 仅当校验通过且首次使用（重放或校验失败返回 `false`），`now` 为负返回 `Err(GarrisonError::InvalidParam)`。
     pub async fn validate_and_consume(
         &self,
         login_id: &str,
@@ -150,10 +74,8 @@ impl TotpHandler {
         }
         let replay_key = format!("totp:used:{}:{}", login_id, code);
 
-        // 用 DAO 的原子 incr 替代 per-login_id 锁 + get-then-set。
-        // incr 在后端用 Mutex/INCR 保证原子性：首次返回 1，重放返回 >1。
-        // TTL = step * 3，覆盖 skew=1 的 3 个时间窗口（前 + 当前 + 后）；
-        // step * 3 用 checked_mul 防止超大 step 溢出回绕出错误的短 TTL。
+        // 原子 incr 替代 per-login_id 锁 + get-then-set：首次返回 1、重放返回 >1；
+        // TTL = step * 3 覆盖 skew=1 的三个窗口，checked_mul 防大 step 溢出回绕出短 TTL。
         let ttl = self
             .step
             .checked_mul(3)
@@ -162,16 +84,7 @@ impl TotpHandler {
         Ok(count == 1)
     }
 
-    /// 将 Google Authenticator 风格的 Base32 密钥解码为原始字节。
-    ///
-    /// 使用 RFC 4648 Base32 编码（无 padding），兼容主流 Authenticator App。
-    ///
-    /// # 参数
-    /// - `s`: Base32 编码的密钥字符串。
-    ///
-    /// # 返回
-    /// - `Ok(Vec<u8>)`: 解码成功。
-    /// - `Err(GarrisonError::Internal)`: Base32 解码失败。
+    /// 解码 Google Authenticator 风格 Base32 密钥（RFC 4648，无 padding）；解码失败返回 `Err(GarrisonError::Internal)`。
     pub fn secret_from_base32(s: &str) -> GarrisonResult<Vec<u8>> {
         base32::decode(base32::Alphabet::Rfc4648 { padding: false }, s).ok_or_else(|| {
             // 错误信息仅暴露 secret 长度，避免泄露密钥原文

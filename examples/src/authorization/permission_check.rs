@@ -21,9 +21,7 @@ use std::sync::Arc;
 // 业务方实现 GarrisonInterface：提供 login_id → 权限/角色列表
 // ============================================================================
 
-/// 示例接口实现：基于内存 HashMap 存储 login_id 的权限与角色。
-///
-/// 生产环境通常从数据库或 RBAC 系统读取。
+/// 示例接口实现：基于内存 HashMap 存储 login_id 的权限与角色，生产环境通常从数据库或 RBAC 系统读取。
 pub struct MyInterface {
     permissions: HashMap<String, Vec<String>>,
     roles: HashMap<String, Vec<String>>,
@@ -33,13 +31,11 @@ impl MyInterface {
     /// 创建接口实例，预置 login_id=1001 的权限与角色。
     pub fn new() -> Self {
         let mut permissions = HashMap::new();
-        // 账号 1001 持有 user:read / user:write 权限
         permissions.insert(
             "1001".to_string(),
             vec!["user:read".to_string(), "user:write".to_string()],
         );
         let mut roles = HashMap::new();
-        // 账号 1001 持有 admin / user 角色
         roles.insert(
             "1001".to_string(),
             vec!["admin".to_string(), "user".to_string()],
@@ -65,10 +61,8 @@ impl GarrisonInterface for MyInterface {
     }
 }
 
-/// 运行权限校验示例。
-///
-/// 演示 PermissionCheckerDefault 的 has_permission / has_role / check_permission / check_role
-/// 以及 has_any_permission / has_all_permissions 批量校验。
+/// 运行权限校验示例：演示 has_permission / has_role 查询，check_permission / check_role 断言
+/// （失败抛 NotPermission / NotRole）与 has_any_permission / has_all_permissions 批量校验。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 权限校验示例 ===\n");
 
@@ -104,7 +98,6 @@ pub async fn run() -> GarrisonResult<()> {
     // 3. check_permission / check_role 断言（失败抛异常）
     // ----------------------------------------------------------------
     println!("[4] check_permission / check_role 断言:");
-    // 持有权限 → Ok(())
     checker.check_permission("1001", "user:read").await?;
     println!("    check_permission(\"user:read\")  → Ok(()) ✓");
     checker.check_role("1001", "admin").await?;

@@ -8,9 +8,7 @@
 //! cargo run -p garrison-examples --bin sso_flow --features protocol-sso
 //! ```
 //!
-//! 本示例内联一个最小化的内存 `GarrisonDao` 实现，用于演示 `SsoClient` 的完整流程。
-//! 生产环境应使用 `GarrisonDaoOxcache`（启用 `cache-memory` / `cache-redis`）或
-//! `dbnexus` 实现（启用 `db-sqlite`）。
+//! 本示例内联最小化内存 `GarrisonDao`；生产环境用 `GarrisonDaoOxcache`（cache-memory / cache-redis）或 `dbnexus`（db-sqlite）。
 
 use async_trait::async_trait;
 use garrison::dao::GarrisonDao;
@@ -27,7 +25,6 @@ pub struct InMemoryDao {
 }
 
 impl InMemoryDao {
-    /// 创建 InMemoryDao 实例。
     pub fn new() -> Self {
         Self {
             store: Mutex::new(HashMap::new()),
@@ -104,15 +101,11 @@ impl GarrisonDao for InMemoryDao {
     }
 }
 
-/// 运行 SSO 单点登录示例。
-///
-/// 演示 SsoClient 的 issue_ticket / validate_ticket / destroy_ticket 完整流程，
-/// 包括一次性语义、client_id 不匹配拒绝、幂等销毁。
+/// 运行 SSO 单点登录示例：issue_ticket / validate_ticket / destroy_ticket 流程，含一次性语义、client_id 不匹配拒绝、幂等销毁。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison SSO 单点登录示例 ===\n");
 
-    // 1. 创建 SsoClient，注入 DAO（ticket TTL 默认 60 秒）
-    // new 校验 secret 非空，返回 GarrisonResult
+    // 1. 创建 SsoClient（注入 DAO，ticket TTL 默认 60 秒；new 校验 secret 非空）
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let sso = SsoClient::new(dao, "test-sso-secret-key-for-unit-tests-01")?;
 

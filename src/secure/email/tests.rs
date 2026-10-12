@@ -12,9 +12,7 @@ use crate::secure::ct_eq::constant_time_eq;
 use async_trait::async_trait;
 use std::sync::Arc;
 
-// ============================================================
 // normalize_email 测试
-// ============================================================
 
 #[test]
 fn normalize_email_trims_and_lowercases() {
@@ -29,9 +27,7 @@ fn normalize_email_empty_string() {
     assert_eq!(normalize_email("   "), "");
 }
 
-// ============================================================
 // validate_email 测试
-// ============================================================
 
 #[test]
 fn validate_email_valid() {
@@ -81,9 +77,7 @@ fn validate_email_no_at_rejected() {
     );
 }
 
-// ============================================================
 // generate_code 测试
-// ============================================================
 
 #[test]
 fn generate_code_returns_six_digits() {
@@ -92,15 +86,12 @@ fn generate_code_returns_six_digits() {
         assert_eq!(code.len(), 6);
         assert!(code.chars().all(|c| c.is_ascii_digit()));
         assert_ne!(code, "000000");
-        // 范围 100000..1000000
         let num: u32 = code.parse().unwrap();
         assert!((100000..1000000).contains(&num));
     }
 }
 
-// ============================================================
 // 验证码比对原语测试（ADR-0003 决策 2：统一走 secure::ct_eq）
-// ============================================================
 
 #[test]
 fn code_ct_eq_equal_strings() {
@@ -116,7 +107,6 @@ fn code_ct_eq_different_strings() {
 }
 
 // constant_time_eq 测试（verify_code 存储码与用户输入的统一比较原语）
-// ============================================================
 
 #[test]
 fn constant_time_eq_equal_strings() {
@@ -147,10 +137,7 @@ fn constant_time_eq_different_lengths() {
 
 /// 超长/短验证码输入按「错误验证码」失败路径处理（计入尝试次数）。
 ///
-/// 安全属性：验证码定长 6 位（`generate_code` 保证），长度不符必然不等，
-/// `verify_code` 在进入比较前即拒绝——用户可控的输入长度不得放大服务端
-/// 计算量（统一原语的调用方长度预校验约定）；长度是公开参数，提前拒绝
-/// 不泄露任何秘密。
+/// 安全属性：验证码定长 6 位，长度不符必然不等，`verify_code` 进入比较前即拒绝——用户可控输入长度不得放大服务端计算量（调用方长度预校验约定）；长度是公开参数，提前拒绝不泄露秘密。
 #[tokio::test]
 async fn wrong_length_code_counts_as_failed_attempt() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -168,7 +155,6 @@ async fn wrong_length_code_counts_as_failed_attempt() {
     // 短输入同型
     let result = service.verify_code("user6@example.com", "12345").await;
     assert!(matches!(result, Err(GarrisonError::InvalidParam(_))));
-    // 两次失败均计入尝试次数
     let attempts = dao.get("email:attempts:user6@example.com").await.unwrap();
     assert_eq!(
         attempts,
@@ -177,9 +163,7 @@ async fn wrong_length_code_counts_as_failed_attempt() {
     );
 }
 
-// ============================================================
 // SmtpConfig 测试（仅 email-verification-smtp feature）
-// ============================================================
 
 #[cfg(feature = "email-verification-smtp")]
 #[test]
@@ -192,9 +176,7 @@ fn smtp_config_defaults() {
     assert!(config.username.is_empty());
 }
 
-// ============================================================================
 // EmailVerificationService 服务级行为测试（对齐 sms/tests.rs 模式）
-// ============================================================================
 
 /// 仅记录不实际发送的 Noop 实现（测试用）。
 struct NoopEmailSender;
@@ -327,8 +309,7 @@ async fn verify_max_attempts_after_3_failures() {
     );
 }
 
-/// 测试 5：正确验证码验证通过后清除 code/unverified/attempts 全部状态；
-/// 同时断言邮件收件人为规范化地址、本地化正文包含验证码（文案透传）。
+/// 测试 5：正确验证码通过后清除 code/unverified/attempts 全部状态；并断言收件人为规范化地址、本地化正文含验证码。
 #[tokio::test]
 async fn correct_code_verifies_and_clears_state() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -489,8 +470,7 @@ async fn unverified_threshold_recycles_channel() {
     );
 }
 
-/// 测试 12（email 特有）：发送失败应回滚全部状态——
-/// 验证码删除、限速计数回退、未验证计数回退，错误原样透传。
+/// 测试 12（email 特有）：发送失败回滚全部状态——验证码删除、限速计数回退、未验证计数回退，错误原样透传。
 #[tokio::test]
 async fn send_failure_rolls_back_all_state() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());

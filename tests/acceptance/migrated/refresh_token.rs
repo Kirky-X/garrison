@@ -3,9 +3,8 @@
 
 //! RefreshToken Rotation + Reuse Detection 端到端集成测试。
 //!
-//! 验证 RefreshToken 轮换、重用检测和链级撤销完整流程：
-//! 1. `rotate(t1)` 得到 t2 → t1 标记为 revoked，t2 插入且 parent=t1
-//! 2. 再次 `rotate(t1)`（重用）→ 返回 InvalidToken 且整条链被吊销
+//! 验证轮换、重用检测和链级撤销完整流程：`rotate(t1)` 得到 t2（t1 revoked、t2 parent=t1）；
+//! 再次 `rotate(t1)`（重用）返回 InvalidToken 且整条链被吊销。
 //!
 //! 运行：
 //! ```bash
@@ -74,18 +73,8 @@ mod refresh_token_e2e {
         row.try_get::<i64>("", "revoked").expect("读取 revoked 列")
     }
 
-    /// 验证 RefreshToken Rotation + Reuse Detection 完整流程。
-    ///
-    /// 流程：
-    /// 1. 插入初始 refresh token (t1)
-    /// 2. 调用 `rotate(t1)` 得到 t2 → t1 标记为 revoked，t2 插入且 parent=t1
-    /// 3. 再次调用 `rotate(t1)`（重用）→ 应返回 InvalidToken 且 t1/t2 全被吊销
-    ///
-    /// 断言：
-    /// 1. 首次 rotate 返回新 access + 新 refresh token
-    /// 2. 首次 rotate 后旧 token revoked=1
-    /// 3. 重用旧 token 触发 GarrisonError::InvalidToken
-    /// 4. 重用检测后整条链（t1 + t2）revoked=1
+    /// 验证 RefreshToken Rotation + Reuse Detection 完整流程：插入 t1 → `rotate(t1)`
+    /// 得 t2（t1 revoked、t2 parent=t1）→ 重用 t1 触发 InvalidToken 且整条链（t1+t2）吊销。
     #[tokio::test(flavor = "multi_thread")]
     async fn refresh_token_rotation_reuse_detection_e2e() {
         let pool = setup_db().await;
@@ -112,7 +101,7 @@ mod refresh_token_e2e {
         let t2_revoked = query_revoked(&pool, &t2_hash).await;
         assert_eq!(t2_revoked, 0, "新 token t2 应未 revoked");
 
-        // Step 2: 重用 t1 → 应触发 reuse detection，返回 InvalidToken，且整条链被吊销
+        // 重用 t1 → 应触发 reuse detection，返回 InvalidToken，且整条链被吊销
         let reuse_result = rotation.rotate(t1).await;
         assert!(reuse_result.is_err(), "重用已消费的 token 应返回错误");
         let err_msg = format!("{}", reuse_result.unwrap_err());
@@ -130,28 +119,24 @@ mod refresh_token_e2e {
         assert_eq!(t2_revoked_after, 1, "重用检测后 t2 也应被吊销（链级撤销）");
     }
 
-    /// 验证 `refresh_access_token` 传入已撤销 token 时返回 `TokenRevoked`（透传 `rotate` 错误）。
-    ///
-    /// 流程：
-    /// 1. 预先插入一个 revoked=1 的 refresh token（模拟已被撤销的 token）
-    /// 2. 调用 `rotate(old_token)` → `detect_reuse` 发现 revoked=1 → 撤销链后返回 `TokenRevoked`
-    ///
-    /// 断言：返回 `Err(GarrisonError::TokenRevoked)`，错误信息包含 "reuse" 或 "revoked"。
+    /// 验证 `refresh_access_token` 传入已撤销 token 时返回 `TokenRevoked`（透传 `rotate`
+    /// 错误）：预置 revoked=1 的 token 后 `rotate` 经 `detect_reuse` 发现并撤销链，断言返回
+    /// `Err(GarrisonError::TokenRevoked)`，错误信息包含 "reuse" 或 "revoked"。
     #[tokio::test(flavor = "multi_thread")]
     async fn refresh_access_token_with_revoked_token_returns_error() {
         let pool = setup_db().await;
 
-        // 1. 插入一个已撤销的 refresh token (revoked=1)
+        // 插入一个已撤销的 refresh token (revoked=1)
         let old_token = "revoked-refresh-token-12345";
         let old_hash = sha256_hex(old_token);
         insert_refresh_token(&pool, &old_hash, None, 1001, 0, 1, now_unix() + 3600, 1).await;
 
-        // 2. 创建 RefreshTokenRotation 实例
+        // 创建 RefreshTokenRotation 实例
         let jwt_handler = Arc::new(JwtHandler::new("test_secret_key_min_32_bytes!!!!"));
         let key_version = Arc::new(RwLock::new(1u32));
         let rotation = RefreshTokenRotation::new(pool, jwt_handler, key_version);
 
-        // 3. 调用 rotate 直接验证行为（透传 TokenRevoked）
+        // 调用 rotate 直接验证行为（透传 TokenRevoked）
         let result = rotation.rotate(old_token).await;
         assert!(
             matches!(result, Err(GarrisonError::TokenRevoked(ref msg)) if msg.contains("reuse") || msg.contains("revoked")),

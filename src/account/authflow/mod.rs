@@ -1,24 +1,15 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! AuthenticationFlow DSL 子模块（吸收 keycloak AuthenticationFlow）。
-//! 提供声明式认证流程编排，覆盖登录 + MFA + 社交登录 + SSO 全认证流程。
-//! 详见 spec `auth-flow-dsl`。
+//! AuthenticationFlow DSL 子模块（吸收 Keycloak AuthenticationFlow）：声明式认证流程编排，
+//! 覆盖登录 + MFA + 社交登录 + SSO 全认证流程。
 //!
-//! # 核心类型
+//! 核心类型：`AuthStep`（7 变体：Login/Mfa/SocialProvider/SsoServer/RequiredAction/Conditional/SubFlow）、
+//! `AuthCondition`（4 变体：HasCredential/IsLocked/IpWhitelisted/Custom）、`AuthenticationFlow`
+//! （name + steps + allow_skip）、`AuthContext`（执行上下文）、`AuthResult`（4 变体）。
 //!
-//! - [`AuthStep`](crate::account::authflow::AuthStep)：认证步骤 enum（7 变体：Login/Mfa/SocialProvider/SsoServer/RequiredAction/Conditional/SubFlow）
-//! - [`AuthCondition`](crate::account::authflow::AuthCondition)：条件分支 enum（4 变体：HasCredential/IsLocked/IpWhitelisted/Custom）
-//! - [`AuthenticationFlow`](crate::account::authflow::AuthenticationFlow)：认证流程定义（name + steps + allow_skip）
-//! - [`AuthContext`](crate::account::authflow::AuthContext)：执行上下文（input + user_id + tenant_id + ip + completed_steps + extras）
-//! - [`AuthResult`](crate::account::authflow::AuthResult)：执行结果 enum（4 变体：Success/Failed/Pending/ChallengeRequired)
-//!
-//! # 子模块
-//!
-//! - [`builder`](crate::account::authflow::builder): FlowBuilder 流式构建 DSL
-//! - [`registry`](crate::account::authflow::registry): FlowRegistry inventory 注册
-//! - [`executor`](crate::account::authflow::executor): AuthExecutor 执行器
-//! - [`builtin`](crate::account::authflow::builtin): 内置 AuthenticationFlow
+//! 子模块：`builder`（FlowBuilder 流式构建 DSL）、`registry`（FlowRegistry inventory 注册）、
+//! `executor`（AuthExecutor 执行器）、`builtin`（内置 AuthenticationFlow）。
 
 pub mod builder;
 pub mod builtin;
@@ -152,15 +143,13 @@ pub struct AuthenticationFlow {
     pub allow_skip: bool,
 }
 
-/// 执行上下文，携带认证过程的状态与输入。
-///
-/// 作为 `AuthExecutor::execute` 的可变引用参数，执行过程中更新 `completed_steps`。
+/// 执行上下文，携带认证过程的状态与输入；作为 `AuthExecutor::execute` 的可变引用参数，
+/// 执行过程中更新 `completed_steps`。
 ///
 /// # 安全（Debug 脱敏）
 ///
-/// `input` 字段承载密码 / TOTP code / 社交 authorization_code 等敏感凭证。
-/// `Debug` 为手动实现：`input` 一律输出 `<redacted>`，防止 `dbg!(ctx)` /
-/// `format!("{:?}", ctx)` / panic 输出将凭证泄露到日志。
+/// `input` 承载密码 / TOTP code / 社交 authorization_code 等敏感凭证；`Debug` 为手动实现，
+/// `input` 一律输出 `<redacted>`，防止 `dbg!` / `format!("{:?}")` / panic 输出泄露到日志。
 /// 访问明文请使用具名字段（`ctx.input`）。
 #[derive(Clone)]
 pub struct AuthContext {
@@ -195,9 +184,8 @@ impl std::fmt::Debug for AuthContext {
 ///
 /// # 安全（Debug 脱敏）
 ///
-/// `Success.token` 为会话 token（敏感）。`Debug` 为手动实现：token 掩码输出
-/// （保留前 4 字符用于问题定位，其余以 `<redacted>` 替代；短 token 全掩码），
-/// 防止 `{:?}` 日志 / panic 输出泄露明文 token。
+/// `Success.token` 为敏感会话 token；`Debug` 为手动实现，token 掩码输出（保留前 4 字符用于
+/// 定位，其余 `<redacted>`；短 token 全掩码），防止 `{:?}` 日志 / panic 输出泄露明文。
 /// token 仍可通过具名字段访问与 Clone（成功响应构造需要）。
 #[derive(Clone)]
 pub enum AuthResult {

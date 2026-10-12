@@ -1,20 +1,15 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! /oauth2/token 端点 — 支持 4 种 grant type + PKCE 强制。
-//!
-//! 处理 RFC 6749 §4 token 签发请求：
-//! - `authorization_code`：授权码交换 access_token + refresh_token（强制 PKCE）
-//! - `refresh_token`：刷新令牌
-//! - `client_credentials`：服务间认证 token（无 user_id，无 refresh_token）
-//! - `password`：用户名密码验证 + token（需注入 PasswordVerifier）
+//! /oauth2/token 端点 — RFC 6749 §4 token 签发，支持 4 种 grant type + PKCE 强制：
+//! `authorization_code`（授权码交换 access/refresh token，强制 PKCE）、`refresh_token`、
+//! `client_credentials`（无 user_id 与 refresh_token）、`password`（需注入 PasswordVerifier）。
 
 use crate::constants::{DaoKeyPrefix, TokenType};
 use crate::dao::{GarrisonDao, InMemoryDao};
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::limiteron::GarrisonDaoDistributedLimiter;
 use crate::loc;
-// 导入 DistributedLimiter trait 以使用 get_count / incr_with_ttl 方法
 use crate::oauth2_server::authorize::AuthorizeHandler;
 use crate::oauth2_server::client::{GrantType, OAuth2Client, OAuth2ClientStore};
 #[cfg(feature = "db-sqlite")]
@@ -30,8 +25,8 @@ use std::time::Duration as StdDuration;
 
 /// OAuth2 refresh_token 的 DAO fallback key：`oauth2:rtoken:{token}`。
 ///
-/// 未注入 `RefreshTokenRotation`（需 `db-sqlite`）时 refresh token 经 DAO 键值存储
-/// 签发/消费/吊销（无 reuse detection，见各 handler 文档）。
+/// 未注入 `RefreshTokenRotation`（需 `db-sqlite`）时 refresh token 经 DAO 键值存储签发/消费/吊销
+/// （无 reuse detection，见各 handler 文档）。
 fn oauth2_refresh_token_key(token: &str) -> String {
     debug_assert!(
         !token.contains(':'),
@@ -52,9 +47,8 @@ pub struct TokenRequest {
     pub grant_type: String,
     /// 客户端 ID。
     ///
-    /// RFC 6749 §2.3.1：凭证可经 `Authorization: Basic` 头传递，此时 body 中省略
-    /// 本字段（缺省为空串）。认证层（`authenticate_client_with_authorization`）
-    /// Basic 头优先；头与 body 均未提供时返回 `invalid_client`（fail-closed）。
+    /// RFC 6749 §2.3.1：凭证可经 `Authorization: Basic` 头传递，此时 body 省略本字段（缺省空串）；
+    /// 认证层（`authenticate_client_with_authorization`）Basic 头优先，头与 body 均无则 `invalid_client`（fail-closed）。
     #[serde(default)]
     pub client_id: String,
     /// 客户端密钥（同 [`TokenRequest::client_id`]：Basic Auth 时 body 可省略）。
@@ -95,8 +89,7 @@ pub struct TokenResponse {
 
 /// token 记录（存储在 DAO 中）。
 ///
-/// 扩展 `issued_at` / `jti` / `username` 字段以支持 RFC 7662 token 内省完整字段。
-/// 所有字段均为必填：反序列化缺失任一字段即失败（fail-closed）。
+/// `issued_at` / `jti` / `username` 用于 RFC 7662 内省完整字段；所有字段必填，反序列化缺失任一即失败（fail-closed）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenRecord {
     /// token 字符串。
@@ -119,71 +112,36 @@ pub struct TokenRecord {
     pub username: Option<String>,
 }
 
-/// 解析 HTTP Basic Authentication 头（RFC 6749 §2.3.1）。
+/// 解析 HTTP Basic Authentication 头（RFC 6749 §2.3.1），期望 `Basic <base64(client_id:client_secret)>`。
 ///
-/// # 参数
-/// - `header`: `Authorization` 头值，期望格式 `"Basic <base64(client_id:client_secret)>"`。
-///
-/// # 返回
-/// - `Some((client_id, client_secret))`: 解析成功。
-/// - `None`: 头不是 Basic Auth、base64 解码失败、UTF-8 解码失败、或不含 `:` 分隔符。
-///
-/// # 安全
-///
-/// - 不限制 `client_id` / `client_secret` 中的字符（RFC 6749 §2.3.1 允许 percent-encoded）。
-/// - 空客户端 ID（`":secret"`）返回 `Some(("", "secret"))`，由调用方决定是否拒绝。
-/// - 空密钥（`"cid:"`）返回 `Some(("cid", ""))`，由 `verify_secret` 拒绝。
+/// 头非 Basic Auth、base64 / UTF-8 解码失败或不含 `:` 分隔符时返回 `None`。不限制 `client_id` /
+/// `client_secret` 中的字符（RFC 6749 §2.3.1 允许 percent-encoded）：空 id（`":secret"`）与空密钥
+/// （`"cid:"`）均原样返回，由调用方决定是否拒绝。
 pub(crate) fn parse_basic_auth(header: &str) -> Option<(String, String)> {
     let encoded = header.strip_prefix("Basic ")?;
-    // RFC 7617: HTTP Basic Auth 使用 STANDARD base64（含 +/= 和 padding）。
-    // RFC 6749 §2.3.1: client_id 和 client_secret 在编码前需 percent-encoding，
-    // 但大多数客户端直接 base64 编码。这里接受 STANDARD base64 输入。
+    // RFC 7617 要求 STANDARD base64（含 +/= 与 padding）；RFC 6749 §2.3.1 规定编码前需
+    // percent-encoding，但多数客户端直接 base64，故此处接受 STANDARD 输入
     let decoded = STANDARD.decode(encoded.trim()).ok()?;
     let decoded_str = String::from_utf8(decoded).ok()?;
     let (client_id, client_secret) = decoded_str.split_once(':')?;
     Some((client_id.to_string(), client_secret.to_string()))
 }
 
-/// password grant type 验证器 trait.
-///
-/// 业务方实现此 trait 注入到 `TokenHandler`，用于 password grant type 的用户名密码验证。
-/// 未注入时 password grant type 返回 `unauthorized_grant_type` 错误。
+/// password grant type 验证器 trait：业务方实现后注入 `TokenHandler`；未注入时 password grant
+/// 返回 `unauthorized_grant_type` 错误。
 #[async_trait]
 pub trait PasswordVerifier: Send + Sync {
-    /// 验证用户名密码，返回用户 ID。
-    ///
-    /// # 返回
-    /// - `Ok(Some(user_id))`：验证成功
-    /// - `Ok(None)`：用户名或密码错误
-    /// - `Err`：内部错误
+    /// 验证用户名密码并返回用户 ID：`Ok(None)` 表示用户名或密码错误。
     async fn verify(&self, username: &str, password: &str) -> GarrisonResult<Option<i64>>;
 }
 
 /// Password grant 失败计数器 — 防 brute-force。
 ///
-/// 按 username 维度跟踪窗口内失败次数，超阈值后锁定至窗口过期。
-/// 验证成功后重置计数。
+/// per-username 维度（与中间件级 per-IP 的 `RateLimitState` 互补）：窗口 `window_seconds` 内失败次数
+/// 达 `max_attempts` 即锁定至窗口过期，验证成功后重置。计数经 `GarrisonDaoDistributedLimiter` +
+/// `InMemoryDao` 原子实现（TTL 语义自动重置窗口，无需手写时间窗口判断）。
 ///
-/// # 设计
-///
-/// - **per-username 维度**：与 `crate::server::middleware::RateLimitState`（per-IP）不同 ——
-///   防御多 IP 撞库同一账户的暴力破解
-/// - **滑动窗口**：`window_seconds` 内累计失败次数达 `max_attempts` 即锁定至窗口过期
-/// - **limiteron 委托**：通过 `GarrisonDaoDistributedLimiter` + `InMemoryDao` 实现原子计数 + TTL，
-///   不再手写 `Mutex<HashMap>` + 滑动窗口算法（limiteron 适配器统一抽象）
-/// - **进程内原子**：`InMemoryDao::incr` 用 `parking_lot::Mutex` 保护，单进程内原子
-/// - **TTL 自动重置**：窗口过期由 `InMemoryDao` 的 TTL 语义保证（首次 `incr` 后过期会重新初始化），
-///   无需手动时间窗口判断
-///
-/// # 与 RateLimitState 的区别
-///
-/// `RateLimitState` 是 HTTP 中间件级别的 per-IP 令牌桶，限制每秒请求数；
-/// 本结构是 OAuth2 handler 级别的 per-username 失败计数器，限制窗口内失败次数。
-/// 两者互补：IP 限速防御分布式扫描，账户锁定防御定向撞库。
-///
-/// # Key 格式
-///
-/// `rate_limit:pw:{username}` — 通过 `InMemoryDao::keys("rate_limit:pw:*")` 可扫描全部 entry。
+/// Key 格式：`rate_limit:pw:{username}`（经 `InMemoryDao::keys("rate_limit:pw:*")` 可扫描全部 entry）。
 pub struct PasswordRateLimiter {
     /// 限流器（基于 `GarrisonDaoDistributedLimiter`，内部用 `InMemoryDao` 进程内原子）
     limiter: GarrisonDaoDistributedLimiter,
@@ -196,13 +154,8 @@ pub struct PasswordRateLimiter {
 }
 
 impl PasswordRateLimiter {
-    /// 创建失败计数器。
-    ///
-    /// 内部创建 `InMemoryDao` + `GarrisonDaoDistributedLimiter`，进程内原子计数。
-    ///
-    /// # 参数
-    /// - `max_attempts`：窗口内允许的最大失败次数（达此值后锁定至窗口过期）
-    /// - `window_seconds`：滑动窗口时长（秒），窗口过期后计数自动重置
+    /// 创建失败计数器（内部 `InMemoryDao` + `GarrisonDaoDistributedLimiter`，进程内原子计数）；
+    /// `max_attempts` 为窗口内允许的最大失败次数，`window_seconds` 为窗口时长（过期后计数自动重置）。
     pub fn new(max_attempts: u32, window_seconds: u64) -> Self {
         let dao = Arc::new(InMemoryDao::new());
         let limiter = GarrisonDaoDistributedLimiter::new(dao.clone());
@@ -215,17 +168,11 @@ impl PasswordRateLimiter {
         }
     }
 
-    /// 检查 username 是否允许尝试（未锁定）。
+    /// 检查 username 是否允许尝试（未锁定）：窗口内失败次数达上限返回 `false`，窗口过期由 TTL 语义自动重置。
     ///
-    /// 返回 `true` 表示允许尝试，`false` 表示已被锁定（窗口内失败次数达上限）。
-    /// 窗口过期时由 `InMemoryDao` 的 TTL 语义自动重置（首次 `incr` 后过期会重新初始化）。
-    ///
-    /// # Fail-Closed 策略
-    ///
-    /// 当 `limiteron::get_count` 出错（如 DAO 通信失败 / 计数器值损坏）时返回 `false`
-    /// （拒绝本次密码校验）。本计数器防御定向撞库——若故障时放行，攻击者可持续
-    /// 制造 DAO 故障使锁定失效、无限撞库。与 `check_client` 的
-    /// fail-open（可用性优先）刻意不同：撞库防护的失效代价高于单次请求拒绝。
+    /// **fail-closed**：`limiteron::get_count` 出错（DAO 通信失败 / 计数损坏）时返回 `false`。本计数器防御
+    /// 定向撞库——故障放行会让攻击者制造 DAO 故障使锁定失效、无限撞库；与 `check_client` 的 fail-open
+    /// （仅防滥用、可用性优先）刻意不同。
     pub async fn check(&self, username: &str) -> bool {
         let key = format!("rate_limit:pw:{}", username);
         match self.limiter.get_count(&key).await {
@@ -240,12 +187,8 @@ impl PasswordRateLimiter {
         }
     }
 
-    /// 记录一次失败。
-    ///
-    /// 通过 `limiteron::incr_with_ttl` 原子递增计数器。
-    /// - 首次失败：设置 count=1 + TTL=`window_seconds`（窗口起始时间）
-    /// - 后续失败：仅递增 count，不重置 TTL（保持窗口起点）
-    /// - 窗口过期：由 `InMemoryDao` 的 TTL 语义自动重置（首次 `incr` 重新初始化）
+    /// 记录一次失败（`incr_with_ttl` 原子递增）：首次失败设 count=1 + TTL=`window_seconds`（窗口起点），
+    /// 后续仅递增不重置 TTL，窗口过期由 TTL 语义自动重置。
     pub async fn record_failure(&self, username: &str) {
         let key = format!("rate_limit:pw:{}", username);
         let ttl = StdDuration::from_secs(self.window_seconds);
@@ -285,35 +228,14 @@ impl PasswordRateLimiter {
 
 /// /token 端点速率限制器 — 防暴力枚举 `client_secret` / 密码。
 ///
-/// 两层独立限速：
-/// - **per-client_id**：限制每个 client 的 `/token` 请求速率（默认 10 req/s），
-///   防御针对单一 client 的暴力枚举 `client_secret`
-/// - **per-username**：限制 password grant 中每个 username 的请求速率（默认 5 req/min），
-///   与 `PasswordRateLimiter`（失败计数器）互补 —— 后者限制失败次数，本结构限制请求次数
+/// 两层独立限速（计数经 `GarrisonDaoDistributedLimiter` 原子 check-and-increment）：per-client_id 限
+/// `/token` 请求速率（默认 10 req/s，防暴力枚举单一 client 的 `client_secret`）；per-username 限
+/// password grant 的请求速率（默认 5 req/min，与 `PasswordRateLimiter` 失败计数器互补）。
 ///
-/// # 设计
+/// **Fail 策略**：username 维度（撞库防护）DAO 错误 fail-closed 拒绝；client QPS 维度 fail-open 放行
+/// （仅防滥用，可用性优先）。
 ///
-/// - **limiteron 委托**：通过 `GarrisonDaoDistributedLimiter` + `InMemoryDao` 实现原子计数 + TTL，
-///   `atomic_check_and_incr` 在 Redis 后端走 Lua 脚本原子 check-and-increment，
-///   `InMemoryDao` 后端退化为 `incr` + 阈值判断（单进程原子）
-/// - **Fail 策略**：username 维度（撞库防护）DAO 错误 fail-closed 拒绝；
-///   client QPS 维度 fail-open 放行（可用性优先，仅防滥用）
-/// - **独立于 PasswordRateLimiter**：后者是失败计数器（账户锁定），
-///   本结构是请求速率限制（QPS 限制），两者互补
-///
-/// # 与 PasswordRateLimiter 的区别
-///
-/// | 维度 | PasswordRateLimiter | TokenRateLimiter |
-/// |------|---------------------|------------------|
-/// | 限速对象 | username | client_id + username |
-/// | 计数事件 | 验证失败 | 每次请求 |
-/// | 重置条件 | 验证成功 | 窗口过期 |
-/// | 防御场景 | 撞库（同账户多 IP） | 暴力枚举 / QPS 滥用 |
-///
-/// # Key 格式
-///
-/// - `rate_limit:token:client:{client_id}` — per-client_id 计数
-/// - `rate_limit:token:user:{username}` — per-username 计数
+/// Key 格式：`rate_limit:token:client:{client_id}` / `rate_limit:token:user:{username}`。
 pub struct TokenRateLimiter {
     /// 限流器（基于 `GarrisonDaoDistributedLimiter`，内部用 `InMemoryDao` 进程内原子）
     limiter: GarrisonDaoDistributedLimiter,
@@ -328,18 +250,13 @@ pub struct TokenRateLimiter {
 }
 
 impl TokenRateLimiter {
-    /// 创建默认配置的速率限制器（10 req/s per-client_id + 5 req/min per-username）。
-    ///
-    /// 默认值依据：
-    /// - client_id 10 req/s：覆盖正常客户端的 token 刷新 + 短时重试需求
-    /// - username 5 req/min：限制单账户密码暴力尝试，与 `PasswordRateLimiter` 失败计数器互补
+    /// 创建默认配置的速率限制器：10 req/s per-client_id（覆盖正常刷新与短时重试）
+    /// + 5 req/min per-username（限制单账户密码暴力尝试）。
     pub fn new() -> Self {
         Self::with_limits(10, 1, 5, 60)
     }
 
-    /// 自定义限速参数（测试 / 运维调优用）。
-    ///
-    /// 所有参数会被 clamp 到至少 1，避免 `max=0` 导致所有请求被拒。
+    /// 自定义限速参数（测试 / 运维调优用）；所有参数 clamp 到至少 1，避免 `max=0` 拒绝所有请求。
     pub fn with_limits(
         client_max: u64,
         client_window_secs: u64,
@@ -358,18 +275,10 @@ impl TokenRateLimiter {
         }
     }
 
-    /// 检查 client_id 是否允许请求（未超 per-client_id 速率）。
+    /// 检查 client_id 是否允许请求（调用即计数）：已达窗口上限返回 `false`。
     ///
-    /// 调用即计数（`atomic_check_and_incr` 原子 check-and-increment）：
-    /// - 返回 `true`：本次请求计入窗口，允许继续
-    /// - 返回 `false`：已达窗口上限，拒绝
-    ///
-    /// # Fail-Open
-    ///
-    /// DAO 错误时返回 `true`（放行），可用性优先于限速准确性——本维度仅限
-    /// 请求 QPS（防滥用），失效代价可接受。注意与 `PasswordRateLimiter::check`
-    /// / [`Self::check_username`] 的 fail-closed 刻意不同：后两者是撞库防护，
-    /// 故障放行等于允许无限撞库。
+    /// **fail-open**：DAO 错误时返回 `true`（放行），本维度仅限请求 QPS（防滥用），失效代价可接受；
+    /// 与 `PasswordRateLimiter::check` / [`Self::check_username`] 的 fail-closed 刻意不同（后两者防撞库）。
     pub async fn check_client(&self, client_id: &str) -> bool {
         let key = format!("rate_limit:token:client:{}", client_id);
         let ttl = StdDuration::from_secs(self.client_window_secs);
@@ -386,15 +295,9 @@ impl TokenRateLimiter {
         }
     }
 
-    /// 检查 username 是否允许请求（未超 per-username 速率）。
+    /// 检查 username 是否允许请求（调用即计数）；仅 password grant type 调用，限制单账户密码尝试 QPS。
     ///
-    /// 调用即计数（`atomic_check_and_incr` 原子 check-and-increment）。
-    /// 仅 password grant type 调用，限制单账户的密码尝试 QPS。
-    ///
-    /// # Fail-Closed 策略
-    ///
-    /// DAO 错误时返回 `false`（拒绝）。本维度限制单账户密码尝试 QPS，
-    /// 属撞库防护面——故障放行等于允许绕过限速无限撞库。
+    /// **fail-closed**：DAO 错误时返回 `false`——本维度属撞库防护面，故障放行等于允许无限撞库。
     pub async fn check_username(&self, username: &str) -> bool {
         let key = format!("rate_limit:token:user:{}", username);
         let ttl = StdDuration::from_secs(self.username_window_secs);
@@ -414,10 +317,8 @@ impl TokenRateLimiter {
         }
     }
 
-    /// 双窗口时长的上界（秒），供限流 429 的 `Retry-After` 保守提示。
-    ///
-    /// 桥接层（`server::oauth2_routes`）无法区分具体触发的窗口与剩余秒数，
-    /// 取上界保证客户端不早于任一窗口过期重试。
+    /// 双窗口时长的上界（秒）：桥接层（`server::oauth2_routes`）无法区分具体触发的窗口与剩余秒数，
+    /// 取上界作 429 `Retry-After` 的保守提示，保证客户端不早于任一窗口过期重试。
     pub fn window_upper_bound_secs(&self) -> u64 {
         self.client_window_secs.max(self.username_window_secs)
     }
@@ -433,13 +334,10 @@ impl Default for TokenRateLimiter {
 ///
 /// # Refresh Token 统一
 ///
-/// 启用 `db-sqlite` feature 并通过 `with_refresh_rotation` 注入
-/// `RefreshTokenRotation` 后，refresh_token 走统一轮换路径：
-/// - `issue_tokens` 委托 `RefreshTokenRotation::issue`（hash chain + INSERT）
-/// - `handle_refresh_token` 委托 `RefreshTokenRotation::rotate`（reuse detection + 链式撤销）
-///
-/// 未注入时退化为 DAO 键值存储（`oauth2:rtoken:` 前缀），
-/// 无 reuse detection，文档明确标注安全风险。
+/// `db-sqlite` 下经 `with_refresh_rotation` 注入 `RefreshTokenRotation` 后走统一轮换路径
+/// （`issue_tokens` 委托 `issue`（hash chain + INSERT），`handle_refresh_token` 委托 `rotate`
+/// （reuse detection + 链式撤销））；未注入时退化为 DAO 键值存储（`oauth2:rtoken:` 前缀），
+/// 无 reuse detection（安全风险见各 handler 文档）。
 pub struct TokenHandler {
     store: Arc<dyn OAuth2ClientStore>,
     dao: Arc<dyn GarrisonDao>,
@@ -456,14 +354,9 @@ pub struct TokenHandler {
 }
 
 impl TokenHandler {
-    /// 创建 handler。
+    /// 创建 handler（两个限流器均为必需注入，不提供"未注入 = 无账户锁定"的构造形态）。
     ///
-    /// # 参数
-    /// - `password_rate_limiter`: password grant 失败计数 + 账户锁定（必需注入，
-    ///   不提供"未注入 = 无账户锁定"的构造形态）。
-    /// - `token_rate_limiter`: `/token` 端点速率限制（必需注入；`handle_with_authorization`
-    ///   在 client 认证前按 `client_id` 限速，`handle_password` 在账户锁定检查前按
-    ///   `username` 限速，防暴力枚举 `client_secret` / 密码）。
+    /// `token_rate_limiter` 在 client 认证前按 `client_id`、账户锁定检查前按 `username` 限速，防暴力枚举。
     pub fn new(
         store: Arc<dyn OAuth2ClientStore>,
         dao: Arc<dyn GarrisonDao>,
@@ -489,13 +382,9 @@ impl TokenHandler {
         self
     }
 
-    /// 注入 RefreshTokenRotation 启用统一轮换 + reuse detection。
+    /// 注入 RefreshTokenRotation 启用统一轮换 + reuse detection（仅 `db-sqlite` feature 启用时可用）。
     ///
-    /// 仅在 `db-sqlite` feature 启用时可用。注入后：
-    /// - `issue_tokens` 在 `with_refresh=true` 时委托 `rotation.issue()`
-    /// - `handle_refresh_token` 委托 `rotation.rotate()` 获得轮换 + hash chain
-    ///
-    /// 未注入时退化为 DAO 路径（`oauth2:rtoken:` 前缀，无 reuse detection）。
+    /// 注入后 `issue_tokens`（`with_refresh=true` 时）委托 `rotation.issue()`，`handle_refresh_token` 委托 `rotation.rotate()`；未注入时退化为 DAO 路径（无 reuse detection）。
     #[cfg(feature = "db-sqlite")]
     pub fn with_refresh_rotation(mut self, rotation: Arc<RefreshTokenRotation>) -> Self {
         self.refresh_rotation = Some(rotation);
@@ -531,26 +420,14 @@ impl TokenHandler {
 
     /// 处理 token 请求，支持 HTTP Basic Auth 客户端认证（RFC 6749 §2.3.1）。
     ///
-    /// # 参数
-    /// - `req`: token 请求参数。
-    /// - `authorization`: 可选的 `Authorization` 头值。若为 `Some("Basic ...")`，
-    ///   优先从头中解码 `client_id:client_secret`，否则回退到 `req.client_id` /
-    ///   `req.client_secret`（body 参数）。
-    ///
-    /// # RFC 6749 §2.3.1
-    ///
-    /// 客户端可通过 HTTP Basic Auth 传递凭证，避免凭证出现在 URL 或 body 中。
-    /// 此方法遵循 RFC：优先使用 Basic Auth 头，body 参数作为回退。
+    /// `authorization` 为 `Some("Basic ...")` 时优先从头解码 `client_id:client_secret`，否则回退 body 参数。
     pub async fn handle_with_authorization(
         &self,
         req: &TokenRequest,
         authorization: Option<&str>,
     ) -> GarrisonResult<TokenResponse> {
-        // 0. per-client_id 速率限制（在 client 认证前，防暴力枚举 client_secret）
-        //
-        // 从 Basic Auth 头或 body 提取 client_id 用于限速 —— 即使凭证错误也计入，
-        // 防御攻击者用错误凭证暴力枚举 client_secret（与 PasswordRateLimiter 在
-        // 密码验证前 check 的设计一致）。
+        // per-client_id 速率限制（在 client 认证前）：即使凭证错误也计入限速，防御暴力枚举 client_secret
+        //（与 PasswordRateLimiter 在密码验证前 check 的设计一致）。
         let client_id = authorization
             .and_then(parse_basic_auth)
             .map(|(id, _)| id)
@@ -562,7 +439,6 @@ impl TokenHandler {
             )));
         }
 
-        // 1. 验证客户端凭证（优先 Basic Auth）
         let client = self
             .authenticate_client_with_authorization(
                 authorization,
@@ -571,7 +447,7 @@ impl TokenHandler {
             )
             .await?;
 
-        // 2. 根据 grant_type 分发（使用 GrantType 枚举，避免硬编码字符串）
+        // 根据 grant_type 分发（GrantType 枚举，避免硬编码字符串）
         let grant_type: GrantType = req.grant_type.parse()?;
         match grant_type {
             GrantType::AuthorizationCode => self.handle_authorization_code(&client, req).await,
@@ -702,18 +578,9 @@ impl TokenHandler {
 
     /// refresh_token grant type：刷新令牌。
     ///
-    /// # Refresh Token 统一
-    ///
-    /// 启用 `db-sqlite` 且注入 `RefreshTokenRotation` 时，走统一轮换路径：
-    /// - 调用 `rotation.rotate()` 获得 hash chain + reuse detection + 链式撤销
-    /// - 返回新 refresh_token（轮换，旧 token revoked=1）
-    ///
-    /// 未注入时退化为 DAO 路径（轮换 + 原子消费旧 token）：
-    /// - `get_and_delete` 原子消费 `oauth2:rtoken:` 记录（防并发双花）
-    /// - 校验 client_id 一致性
-    /// - 签发新 access_token + 新 refresh_token（with_refresh=true 轮换）
-    /// - 签发失败时补偿回写旧 token（剩余 TTL），不丢失用户凭证
-    /// - 旧 token 消费后再次使用 → `invalid_grant`（隐式 reuse detection）
+    /// 启用 `db-sqlite` 且注入 `RefreshTokenRotation` 时走统一轮换（`rotation.rotate()`：hash chain + reuse detection + 链式撤销）；
+    /// 未注入时退化为 DAO 路径：`get_and_delete` 原子消费旧 token 防双花、校验 client_id、签发新 token 对，
+    /// 签发失败补偿回写旧 token（剩余 TTL），旧 token 再次使用 → `invalid_grant`（隐式 reuse detection）。
     async fn handle_refresh_token(
         &self,
         client: &OAuth2Client,
@@ -784,12 +651,8 @@ impl TokenHandler {
             }
         }
 
-        // DAO fallback 路径 — refresh_token 轮换 + 原子消费旧 token
-        //
-        // 退化路径显性化（每次降级刷新告警一次）：本路径无 reuse detection——
-        // 盗用 refresh_token 的重放仅因单次消费失败而拒绝，不会触发链式撤销，
-        // 攻击者持有的同链其他 token 不受影响。启动期 `OAuth2State::new` 已输出
-        // 结构性 warn，此处为按请求级标记。
+        // DAO fallback 路径显性化（每次降级刷新告警一次）：本路径无 reuse detection，盗用 refresh_token 的重放
+        // 仅因单次消费失败而拒绝，不会触发链式撤销；启动期已输出结构性 warn，此处为按请求级标记。
         tracing::warn!(
             "oauth2 refresh_token rotation not configured: serving refresh grant via DAO fallback without reuse detection — stolen refresh_token replay will NOT trigger chain revocation"
         );
@@ -1124,14 +987,8 @@ impl TokenHandler {
 
     /// 查找 refresh_token 记录（供 introspect / revoke 端点使用）。
     ///
-    /// # 存储路径
-    ///
-    /// - `db-sqlite` + `RefreshTokenRotation` 注入：refresh token 存 SQLite
-    ///   `refresh_tokens` 表（以 SHA-256 hash 为键），查 rotation.validate()
-    /// - 否则：查 DAO `oauth2:rtoken:` 记录
-    ///
-    /// 过期过滤不在此处完成——返回记录含 `expires_at`，由调用方判定 active
-    /// （rotation.validate 只过滤 `revoked = 0`，不过滤 `expires_at`）。
+    /// `db-sqlite` + `RefreshTokenRotation` 注入时存 SQLite `refresh_tokens` 表（SHA-256 hash 为键，查 rotation.validate()），
+    /// 否则查 DAO `oauth2:rtoken:` 记录。过期过滤不在此处——返回记录含 `expires_at`，由调用方判定 active。
     pub async fn get_refresh_token_record(
         &self,
         token: &str,
@@ -1367,8 +1224,6 @@ mod tests {
         let err = handler.handle(&req).await.unwrap_err();
         assert!(err.to_string().contains("invalid_client"));
     }
-
-    // === HTTP Basic Auth 测试 ===
 
     /// parse_basic_auth 正确解析标准 Basic Auth 头。
     #[test]
@@ -1824,12 +1679,7 @@ mod tests {
         assert!(err.to_string().contains("invalid_grant"));
     }
 
-    /// refresh_token 轮换后，旧 token 被删除，重用返回 invalid_grant。
-    ///
-    /// 流程：
-    /// 1. authorization_code 获取 refresh_token（old_token）
-    /// 2. 用 old_token 刷新 → 返回新 refresh_token（new_token），old_token 被删除
-    /// 3. 再次用 old_token 刷新 → invalid_grant（旧 token 已删除）
+    /// refresh_token 轮换后旧 token 被删除，重用返回 invalid_grant（authorization_code 取 old_token → 刷新得 new_token 并删除 old_token → 再用 old_token 刷新返回 invalid_grant）。
     #[tokio::test]
     async fn handle_refresh_token_rotation_deletes_old_token() {
         let (handler, _) = make_handler();
@@ -1839,7 +1689,6 @@ mod tests {
             .await
             .unwrap();
 
-        // 1. 获取初始 refresh_token
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         let code = get_auth_code(&handler, "rt-rot-001", verifier).await;
         let issue_req = TokenRequest {
@@ -1857,7 +1706,6 @@ mod tests {
         let issue_resp = handler.handle(&issue_req).await.unwrap();
         let old_token = issue_resp.refresh_token.unwrap();
 
-        // 2. 用 old_token 刷新（轮换）
         let refresh_req = TokenRequest {
             grant_type: "refresh_token".into(),
             client_id: "rt-rot-001".into(),
@@ -1877,7 +1725,6 @@ mod tests {
         let new_token = refresh_resp.refresh_token.unwrap();
         assert_ne!(&new_token, &old_token, "新 refresh_token 应与旧的不同");
 
-        // 3. 再次用 old_token 刷新 → invalid_grant（旧 token 已删除）
         let err = handler.handle(&refresh_req).await.unwrap_err();
         assert!(
             err.to_string().contains("invalid_grant"),
@@ -2066,13 +1913,7 @@ mod tests {
         assert!(err.to_string().contains("invalid_grant"));
     }
 
-    // === password grant rate limiting 测试 ===
-
-    /// 连续失败超过阈值后，再尝试应返回 rate_limited 错误（账户锁定）。
-    ///
-    /// max_attempts=3，window=300s：
-    /// - 前 3 次失败：返回 invalid_grant（凭据错误，未超阈值）
-    /// - 第 4 次尝试：返回 rate_limited（账户锁定，不调用 verifier）
+    /// 连续失败超过阈值后再尝试返回 rate_limited 错误（账户锁定）：max_attempts=3 时前 3 次失败返回 invalid_grant，第 4 次尝试返回 rate_limited 且不调用 verifier。
     #[tokio::test]
     async fn handle_password_rate_limited_after_max_attempts() {
         let (handler, _) = make_handler_with_limiters(
@@ -2118,13 +1959,7 @@ mod tests {
         );
     }
 
-    /// 成功登录后重置失败计数，可重新尝试至再次超阈值。
-    ///
-    /// max_attempts=3，window=300s：
-    /// 1. 2 次失败（未超阈值）
-    /// 2. 1 次成功 → 计数重置
-    /// 3. 3 次失败（重新累计，未超阈值）
-    /// 4. 第 4 次尝试 → rate_limited（重置后再次达上限）
+    /// 成功登录后重置失败计数（max_attempts=3：2 次失败后 1 次成功重置，再 3 次失败未超阈值，第 4 次尝试 rate_limited）。
     #[tokio::test]
     async fn handle_password_rate_limit_resets_on_success() {
         let (handler, _) = make_handler_with_limiters(
@@ -2163,7 +1998,6 @@ mod tests {
             password: Some("wonderland".into()),
         };
 
-        // 1. 2 次失败（未超阈值 3）
         for _ in 0..2 {
             let _ = handler.handle(&wrong_req).await.unwrap_err();
         }
@@ -2171,7 +2005,6 @@ mod tests {
         let resp = handler.handle(&right_req).await.expect("成功登录");
         assert_eq!(resp.token_type, "Bearer");
 
-        // 3. 重置后再 3 次失败：仍应返回 invalid_grant（计数已重置，未超阈值）
         for i in 0..3 {
             let err = handler.handle(&wrong_req).await.unwrap_err();
             assert!(
@@ -2182,7 +2015,6 @@ mod tests {
             );
         }
 
-        // 4. 第 4 次尝试：rate_limited（重置后再次达上限）
         let err = handler.handle(&wrong_req).await.unwrap_err();
         assert!(
             err.to_string().contains("rate_limited"),
@@ -2191,11 +2023,7 @@ mod tests {
         );
     }
 
-    /// `record_failure` 通过 `limiteron::incr_with_ttl` 原子递增计数器。
-    ///
-    /// 验证：
-    /// - 首次失败：count=1
-    /// - 后续失败：count 递增（不重置 TTL，窗口起点保持）
+    /// `record_failure` 经 `limiteron::incr_with_ttl` 原子递增计数器：首次失败 count=1，后续递增不重置 TTL（窗口起点保持）。
     #[tokio::test]
     async fn password_rate_limiter_record_failure_increments_count() {
         let limiter = PasswordRateLimiter::new(5, 300);
@@ -2526,8 +2354,6 @@ mod tests {
         assert!(t1.len() >= 43);
     }
 
-    // === TokenRateLimiter 速率限制测试（B5）===
-
     /// `TokenRateLimiter::new()` 使用默认配置（10 req/s per-client + 5 req/min per-username）。
     #[test]
     fn token_rate_limiter_new_uses_defaults() {
@@ -2795,10 +2621,6 @@ mod tests {
         );
     }
 }
-
-// ============================================================================
-// 统一 Refresh Token 轮换集成测试（db-sqlite feature）
-// ============================================================================
 
 #[cfg(all(test, feature = "db-sqlite"))]
 mod refresh_rotation_tests {
@@ -3200,22 +3022,13 @@ mod refresh_rotation_tests {
         );
     }
 
-    /// 端到端集成测试 — authorization_code → refresh → reuse detection → revoke_chain。
-    ///
-    /// 完整流程：
-    /// 1. authorization_code grant 签发初始 refresh_token（token1）
-    /// 2. refresh_token grant 轮换 token1 → token2（token1 revoked=1）
-    /// 3. refresh_token grant 轮换 token2 → token3（token2 revoked=1）
-    /// 4. 重用 token1 → TokenRevoked（reuse detection 触发 revoke_chain）
-    /// 5. 验证 token1 / token2 均为 revoked=1（链式撤销）
-    /// 6. 验证 token3 仍有效（revoked=0）
+    /// 端到端集成测试 — authorization_code → refresh → reuse detection → revoke_chain（token1 轮换 token2 再轮换 token3，重用 token1 触发 revoke_chain，token1/token2 revoked=1、token3 仍有效）。
     #[tokio::test(flavor = "multi_thread")]
     async fn oauth2_full_flow_with_refresh_rotation() {
         let handler = make_handler_with_rotation().await;
         let client = make_full_client("rot-e2e-001");
         handler.store.create(client.clone()).await.unwrap();
 
-        // 1. authorization_code grant 签发初始 token
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         let code = get_auth_code(&handler, "rot-e2e-001", verifier).await;
         let issue_req = TokenRequest {
@@ -3233,7 +3046,6 @@ mod refresh_rotation_tests {
         let issue_resp = handler.handle(&issue_req).await.expect("签发 token");
         let token1 = issue_resp.refresh_token.expect("应有 refresh_token");
 
-        // 2. 第一次 refresh：token1 → token2（轮换）
         let refresh_req_1 = TokenRequest {
             grant_type: "refresh_token".into(),
             client_id: "rot-e2e-001".into(),
@@ -3253,7 +3065,6 @@ mod refresh_rotation_tests {
         let token2 = resp1.refresh_token.expect("应返回新 refresh_token");
         assert_ne!(&token2, &token1, "token2 应与 token1 不同");
 
-        // 3. 第二次 refresh：token2 → token3（轮换）
         let refresh_req_2 = TokenRequest {
             grant_type: "refresh_token".into(),
             client_id: "rot-e2e-001".into(),
@@ -3273,7 +3084,6 @@ mod refresh_rotation_tests {
         let token3 = resp2.refresh_token.expect("应返回新 refresh_token");
         assert_ne!(&token3, &token2, "token3 应与 token2 不同");
 
-        // 4. 重用 token1 → TokenRevoked（reuse detection）
         let reuse_result = handler.handle(&refresh_req_1).await;
         assert!(
             matches!(&reuse_result, Err(GarrisonError::TokenRevoked(_))),
@@ -3281,8 +3091,7 @@ mod refresh_rotation_tests {
             reuse_result
         );
 
-        // 5. 验证整条链 token1 / token2 / token3 均已 revoked（链式撤销）
-        // revoke_chain 撤销给定 token 及其所有子代（安全最佳实践：泄露一个即吊销全部）
+        // 验证整条链 token1 / token2 / token3 均已 revoked：revoke_chain 撤销给定 token 及其所有子代（安全最佳实践：泄露一个即吊销全部）
         let rotation = handler.refresh_rotation.as_ref().unwrap();
         let token1_record = rotation.validate(&token1).await.expect("validate token1");
         assert!(
@@ -3300,10 +3109,6 @@ mod refresh_rotation_tests {
             "token3 应已 revoked（链式撤销孙代，validate 返回 None）"
         );
     }
-
-    // ========================================================================
-    // 退化路径显性化：未注入 rotation → 结构化 warn（日志验收）
-    // ========================================================================
 
     /// 进程内日志捕获 writer（fmt Layer 的 MakeWriter，收集格式化行）。
     #[derive(Clone)]

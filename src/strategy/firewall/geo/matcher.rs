@@ -1,24 +1,13 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! limiteron GeoMatcher 生产后端实现（自研库吸收）。
+//! limiteron GeoMatcher 生产后端实现：`GeoMatcherLookup`（City 库 → `GeoLookup`）与
+//! `GeoMatcherCountryLookup`（Country/City 库 → `CountryLookup`），内部委托 limiteron `GeoMatcher`
+//! （mmdb 读取 + Moka LRU 缓存 + 批量查询）。
 //!
-//! 提供 [`GeoMatcherLookup`](crate::strategy::firewall::geo::matcher::GeoMatcherLookup) 与
-//! [`GeoMatcherCountryLookup`](crate::strategy::firewall::geo::matcher::GeoMatcherCountryLookup)
-//! 两个生产实现，内部委托 limiteron `GeoMatcher`（内置 mmdb 读取 + Moka LRU
-//! 查询缓存 + 批量查询），分别映射到 garrison 的 [`GeoLookup`] / [`CountryLookup`] trait。
-//!
-//! # 依赖
-//!
-//! - limiteron `geo-matching` feature（由 `firewall-geoip` 启用）
-//! - 测试数据：`tests/data/GeoLite2-City-Test.mmdb` / `GeoLite2-Country-Test.mmdb`
-//!   （小体积测试库——limiteron 对非全量库仅告警，不拒绝）
-//!
-//! # 语义映射
-//!
-//! - 库中无该 IP 记录（私有 IP / 未知网段）：GeoMatcher 返回 `GeoInfo::empty()`
-//!   → garrison 映射为 `Ok(None)`（与历史 maxminddb 直读后端一致）
-//! - 数据库损坏/IO 错误：`Err(LimiteronError)` → `GarrisonError::Internal`
+//! 依赖 limiteron `geo-matching` feature（由 `firewall-geoip` 启用）；测试数据为 `tests/data/GeoLite2-*-Test.mmdb`
+//! （小体积测试库，limiteron 对非全量库仅告警不拒绝）。语义映射：库中无记录（私有 IP / 未知网段）→ `Ok(None)`；
+//! 数据库损坏/IO 错误 → `GarrisonError::Internal`。
 
 use super::{CountryLookup, GeoCoord, GeoLookup};
 use crate::error::{GarrisonError, GarrisonResult};
@@ -27,9 +16,7 @@ use limiteron::matchers::geo::GeoMatcher;
 use std::net::IpAddr;
 use std::sync::Arc;
 
-/// limiteron GeoMatcher 坐标查询后端（生产实现，City 库）。
-///
-/// 实现 [`GeoLookup`] trait，供 `AnomalousLoginStrategy` 的 haversine 距离计算。
+/// limiteron GeoMatcher 坐标查询后端（生产实现，City 库）：实现 [`GeoLookup`]，供 `AnomalousLoginStrategy` 的 haversine 距离计算。
 ///
 /// # 构造
 ///
@@ -49,10 +36,7 @@ impl std::fmt::Debug for GeoMatcherLookup {
 }
 
 impl GeoMatcherLookup {
-    /// 从文件路径打开 mmdb 数据库（GeoLite2-City / GeoIP2-City）。
-    ///
-    /// # 错误
-    /// - `GarrisonError::Internal`: 文件不存在、格式错误或 IO 错误。
+    /// 从文件路径打开 mmdb 数据库（GeoLite2-City / GeoIP2-City）；文件缺失、格式错误或 IO 错误返回 `Internal`。
     pub async fn open(path: &str) -> GarrisonResult<Self> {
         let matcher = GeoMatcher::new(path).await.map_err(|e| {
             GarrisonError::Internal(format!("strategy-geo-matcher-open::{}::{}", path, e))
@@ -85,9 +69,7 @@ impl GeoLookup for GeoMatcherLookup {
     }
 }
 
-/// limiteron GeoMatcher 国家码查询后端（生产实现，Country/City 库）。
-///
-/// 实现 [`CountryLookup`] trait，供 `GeoIPStrategy` 的 allow/block 匹配。
+/// limiteron GeoMatcher 国家码查询后端（生产实现，Country/City 库）：实现 [`CountryLookup`]，供 `GeoIPStrategy` 的 allow/block 匹配。
 pub struct GeoMatcherCountryLookup {
     matcher: Arc<GeoMatcher>,
 }
@@ -100,10 +82,7 @@ impl std::fmt::Debug for GeoMatcherCountryLookup {
 }
 
 impl GeoMatcherCountryLookup {
-    /// 从文件路径打开 mmdb 数据库（GeoLite2-Country / GeoIP2-City）。
-    ///
-    /// # 错误
-    /// - `GarrisonError::Internal`: 文件不存在、格式错误或 IO 错误。
+    /// 从文件路径打开 mmdb 数据库（GeoLite2-Country / GeoIP2-City）；文件缺失、格式错误或 IO 错误返回 `Internal`。
     pub async fn open(path: &str) -> GarrisonResult<Self> {
         let matcher = GeoMatcher::new(path).await.map_err(|e| {
             GarrisonError::Internal(format!("strategy-geo-matcher-open::{}::{}", path, e))
@@ -142,12 +121,9 @@ mod tests {
     const CITY_TEST_DB: &str = "tests/data/GeoLite2-City-Test.mmdb";
     const COUNTRY_TEST_DB: &str = "tests/data/GeoLite2-Country-Test.mmdb";
 
-    // =========================================================================
     // GeoMatcherLookup 测试
-    // =========================================================================
 
-    /// 验证从测试 mmdb 文件打开 GeoMatcherLookup 成功（小体积测试库——
-    /// limiteron 对非全量库仅告警不拒绝）。
+    /// 验证从测试 mmdb 文件打开 GeoMatcherLookup 成功。
     #[tokio::test]
     async fn geo_matcher_open_success() {
         let result = GeoMatcherLookup::open(CITY_TEST_DB).await;
@@ -171,9 +147,7 @@ mod tests {
         );
     }
 
-    /// 验证查询已知 IP 返回 Some(GeoCoord)。
-    ///
-    /// 81.2.69.142 是 MaxMind 测试数据中的已知 IP（英国伦敦）。
+    /// 验证查询已知 IP 返回 Some(GeoCoord)：81.2.69.142 是 MaxMind 测试数据中的已知 IP（英国伦敦）。
     #[tokio::test]
     async fn geo_matcher_lookup_known_ip() {
         let lookup = GeoMatcherLookup::open(CITY_TEST_DB)
@@ -227,9 +201,7 @@ mod tests {
         );
     }
 
-    // =========================================================================
     // GeoMatcherCountryLookup 测试
-    // =========================================================================
 
     /// 验证从测试 mmdb 文件打开 GeoMatcherCountryLookup 成功。
     #[tokio::test]
@@ -249,9 +221,7 @@ mod tests {
         assert!(result.is_err(), "打开不存在的文件应返回 Err");
     }
 
-    /// 验证查询已知 IP 返回 Some(国家码)。
-    ///
-    /// 81.2.69.142 是 MaxMind 测试数据中的已知 IP（英国，国家码 GB）。
+    /// 验证查询已知 IP 返回 Some(国家码)：81.2.69.142 是 MaxMind 测试数据中的已知 IP（英国，GB）。
     #[tokio::test]
     async fn geo_matcher_country_lookup_known_ip() {
         let lookup = GeoMatcherCountryLookup::open(COUNTRY_TEST_DB)
@@ -299,9 +269,7 @@ mod tests {
         );
     }
 
-    // =========================================================================
     // 集成测试
-    // =========================================================================
 
     /// 验证 GeoIPStrategy 注入 GeoMatcherCountryLookup 的白名单拦截行为。
     ///
@@ -331,10 +299,7 @@ mod tests {
         );
     }
 
-    /// 验证 AnomalousLoginStrategy 注入 GeoMatcherLookup 的异地登录检测。
-    ///
-    /// 使用 City 测试数据库，81.2.69.142 → 伦敦坐标。
-    /// MockDao 提供历史坐标（北京），haversine 距离 > 500km，应拦截。
+    /// 验证 AnomalousLoginStrategy 注入 GeoMatcherLookup 的异地登录检测：City 测试库 81.2.69.142 → 伦敦；首次登录（无历史）与同地再次登录均放行。
     #[tokio::test]
     async fn anomalous_strategy_with_geo_matcher() {
         use crate::dao::tests::MockDao;

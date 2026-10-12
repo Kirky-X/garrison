@@ -1,34 +1,23 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! HTTP Basic 认证子模块（RFC 7617）。
+//! HTTP Basic 认证子模块（RFC 7617）：基于 `base64` crate 的用户名密码编解码。
 //!
-//! 对应 Basic 认证能力，
-//! 基于 `base64` crate 实现用户名密码的编解码。
-//!
-//! 所有方法均为关联函数，`HttpBasicAuth` struct 不持有任何状态。
+//! 所有方法均为关联函数，`HttpBasicAuth` 不持有任何状态。
 
-/// Basic 认证凭证，承载解码后的用户名与密码。
+/// Basic 认证凭证（解码后的用户名与密码）。
 ///
 /// # 安全说明
 ///
-/// - **Debug 脱敏**：[`Debug`] 为手动实现，`pass` 字段输出 `<redacted>`，
-///   防止 `{:?}` / 日志 / panic backtrace 泄露明文密码。
-/// - **内存零化**：`pass` 为普通 `String`，**未** 实现 `zeroize` / 自定义 [`Drop`]——
-///   凭证 drop 后其字节可能残留在已释放的堆内存中直至复用（与 `protocol-zeroize`
-///   防护的密钥同级别风险）。因 HTTP Basic 凭证为短生命周期传输凭证，
-///   当前选择文档声明该残留风险而非引入 feature 门控零化；调用方应：
-///   (1) 避免 `clone()` 凭证或延长其生命周期；(2) 不将 `pass` 写入日志/持久化存储；
-///   (3) 对长期凭证改用框架的 credential 模块（`credential-zeroize` feature 提供
-///   `Zeroize + ZeroizeOnDrop`）。
+/// [`Debug`] 手动实现，`pass` 输出 `<redacted>`，防 `{:?}` / 日志 / panic backtrace 泄露明文；
+/// `pass` 未实现 `zeroize` / `Drop` 零化，drop 后字节可能残留在堆内存（与 `protocol-zeroize` 同级风险，
+/// 因 Basic 凭证短生命周期而仅文档声明）——调用方应避免 `clone()` 或延长生命周期、不写入日志/持久化，
+/// 长期凭证改用 `credential-zeroize` feature。
 #[derive(Clone, PartialEq, Eq)]
 pub struct Credential {
     /// 用户名。
     pub user: String,
-    /// 密码。
-    ///
-    /// 注意：本字段为 `pub` 以便业务方按需消费凭证；任何代码均可读取明文，
-    /// 调用方应遵循最小暴露原则，仅在验证时短暂持有。
+    /// 密码（`pub` 便于业务方消费；明文可被任意代码读取，调用方应最小暴露、仅在验证时短暂持有）。
     pub pass: String,
 }
 
@@ -42,9 +31,7 @@ impl std::fmt::Debug for Credential {
     }
 }
 
-/// HTTP Basic 认证工具，封装 RFC 7617 编解码逻辑。
-///
-/// 所有方法为关联函数，无需实例化即可调用：
+/// HTTP Basic 认证工具（RFC 7617 编解码，纯关联函数，无需实例化）。
 ///
 /// ```
 /// #[cfg(feature = "protocol-httpbasic")]

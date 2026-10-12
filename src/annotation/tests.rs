@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! annotation 模块测试（从 mod.rs 迁移）。
-//!
-//! 此测试模块仅在启用 `web-axum` feature 时编译（与原 mod.rs 一致）。
+//! annotation 模块测试，仅在启用 `web-axum` feature 时编译。
 
 use super::mock::{MockDao, MockInterface};
 use super::*;
@@ -150,7 +148,6 @@ async fn check_login_logged_in_returns_ok() {
 #[serial]
 async fn check_login_not_logged_in_returns_not_login() {
     init_manager(false, &[], &[]).await;
-    // 不调用 login，直接 extractor（无 token）
     let mut parts = make_parts();
     let result = CheckLogin::from_request_parts(&mut parts, &()).await;
     assert!(
@@ -204,7 +201,7 @@ async fn check_role_held_returns_ok() {
 #[tokio::test]
 #[serial]
 async fn check_role_not_held_returns_not_role() {
-    init_manager(true, &[], &[]).await; // 无角色数据
+    init_manager(true, &[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts();
@@ -251,7 +248,7 @@ async fn check_permission_held_returns_ok() {
 #[tokio::test]
 #[serial]
 async fn check_permission_not_held_returns_not_permission() {
-    init_manager(true, &[], &[]).await; // 无权限数据
+    init_manager(true, &[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts();
@@ -279,7 +276,6 @@ async fn check_permission_not_held_returns_not_permission() {
 #[serial]
 async fn ignore_always_returns_ok() {
     init_manager(false, &[], &[]).await;
-    // 未登录状态下 Ignore 仍返回 Ok
     let mut parts = make_parts();
     let result = Ignore::from_request_parts(&mut parts, &()).await;
     assert!(result.is_ok(), "Ignore 应总是返回 Ok");
@@ -295,7 +291,7 @@ async fn ignore_always_returns_ok() {
 #[tokio::test]
 #[serial]
 async fn mode_strict_not_logged_in_throws_not_login() {
-    init_manager(false, &[], &[]).await; // throw_on_not_login=false
+    init_manager(false, &[], &[]).await;
     let mut parts = make_parts();
     let result = Mode::<Strict>::from_request_parts(&mut parts, &()).await;
     assert!(
@@ -403,7 +399,6 @@ fn annotation_name_returns_variant_string() {
     assert_eq!(Annotation::CheckBasicAuth.name(), "CheckBasicAuth");
     assert_eq!(Annotation::CheckDigestAuth.name(), "CheckDigestAuth");
     assert_eq!(Annotation::CheckSign.name(), "CheckSign");
-    // CheckApiKey— namespace None 与 Some 均返回同一字符串
     assert_eq!(
         Annotation::CheckApiKey { namespace: None }.name(),
         "CheckApiKey"
@@ -436,7 +431,7 @@ fn annotation_mode_display_outputs_uppercase() {
 #[test]
 fn annotation_mode_copy_semantics() {
     let mode = AnnotationMode::And;
-    let copied = mode; // Copy，原值仍可用
+    let copied = mode;
     assert_eq!(mode, AnnotationMode::And);
     assert_eq!(copied, AnnotationMode::And);
 }
@@ -615,9 +610,8 @@ async fn check_login_extracts_token_from_cookie() {
 
 /// production 构建下 CheckLogin 命中 `__Host-` 前缀 token cookie（写读同名）。
 ///
-/// 回归：annotation 提取器曾用裸 `token_name` 直查 cookie，未经
-/// `token_cookie_name` 统一入口——production + Secure 上下文下写侧产出
-/// `__Host-` 前缀名而读侧查裸名，纯 cookie 会话永远 NotLogin。
+/// 回归：提取器须经 `token_cookie_name` 统一入口解析 cookie 名，production + Secure
+/// 上下文下写侧产出 `__Host-` 前缀名，读侧直查裸名会导致纯 cookie 会话永远 NotLogin。
 #[cfg(feature = "production")]
 #[tokio::test]
 #[serial]
@@ -722,10 +716,7 @@ async fn mode_loose_logged_in_with_header() {
 // GarrisonPrincipal extractor 测试（携带 login_id）
 // ----------------------------------------------------------------
 
-/// `GarrisonPrincipal::from_request_parts` 从 `Authorization: Bearer <token>`
-/// header 解析出 `login_id`。
-///
-/// 与 actix/warp extractor 对齐：valid token → Ok(GarrisonPrincipal { login_id })。
+/// `GarrisonPrincipal::from_request_parts` 从 Bearer header 解析出 `login_id`（与 actix/warp 提取器一致）。
 #[tokio::test]
 #[serial]
 async fn garrison_principal_extracts_login_id_from_bearer_header() {
@@ -743,9 +734,7 @@ async fn garrison_principal_extracts_login_id_from_bearer_header() {
     GarrisonManager::reset_for_test();
 }
 
-/// `GarrisonPrincipal::from_request_parts` 在无 token 时返回 `Err(NotLogin)`。
-///
-/// 与 actix/warp extractor 对齐：missing token → Err(NotLogin("未提供 token"))。
+/// `GarrisonPrincipal::from_request_parts` 在无 token 时返回 `Err(NotLogin)`（与 actix/warp 提取器一致）。
 #[tokio::test]
 #[serial]
 async fn garrison_principal_returns_err_without_token() {
@@ -762,9 +751,7 @@ async fn garrison_principal_returns_err_without_token() {
     GarrisonManager::reset_for_test();
 }
 
-/// `GarrisonPrincipal::from_request_parts` 在无效 token 时返回 `Err(NotLogin)`。
-///
-/// 与 actix/warp extractor 对齐：invalid token → Err(NotLogin("token 无效或会话不存在"))。
+/// `GarrisonPrincipal::from_request_parts` 在无效 token 时返回 `Err(NotLogin)`（与 actix/warp 提取器一致）。
 #[tokio::test]
 #[serial]
 async fn garrison_principal_returns_err_with_invalid_token() {
@@ -781,11 +768,8 @@ async fn garrison_principal_returns_err_with_invalid_token() {
     GarrisonManager::reset_for_test();
 }
 
-/// `GarrisonPrincipal::from_request_parts` 在 token 曾有效但已 logout 时
-/// 返回 `Err(NotLogin)`。
-///
-/// 覆盖 `get_login_id_by_token` 返回 `Ok(None)` 的路径
-/// （token 存在过但 session 已销毁）。
+/// `GarrisonPrincipal::from_request_parts` 在 token 曾有效但已 logout 时返回 `Err(NotLogin)`；
+/// 覆盖 `get_login_id_by_token` 返回 `Ok(None)` 的路径（token 存在过但 session 已销毁）。
 #[tokio::test]
 #[serial]
 async fn garrison_principal_returns_err_when_token_logout() {
@@ -813,9 +797,7 @@ async fn garrison_principal_returns_err_when_token_logout() {
 // TenantContext extractor 测试（cfg tenant-isolation）
 // ----------------------------------------------------------------
 
-/// `TenantContext::from_request_parts` 从 `X-Tenant-Id` header 解析出 `tenant_id`。
-///
-/// 与 actix/warp extractor 对齐：valid X-Tenant-Id → Ok(TenantContext)。
+/// `TenantContext::from_request_parts` 从 `X-Tenant-Id` header 解析出 `tenant_id`（与 actix/warp 提取器一致）。
 #[cfg(feature = "tenant-isolation")]
 #[tokio::test]
 #[serial]
@@ -843,9 +825,7 @@ async fn tenant_context_extracts_tenant_id_from_header() {
     );
 }
 
-/// `TenantContext::from_request_parts` 在缺失 `X-Tenant-Id` header 时返回 `Err`。
-///
-/// 与 actix/warp extractor 对齐：missing X-Tenant-Id → Err(Config)。
+/// `TenantContext::from_request_parts` 在缺失 `X-Tenant-Id` header 时返回 `Err(Config)`（与 actix/warp 提取器一致）。
 #[cfg(feature = "tenant-isolation")]
 #[tokio::test]
 #[serial]
@@ -859,9 +839,7 @@ async fn tenant_context_returns_err_without_x_tenant_id_header() {
     );
 }
 
-/// `TenantContext::from_request_parts` 在非数字 `X-Tenant-Id` 时返回 `Err`。
-///
-/// 与 actix/warp extractor 对齐：non-numeric X-Tenant-Id → Err(Config)。
+/// `TenantContext::from_request_parts` 在非数字 `X-Tenant-Id` 时返回 `Err(Config)`（与 actix/warp 提取器一致）。
 #[cfg(feature = "tenant-isolation")]
 #[tokio::test]
 #[serial]

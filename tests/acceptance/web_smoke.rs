@@ -7,22 +7,16 @@
 //! （`spawn_axum` / `spawn_actix` / `spawn_warp`），验证 CheckLogin 语义：
 //! 未登录 401 + 统一 `error_code`/`message` JSON；有效 token 200。
 //! `GarrisonManager` 为进程级全局单例，全部用例以 `#[serial]` 串行。
-//!
-
 use crate::common::harness::{web_test_config, GarrisonTestHarness, SpawnedServer};
 use crate::relay::SendRelayRetry;
 use garrison::stp::GarrisonUtil;
 use serial_test::serial;
 
-/// 三框架共用的 CheckLogin 语义断言：
-/// （a）无 token 请求 `/protected` 返回 401，且 body 含 `error_code` 与 `message`
-/// （统一错误 JSON，文案受 i18n 影响，只断言键存在不硬编码内容）；
-/// （b）带 `Authorization: Bearer <token>` 请求返回 200。
+/// 三框架共用的 CheckLogin 语义断言：（a）无 token 请求 `/protected` 返回 401，body 含 `error_code` 与 `message`（统一错误 JSON，文案受 i18n 影响，只断言键存在）；（b）带 `Authorization: Bearer <token>` 请求返回 200。
 async fn assert_protected_semantics(server: &SpawnedServer, token: &str) {
     let client = reqwest::Client::new();
     let url = format!("http://{}/protected", server.addr());
 
-    // （a）未登录 → 401 + 统一错误 JSON
     let resp = client
         .get(&url)
         .send_relay_retry()
@@ -45,7 +39,6 @@ async fn assert_protected_semantics(server: &SpawnedServer, token: &str) {
         "401 body 应含 message 字段（三框架一致），实际: {body}"
     );
 
-    // （b）已登录 → 200
     let resp = client
         .get(&url)
         .header("Authorization", format!("Bearer {token}"))
@@ -55,8 +48,7 @@ async fn assert_protected_semantics(server: &SpawnedServer, token: &str) {
     assert_eq!(resp.status(), 200, "有效 token 访问受保护路由应放行 200");
 }
 
-/// （正常+异常）：axum 冒烟 —— 未登录 401 + 统一错误 JSON、
-/// 有效 token 200（经 `GarrisonRouter` middleware）。
+/// （正常+异常）：axum 冒烟——未登录 401 + 统一错误 JSON、有效 token 200（经 `GarrisonRouter` middleware）。
 #[cfg(feature = "web-axum")]
 #[tokio::test]
 #[serial]
@@ -75,8 +67,7 @@ async fn acc_smoke_axum_001() {
     server.shutdown().await;
 }
 
-/// （正常+异常）：actix-web 冒烟 —— 未登录 401 + 统一错误 JSON、
-/// 有效 token 200（经 `GarrisonRouter::into_middleware()`，actix 运行时跑在专属线程）。
+/// （正常+异常）：actix-web 冒烟——未登录 401 + 统一错误 JSON、有效 token 200（经 `GarrisonRouter::into_middleware()`，actix 运行时跑在专属线程）。
 #[cfg(feature = "web-actix")]
 #[tokio::test]
 #[serial]
@@ -95,8 +86,7 @@ async fn acc_smoke_actix_001() {
     server.shutdown().await;
 }
 
-/// （正常+异常）：warp 冒烟 —— 未登录 401 + 统一错误 JSON、
-/// 有效 token 200（经 `check_login` filter + `.recover(garrison_recover)`）。
+/// （正常+异常）：warp 冒烟——未登录 401 + 统一错误 JSON、有效 token 200（经 `check_login` filter + `.recover(garrison_recover)`）。
 #[cfg(feature = "web-warp")]
 #[tokio::test]
 #[serial]

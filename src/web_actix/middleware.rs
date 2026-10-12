@@ -1,16 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! actix-web middleware 实现：Transform + Service trait 实现。
-//!
-//! `GarrisonMiddleware` 作为 actix-web middleware 装饰器，在请求到达 handler 前
-//! 执行鉴权（pre_handle），失败则直接构造错误响应。struct 声明位于 `mod.rs`。
-//!
-//! ## 历史 BUG #8（已修复）
-//!
-//! 原实现在 `self.inner.call(req)` 之前执行 `req.request().clone()`，导致 `Rc`
-//! 引用计数为 2，路由层 `match_info_mut()` 触发 panic。修复方案：先鉴权通过后
-//! 才 `inner.call(req)`，失败则 `req.into_response(resp)`（无需 clone HttpRequest）。
+//! actix-web middleware 实现（Transform + Service）：请求到达 handler 前执行鉴权（pre_handle），失败直接构造错误响应。
+//! 鉴权通过才 `inner.call(req)`，不 clone `HttpRequest`——提前 clone 会抬高 `Rc` 引用计数，触发路由层 `match_info_mut()` panic。
 
 use crate::context::tenant::TENANT;
 use crate::context::token_extract::extract_token_from_headers;
@@ -25,11 +17,8 @@ use std::rc::Rc;
 
 use super::{GarrisonMiddleware, GarrisonMiddlewareService};
 
-/// 将 actix 的 `HeaderMap` 桥接为框架无关的 `http::HeaderMap`（`TenantResolver::resolve` 输入）。
-///
-/// 仅保留值可见 ASCII 的 header（`to_str()` 成功的项）；非法值跳过（不 panic）。
-/// actix-web 4.x 使用 actix-http 的 `HeaderMap`（独立类型），`TenantResolver`
-/// trait 统一接收 `http::HeaderMap`（v1），此处做一次值拷贝桥接。
+/// 桥接 actix `HeaderMap` → `http::HeaderMap`（`TenantResolver::resolve` 输入）：仅保留值可见
+/// ASCII 的 header（`to_str()` 成功），非法值跳过不 panic。
 fn actix_headers_to_http(headers: &actix_web::http::header::HeaderMap) -> http::HeaderMap {
     let mut out = http::HeaderMap::new();
     for (name, value) in headers.iter() {
@@ -55,13 +44,8 @@ fn normalize_route_path(path: &str) -> &str {
     }
 }
 
-/// 路由规则匹配：支持精确匹配、单段参数与尾部通配。
-///
-/// - 精确段：逐段相等比较（尾斜杠归一化后）
-/// - `{param}` / `:param`：匹配任意非空单段（与 axum/actix 参数语义对齐）
-/// - `*` / `{*rest}`：匹配剩余所有段（零段或多段，前缀保护语义）
-///
-/// 返回 true 表示 `pattern` 覆盖请求 `path`。
+/// 路由规则匹配：精确段逐段比较，`{param}`/`:param` 匹配任意非空单段，
+/// `*`/`{*rest}` 匹配剩余所有段（零段或多段）；true 表示 `pattern` 覆盖请求 `path`。
 fn route_matches_rule(pattern: &str, path: &str) -> bool {
     let pattern = normalize_route_path(pattern);
     let path = normalize_route_path(path);
@@ -70,15 +54,13 @@ fn route_matches_rule(pattern: &str, path: &str) -> bool {
     loop {
         match (p.next(), s.next()) {
             (None, None) => return true,
-            // 参数段缺失（pattern 段数多于 path）→ 不匹配
+            // pattern 段多于 path：仅尾部通配段可匹配
             (Some(seg), None) => return seg == "*" || seg == "{*wildcard}" || is_wild_brace(seg),
             (Some(seg), Some(part)) => {
                 if seg == "*" || seg == "{*wildcard}" || is_wild_brace(seg) {
-                    // 尾部通配：吞掉剩余所有段（含零段）
                     return true;
                 }
                 if is_param_segment(seg) {
-                    // 单段参数：匹配任意非空段
                     if part.is_empty() {
                         return false;
                     }
@@ -141,8 +123,7 @@ where
         let interceptor = self.interceptor.clone();
         let path = req.uri().path().to_string();
         let headers = req.headers().clone();
-        // 规则匹配支持参数段（{id}/:id）与尾部通配（*/{*rest}），
-        // 参数化路径不再因精确匹配失败而静默跳过鉴权；尾斜杠归一化对齐。
+        // 规则匹配支持参数段（{id}/:id）与尾部通配（*/{*rest}），避免参数化路径静默跳过鉴权；尾斜杠归一化对齐。
         let rule_annotation = self
             .rules
             .iter()
@@ -152,8 +133,7 @@ where
             .ok()
             .flatten();
         let tenant_resolver = self.tenant_resolver.clone();
-        // clone Rc<S>（无需 S: Clone），以便在 async block 中先鉴权通过后才调用 inner.call
-        // 不 clone HttpRequest（原 BUG #8 修复：避免 Rc 引用计数问题）
+        // clone Rc<S>（无需 S: Clone）；不 clone HttpRequest——鉴权通过才 inner.call(req)，避免 Rc 引用计数触发路由层 panic
         let inner = self.inner.clone();
         let handler_timeout = self.handler_timeout;
 
@@ -165,10 +145,8 @@ where
                 Ok::<_, GarrisonError>(())
             };
 
-            // 配置了 TenantResolver 时，先解析租户并进入 TENANT.scope 再执行鉴权，
-            // 使 tenant-isolation 下 check_permission/check_role 获得租户上下文；
-            // resolve 失败透传 GarrisonError（fail-closed，映射为错误响应）。
-            // 未配置时保持旧行为（不提取租户）。
+            // 配置 TenantResolver 时先解析租户并进入 TENANT.scope 再鉴权（tenant-isolation 下
+            // check_permission/check_role 需要租户上下文）；resolve 失败透传（fail-closed，映射为错误响应）。
             let auth_result: Result<(), GarrisonError> = async {
                 let tenant_ctx = match &tenant_resolver {
                     Some(resolver) => {
@@ -192,16 +170,13 @@ where
 
             match auth_result {
                 Ok(()) => {
-                    // 鉴权通过，调用 inner service（req 在此 move）。
-                    // 配置了 handler_timeout 时以 tokio::time::timeout 包裹
-                    // 内层调用，超时返回 504，防止挂起 handler 无限占用连接；
-                    // 未配置（默认）保持历史行为。
+                    // 鉴权通过，调用 inner service（req 在此 move）；配置 handler_timeout 时以
+                    // tokio::time::timeout 包裹，超时返回 504 防挂起 handler 无限占用连接。
                     let result = match handler_timeout {
                         Some(timeout) => {
                             match tokio::time::timeout(timeout, (*inner).call(req)).await {
                                 Ok(res) => res,
-                                // 超时：req 已随 future 被 drop，此处以 Err 交给 actix
-                                // 渲染 504 错误响应（ResponseError 机制）
+                                // 超时：req 已随 future 被 drop，以 Err 交给 actix 渲染 504（ResponseError 机制）
                                 Err(_elapsed) => {
                                     tracing::warn!(
                                         timeout_secs = timeout.as_secs_f64(),

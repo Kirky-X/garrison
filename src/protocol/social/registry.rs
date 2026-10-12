@@ -1,17 +1,13 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! `SocialLoginService` 注册中心 —— 社交登录扩展点。
-//!
-//! 提供运行时 provider 注册表，允许外部 crate 自定义 `SocialLoginProvider` 实现
-//! （如华为 Account Kit）注册到 garrison，实现开放-封闭原则（OCP）。
+//! `SocialLoginService` 注册中心 —— 社交登录扩展点：运行时 provider 注册表，允许外部 crate 注册自定义 `SocialLoginProvider`（如华为 Account Kit）。
 //!
 //! # 设计
 //!
-//! - `HashMap<String, Arc<dyn SocialLoginProvider>>` 存储 provider 实例
-//! - `register` / `unregister` / `get` / `list` CRUD API
-//! - 委托方法（`get_authorization_url` / `exchange_token` / `get_user_info`）按 name 查找并转发
-//! - 实现 `SocialProviderResolver` trait（cfg `account-authflow`），与 authflow executor 适配
+//! - `HashMap<String, Arc<dyn SocialLoginProvider>>` + `parking_lot::RwLock` 存储 provider，提供 register/unregister/get/list CRUD API；
+//! - 委托方法（`get_authorization_url` / `exchange_token` / `get_user_info`）按 name 查找并转发；
+//! - 实现 `SocialProviderResolver` trait（cfg `account-authflow`），与 authflow executor 适配。
 //!
 //! # 扩展示例
 //!
@@ -38,25 +34,15 @@ use crate::protocol::social::{SocialLoginProvider, SocialUserInfo};
 
 /// 错误码：社交登录 provider 未注册。
 ///
-/// `SocialLoginService::get_authorization_url` / `exchange_token` / `get_user_info`
-/// 在 provider 未注册时返回 `InvalidParam(loc!(ERR_SOCIAL_PROVIDER_NOT_REGISTERED, ...))`。
-/// 消费方（如 sinnan）用此常量做 `starts_with` 匹配，避免硬编码字符串契约。
+/// 三个委托方法在 provider 未注册时返回 `InvalidParam(loc!(ERR_SOCIAL_PROVIDER_NOT_REGISTERED, ...))`；消费方（如 sinnan）用 `starts_with` 匹配，避免硬编码字符串契约。
 pub const ERR_SOCIAL_PROVIDER_NOT_REGISTERED: &str = "social-provider-not-registered";
 
-/// 错误码：社交登录 provider 名称格式非法。
-///
-/// `SocialLoginService::register` 在 provider 名称未通过 `is_valid_provider_name` 校验时
-/// 返回 `InvalidParam(loc!(ERR_SOCIAL_PROVIDER_NAME_INVALID, ...))`。
+/// 错误码：社交登录 provider 名称格式非法（`register` 未通过 `is_valid_provider_name` 校验时返回）。
 pub const ERR_SOCIAL_PROVIDER_NAME_INVALID: &str = "social-provider-name-invalid";
 
-/// 社交登录注册中心。
+/// 社交登录注册中心：持有 `provider_name → Arc<dyn SocialLoginProvider>` 映射。
 ///
-/// 持有 `provider_name → Arc<dyn SocialLoginProvider>` 映射，提供注册/查找/委托调用 API。
-///
-/// # 线程安全
-///
-/// 内部用 `parking_lot::RwLock<HashMap>` 保护，支持并发读、互斥写。
-/// `register` / `unregister` 需要写锁，`get` / `list` / 委托方法用读锁。
+/// 内部 `parking_lot::RwLock<HashMap>` 支持并发读、互斥写（register/unregister 写锁，get/list/委托方法读锁）。
 pub struct SocialLoginService {
     providers: parking_lot::RwLock<HashMap<String, Arc<dyn SocialLoginProvider>>>,
 }
@@ -69,22 +55,11 @@ impl SocialLoginService {
         }
     }
 
-    /// 注册 provider。
-    ///
-    /// 若 `name` 已存在，覆盖旧值并返回被替换的 provider（`Option::Some`）。
-    ///
-    /// # 参数
-    /// - `name`: provider 名称（如 `"wechat"` / `"huawei"`，区分大小写）
-    /// - `provider`: `SocialLoginProvider` trait 实现
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: provider 名称格式非法（校验规则见
-    ///   [`is_valid_provider_name`](crate::protocol::social::validation::is_valid_provider_name)）
+    /// 注册 provider（`name` 已存在时覆盖并返回被替换的 provider）。
     ///
     /// # 安全
     ///
-    /// 在数据入口强制校验 provider 名称（防御编程 + 数据不变性原则），
-    /// 防止恶意 name 导致 DAO key 注入（`:`）、日志注入（`\n`）、SQL 注入等。
+    /// 在数据入口强制校验名称（防御编程 + 数据不变性原则），防恶意 name 造成 DAO key 注入（`:`）、日志注入（`\n`）、SQL 注入；格式非法返回 `GarrisonError::InvalidParam`（规则见 [`is_valid_provider_name`](crate::protocol::social::validation::is_valid_provider_name)）。
     pub fn register(
         &self,
         name: impl Into<String>,
@@ -102,9 +77,7 @@ impl SocialLoginService {
         Ok(map.insert(name, provider))
     }
 
-    /// 注销 provider。
-    ///
-    /// 返回被移除的 provider（`Option::Some`），若 `name` 不存在返回 `None`。
+    /// 注销 provider，返回被移除者（`name` 不存在返回 `None`）。
     pub fn unregister(&self, name: &str) -> Option<Arc<dyn SocialLoginProvider>> {
         let mut map = self.providers.write();
         map.remove(name)
@@ -122,10 +95,7 @@ impl SocialLoginService {
         map.keys().cloned().collect()
     }
 
-    /// 拼接授权页 URL（按 name 查找 provider 并委托）。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: provider 未注册
+    /// 拼接授权页 URL（按 name 查找 provider 并委托；未注册返回 `GarrisonError::InvalidParam`）。
     pub async fn get_authorization_url(
         &self,
         name: &str,
@@ -142,11 +112,7 @@ impl SocialLoginService {
         provider.get_authorization_url(state, redirect_uri).await
     }
 
-    /// 用授权码换取用户信息（按 name 查找 provider 并委托）。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: provider 未注册
-    /// - 其他错误由 provider 实现决定（网络/解析/平台错误码）
+    /// 用授权码换取用户信息（按 name 查找 provider 并委托；未注册返回 `InvalidParam`，其他错误由 provider 实现决定）。
     pub async fn exchange_token(
         &self,
         name: &str,
@@ -163,11 +129,7 @@ impl SocialLoginService {
         provider.exchange_token(code, state).await
     }
 
-    /// 用 access_token 获取用户信息（按 name 查找 provider 并委托）。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: provider 未注册
-    /// - 其他错误由 provider 实现决定
+    /// 用 access_token 获取用户信息（按 name 查找 provider 并委托；未注册返回 `InvalidParam`，其他错误由 provider 实现决定）。
     pub async fn get_user_info(
         &self,
         name: &str,
@@ -190,10 +152,7 @@ impl Default for SocialLoginService {
     }
 }
 
-/// `SocialProviderResolver` trait 实现（cfg `account-authflow`）。
-///
-/// 让 `SocialLoginService` 可直接作为 `AuthExecutor::execute_with_full` 的 `social_resolver` 参数，
-/// 避免 sinnan 重复实现 resolver。
+/// `SocialProviderResolver` 实现（cfg `account-authflow`）：可直接作为 `AuthExecutor::execute_with_full` 的 `social_resolver` 参数，避免 sinnan 重复实现 resolver。
 #[cfg(feature = "account-authflow")]
 #[async_trait]
 impl crate::account::authflow::executor::SocialProviderResolver for SocialLoginService {
@@ -259,9 +218,7 @@ mod tests {
         })
     }
 
-    // ========================================================================
     // register / get / unregister / list 测试
-    // ========================================================================
 
     #[test]
     fn register_stores_provider_and_get_returns_it() {
@@ -288,7 +245,6 @@ mod tests {
     fn register_rejects_invalid_provider_name() {
         let svc = SocialLoginService::new();
 
-        // 含冒号（DAO key 注入风险）
         let result = svc.register("a:b", make_stub("bad"));
         assert!(result.is_err(), "含冒号的 provider name 应拒绝");
 
@@ -298,7 +254,6 @@ mod tests {
         let result = svc.register("", make_stub("bad"));
         assert!(result.is_err(), "空字符串 provider name 应拒绝");
 
-        // 含换行符（日志注入风险）
         let result = svc.register("a\nb", make_stub("bad"));
         assert!(result.is_err(), "含换行符的 provider name 应拒绝");
 
@@ -348,9 +303,7 @@ mod tests {
         assert!(svc.list().is_empty(), "未注册任何 provider 时 list 应为空");
     }
 
-    // ========================================================================
     // 委托方法测试（get_authorization_url / exchange_token / get_user_info）
-    // ========================================================================
 
     #[tokio::test]
     async fn get_authorization_url_delegates_to_registered_provider() {
@@ -426,9 +379,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ========================================================================
     // 并发安全测试（parking_lot::RwLock）
-    // ========================================================================
 
     #[tokio::test(flavor = "multi_thread")]
     async fn concurrent_register_and_get_is_safe() {
@@ -455,9 +406,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // Default trait 测试
-    // ========================================================================
 
     #[test]
     fn default_creates_empty_service() {
@@ -465,9 +414,7 @@ mod tests {
         assert!(svc.list().is_empty());
     }
 
-    // ========================================================================
     // SocialProviderResolver 实现（cfg account-authflow）
-    // ========================================================================
 
     #[cfg(feature = "account-authflow")]
     #[tokio::test]

@@ -1,11 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! web_actix 模块集成测试。
-//!
-//! 覆盖 ResponseError、extract_token_from_headers、GarrisonRouter、
-//! GarrisonMiddleware（Transform/Service）、CheckLogin/CheckRole/CheckPermission
-//! FromRequest extractor 的行为。Mock 实现复用 `mock.rs`。
+//! web_actix 模块集成测试：覆盖 ResponseError、extract_token_from_headers、GarrisonRouter、
+//! GarrisonMiddleware（Transform/Service）、CheckLogin/CheckRole/CheckPermission FromRequest 行为；Mock 复用 `mock.rs`。
 
 use super::*;
 use crate::context::token_extract::extract_token_from_headers;
@@ -15,9 +12,7 @@ use actix_web::http::header::{self, HeaderMap, HeaderValue};
 use actix_web::http::StatusCode;
 use actix_web::ResponseError;
 
-// ========================================================================
 // ResponseError 测试
-// ========================================================================
 
 /// NotLogin → 401 + error_code=NOT_LOGIN。
 #[test]
@@ -87,9 +82,7 @@ fn error_response_contains_json_body() {
     );
 }
 
-// ========================================================================
 // extract_token_from_headers 测试
-// ========================================================================
 
 /// 从 Authorization: Bearer 提取 token。
 #[test]
@@ -178,9 +171,7 @@ fn extract_token_skips_header_when_disabled() {
     assert_eq!(token, None);
 }
 
-// ========================================================================
 // GarrisonRouter 测试
-// ========================================================================
 
 /// GarrisonRouter::new 初始化默认 interceptor。
 #[test]
@@ -207,8 +198,7 @@ fn router_into_middleware_transfers_state() {
         .route_protected("/api", Annotation::CheckLogin);
     let mw = router.into_middleware();
     assert_eq!(mw.rules.len(), 1);
-    // Arc<dyn GarrisonInterceptor> 无法直接做类型检查（dyn Trait 不实现 Any），
-    // 通过 rules + config 存在性验证 state 已正确传递。
+    // Arc<dyn GarrisonInterceptor> 无法直接做类型检查（dyn 不实现 Any），以 rules + config 存在性验证 state 传递
     assert!(Arc::strong_count(&mw.rules) >= 1);
 }
 
@@ -219,9 +209,7 @@ fn router_default_impl() {
     assert!(router.rules.is_empty());
 }
 
-// ========================================================================
-// Middleware + Extractor 测试（覆盖 Transform / Service / FromRequest）
-// ========================================================================
+// Middleware + Extractor 测试（Transform / Service / FromRequest）
 
 use super::mock::{MockDao, MockInterface};
 use crate::context::tenant::with_default_tenant;
@@ -231,9 +219,7 @@ use crate::stp::{GarrisonInterface, GarrisonUtil};
 use actix_web::{test, web, App};
 use serial_test::serial;
 
-// ----------------------------------------------------------------
 // 辅助函数
-// ----------------------------------------------------------------
 
 /// 创建测试配置（throw_on_not_login=false 便于未登录返回 NotLogin→401）。
 fn make_config() -> GarrisonConfig {
@@ -266,19 +252,10 @@ async fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]
         .unwrap();
 }
 
-// ----------------------------------------------------------------
 // GarrisonMiddleware Transform + Service 测试
-// ----------------------------------------------------------------
 //
-// 以下测试使用 `OkService` + `TestRequest::to_srv_request()` 直接调用
-// `GarrisonMiddlewareService::call`，覆盖鉴权逻辑的各个分支。
-//
-// 历史 BUG #8（已修复）：原实现在 `self.inner.call(req)` 之前执行
-// `req.request().clone()`，导致 `Rc` 引用计数为 2，路由层 `match_info_mut()`
-// 触发 panic。修复方案：添加 `S: Clone` 约束，先鉴权通过后才 `inner.call(req)`，
-// 失败则 `req.into_response(resp)`（无需 clone HttpRequest）。
-//
-// `middleware_works_in_real_app_chain` 测试使用 `App::wrap` 真实链路验证修复。
+// 以下测试用 `OkService` + `TestRequest::to_srv_request()` 直接调用 `GarrisonMiddlewareService::call` 覆盖各鉴权分支。
+// 鉴权约束：先鉴权通过才 `inner.call(req)`，不提前 clone HttpRequest（提前 clone 抬高 Rc 引用计数会触发路由层 panic）。
 
 /// 简单 inner service，直接返回 200 OK（用于 middleware 测试）。
 struct OkService;
@@ -316,9 +293,7 @@ async fn make_middleware_service(
     .unwrap()
 }
 
-/// 验证 middleware 放行未注册路径（无鉴权规则 → 直接执行 inner service）。
-///
-/// 覆盖 `GarrisonMiddlewareService::call` 中 `rule_annotation` 为 `None` 的分支。
+/// 放行未注册路径（无鉴权规则 → 直接执行 inner service；覆盖 `rule_annotation` 为 None 的分支）。
 #[tokio::test]
 #[serial]
 async fn middleware_allows_unprotected_path() {
@@ -334,9 +309,7 @@ async fn middleware_allows_unprotected_path() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 middleware 阻断受保护路径（无 token → 401）。
-///
-/// 覆盖 `GarrisonMiddlewareService::call` 中鉴权失败的 `Err` 分支。
+/// 阻断受保护路径（无 token → 401；覆盖鉴权失败 Err 分支）。
 #[tokio::test]
 #[serial]
 async fn middleware_blocks_protected_path_without_token() {
@@ -350,10 +323,7 @@ async fn middleware_blocks_protected_path_without_token() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 middleware 放行受保护路径（有效 token → 200）。
-///
-/// 覆盖 `GarrisonMiddlewareService::call` 中鉴权通过的 `Ok` 分支 +
-/// `with_current_token` 设置 task_local 路径。
+/// 放行受保护路径（有效 token → 200；覆盖 Ok 分支 + `with_current_token` 设置 task_local）。
 #[tokio::test]
 #[serial]
 async fn middleware_allows_protected_path_with_valid_token() {
@@ -371,9 +341,7 @@ async fn middleware_allows_protected_path_with_valid_token() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 middleware 阻断无权限访问（有效 token 但无权限 → 403）。
-///
-/// 覆盖 `GarrisonMiddlewareService::call` 中 `CheckPermission` 注解的鉴权失败分支。
+/// 阻断无权限访问（有效 token 但无权限 → 403；覆盖 CheckPermission 鉴权失败分支）。
 #[tokio::test]
 #[serial]
 async fn middleware_blocks_permission_denied() {
@@ -395,9 +363,7 @@ async fn middleware_blocks_permission_denied() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 middleware 放行 Ignore 注解路径（无 token → 200）。
-///
-/// 覆盖 `GarrisonMiddlewareService::call` 中 `Ignore` 注解放行分支。
+/// 放行 Ignore 注解路径（无 token → 200；覆盖 Ignore 放行分支）。
 #[tokio::test]
 #[serial]
 async fn middleware_allows_ignore_path_without_token() {
@@ -411,9 +377,7 @@ async fn middleware_allows_ignore_path_without_token() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 `Transform::new_transform` 直接调用返回 `GarrisonMiddlewareService`。
-///
-/// 覆盖 `Transform for GarrisonMiddleware` 的 `new_transform` 方法。
+/// `Transform::new_transform` 返回 `GarrisonMiddlewareService`。
 #[tokio::test]
 #[serial]
 async fn new_transform_returns_service() {
@@ -424,11 +388,8 @@ async fn new_transform_returns_service() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 middleware 在真实 `App::wrap` 链路下不触发 Rc panic（BUG #8 回归测试）。
-///
-/// 原 BUG：`req.request().clone()` 导致 Rc 引用计数为 2，路由层 `match_info_mut` panic。
-/// 修复后：先鉴权通过后才 `inner.call(req)`，失败则 `req.into_response(resp)`。
-/// 此测试使用 `App::wrap` + 真实路由，覆盖 OkService 无法触发的路由层路径。
+/// 真实 `App::wrap` 链路不触发 Rc panic（回归）：`req.request().clone()` 抬高 Rc 引用计数会致路由层 panic，
+/// 修复后先鉴权通过才 `inner.call(req)`；本测试覆盖 OkService 无法触发的路由层路径。
 #[tokio::test]
 #[serial]
 async fn middleware_works_in_real_app_chain() {
@@ -462,9 +423,7 @@ async fn middleware_works_in_real_app_chain() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
-// 租户解析中间件测试（tenant-isolation 生产场景缺口修复）
-// ----------------------------------------------------------------
+// 租户解析中间件测试（tenant-isolation 生产场景）
 
 /// 构建启用 `HeaderTenantResolver`（X-Tenant-Id）的 `GarrisonMiddlewareService<OkService>`。
 #[cfg(feature = "tenant-isolation")]
@@ -484,10 +443,7 @@ async fn make_middleware_service_with_header_tenant(
     .unwrap()
 }
 
-/// 验证未配置 TenantResolver 时，tenant-isolation 下 `CheckPermission` 鉴权 fail-closed（500）。
-///
-/// 覆盖修复前的生产缺口：中间件无租户上下文，`check_permission` 返回
-/// `ctx-tenant-context-missing` → 500。这是安全默认（fail-closed）。
+/// 未配置 TenantResolver 时 tenant-isolation 下 CheckPermission fail-closed（500：`ctx-tenant-context-missing`，安全默认）。
 #[cfg(feature = "tenant-isolation")]
 #[tokio::test]
 #[serial]
@@ -510,10 +466,7 @@ async fn middleware_without_tenant_resolver_fails_closed_on_permission() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证配置 `HeaderTenantResolver` 后，带 `X-Tenant-Id` 的鉴权请求通过（200）。
-///
-/// 覆盖生产场景修复主路径：中间件从请求头解析租户并进入 `TENANT.scope`，
-/// `check_permission` 获得租户上下文后正常鉴权。
+/// 配置 HeaderTenantResolver 后带 `X-Tenant-Id` 请求通过（200）：中间件解析租户并进入 `TENANT.scope`。
 #[cfg(feature = "tenant-isolation")]
 #[tokio::test]
 #[serial]
@@ -537,10 +490,7 @@ async fn middleware_with_header_tenant_allows_permission_with_tenant_header() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证配置 `HeaderTenantResolver` 后，缺失 `X-Tenant-Id` 的请求被拒绝（fail-closed）。
-///
-/// 覆盖租户解析失败路径：`HeaderTenantResolver` 缺失 header 时返回 `Config` 错误，
-/// 中间件透传为错误响应（500），不静默默认 0（失败显性化）。
+/// 配置 HeaderTenantResolver 后缺失 `X-Tenant-Id` 拒绝（500，fail-closed，不静默默认 0）。
 #[cfg(feature = "tenant-isolation")]
 #[tokio::test]
 #[serial]
@@ -563,7 +513,7 @@ async fn middleware_with_header_tenant_rejects_missing_tenant_header() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证配置 `HeaderTenantResolver` 后，非法 `X-Tenant-Id`（非 i64）的请求被拒绝。
+/// 配置 HeaderTenantResolver 后非法 `X-Tenant-Id`（非 i64）拒绝。
 #[cfg(feature = "tenant-isolation")]
 #[tokio::test]
 #[serial]
@@ -587,8 +537,7 @@ async fn middleware_with_header_tenant_rejects_invalid_tenant_header() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证配置 `HeaderTenantResolver` 后，租户上下文传播到 `CheckLogin` 注解路径
-/// 的鉴权（`check_login` 不校验租户但 scope 不报错，登录请求正常通过）。
+/// 租户上下文传播到 CheckLogin 路径（`check_login` 不校验租户但 scope 不报错，登录通过）。
 #[cfg(feature = "tenant-isolation")]
 #[tokio::test]
 #[serial]
@@ -609,13 +558,9 @@ async fn middleware_with_header_tenant_allows_check_login() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // CheckLogin / CheckRole / CheckPermission FromRequest 测试
-// ----------------------------------------------------------------
 
-/// 验证 CheckLogin extractor 在无 token 时返回 401。
-///
-/// 覆盖 `CheckLogin::from_request` 中 `extract_token_from_headers` 返回 `None` 的分支。
+/// 无 token 返回 401（覆盖 `extract_token_from_headers` 返回 None 分支）。
 #[tokio::test]
 #[serial]
 async fn extractor_check_login_returns_401_without_token() {
@@ -635,9 +580,7 @@ async fn extractor_check_login_returns_401_without_token() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 CheckLogin extractor 在有效 token 时通过。
-///
-/// 覆盖 `CheckLogin::from_request` 中 `with_current_token` + `check_login` 成功分支。
+/// 有效 token 通过（覆盖 `with_current_token` + `check_login` 成功分支）。
 #[tokio::test]
 #[serial]
 async fn extractor_check_login_passes_with_valid_token() {
@@ -661,9 +604,7 @@ async fn extractor_check_login_passes_with_valid_token() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 CheckLogin extractor 在无 app_data 时使用默认配置（无 token → 401）。
-///
-/// 覆盖 `CheckLogin::from_request` 中 `unwrap_or_else(|| Arc::new(default_config()))` 分支。
+/// 无 app_data 时回退默认配置（无 token → 401；覆盖 `default_config` 回退分支）。
 #[tokio::test]
 #[serial]
 async fn extractor_check_login_uses_default_config_without_app_data() {
@@ -678,9 +619,7 @@ async fn extractor_check_login_uses_default_config_without_app_data() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 CheckRole extractor 在无 token 时返回 401。
-///
-/// 覆盖 `CheckRole::from_request` 中 token 缺失分支。
+/// 无 token 返回 401（覆盖 token 缺失分支）。
 #[tokio::test]
 #[serial]
 async fn extractor_check_role_returns_401_without_token() {
@@ -700,9 +639,7 @@ async fn extractor_check_role_returns_401_without_token() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 CheckRole extractor 在无角色时返回 403。
-///
-/// 覆盖 `CheckRole::from_request` 中 `check_role` 失败分支。
+/// 无角色返回 403（覆盖 `check_role` 失败分支）。
 #[tokio::test]
 #[serial]
 async fn extractor_check_role_returns_403_without_role() {
@@ -727,9 +664,7 @@ async fn extractor_check_role_returns_403_without_role() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 CheckRole extractor 通过 `web::Data<RequiredRole>` 服务端配置角色。
-///
-/// 角色不再从客户端 header/query 读取，必须通过服务端配置。
+/// 角色经 `web::Data<RequiredRole>` 服务端配置生效（不再从客户端 header/query 读取）。
 #[tokio::test]
 #[serial]
 async fn extractor_check_role_reads_role_from_server_config() {
@@ -754,9 +689,7 @@ async fn extractor_check_role_reads_role_from_server_config() {
     GarrisonManager::reset_for_test();
 }
 
-/// 安全回归：客户端 `X-Garrison-Role` header 不应影响角色检查。
-///
-/// 攻击者发送 `X-Garrison-Role: admin` 不应绕过服务端配置的角色检查。
+/// 安全回归：客户端 `X-Garrison-Role: admin` 不应绕过服务端配置的角色检查。
 #[tokio::test]
 #[serial]
 async fn extractor_check_role_ignores_client_role_header() {
@@ -784,9 +717,7 @@ async fn extractor_check_role_ignores_client_role_header() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 CheckPermission extractor 在无 token 时返回 401。
-///
-/// 覆盖 `CheckPermission::from_request` 中 token 缺失分支。
+/// 无 token 返回 401（覆盖 token 缺失分支）。
 #[tokio::test]
 #[serial]
 async fn extractor_check_permission_returns_401_without_token() {
@@ -806,9 +737,7 @@ async fn extractor_check_permission_returns_401_without_token() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 CheckPermission extractor 在无权限时返回 403。
-///
-/// 覆盖 `CheckPermission::from_request` 中 `check_permission` 失败分支。
+/// 无权限返回 403（覆盖 `check_permission` 失败分支）。
 #[tokio::test]
 #[serial]
 async fn extractor_check_permission_returns_403_without_permission() {
@@ -835,9 +764,7 @@ async fn extractor_check_permission_returns_403_without_permission() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 CheckPermission extractor 通过 `web::Data<RequiredPermission>` 服务端配置权限。
-///
-/// 权限不再从客户端 header/query 读取，必须通过服务端配置。
+/// 权限经 `web::Data<RequiredPermission>` 服务端配置生效（不再从客户端 header/query 读取）。
 #[tokio::test]
 #[serial]
 async fn extractor_check_permission_reads_from_server_config() {
@@ -864,9 +791,7 @@ async fn extractor_check_permission_reads_from_server_config() {
     GarrisonManager::reset_for_test();
 }
 
-/// 安全回归：客户端 `?permission=` query param 不应影响权限检查。
-///
-/// 攻击者发送 `?permission=user:read` 不应绕过服务端配置的权限检查。
+/// 安全回归：客户端 `?permission=` query param 不应绕过服务端配置的权限检查。
 #[tokio::test]
 #[serial]
 async fn extractor_check_permission_ignores_client_query_param() {
@@ -895,9 +820,7 @@ async fn extractor_check_permission_ignores_client_query_param() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
-// extractor handler 函数（使用 FromRequest extractor）
-// ----------------------------------------------------------------
+// extractor handler 函数
 
 /// 使用 CheckLogin extractor 的 handler。
 async fn check_login_handler(_auth: CheckLogin) -> &'static str {
@@ -914,14 +837,9 @@ async fn check_permission_handler(_auth: CheckPermission) -> &'static str {
     "ok"
 }
 
-// ========================================================================
-// 覆盖率补测：GarrisonRouter::with_interceptor / with_tenant_resolver
-// ========================================================================
+// 覆盖率补测：with_interceptor / with_tenant_resolver
 
-/// with_interceptor 注入自定义拦截器，受保护路径鉴权时会执行它。
-///
-/// 覆盖 `router.rs` 中 `with_interceptor` 方法体（替换默认
-/// `DefaultGarrisonInterceptor`），并通过 middleware 真实调用验证拦截器生效。
+/// with_interceptor 注入自定义拦截器并经 middleware 真实调用验证生效（覆盖方法体）。
 #[tokio::test]
 #[serial]
 async fn router_with_interceptor_invoked_on_protected_path() {
@@ -952,8 +870,7 @@ async fn router_with_interceptor_invoked_on_protected_path() {
     .await
     .unwrap();
 
-    // interceptor 即鉴权决策点：RecordingInterceptor 恒放行 Ok(())，
-    // 受保护路径因此通过（200），证明自定义拦截器完全接管鉴权语义
+    // interceptor 即鉴权决策点：RecordingInterceptor 恒放行，受保护路径通过（200），证明其完全接管鉴权语义
     let req = test::TestRequest::get().uri("/protected").to_srv_request();
     let resp = service.call(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -966,10 +883,7 @@ async fn router_with_interceptor_invoked_on_protected_path() {
     GarrisonManager::reset_for_test();
 }
 
-/// with_tenant_resolver 两态：默认 `None`（不提取租户），注入后为 `Some`。
-///
-/// 覆盖 `router.rs` 中 `with_tenant_resolver` 方法体（`tenant_resolver` 的
-/// None → Some 状态转换）。
+/// with_tenant_resolver 两态：默认 None（不提取租户），注入后 Some（覆盖 None → Some 转换）。
 #[tokio::test]
 #[serial]
 async fn router_with_tenant_resolver_states_none_and_some() {
@@ -1000,8 +914,7 @@ async fn router_with_tenant_resolver_states_none_and_some() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证通用 `with_tenant_resolver(HeaderTenantResolver)` 入口与
-/// `with_header_tenant` 便捷方法行为一致：带 `X-Tenant-Id` 的
+/// `with_tenant_resolver(HeaderTenantResolver)` 与 `with_header_tenant` 行为一致：带 `X-Tenant-Id` 的
 /// `CheckPermission` 请求在 tenant-isolation 下鉴权通过（200）。
 #[cfg(feature = "tenant-isolation")]
 #[tokio::test]

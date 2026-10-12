@@ -35,7 +35,6 @@ pub struct InMemoryDao {
 }
 
 impl InMemoryDao {
-    /// 创建 InMemoryDao 实例。
     pub fn new() -> Self {
         Self {
             store: Mutex::new(HashMap::new()),

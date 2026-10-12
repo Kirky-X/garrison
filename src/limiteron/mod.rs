@@ -3,9 +3,8 @@
 
 //! limiteron 适配器模块。
 //!
-//! 提供 3 个适配器，将 `GarrisonDao` 桥接到 limiteron 的 `Storage` /
-//! `BanStorage` / `DistributedLimiter` trait，使 garrison 的限速/封禁策略可以
-//! 委托 limiteron 的统一抽象。
+//! 提供 3 个适配器，将 `GarrisonDao` 桥接到 limiteron 的 `Storage` / `BanStorage` /
+//! `DistributedLimiter` trait，使 garrison 的限速/封禁策略可以委托 limiteron 的统一抽象。
 //!
 //! # 适配器清单
 //!

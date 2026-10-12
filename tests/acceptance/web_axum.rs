@@ -4,21 +4,17 @@
 //! axum 域深度验收矩阵。
 //!
 //! 在 `web_smoke` 的 CheckLogin 冒烟基线（spawn_axum 全链路）之上做深度矩阵：
-//! - 中间件 token 来源矩阵：Authorization header / Cookie（`garrison_token`）/
-//!   header 优先于 cookie（oneshot 直连 `GarrisonRouter`）；
-//! - per-handler extractor 矩阵：`CheckLogin` / `CheckPermission` / `CheckRole`
-//!   通过与 401/403（`PermissionName` / `RoleName` 类型化 marker）；
-//! - 注解宏 `#[check_login]` / `#[check_permission]` / `#[check_role]`
-//!   包装 handler 的编译与运行（`annotation-macros` 门控）；
-//! - Web 安全件：WAF（`firewall-waf`，原 `web-waf` 已废弃合并）、CORS、
-//!   CSRF、安全响应头——正常放行 + 异常拦截。
+//! 中间件 token 来源矩阵（Authorization header / Cookie / header 优先于 cookie，
+//! oneshot 直连 `GarrisonRouter`）、per-handler extractor 矩阵（`CheckLogin` /
+//! `CheckPermission` / `CheckRole` 通过与 401/403，`PermissionName` / `RoleName`
+//! 类型化 marker）、注解宏 `#[check_login]` / `#[check_permission]` / `#[check_role]`
+//! 包装 handler 的编译与运行（`annotation-macros` 门控）、Web 安全件：WAF
+//! （`firewall-waf`）、CORS、CSRF、安全响应头——正常放行 + 异常拦截。
 //!
-//! 错误断言统一锚定 `GarrisonError::response_parts()` / `to_json_body()`
-//! （src/error.rs，三框架一致性基准）：状态码对齐 `response_parts().0`，
-//! 响应体 JSON 与 `to_json_body()` 全等。
+//! 错误断言统一锚定 `GarrisonError::response_parts()` / `to_json_body()`（三框架一致性
+//! 基准）：状态码对齐 `response_parts().0`，响应体 JSON 与 `to_json_body()` 全等。
 //!
-//! 涉及 `GarrisonManager` 全局单例的用例一律 `#[serial]`（common/harness 约束）；
-//! 纯中间件用例不触碰单例，可并行。
+//! 涉及 `GarrisonManager` 全局单例的用例一律 `#[serial]`；纯中间件用例不触碰单例，可并行。
 
 #![cfg(feature = "web-axum")]
 
@@ -937,7 +933,7 @@ async fn acc_wax_014_invalid_token_rejected_by_middleware_and_extractor() {
     )
     .await;
 
-    // （c）响应体不泄漏内部细节（原 unauthorized_response_body_contains_error_json）
+    // （c）响应体不泄漏内部细节
     let resp = app
         .oneshot(get_request("/protected", Some("invalid-token")))
         .await
@@ -985,9 +981,8 @@ async fn acc_wax_015_macro_check_login_strict_forwards_error() {
     );
 }
 
-/// （正常+异常）：`#[check_permission]` 多参数 AND 语义——
-/// 同时持有 `user:read` + `user:write` 放行 200 + 原 body；仅持部分权限拒绝 403
-/// + NOT_PERMISSION（原 `check_permission_and_all/partial_returns_*`）。
+/// （正常+异常）：`#[check_permission]` 多参数 AND 语义——同时持有 `user:read` +
+/// `user:write` 放行 200 + 原 body；仅持部分权限拒绝 403 + NOT_PERMISSION。
 #[cfg(feature = "annotation-macros")]
 #[tokio::test]
 #[serial]
@@ -1029,9 +1024,8 @@ async fn acc_wax_016_macro_check_permission_and_semantics() {
     );
 }
 
-/// （正常+异常）：`#[check_role]` 多角色 AND 语义——
-/// 同时持有 `admin` + `superadmin` 放行 200 + 原 body；仅持部分角色拒绝 403
-/// + NOT_ROLE（原 `check_role_and_all/partial_returns_*`）。
+/// （正常+异常）：`#[check_role]` 多角色 AND 语义——同时持有 `admin` + `superadmin`
+/// 放行 200 + 原 body；仅持部分角色拒绝 403 + NOT_ROLE。
 #[cfg(feature = "annotation-macros")]
 #[tokio::test]
 #[serial]
@@ -1355,10 +1349,8 @@ async fn acc_wax_024_macro_check_abac_without_engine_fail_closed() {
     );
 }
 
-/// （正常+异常）：`#[check_abac]` 引擎已初始化——Allow 策略
-///（`principal == principal`）放行 200 + 原 body；Deny 策略（`principal !=
-/// principal`）拒绝 403。schema / `EmptyEntityLoader` 装配
-///（原 `check_abac_engine_initialized_allow/deny_returns_*`，同场景合并）。
+/// （正常+异常）：`#[check_abac]` 引擎已初始化——Allow 策略（`principal == principal`）
+/// 放行 200 + 原 body；Deny 策略（`principal != principal`）拒绝 403。
 #[cfg(all(feature = "annotation-macros", feature = "abac", feature = "testing"))]
 #[tokio::test]
 #[serial]

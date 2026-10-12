@@ -345,7 +345,6 @@ mod tests {
             .expect("find 应成功")
             .expect("会话应存在");
 
-        // 等待 1 秒确保时间戳不同
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
         repo.update_last_active(1, &session_id)
@@ -621,9 +620,7 @@ mod tests {
         assert!(result.is_empty(), "空租户 list 应返回空");
     }
 
-    // ========================================================================
     // DROP TABLE 错误路径测试：覆盖 map_err 闭包
-    // ========================================================================
 
     /// 删除 app_session 表后 find_by_user_id 应返回 Dao 错误。
     #[tokio::test(flavor = "multi_thread")]

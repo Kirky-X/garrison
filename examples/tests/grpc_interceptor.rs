@@ -1,14 +1,10 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! grpc_interceptor 示例测试（grpc feature）。
-//!
-//! 验证 GarrisonGrpcInterceptor + with_current_token async 鉴权模式：
-//! - `extract_token` 各种格式（Bearer/bearer/BEARER/裸 token/空）
-//! - `Interceptor::call()` 同步拦截行为
-//! - `authenticate_request()` 完整 async 鉴权（合法/非法 token）
-//!
-//! 使用 `#[serial_test::serial]` 串行化，因为 `setup()` 修改全局 `GarrisonManager` 单例。
+//! grpc_interceptor 示例测试（grpc feature）：验证 GarrisonGrpcInterceptor + with_current_token async
+//! 鉴权模式——`extract_token` 各格式提取（Bearer/bearer/BEARER/裸 token/空）、`Interceptor::call()` 同步
+//! 拦截行为、`authenticate_request()` 完整 async 鉴权（合法/非法 token）；用 `#[serial_test::serial]`
+//! 串行化，因为 `setup()` 修改全局 `GarrisonManager` 单例。
 
 #![cfg(feature = "grpc")]
 
@@ -22,7 +18,6 @@ use tonic::service::Interceptor;
 async fn test_interceptor_new_and_clone() {
     let i1 = garrison::grpc::GarrisonGrpcInterceptor::new();
     let _i2 = i1.clone();
-    // 不 panic 即通过
 }
 
 #[tokio::test(flavor = "multi_thread")]

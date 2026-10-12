@@ -5,12 +5,6 @@
 //!
 //! 实现 `GarrisonContext` / `GarrisonRequest` / `GarrisonResponse` / `GarrisonStorage` trait，
 //! 将 Garrison 鉴权逻辑与 axum Web 框架解耦。
-//!
-//! ## 设计
-//!
-//! - `AxumRequest` 包装 `&http::Request<axum::body::Body>`（不可变引用）
-//! - `AxumResponse` 持有 `HeaderMap + StatusCode`，`to_response()` 转换为 axum Response
-//! - `AxumStorage` 用 `HashMap<String, String>`，请求结束自动清理
 
 use crate::config::GarrisonConfig;
 use crate::context::token_extract::{extract_token_from_request_parts, parse_cookie_value};
@@ -20,42 +14,24 @@ use axum::body::Body;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode};
 use std::collections::HashMap;
 
-// ============================================================================
 // AxumRequest：包装 &http::Request<Body>
-// ============================================================================
 
 /// axum 请求适配器，包装 `&http::Request<Body>`。
 pub struct AxumRequest<'a> {
     request: &'a Request<Body>,
-    /// 预读的 body 字节（用于 `is_read_body=true` 时从 JSON 提取 token）。
+    /// 预读的 body 字节（`is_read_body=true` 时从 JSON 提取 token）；默认空 `Vec`，此时 body 分支跳过。
     ///
-    /// body 读取是 async 操作，但 `get_token` 是 sync 方法，故由调用方在
-    /// async 上下文中预读 body 字节后通过 `with_body` 注入。
-    /// 默认空 `Vec`（`new` 构造时），此时 body 读取分支静默跳过。
+    /// body 读取是 async 操作而 `get_token` 是 sync 方法，故由调用方在 async 上下文中预读后经 `with_body` 注入。
     body_bytes: Vec<u8>,
 }
 
 impl<'a> AxumRequest<'a> {
     /// 创建新的 AxumRequest（body 为空，不读取 body）。
-    ///
-    /// # 参数
-    /// - `request`: axum `Request<Body>` 引用，生命周期绑定到返回的 `AxumRequest`。
-    ///
-    /// # 返回
-    /// 包装该请求引用的 `AxumRequest` 实例（`body_bytes` 为空）。
     pub fn new(request: &'a Request<Body>) -> Self {
         Self::with_body(request, Vec::new())
     }
 
-    /// 创建带预读 body 的 AxumRequest（用于 `is_read_body=true` 场景）。
-    ///
-    /// # 参数
-    /// - `request`: axum `Request<Body>` 引用。
-    /// - `body_bytes`: 预读的 body 字节（调用方在 async 上下文中通过
-    ///   `http_body_util::BodyExt::collect` 等方式读取后传入）。
-    ///
-    /// # 返回
-    /// 包装该请求引用与 body 字节的 `AxumRequest` 实例。
+    /// 创建带预读 body 的 AxumRequest（`is_read_body=true` 场景，body 由调用方在 async 上下文读取）。
     pub fn with_body(request: &'a Request<Body>, body_bytes: Vec<u8>) -> Self {
         Self {
             request,
@@ -106,9 +82,7 @@ impl<'a> GarrisonRequest for AxumRequest<'a> {
     }
 }
 
-// ============================================================================
 // AxumResponse：持有 HeaderMap + StatusCode
-// ============================================================================
 
 /// axum 响应适配器，持有 HeaderMap 与 StatusCode，`to_response()` 转换为 axum Response。
 pub struct AxumResponse {
@@ -133,10 +107,7 @@ impl Default for AxumResponse {
 }
 
 impl AxumResponse {
-    /// 转换为 axum Response（空 body）。
-    ///
-    /// # 返回
-    /// 携带当前 `HeaderMap` 与 `StatusCode` 的 axum `Response`（body 为空）。
+    /// 转换为 axum Response（空 body，携带当前 `HeaderMap` 与 `StatusCode`）。
     pub fn to_response(self) -> axum::response::Response {
         let mut response = axum::response::Response::new(Body::empty());
         *response.status_mut() = self.status;
@@ -165,9 +136,7 @@ impl GarrisonResponse for AxumResponse {
     }
 }
 
-// ============================================================================
 // AxumStorage：HashMap<String, String>
-// ============================================================================
 
 /// axum 存储适配器，用 HashMap 实现请求级临时存储。
 pub struct AxumStorage {
@@ -205,32 +174,21 @@ impl GarrisonStorage for AxumStorage {
     }
 }
 
-// ============================================================================
 // AxumContext：组合 Request + Response
-// ============================================================================
 
-/// axum 上下文适配器，组合 Request 引用 + Response。
+/// axum 上下文适配器，组合 Request 引用 + Response：仅持有 `&Request<Body>` 与 `AxumResponse`，
+/// 经 `into_response()` 消费 context 生成 axum Response。
 ///
-/// # 设计
-///
-/// - 仅持有 `&Request<Body>` 引用 + `AxumResponse`
-/// - 通过 `into_response()` 消费 context 生成 axum Response
-/// - 不再提供 `response()` / `storage()` trait 方法（返回新实例违反 trait 契约）
+/// 不提供 `response()` / `storage()` trait 方法（返回新实例违反 trait 契约）。
 pub struct AxumContext<'a> {
     request: &'a Request<Body>,
     response: AxumResponse,
-    /// 预读的 body 字节（用于 `is_read_body=true` 时从 JSON 提取 token）。
+    /// 预读的 body 字节（`is_read_body=true` 时从 JSON 提取 token）。
     body_bytes: Vec<u8>,
 }
 
 impl<'a> AxumContext<'a> {
     /// 创建新的 AxumContext，绑定到指定请求（body 为空，不读取 body）。
-    ///
-    /// # 参数
-    /// - `request`: axum `Request<Body>` 引用，生命周期绑定到返回的 `AxumContext`。
-    ///
-    /// # 返回
-    /// 绑定该请求的 `AxumContext` 实例（内部已初始化空的 `AxumResponse`，`body_bytes` 为空）。
     pub fn new(request: &'a Request<Body>) -> Self {
         Self {
             request,
@@ -239,14 +197,7 @@ impl<'a> AxumContext<'a> {
         }
     }
 
-    /// 创建带预读 body 的 AxumContext（用于 `is_read_body=true` 场景）。
-    ///
-    /// # 参数
-    /// - `request`: axum `Request<Body>` 引用。
-    /// - `body_bytes`: 预读的 body 字节（调用方在 async 上下文中读取后传入）。
-    ///
-    /// # 返回
-    /// 绑定该请求与 body 字节的 `AxumContext` 实例。
+    /// 创建带预读 body 的 AxumContext（`is_read_body=true` 场景，body 由调用方在 async 上下文读取）。
     pub fn with_body(request: &'a Request<Body>, body_bytes: Vec<u8>) -> Self {
         Self {
             request,
@@ -255,10 +206,7 @@ impl<'a> AxumContext<'a> {
         }
     }
 
-    /// 获取底层请求引用。
-    ///
-    /// # 返回
-    /// 底层 `&Request<Body>` 引用，用于直接访问 axum 原生请求字段。
+    /// 获取底层请求引用，用于直接访问 axum 原生请求字段。
     pub fn raw_request(&self) -> &Request<Body> {
         self.request
     }
@@ -273,10 +221,7 @@ impl<'a> AxumContext<'a> {
         &mut self.response
     }
 
-    /// 消费 context，生成 axum Response。
-    ///
-    /// # 返回
-    /// 由内部 `AxumResponse` 转换而来的 axum `Response`（携带已设置的 status 与 headers）。
+    /// 消费 context，生成 axum Response（携带已设置的 status 与 headers）。
     pub fn into_response(self) -> axum::response::Response {
         self.response.to_response()
     }
@@ -284,9 +229,7 @@ impl<'a> AxumContext<'a> {
 
 impl<'a> GarrisonContext for AxumContext<'a> {
     fn request(&self) -> GarrisonResult<Box<dyn GarrisonRequest>> {
-        // 注意：这里创建 AxumRequest 需要借用 self.request
-        // 但 AxumRequest<'a> 的生命周期与 self 不同
-        // 简化方案：直接克隆必要数据，避免生命周期问题
+        // Box<dyn GarrisonRequest> 不能带生命周期参数，故克隆必要数据
         Ok(Box::new(AxumRequestWrapper::with_body(
             self.request,
             self.body_bytes.clone(),
@@ -294,14 +237,9 @@ impl<'a> GarrisonContext for AxumContext<'a> {
     }
 }
 
-/// AxumRequest 包装器（绕过 Box<dyn> 的生命周期问题）。
+/// AxumRequest 包装器（绕过 `Box<dyn>` 的生命周期问题）：持有 HeaderMap + Method + Uri 的克隆。
 ///
-/// 由于 `Box<dyn GarrisonRequest>` 不能带生命周期参数，
-/// 这里用 Arc 或克隆必要数据。简化方案：直接持有 &Request 的原始指针（不安全），
-/// 或者改为克隆 HeaderMap。
-///
-/// 当前简化实现：持有 Request<Body> 的克隆（Body 不能克隆），
-/// 因此改为只持有 HeaderMap + Method + Uri。
+/// 不持有 `Request<Body>`，因 Body 不可克隆。
 struct AxumRequestWrapper {
     headers: HeaderMap,
     method: String,
@@ -323,7 +261,6 @@ impl AxumRequestWrapper {
 
 impl GarrisonRequest for AxumRequestWrapper {
     fn path(&self) -> GarrisonResult<String> {
-        // uri 是完整 URI，提取 path 部分
         Ok(self.uri.split('?').next().unwrap_or(&self.uri).to_string())
     }
 
@@ -390,10 +327,7 @@ mod tests {
         builder.body(Body::from(body.to_string())).unwrap()
     }
 
-    // ========================================================================
     // AxumRequest 测试
-    // ========================================================================
-
     /// 验证 path() 返回请求路径。
     #[test]
     fn axum_request_path() {
@@ -439,10 +373,7 @@ mod tests {
         assert_eq!(axum_req.cookie("missing").unwrap(), None);
     }
 
-    // ========================================================================
     // get_token 测试（GarrisonRequest）
-    // ========================================================================
-
     /// 验证从 Authorization: Bearer 提取 token。
     #[test]
     fn get_token_from_bearer_header() {
@@ -453,10 +384,7 @@ mod tests {
         assert_eq!(token, Some("my_token_123".to_string()));
     }
 
-    /// 验证 Bearer 前缀大小写不敏感。
-    ///
-    /// 覆盖 `strip_bearer_prefix` 的 `eq_ignore_ascii_case` 分支：
-    /// `bearer xxx` / `BEARER xxx` / `BeArEr xxx` 均应能提取 token。
+    /// Bearer 前缀大小写不敏感（RFC 7235）：`bearer` / `BEARER` / `BeArEr` 均应能提取 token。
     #[test]
     fn bearer_prefix_case_insensitive() {
         let config = GarrisonConfig::default_config();
@@ -541,10 +469,7 @@ mod tests {
         assert_eq!(token, None);
     }
 
-    // ========================================================================
     // AxumResponse 测试（GarrisonResponse）
-    // ========================================================================
-
     /// 验证 set_status 设置状态码。
     #[test]
     fn response_set_status() {
@@ -583,8 +508,7 @@ mod tests {
         assert!(set_cookie.contains("Path=/"));
     }
 
-    /// 含 `;`、控制字符等非法字符的 cookie name/value
-    /// 必须被拒绝，不得拼入 Set-Cookie 头（防 Domain 等属性注入）。
+    /// 含 `;`、控制字符等非法字符的 cookie name/value 必须被拒绝，不得拼入 Set-Cookie 头（防属性注入）。
     #[test]
     fn response_set_cookie_rejects_injection() {
         let mut resp = AxumResponse::new();
@@ -631,8 +555,7 @@ mod tests {
         assert!(set_cookie.contains("SameSite=Strict"));
     }
 
-    /// set_cookie_with_config 在 SameSite=None + 非 Secure 上下文下降级为 Lax
-    /// （None→Lax 不变式：浏览器拒收不带 Secure 的 SameSite=None）。
+    /// set_cookie_with_config 在 SameSite=None + 非 Secure 上下文下降级为 Lax（浏览器拒收不带 Secure 的 None）。
     #[test]
     fn response_set_cookie_none_insecure_downgrades_to_lax() {
         let mut resp = AxumResponse::new();
@@ -684,9 +607,7 @@ mod tests {
     #[test]
     fn response_invalid_status_errors() {
         let mut resp = AxumResponse::new();
-        // 999 是合法 u16 但不是标准 HTTP 状态码，from_u16 接受任何 u16
-        // 用 70000 测试... 不行，u16 最大 65535
-        // 用非标准但合法的值验证 set_status 不抛错
+        // from_u16 接受任意 u16（含非标准状态码），此处仅验证合法值不抛错
         assert!(resp.set_status(200).is_ok());
         assert!(resp.set_status(500).is_ok());
     }
@@ -704,10 +625,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // AxumStorage 测试（GarrisonStorage）
-    // ========================================================================
-
     /// 验证 set/get 存储数据。
     #[test]
     fn storage_set_get() {
@@ -728,14 +646,12 @@ mod tests {
         assert_eq!(storage.get("key1").unwrap(), None);
     }
 
-    /// 验证请求间隔离。
+    /// 验证请求间隔离：两个独立 storage 互不影响。
     #[test]
     fn storage_request_isolation() {
-        // 请求 A
         let mut storage_a = AxumStorage::new();
         storage_a.set("trace_id", "A").unwrap();
 
-        // 请求 B（独立 storage）
         let mut storage_b = AxumStorage::new();
         storage_b.set("trace_id", "B").unwrap();
 
@@ -750,10 +666,7 @@ mod tests {
         assert_eq!(storage.get("missing").unwrap(), None);
     }
 
-    // ========================================================================
     // AxumContext 测试
-    // ========================================================================
-
     /// 验证 AxumContext 创建并访问 request/response/storage。
     #[test]
     fn context_creation() {
@@ -780,18 +693,14 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
-    // ========================================================================
-    // 新增测试：覆盖 AxumRequest 的错误分支与边界
-    // ========================================================================
-
+    // AxumRequest 错误分支与边界测试
     /// 验证 AxumRequest::header() 在 header name 非法时返回 Context 错误。
     #[test]
     fn axum_request_header_invalid_name_errors() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let req = make_request("/", "GET", &[]);
         let axum_req = AxumRequest::new(&req);
-        // header name 不能包含空格
         let result = axum_req.header("invalid header");
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -816,17 +725,13 @@ mod tests {
         assert_eq!(axum_req.cookie("invalidpair").unwrap(), None);
     }
 
-    // ========================================================================
-    // 新增测试：覆盖 AxumResponse 错误分支与 Default 实现
-    // ========================================================================
-
+    // AxumResponse 错误分支与 Default 实现测试
     /// 验证 AxumResponse::set_status() 在状态码非法（> 999）时返回 Context 错误。
     #[test]
     fn axum_response_set_status_invalid_code_errors() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let mut resp = AxumResponse::new();
-        // StatusCode::from_u16 仅接受 0..=999
         let result = resp.set_status(1000);
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -837,10 +742,9 @@ mod tests {
     /// 验证 AxumResponse::set_header() 在 header value 非法时返回 Context 错误。
     #[test]
     fn axum_response_set_header_invalid_value_errors() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let mut resp = AxumResponse::new();
-        // header value 不能包含控制字符（如 '\0'）
         let result = resp.set_header("X-Test", "bad\0value");
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -863,10 +767,7 @@ mod tests {
         assert_eq!(storage.get("any").unwrap(), None);
     }
 
-    // ========================================================================
-    // 新增测试：覆盖 AxumRequestWrapper（通过 AxumContext::request() 访问）
-    // ========================================================================
-
+    // AxumRequestWrapper 测试（通过 AxumContext::request() 访问）
     /// 验证 AxumContext::request() 返回的 wrapper 正确提取 path（去掉 query string）。
     #[test]
     fn axum_context_wrapper_path_strips_query() {
@@ -905,7 +806,7 @@ mod tests {
     /// 验证 AxumContext::request() 返回的 wrapper 在 header name 非法时返回 Context 错误。
     #[test]
     fn axum_context_wrapper_header_invalid_name_errors() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let req = make_request("/", "GET", &[]);
         let ctx = AxumContext::new(&req);
@@ -973,9 +874,7 @@ mod tests {
         assert_eq!(token, None);
     }
 
-    /// 验证 AxumContext::request() 返回的 wrapper 从 Authorization: Bearer 提取 token
-    /// 时大小写不敏感（RFC 7235）。回归 P1-2：原实现用 `strip_prefix("Bearer ")`
-    /// 大小写敏感，与 AxumRequest::get_token（用 strip_bearer_prefix）不一致。
+    /// wrapper 从 Authorization: Bearer 提取 token 时大小写不敏感（RFC 7235）。
     #[test]
     fn axum_context_wrapper_bearer_case_insensitive() {
         let config = GarrisonConfig::default_config();
@@ -994,10 +893,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // 新增测试：覆盖 AxumContext::response() / storage() / into_response()
-    // ========================================================================
-
+    // AxumContext::raw_response_mut() / into_response() 测试
     /// 验证 AxumContext::raw_response_mut() 返回可写的内部 response 引用。
     #[test]
     fn axum_context_raw_response_mut_writable() {
@@ -1025,14 +921,10 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
-    // ========================================================================
     // body 读取分支测试（is_read_body=true）
-    // ========================================================================
-
-    /// `is_read_body=true` 且 header/cookie 无 token 时，从 body JSON 提取 token。
+    /// `is_read_body=true` 且 header/cookie 无 token 时从 body JSON（`{"token": "abc123"}`）提取 token。
     ///
-    /// 优先级：header > cookie > body。本测试 header/cookie 均无 token，
-    /// body 为 `{"token": "abc123"}`，应提取到 "abc123"。
+    /// 优先级：header > cookie > body。
     #[test]
     fn extract_token_from_body_when_is_read_body_true() {
         let body_str = r#"{"token": "abc123"}"#;
@@ -1055,10 +947,7 @@ mod tests {
         );
     }
 
-    /// `is_read_body=true` 但 body 无 token 字段时，回退到 header 读取。
-    ///
-    /// 优先级：header > cookie > body。本测试 header 有 `Authorization: Bearer`，
-    /// body 为 `{"other": "value"}`（无 token 字段），应返回 header 的 token。
+    /// `is_read_body=true` 但 body 无 token 字段时回退到 header 读取（优先级：header > cookie > body）。
     #[test]
     fn extract_token_fallback_to_header_when_body_empty() {
         let body_str = r#"{"other": "value"}"#;
@@ -1084,14 +973,8 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // C7: body token 提取方法限制测试（防 body 注入攻击）
-    // ========================================================================
-
-    /// C7: GET 方法 + body 含 token + is_read_body=true 应跳过 body 提取。
-    ///
-    /// 直接测试 `AxumRequest::get_token`。GET 方法不应从 body 提取 token，
-    /// 否则攻击者可通过 `<img src="...?token=...">` 注入恶意 token。
+    /// C7: GET 方法 + body 含 token 应跳过 body 提取（否则攻击者可经 `<img src="...?token=...">` 注入）。
     #[test]
     fn c7_axum_request_get_method_skips_body_token() {
         let body_str = r#"{"garrison_token":"body_token_should_be_skipped"}"#;
@@ -1113,9 +996,7 @@ mod tests {
         );
     }
 
-    /// C7: POST 方法 + body 含 token + is_read_body=true 应正常提取。
-    ///
-    /// 直接测试 `AxumRequest::get_token`。POST 方法允许从 body 提取 token。
+    /// C7: POST 方法 + body 含 token 应正常提取。
     #[test]
     fn c7_axum_request_post_method_allows_body_token() {
         let body_str = r#"{"garrison_token":"body_token_ok"}"#;
@@ -1138,10 +1019,7 @@ mod tests {
         );
     }
 
-    /// C7: GET 方法 + body 含 token + is_read_body=true 应跳过 body 提取（通过 AxumContext，验证 Wrapper）。
-    ///
-    /// 通过 `AxumContext::with_body` + `request()` 测试 `AxumRequestWrapper::get_token`，
-    /// 确保 Wrapper 路径也正确应用 C7 method 限制。
+    /// C7: GET 方法应跳过 body 提取（经 AxumContext + request() 验证 Wrapper 路径同样受方法限制）。
     #[test]
     fn c7_axum_context_get_method_skips_body_token_via_wrapper() {
         let body_str = r#"{"garrison_token":"wrapper_skipped"}"#;
@@ -1164,9 +1042,7 @@ mod tests {
         );
     }
 
-    /// C7: PUT/PATCH 方法 + body 含 token + is_read_body=true 应正常提取（通过 AxumContext）。
-    ///
-    /// 通过 `AxumContext::with_body` + `request()` 验证 PUT/PATCH 也允许提取 token。
+    /// C7: PUT/PATCH 方法应允许从 body 提取 token（经 AxumContext + request()）。
     #[test]
     fn c7_axum_context_put_patch_methods_allow_body_token_via_wrapper() {
         for method in &["PUT", "PATCH"] {

@@ -1,24 +1,15 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! FlowRegistry inventory 注册。
-//! 提供认证流程的编译期注册（`inventory::submit!`）与运行期查询/追加。
+//! FlowRegistry inventory 注册：认证流程的编译期注册（`inventory::submit!`）与运行期查询/追加。
 //!
-//! # 编译期注册
-//!
-//! 通过 [`inventory::submit!`](macro@inventory::submit) 注册 [`FlowRegistration`]，
-//! [`FlowRegistry::from_inventory`] 收集所有注册项并构造查询表。
-//!
-//! # 运行期追加
-//!
-//! [`FlowRegistry::register`] 可在运行期追加自定义 flow，同名 flow 覆盖默认值。
+//! [`FlowRegistry::from_inventory`] 收集所有 [`FlowRegistration`] 注册项构造查询表；
+//! [`FlowRegistry::register`] 可在运行期追加自定义 flow，同名覆盖默认值。
 
 use super::AuthenticationFlow;
 use std::collections::HashMap;
 
-/// 认证流程编译期注册项。
-///
-/// 通过 `inventory::submit! { FlowRegistration { name, flow } }` 在编译期注册。
+/// 认证流程编译期注册项（经 `inventory::submit! { FlowRegistration { name, flow } }` 注册）。
 pub struct FlowRegistration {
     /// 流程名称（静态字符串）。
     pub name: &'static str,
@@ -28,18 +19,14 @@ pub struct FlowRegistration {
 
 inventory::collect!(FlowRegistration);
 
-/// 认证流程注册表。
-///
-/// 持有 `name → AuthenticationFlow` 映射，支持编译期 inventory 收集与运行期追加。
+/// 认证流程注册表：持 `name → AuthenticationFlow` 映射，支持编译期 inventory 收集与运行期追加。
 pub struct FlowRegistry {
     /// 流程映射表。
     flows: HashMap<String, AuthenticationFlow>,
 }
 
 impl FlowRegistry {
-    /// 从 `inventory` 收集所有编译期注册的 [`FlowRegistration`]，构造注册表。
-    ///
-    /// 对每个注册项调用 `flow()` 构造 [`AuthenticationFlow`]，以 `name` 为 key 插入。
+    /// 从 `inventory` 收集所有编译期注册项构造注册表（对每项调用 `flow()` 并以 `name` 为 key 插入）。
     pub fn from_inventory() -> Self {
         let mut flows = HashMap::new();
         for registration in inventory::iter::<FlowRegistration> {
@@ -54,9 +41,7 @@ impl FlowRegistry {
         self.flows.get(name)
     }
 
-    /// 运行期注册流程，以 `flow.name` 为 key 插入。
-    ///
-    /// 同名流程会覆盖已有值（运行期覆盖编译期默认值）。
+    /// 运行期注册流程（以 `flow.name` 为 key）；同名覆盖已有值（运行期覆盖编译期默认值）。
     pub fn register(&mut self, flow: AuthenticationFlow) {
         self.flows.insert(flow.name.clone(), flow);
     }
@@ -85,7 +70,6 @@ mod tests {
     #[test]
     fn inventory_registration_works() {
         let registry = FlowRegistry::from_inventory();
-        // test-registry-flow 由本测试模块 submit! 注册
         assert!(registry.get("test-registry-flow").is_some());
     }
 
@@ -132,7 +116,6 @@ mod tests {
         registry.register(original);
         assert_eq!(registry.get("override-target").unwrap().steps.len(), 1);
 
-        // 同名覆盖：多步 flow
         let replacement = FlowBuilder::new("override-target")
             .login("password")
             .mfa(Some("totp"))

@@ -1,21 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! HTTP 安全响应头中间件。
-//!
-//! 为所有响应添加标准安全头，防止 MIME 嗅探、点击劫持、缓存泄露等攻击：
-//!
-//! | Header | Value | 防护 |
-//! |--------|-------|------|
-//! | `X-Content-Type-Options` | `nosniff` | MIME 类型嗅探 |
-//! | `X-Frame-Options` | `DENY` | 点击劫持 |
-//! | `Cache-Control` | `no-store` | 敏感响应缓存 |
-//! | `Pragma` | `no-cache` | HTTP/1.0 兼容缓存控制 |
-//! | `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | SSL 降级（仅 `tls` feature） |
-//!
-//! # Feature 门控
-//!
-//! 仅在 `web-security-headers` feature 启用时编译。
+//! HTTP 安全响应头中间件：注入 nosniff（防 MIME 嗅探）、DENY（防点击劫持）、
+//! no-store/no-cache（防敏感响应缓存），TLS 构建附 HSTS；仅 `web-security-headers` feature 启用时编译。
 
 use axum::http::header::HeaderName;
 use axum::http::HeaderValue;
@@ -48,16 +35,8 @@ const HSTS_MAX_AGE: HeaderValue = HeaderValue::from_static("max-age=31536000; in
 
 /// 安全响应头中间件 — 为所有响应注入标准安全头。
 ///
-/// 挂载到 axum Router 后，所有经过此中间件的响应都会自动添加：
-/// - `X-Content-Type-Options: nosniff`
-/// - `X-Frame-Options: DENY`
-/// - `Cache-Control: no-store`
-/// - `Pragma: no-cache`
-/// - （`tls` feature 启用时）`Strict-Transport-Security: max-age=31536000; includeSubDomains`
-///
-/// 静态资源等公开可缓存内容不应走本中间件（no-store 全响应注入会使
-/// 浏览器/CDN 缓存失效）；确需同路由混布时可改用
-/// [`security_headers_middleware_with_config`] 关闭缓存头注入。
+/// 静态资源等公开可缓存内容不应走本中间件（no-store 全响应注入会使浏览器/CDN 缓存失效）；
+/// 同路由混布时可改用 [`security_headers_middleware_with_config`] 关闭缓存头注入。
 ///
 /// # 示例
 ///
@@ -182,10 +161,7 @@ mod tests {
         );
     }
 
-    /// 非 TLS 构建时响应不应包含 HSTS 头。
-    ///
-    /// 注意：此测试在 `tls` feature 启用时行为相反（HSTS 应存在）。
-    /// 通过 `cfg(not(feature = "tls"))` 确保仅在非 TLS 构建时验证 HSTS 缺失。
+    /// 非 TLS 构建时响应不应包含 HSTS 头（cfg 保证仅在非 TLS 构建下运行）。
     #[cfg(not(feature = "tls"))]
     #[tokio::test]
     async fn no_hsts_without_tls_feature() {

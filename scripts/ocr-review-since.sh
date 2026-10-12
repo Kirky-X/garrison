@@ -1,18 +1,10 @@
 #!/usr/bin/env bash
-# ocr-review-since.sh — 以 logs/ 下最新 OCR 报告文件时间为基准，对其后的新增
-# commit 做分块 AI 代码审查（open-code-review / ocr）。
+# ocr-review-since.sh — 以 logs/ 下最新 OCR 报告文件时间为基准，对其后的新增 commit 做分块 AI 代码审查（open-code-review / ocr）。
 #
-# 用法：
-#   scripts/ocr-review-since.sh [--dry-run] [--chunks N] [--base <git-ref>] [--since '<datetime>']
+# 用法：scripts/ocr-review-since.sh [--dry-run] [--chunks N] [--base <git-ref>] [--since '<datetime>']
+# 行为：基准时间取 logs/ocr* 最新文件 mtime（--since 可覆盖），找出其后的 commit（--base 可改审查 <ref>..HEAD），按 --chunks（默认 3）均分块执行 `ocr review --from --to`，报告写 logs/ocr_review_<时间戳>_chunk<N>.md 并汇总 _summary.md。
 #
-# 默认行为：
-#   1. 基准时间 = logs/ocr* 最新文件的 mtime（可用 --since 覆盖）；
-#   2. 找出该时间之后 main 上的全部 commit（可用 --base <ref> 改为审查 <ref>..HEAD）；
-#   3. 按 --chunks（默认 3）均分为时间块，逐块执行 `ocr review --from <块起点> --to <块终点>`；
-#   4. 报告写入 logs/ocr_review_<UTC时间戳>_chunk<N>.md，并汇总到 logs/ocr_review_<UTC时间戳>_summary.md。
-#
-# 前置：ocr 已安装且已配置 provider/model（`ocr config provider`；本项目用
-# custom provider agnes = apihub.agnes-ai.com openai 协议）。
+# 前置：ocr 已安装且已配置 provider/model（`ocr config provider`；本项目用 custom provider agnes = apihub.agnes-ai.com openai 协议）。
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -35,8 +27,7 @@ done
 
 command -v ocr >/dev/null || { echo "错误: 未安装 ocr（npm i -g @alibaba-group/open-code-review）" >&2; exit 1; }
 
-# 基准时间：logs/ 下最新 ocr* 文件的 mtime（排除本脚本自身产物 ocr_review*，
-# 否则运行日志/报告会把基准顶成「现在」，导致窗口恒为空）
+# 基准时间：logs/ 下最新 ocr* 文件的 mtime（排除自身产物 ocr_review*，否则运行日志会把基准顶成「现在」导致窗口恒为空）
 if [[ -z "$SINCE" ]]; then
     latest_ocr_log=$(ls -t --time-style=+%Y-%m-%d\ %H:%M:%S -l logs/ocr* 2>/dev/null | grep -vE 'ocr_review' | head -1 | awk '{print $6, $7}')
     [[ -n "$latest_ocr_log" ]] || { echo "错误: logs/ 下无 ocr* 文件，请用 --since 指定基准时间" >&2; exit 1; }
@@ -44,13 +35,12 @@ if [[ -z "$SINCE" ]]; then
 fi
 echo "基准时间: $SINCE"
 
-# 审查窗口：基准时间之前的最后一个 commit 为块 1 起点
+# 审查窗口起点：基准时间之前的最后一个 commit
 BASE_REF=${BASE_REF:-$(git log --before="$SINCE" -1 --format=%H)}
 [[ -n "$BASE_REF" ]] || { echo "错误: 基准时间之前无 commit" >&2; exit 1; }
 base_subject=$(git log -1 --format='%h %ad %s' --date=format:'%Y-%m-%d %H:%M' "$BASE_REF")
 echo "窗口起点: $base_subject"
 
-# 新增 commit（旧→新）
 mapfile -t commits < <(git rev-list "${BASE_REF}..main" | tac)
 total=${#commits[@]}
 if (( total == 0 )); then
@@ -59,7 +49,6 @@ if (( total == 0 )); then
 fi
 echo "新增 commit: $total 个，分 $CHUNKS 块审查"
 
-# 均分块终点（旧→新）
 size=$(( (total + CHUNKS - 1) / CHUNKS ))
 starts=()
 ends=()

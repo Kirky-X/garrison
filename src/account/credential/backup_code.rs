@@ -1,11 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 备份码凭证子模块。
-//! 提供 `BackupCodeCredential`，实现 `Credential` trait，支持生成 10 个一次性
-//! MFA 备份码（8 字节随机数 → Base32 → `XXXX-XXXX-XXXX` 格式）。
-//!
-//! ## secret_data 格式
+//! 备份码凭证子模块：`BackupCodeCredential` 实现 `Credential` trait，支持 10 个一次性 MFA 备份码
+//! （8 字节随机数 → Base32 → `XXXX-XXXX-XXXX`）。
 //!
 //! `CredentialModel.secret_data` 存储如下 JSON：
 //!
@@ -13,10 +10,8 @@
 //! {"codes":["hash1","hash2",...]}
 //! ```
 //!
-//! - `codes`: SHA-256 哈希列表（每个备份码的规范化形式哈希后存入）
-//!
-//! 备份码明文仅在 `generate()` 返回时可见，此后仅以哈希形式存储。
-//! `verify_and_consume()` 校验通过后从列表中移除该哈希（一次性使用）。
+//! `codes` 为每个备份码规范化形式（大写去 `-`）的 SHA-256 哈希列表；明文仅在 `generate()` 返回时可见，
+//! 此后仅存哈希；`verify_and_consume()` 校验通过后从列表移除该哈希（一次性使用）。
 
 use super::{Credential, CredentialModel, CredentialType};
 use crate::constants::DaoKeyPrefix;
@@ -71,11 +66,8 @@ fn format_code(base32_str: &str) -> String {
     )
 }
 
-/// 备份码凭证（实现 [`Credential`] trait，支持一次性 MFA 备份码）。
-///
-/// 持有 `CredentialModel`，`secret_data` 存储备份码的 SHA-256 哈希列表。
-/// `generate()` 生成 10 个一次性备份码，明文仅此一次返回。
-/// `verify_and_consume()` 校验输入并消费（一次性使用），更新 DAO。
+/// 备份码凭证（实现 [`Credential`] trait）：`generate()` 生成 10 个一次性备份码（明文仅此一次返回），
+/// `verify_and_consume()` 校验输入并消费（一次性使用，更新 DAO）。
 ///
 /// # 示例
 ///
@@ -95,25 +87,13 @@ pub struct BackupCodeCredential {
 }
 
 impl BackupCodeCredential {
-    /// 创建备份码凭证。
-    ///
-    /// # 参数
-    /// - `model`: 凭证存储模型（`secret_data` 应为 `{"codes":["hash1",...]}` JSON）
+    /// 创建备份码凭证（`model.secret_data` 应为 `{"codes":["hash1",...]}` JSON）。
     pub fn new(model: CredentialModel) -> Self {
         Self { model }
     }
 
-    /// 生成 10 个一次性备份码。
-    ///
-    /// 每个备份码：8 字节随机数（直接读 OS CSPRNG）→ Base32 编码 → 格式化为 `XXXX-XXXX-XXXX`。
-    /// 备份码的 SHA-256 哈希存入 `secret_data`，明文仅此一次返回。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识（用户 ID），存入 `CredentialModel.user_id`。
-    ///
-    /// # 返回
-    /// - `Ok((credential, codes))`: 凭证 + 10 个明文备份码列表。
-    /// - `Err(_)`: 序列化失败。
+    /// 生成 10 个一次性备份码（`login_id` 存入 `model.user_id`）：每个为 8 字节随机数（OS CSPRNG）→
+    /// Base32 → `XXXX-XXXX-XXXX`，哈希存入 `secret_data`，明文仅此一次返回；序列化失败返回 `Err`。
     pub fn generate(login_id: &str) -> GarrisonResult<(BackupCodeCredential, Vec<String>)> {
         let mut codes = Vec::with_capacity(CODE_COUNT);
         let mut hashes = Vec::with_capacity(CODE_COUNT);
@@ -141,33 +121,16 @@ impl BackupCodeCredential {
         Ok((BackupCodeCredential { model }, codes))
     }
 
-    /// 校验并消费备份码（一次性使用）。
+    /// 校验并消费备份码（一次性使用）：从 DAO 读取当前 model，将输入（规范化后）的 SHA-256 与
+    /// `secret_data` 哈希列表常量时间比对；匹配则从列表移除该哈希并写回 DAO，不匹配返回 `Ok(false)`。
     ///
-    /// 从 DAO 读取当前 `CredentialModel`，将输入（规范化后）的 SHA-256 哈希
-    /// 与 `secret_data` 中的哈希列表常量时间比对。匹配则从列表中移除该哈希并
-    /// 更新 DAO；不匹配返回 `Ok(false)`。
-    ///
-    /// 成功消费后会同步更新本实例内存中的 `model.secret_data`，
-    /// 使同一实例后续的 [`verify`](Credential::verify) 能看到本次消费。
-    ///
-    /// # 参数
-    /// - `input`: 用户输入的备份码（可能含 `-` 分隔符，自动规范化）。
-    /// - `dao`: DAO 抽象（用于读取/更新 `CredentialModel`）。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 校验通过且备份码已消费。
-    /// - `Ok(false)`: 校验失败（备份码不匹配或已使用）。
-    /// - `Err(_)`: `secret_data` 解析失败或 DAO 读写失败。
+    /// 消费成功后同步更新本实例内存快照，使同一实例后续的 [`verify`](Credential::verify) 可见本次消费。
     ///
     /// # 并发安全（CAS 原子消费）
     ///
-    /// 使用 `compare_and_swap` 实现原子 get→verify→set，消除 TOCTOU 双花竞态。
-    /// CAS 失败时自动重试（最多 `MAX_CAS_RETRIES` 次），应对并发冲突。
-    ///
-    /// **生产后端要求**：
-    /// - `MockDao` / `GarrisonDaoOxcache`：Mutex 保护，进程内原子 ✅
-    /// - Redis 后端：应重写为 Lua 脚本（GET + COMPARE + SET 原子执行）
-    /// - dbnexus 后端：应重写为 `UPDATE ... WHERE value = expected`
+    /// `compare_and_swap` 实现原子 get→verify→set，消除 TOCTOU 双花竞态；CAS 失败自动重试
+    /// （最多 `MAX_CAS_RETRIES` 次）。生产后端需保证 CAS 原子（Redis 应重写为 Lua 脚本
+    /// GET + COMPARE + SET；dbnexus 应重写为 `UPDATE ... WHERE value = expected`）。
     #[tracing::instrument(skip(self, input, dao), fields(user_id = %self.model.user_id))]
     pub async fn verify_and_consume(
         &mut self,
@@ -184,7 +147,6 @@ impl BackupCodeCredential {
         let input_hash = sha256_hex(&normalize(input));
 
         for attempt in 0..MAX_CAS_RETRIES {
-            // 1. 读取当前状态
             let old_json = match dao.get(&key).await? {
                 Some(j) => j,
                 None => {
@@ -198,7 +160,7 @@ impl BackupCodeCredential {
                 .map_err(|e| GarrisonError::Internal(format!("account-cred-deserialize::{}", e)))?;
             let mut data = BackupCodeSecretData::from_json(&model.secret_data)?;
 
-            // 2. 查找并消费备份码（常量时间比较，CWE-208）
+            // 常量时间比较（CWE-208）
             if let Some(idx) = data
                 .codes
                 .iter()
@@ -214,14 +176,13 @@ impl BackupCodeCredential {
                     GarrisonError::Internal(format!("account-cred-serialize::{}", e))
                 })?;
 
-                // 3. 原子 CAS：仅当 DAO 值未被并发修改时写入
+                // 原子 CAS：仅当 DAO 值未被并发修改时写入
                 if dao
                     .compare_and_swap(&key, Some(&old_json), &updated_json, 0)
                     .await?
                 {
-                    // 4. 同步内存快照：消费成功后更新本实例
-                    // 的 model.secret_data，使同一实例的 verify() 不再对已消费码
-                    // 返回 true。
+                    // 同步内存快照：消费成功后更新本实例 model.secret_data，
+                    // 使同一实例的 verify() 不再对已消费码返回 true
                     self.model.secret_data = new_secret;
                     tracing::info!(
                         user_id = %self.model.user_id,
@@ -259,12 +220,9 @@ impl Credential for BackupCodeCredential {
     }
 
     async fn verify(&self, input: &str) -> GarrisonResult<bool> {
-        // 内存快照语义：本方法只比对实例内存中的
-        // `self.model.secret_data` 快照，不查 DAO。
-        // - 本实例内：`verify_and_consume` 成功后会同步更新该快照，
-        // 已消费的码 verify 返回 false；
-        // - 跨实例/并发消费：本方法不可见（无 DAO 参数），
-        // 权威校验请使用 [`BackupCodeCredential::verify_and_consume`]。
+        // 内存快照语义：只比对实例内存中的 `self.model.secret_data` 快照，不查 DAO——本实例内
+        // `verify_and_consume` 成功后会同步该快照（已消费码返回 false）；跨实例/并发消费不可见
+        // （无 DAO 参数），权威校验请用 [`BackupCodeCredential::verify_and_consume`]。
         let data = BackupCodeSecretData::from_json(&self.model.secret_data)?;
         let input_hash = sha256_hex(&normalize(input));
         // 常量时间比较（CWE-208）：不使用 contains/== 短路比较
@@ -559,11 +517,8 @@ mod tests {
         assert!(!result, "全部消费后应返回 false");
     }
 
-    /// 并发双花防护 — CAS 原子消费保证同一备份码并发仅一次成功。
-    ///
-    /// 验证 `verify_and_consume` 使用 `compare_and_swap` 原子操作，
-    /// 两个并发调用同一备份码时仅一个成功（另一个 CAS 冲突后重试，发现码已消费）。
-    /// MockDao 的 Mutex 保证 CAS 进程内原子。
+    /// 并发双花防护 — CAS 原子消费保证同一备份码并发仅一次成功（另一个 CAS 冲突重试后发现码已消费；
+    /// MockDao 的 Mutex 保证 CAS 进程内原子）。
     #[tokio::test]
     async fn concurrent_consume_same_code_only_one_succeeds() {
         use std::sync::Arc;
@@ -580,7 +535,6 @@ mod tests {
         let code1 = code.clone();
         let code2 = code.clone();
 
-        // 并发消费同一备份码
         let (r1, r2) = tokio::join!(
             cred1.verify_and_consume(&code1, dao1.as_ref()),
             cred2.verify_and_consume(&code2, dao2.as_ref()),
@@ -588,7 +542,6 @@ mod tests {
 
         let ok1 = r1.expect("调用 1 不应报错");
         let ok2 = r2.expect("调用 2 不应报错");
-        // MockDao 的 Mutex 保护下，仅一个应成功
         assert!(
             ok1 ^ ok2,
             "并发消费同一备份码应仅一个成功（XOR），实际: ok1={}, ok2={}",

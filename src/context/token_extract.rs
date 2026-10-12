@@ -1,43 +1,22 @@
-// Copyright (c) 2026 Kirky.X🌠
-// SPDX-License-Identifier: Apache-2.0
-
 //! Token 提取公共模块。
 //!
-//! 提供 `strip_bearer_prefix` 和 `extract_token_from_headers` 两个函数，
-//! 供 web 框架适配器（`web_actix` / `web_warp`）和 context 适配器
-//! （`axum_adapter` / `actix_adapter` / `warp_adapter`）共用，
-//! 消除跨文件重复实现（先读再写，不重复造轮子）。
+//! `strip_bearer_prefix` / `parse_cookie_value` / `extract_token_from_headers` 供 web 框架适配器
+//! （`web_actix` / `web_warp`）与 context 适配器共用，消除跨文件重复实现。
 //!
-//! ## 设计
-//!
-//! - `strip_bearer_prefix`：大小写不敏感地剥离 `Bearer ` 前缀（RFC 7235）
-//! - `parse_cookie_value`：从 Cookie header 值中按名称提取单个 cookie
-//! - `extract_token_from_headers`：依据 `GarrisonConfig` 从 `http::HeaderMap` 提取 token
-//!   （Authorization: Bearer → 自定义 token_name header → cookie）
-//!
-//! `http` crate 是必需依赖（Cargo.toml L43），故本模块无需 feature gate。
-//! `warp::http::HeaderMap` / `axum::http::HeaderMap` 是 `http::HeaderMap` 的 re-export，
-//! 可直接传入本模块函数。`actix_web::http::header::HeaderMap` 是 `actix_http::header::HeaderMap`
-//! （独立类型，非 `http::HeaderMap` 的 re-export），通过 [`HeaderLookup`] trait 适配。
+//! `http` crate 是必需依赖，故本模块无需 feature gate；`warp::http::HeaderMap` / `axum::http::HeaderMap`
+//! 是其 re-export 可直接传入，`actix_web::http::header::HeaderMap` 是独立类型，通过 [`HeaderLookup`] trait 适配。
 
 use crate::config::GarrisonConfig;
 use crate::error::{GarrisonError, GarrisonResult};
 use http::HeaderMap;
 
-// ============================================================================
 // HeaderLookup trait：抽象 HeaderMap 类型差异
-// ============================================================================
 
 /// Header 查找抽象 trait，用于 `extract_token_from_headers` 泛型约束。
 ///
-/// **为什么需要这个 trait**：`http::HeaderMap`（v1.x）和 `actix_http::header::HeaderMap`
-/// 是两个不同的类型。actix-web 4.x 依赖 `http` v0.2，而 garrison 依赖 `http` v1.x，
-/// 两者的 `HeaderName` / `HeaderValue` 也是不同类型。本 trait 用纯字符串接口
-/// (`&str` → `Option<&str>`) 彻底规避版本冲突，使 `extract_token_from_headers`
-/// 可同时接受两种 HeaderMap。
-///
-/// `http::HeaderMap` 的实现在本模块中提供；`actix_web::http::header::HeaderMap`
-/// 的实现在 `web_actix/mod.rs` 中提供（需要 `web-actix` feature）。
+/// `http::HeaderMap`（v1.x）与 `actix_http::header::HeaderMap` 是不同类型（actix-web 4.x 依赖
+/// `http` v0.2），用纯字符串接口（`&str` → `Option<&str>`）彻底规避版本冲突，使该函数可同时接受两者。
+/// `http::HeaderMap` 的实现在本模块提供，actix 侧在 `web_actix/mod.rs` 提供（需 `web-actix` feature）。
 pub trait HeaderLookup {
     /// 按 header name（小写字符串）查找值，返回 header 值的字符串切片。
     fn get_header(&self, name: &str) -> Option<&str>;
@@ -49,31 +28,20 @@ impl HeaderLookup for HeaderMap {
     }
 }
 
-// ============================================================================
 // 公共函数
-// ============================================================================
 
-/// 大小写不敏感地剥离 `Bearer ` 前缀（RFC 7235）。
+/// 大小写不敏感地剥离 `Bearer ` 前缀（RFC 7235），支持 `Bearer` / `bearer` / `BEARER` 等任意大小写。
 ///
-/// 支持 `Bearer xxx`、`bearer xxx`、`BEARER xxx` 等任意大小写组合。
-///
-/// # 参数
-/// - `auth_str`: Authorization header 值（如 `"Bearer my_token"`）。
-///
-/// # 返回
-/// - `Some(token)`: 成功剥离前缀后的 token 字符串切片（保证非空）。
-/// - `None`: 前缀不匹配、字符串过短，或前缀后为空
-///   （如 `"Bearer "`——返回 `Some("")` 会让下游拿到空 token，
-///   构成认证旁路风险）。
+/// 前缀不匹配、字符串过短或前缀后为空（如 `"Bearer "`）返回 `None`：返回 `Some("")` 会让下游
+/// 拿到空 token，构成认证旁路风险。保证返回的 token 非空。
 pub fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
     let prefix = "bearer ";
-    // 用 get(..n) 而非 auth_str[..n]：当 n 落在多字节 UTF-8 字符中间时
-    // get 返回 None（而非 panic），避免恶意非 ASCII header 触发 DoS。
+    // 用 get(..n) 而非 auth_str[..n]：n 落在多字节 UTF-8 字符中间时返回 None 而非 panic，
+    // 避免恶意非 ASCII header 触发 DoS。
     let head = auth_str.get(..prefix.len())?;
     if head.eq_ignore_ascii_case(prefix) {
         let rest = &auth_str[prefix.len()..];
         if rest.is_empty() {
-            // "Bearer " 空前缀：无实际 token，返回 None 而非 Some("")
             return None;
         }
         Some(rest)
@@ -82,22 +50,9 @@ pub fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
     }
 }
 
-/// 从 Cookie header 值中按名称提取单个 cookie 值。
+/// 从 Cookie header 值中按名称提取单个 cookie 值，返回首个匹配 `name` 的值；未找到或 header 为空返回 `None`。
 ///
-/// 解析 `Cookie: name1=value1; name2=value2` 格式的字符串，
-/// 返回第一个匹配 `name` 的 cookie 值。
-///
-/// # 参数
-/// - `cookie_header`: Cookie header 的完整字符串值（如 `"session=abc; token=xyz"`）。
-/// - `name`: 要查找的 cookie 名称。
-///
-/// # 返回
-/// - `Some(value)`: 找到匹配的 cookie。
-/// - `None`: 未找到或 header 为空。
-///
-/// # 安全性
-///
-/// 使用 `get(1..)` 而非 `&v[1..]` 防止空值 panic（如 `"name="`）。
+/// 用 `get(1..)` 而非 `&v[1..]` 防止空值 panic（如 `"name="`）。
 pub fn parse_cookie_value(cookie_header: &str, name: &str) -> Option<String> {
     if cookie_header.is_empty() {
         return None;
@@ -114,64 +69,40 @@ pub fn parse_cookie_value(cookie_header: &str, name: &str) -> Option<String> {
     None
 }
 
-/// C7: 检查 HTTP 方法是否允许从 body 提取 token。
+/// C7: 检查 HTTP 方法是否允许从 body 提取 token（仅 `POST` / `PUT` / `PATCH`，大小写不敏感）。
 ///
-/// 仅 `POST` / `PUT` / `PATCH` 允许从 body 提取 token。`GET` / `HEAD` / `DELETE` /
-/// `OPTIONS` 等方法不应从 body 提取 token，原因有二：
-/// 1. **语义层面**：RFC 7231 规定 GET/HEAD/DELETE 请求语义上不应有 body，
-///    部分代理 / CDN / WAF 会丢弃或拒绝转发 GET 请求的 body。
-/// 2. **安全层面**：允许 GET 请求携带 token 会被攻击者利用构造恶意链接
-///    （如 `<img src="https://victim.com/api?token=attacker_token">`），
-///    在用户不知情的情况下用 body 中的 token 替换正常 token（CSRF 变种）。
-///
-/// # 参数
-/// - `method`: HTTP 方法字符串（如 `"POST"` / `"get"` / `"Put"`）。
-///
-/// # 返回
-/// - `true`: 方法允许从 body 提取 token（POST/PUT/PATCH，大小写不敏感）。
-/// - `false`: 方法不允许（其他所有方法，包括 GET/HEAD/DELETE/OPTIONS/CONNECT/TRACE）。
+/// 其他方法不应从 body 提取：RFC 7231 规定 GET/HEAD/DELETE 语义上不应有 body，部分代理 / CDN / WAF
+/// 会丢弃或拒绝转发；且允许 GET 携带 token 可被构造恶意链接（如
+/// `<img src="https://victim.com/api?token=attacker_token">`）在用户不知情时替换正常 token（CSRF 变种）。
 pub fn is_body_token_allowed_method(method: &str) -> bool {
     method.eq_ignore_ascii_case("POST")
         || method.eq_ignore_ascii_case("PUT")
         || method.eq_ignore_ascii_case("PATCH")
 }
 
-/// 从 `HeaderMap` 提取 token。
+/// 从 `HeaderMap` 提取 token，返回首个命中的 token，均无则 `Ok(None)`。
 ///
-/// 提取顺序：
-/// 1. `Authorization: Bearer <token>`（仅当 `is_read_header` 为 true）
-/// 2. 自定义 `token_name` header（仅当 `is_read_header` 为 true）
-/// 3. `Cookie: token_name=<token>`（仅当 `is_read_cookie` 为 true）
+/// 提取顺序：`Authorization: Bearer <token>` → 自定义 `token_name` header（二者仅当 `is_read_header`）
+/// → `Cookie: token_name=<token>`（仅当 `is_read_cookie`）。
 ///
-/// 返回第一个找到的 token，若都不存在返回 `Ok(None)`。
-///
-/// # 泛型参数
-///
-/// 泛型 `H: HeaderLookup` 使本函数可同时接受 `http::HeaderMap`（warp/axum 使用）
-/// 和 `actix_http::header::HeaderMap`（actix-web 使用）。两种 HeaderMap 是不同的类型，
-/// 通过 [`HeaderLookup`] trait 统一抽象。
-///
-/// # 参数
-/// - `headers`: 任何实现 `HeaderLookup` 的 header 容器。
-/// - `config`: 全局配置，决定从 header 还是 cookie 提取。
+/// 泛型 `H: HeaderLookup` 使本函数可同时接受 `http::HeaderMap`（warp / axum）与
+/// `actix_http::header::HeaderMap`（actix-web），两种类型经 [`HeaderLookup`] 统一抽象。
 pub fn extract_token_from_headers<H: HeaderLookup>(
     headers: &H,
     config: &GarrisonConfig,
 ) -> Result<Option<String>, GarrisonError> {
     if config.is_read_header {
-        // 1. Authorization: Bearer <token>
         if let Some(auth) = headers.get_header("authorization") {
             if let Some(token) = strip_bearer_prefix(auth) {
                 return Ok(Some(token.to_string()));
             }
         }
-        // 2. 自定义 token_name header
         if let Some(token) = headers.get_header(&config.token_name) {
             return Ok(Some(token.to_string()));
         }
     }
     if config.is_read_cookie {
-        // 3. Cookie: <解析名>=<token>（production + Secure 上下文与写侧同为 __Host- 前缀名）
+        // production + Secure 上下文下 cookie 解析名带 __Host- 前缀，与写侧同名
         if let Some(token) = parse_cookie_value(
             headers.get_header("cookie").unwrap_or(""),
             &crate::context::token_cookie_name(config),
@@ -182,23 +113,11 @@ pub fn extract_token_from_headers<H: HeaderLookup>(
     Ok(None)
 }
 
-/// 从请求三部分统一提取 token（header→cookie→body 三级优先级）。
+/// 从请求三部分统一提取 token（header → cookie → body 三级优先级），供 actix / warp / axum 适配器共用。
 ///
-/// 供 actix/warp/axum 适配器共用，消除 `get_token` 重复实现。
-/// 通过闭包参数适配不同框架的 header/cookie 访问方式。
-///
-/// # 提取顺序
-///
-/// 1. **Header**（`is_read_header=true` 时）：`Authorization: Bearer <token>` → 自定义 `token_name` header
-/// 2. **Cookie**（`is_read_cookie=true` 时）：按 `token_name` 查找 cookie
-/// 3. **Body**（`is_read_body=true` 时）：C7 方法限制（POST/PUT/PATCH）→ Content-Type: application/json → JSON 提取
-///
-/// # 参数
-/// - `config`: 全局配置
-/// - `body_bytes`: 预读的请求 body 字节
-/// - `method`: HTTP 方法字符串
-/// - `header_fn`: header 查找闭包（框架特定）
-/// - `cookie_fn`: cookie 查找闭包（框架特定）
+/// 通过闭包参数适配不同框架的 header / cookie 访问方式；`is_read_header` / `is_read_cookie` /
+/// `is_read_body` 分别控制三级，body 级另有 C7 方法限制（POST/PUT/PATCH）→ Content-Type: application/json
+/// → JSON 提取。
 pub fn extract_token_from_request_parts(
     config: &GarrisonConfig,
     body_bytes: &[u8],
@@ -206,7 +125,6 @@ pub fn extract_token_from_request_parts(
     mut header_fn: impl FnMut(&str) -> GarrisonResult<Option<String>>,
     mut cookie_fn: impl FnMut(&str) -> GarrisonResult<Option<String>>,
 ) -> GarrisonResult<Option<String>> {
-    // 1. Header 提取
     if config.is_read_header {
         if let Some(auth) = header_fn("Authorization")? {
             if let Some(token) = strip_bearer_prefix(&auth) {
@@ -217,13 +135,12 @@ pub fn extract_token_from_request_parts(
             return Ok(Some(token));
         }
     }
-    // 2. Cookie 提取（production + Secure 上下文与写侧同为 __Host- 前缀名）
+    // production + Secure 上下文下 cookie 解析名带 __Host- 前缀，与写侧同名
     if config.is_read_cookie {
         if let Some(token) = cookie_fn(&crate::context::token_cookie_name(config))? {
             return Ok(Some(token));
         }
     }
-    // 3. Body 提取（C7: 仅 POST/PUT/PATCH 允许）
     if config.is_read_body && !body_bytes.is_empty() {
         return extract_token_from_body(config, body_bytes, method, header_fn);
     }
@@ -232,9 +149,9 @@ pub fn extract_token_from_request_parts(
 
 /// Body 级 token 提取子流程（C7 方法限制 → 大小护栏 → JSON 字段提取）。
 ///
-/// 仅在 `is_read_body` 且 body 非空时由 [`extract_token_from_request_parts`] 调用；
-/// 任何不可提取条件（方法受限 / 超 1MB 解析护栏 / 非 JSON / 无目标字段）
-/// 一律 `Ok(None)` fail-closed 跳过；仅 Content-Type 读取失败透传错误。
+/// 仅在 `is_read_body` 且 body 非空时由 [`extract_token_from_request_parts`] 调用；不可提取条件
+/// （方法受限 / 超 1MB 解析护栏 / 非 JSON / 无目标字段）一律 `Ok(None)` fail-closed 跳过，
+/// 仅 Content-Type 读取失败透传错误。
 fn extract_token_from_body(
     config: &GarrisonConfig,
     body_bytes: &[u8],
@@ -248,10 +165,9 @@ fn extract_token_from_body(
         );
         return Ok(None);
     }
-    // DoS 防护：解析前限制 body 大小。超大 body（数十 MB JSON）
-    // 会在 token 校验前引发过量堆分配；超过上限直接跳过 body 提取。
-    // 上限固定 1MB（与常见网关 body 限制对齐）；如需调整请修改本常量。
-    const MAX_BODY_TOKEN_PARSE_BYTES: usize = 1024 * 1024; // 1MB
+    // DoS 防护：超大 body（数十 MB JSON）会在 token 校验前引发过量堆分配，超限直接跳过 body 提取。
+    // 上限固定 1MB（与常见网关 body 限制对齐）。
+    const MAX_BODY_TOKEN_PARSE_BYTES: usize = 1024 * 1024;
     if body_bytes.len() > MAX_BODY_TOKEN_PARSE_BYTES {
         tracing::warn!(
             size = body_bytes.len(),
@@ -261,8 +177,7 @@ fn extract_token_from_body(
         return Ok(None);
     }
     let content_type = header_fn("Content-Type")?.unwrap_or_default();
-    // 大小写不敏感匹配（RFC 9110：media type 不区分大小写），
-    // `Application/JSON` 等非常规大小写不应静默跳过 body 提取
+    // RFC 9110：media type 不区分大小写，Application/JSON 等不应静默跳过 body 提取
     if content_type
         .to_ascii_lowercase()
         .contains("application/json")
@@ -282,10 +197,7 @@ mod tests {
     use http::header;
     use http::HeaderValue;
 
-    // ========================================================================
     // strip_bearer_prefix 测试
-    // ========================================================================
-
     /// `Bearer ` 前缀标准大小写。
     #[test]
     fn strip_bearer_prefix_standard() {
@@ -330,13 +242,11 @@ mod tests {
         assert_eq!(strip_bearer_prefix("bearer"), None);
     }
 
-    /// 多字节 UTF-8 header 值不应 panic（边界安全， 回归测试）。
+    /// 多字节 UTF-8 header 值不应 panic（回归测试）。
     ///
-    /// 构造 4 个 `é`（每个 2 字节，共 8 字节），`prefix.len()=7` 落在
-    /// 最后一个 `é` 中间（字节 7 是 0xA9，非字符起始边界）。
-    /// 修复前：`auth_str[..prefix.len()]` 触发 panic（byte index 7 is not a char boundary），
-    /// 攻击者可发送非 ASCII Authorization header 远程 DoS。
-    /// 修复后：`get(..prefix.len())` 返回 None，函数返回 None。
+    /// 4 个 `é`（8 字节）使 `prefix.len()=7` 落在最后一个 `é` 中间（字节 7 非字符起始边界）：
+    /// 修复前 `auth_str[..prefix.len()]` panic（byte index 7 is not a char boundary），攻击者可用
+    /// 非 ASCII Authorization header 远程 DoS；`get(..prefix.len())` 返回 None 后函数返回 None。
     #[test]
     fn strip_bearer_prefix_multibyte_no_panic() {
         let auth_str = "éééé"; // 0xC3 0xA9 × 4 = 8 字节
@@ -346,13 +256,11 @@ mod tests {
     /// 仅前缀无 token 返回 None（空 token 不得下发给下游）。
     #[test]
     fn strip_bearer_prefix_only_prefix() {
-        // 原固化行为为 Some("")，构成认证旁路风险（下游拿到空 token），已修正为 None
+        // 空 token 构成认证旁路风险（下游拿到空 token）
         assert_eq!(strip_bearer_prefix("Bearer "), None);
     }
 
-    // ========================================================================
     // parse_cookie_value 测试
-    // ========================================================================
 
     /// 从单 cookie 提取值。
     #[test]
@@ -390,10 +298,7 @@ mod tests {
         assert_eq!(parse_cookie_value("name=", "name"), Some("".to_string()));
     }
 
-    // ========================================================================
     // extract_token_from_headers 测试
-    // ========================================================================
-
     /// 从 Authorization: Bearer 提取 token。
     #[test]
     fn extract_token_from_bearer_header() {
@@ -597,10 +502,7 @@ mod tests {
         assert_eq!(token, Some("cookie_tok".to_string()));
     }
 
-    // ========================================================================
     // is_body_token_allowed_method 测试（C7）
-    // ========================================================================
-
     /// C7: POST 方法应允许从 body 提取 token。
     #[test]
     fn c7_is_body_token_allowed_method_post() {
@@ -614,10 +516,9 @@ mod tests {
         assert!(is_body_token_allowed_method("PATCH"));
     }
 
-    /// C7: GET / HEAD / DELETE / OPTIONS / CONNECT / TRACE 方法应拒绝从 body 提取 token。
+    /// C7: GET / HEAD / DELETE / OPTIONS / CONNECT / TRACE 应拒绝从 body 提取 token。
     ///
-    /// 这些方法语义上不应携带 body（RFC 7231），允许从 body 提取 token 会引入
-    /// CSRF 变种攻击（如 `<img src="https://victim.com/api?token=...">`）。
+    /// 这些方法语义上不应携带 body（RFC 7231），允许从 body 提取会引入 CSRF 变种攻击。
     #[test]
     fn c7_is_body_token_allowed_method_rejects_others() {
         assert!(!is_body_token_allowed_method("GET"));
@@ -641,12 +542,8 @@ mod tests {
         assert!(!is_body_token_allowed_method(" POST")); // 带空格
     }
 
-    // ========================================================================
     // extract_token_from_request_parts 补充测试
-    // ========================================================================
-
-    /// Content-Type 大小写不敏感（RFC 9110）。
-    /// `Application/JSON` 不应静默跳过 body 提取。
+    /// Content-Type 大小写不敏感（RFC 9110）：`Application/JSON` 不应静默跳过 body 提取。
     #[test]
     fn extract_from_body_content_type_case_insensitive() {
         let config = GarrisonConfig::default_config();
@@ -736,10 +633,7 @@ mod tests {
         assert_eq!(token, None, "空前缀 Bearer 应返回 None 而非 Some(\"\")");
     }
 
-    // ========================================================================
     // production 前缀：读侧同名命中（写读同名一致性）
-    // ========================================================================
-
     /// production + Secure 上下文：读侧命中带 `__Host-` 前缀的 token cookie。
     #[cfg(feature = "production")]
     #[test]
@@ -754,8 +648,7 @@ mod tests {
         assert_eq!(token, Some("host_prefixed_tok".to_string()));
     }
 
-    /// production + Secure 上下文：`extract_token_from_request_parts` 向 cookie_fn
-    /// 传入与写侧一致的 `__Host-` 前缀名。
+    /// production + Secure 上下文：`extract_token_from_request_parts` 向 cookie_fn 传入与写侧一致的 `__Host-` 前缀名。
     #[cfg(feature = "production")]
     #[test]
     fn extract_from_parts_queries_host_prefixed_cookie_name() {

@@ -1,29 +1,10 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! actix-web 框架适配模块。
+//! actix-web 框架适配模块：GarrisonRouter + FromRequest extractor + GarrisonMiddleware 完整集成。
 //!
-//! 对应 actix-web 适配器，
-//! 提供 GarrisonRouter + FromRequest extractor + GarrisonMiddleware 完整集成。
-//!
-//! ## 模块拆分（接口隔离）
-//!
-//! - `mod.rs`：pub struct 声明（GarrisonRouter/GarrisonMiddleware/GarrisonMiddlewareService/
-//! RouteRule/CheckLogin/CheckRole/CheckPermission）+ pub mod 声明 + pub use re-export
-//! - `error.rs`：`HeaderLookup for HeaderMap` + `ResponseError for GarrisonError` 实现
-//! - `router.rs`：`GarrisonRouter` 方法 + `Default` 实现
-//! - `middleware.rs`：`Transform` + `Service` trait 实现（GarrisonMiddleware/GarrisonMiddlewareService）
-//! - `extractor.rs`：`FromRequest` extractor 实现（GarrisonPrincipal/CheckLogin/CheckRole/
-//! CheckPermission/TenantContext）
-//! - `mock.rs`：测试 mock（MockDao + MockInterface）
-//! - `tests.rs`：集成测试
-//!
-//! ## 设计
-//!
-//! - `GarrisonRouter`：路由规则构建器，`route_protected` 注册路径 + 注解映射
-//! - `GarrisonMiddleware`：actix-web middleware（Transform + Service），请求前调用 interceptor
-//! - `CheckLogin` / `CheckRole` / `CheckPermission`：FromRequest extractors，per-handler 鉴权
-//! - `ResponseError for GarrisonError`：错误响应，复用 `response_parts()` 保证三框架一致
+//! 模块拆分（接口隔离）：`router.rs` 路由构建器、`middleware.rs` Transform/Service、
+//! `extractor.rs` per-handler 鉴权、`error.rs` HeaderLookup + ResponseError、`mock.rs`/`tests.rs` 测试。
 //!
 //! ## 使用示例
 //!
@@ -63,9 +44,7 @@ pub use extractor::GarrisonPrincipal;
 /// X-Request-ID 中间件（Transform）：提取 / 生成 / 回传请求标识。
 pub use request_id::{RequestIdMiddleware, RequestIdService};
 
-// ============================================================================
 // 路由规则 + 路由器 struct 声明（impl 见 router.rs）
-// ============================================================================
 
 /// 路由规则：路径 → 注解映射。
 #[derive(Clone)]
@@ -90,16 +69,12 @@ pub struct GarrisonRouter {
     handler_timeout: Option<std::time::Duration>,
 }
 
-// ============================================================================
 // GarrisonMiddleware struct 声明（impl Transform/Service 见 middleware.rs）
-// ============================================================================
 
-/// actix-web middleware，提取 token + 解析租户 + 调用 interceptor + 设置 task_local。
+/// actix-web middleware：提取 token + 解析租户 + 调用 interceptor + 设置 task_local。
 ///
-/// 配置了 [`TenantResolver`]（见 [`GarrisonRouter::with_tenant_resolver`]）时，
-/// 请求处理前先从请求头解析 `TenantContext` 并进入 `TENANT.scope`，使
-/// `tenant-isolation` 下的 `check_permission` / `check_role` 获得租户上下文
-/// （fail-closed 的 `ctx-tenant-context-missing` 不再触发）。未配置时行为不变。
+/// 配置 [`TenantResolver`]（[`GarrisonRouter::with_tenant_resolver`]）时先解析 `TenantContext` 并进入
+/// `TENANT.scope`，使 tenant-isolation 下的 `check_permission`/`check_role` 拿到租户上下文（避免 fail-closed 拒绝）。
 pub struct GarrisonMiddleware {
     rules: Arc<HashMap<String, Annotation>>,
     interceptor: Arc<dyn GarrisonInterceptor>,
@@ -119,15 +94,13 @@ pub struct GarrisonMiddlewareService<S> {
     pub interceptor: Arc<dyn GarrisonInterceptor>,
     /// 配置
     pub config: Arc<GarrisonConfig>,
-    /// 租户解析器（None 时不启用租户提取）。
+    /// 租户解析器（None = 不启用租户提取）。
     pub tenant_resolver: Option<Arc<dyn TenantResolver>>,
     /// 内层 handler 可选超时（None = 不设超时，默认）。
     pub handler_timeout: Option<std::time::Duration>,
 }
 
-// ============================================================================
 // FromRequest Extractor struct 声明（impl FromRequest 见 extractor.rs）
-// ============================================================================
 
 /// CheckLogin extractor：验证用户已登录。
 ///
@@ -149,8 +122,7 @@ pub struct CheckPermission(pub String);
 
 /// CheckRole 服务端配置：路由注册时声明所需角色。
 ///
-/// 通过 `web::Data::new(RequiredRole("admin".into()))` 注入 `App`，
-/// `CheckRole` extractor 从此配置读取角色名，禁止客户端控制。
+/// 通过 `web::Data::new(RequiredRole("admin".into()))` 注入，角色名禁止客户端控制。
 ///
 /// # 使用
 ///
@@ -164,8 +136,7 @@ pub struct RequiredRole(pub String);
 
 /// CheckPermission 服务端配置：路由注册时声明所需权限。
 ///
-/// 通过 `web::Data::new(RequiredPermission("user:read".into()))` 注入 `App`，
-/// `CheckPermission` extractor 从此配置读取权限名，禁止客户端控制。
+/// 通过 `web::Data::new(RequiredPermission("user:read".into()))` 注入，权限名禁止客户端控制。
 ///
 /// # 使用
 ///

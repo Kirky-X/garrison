@@ -69,18 +69,14 @@ impl GarrisonDao for MockDao {
     }
 }
 
-/// 运行临时凭证示例。
-///
-/// 演示 TempCredentialHandler 的 issue / get / consume / revoke 与参数校验。
-/// 适用场景：邀请码、密码重置链接、邮箱验证码等短时一次性凭证。
+/// 运行临时凭证示例：issue / get / consume / revoke 与参数校验，适用邀请码、密码重置链接、邮箱验证码等短时一次性凭证。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 临时凭证示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. 构建 TempCredentialHandler
     // ----------------------------------------------------------------
-    // Key 命名空间：garrison:temp:<prefix>:<random>
-    // prefix 用于区分业务场景（如 invite / reset / verify），不可包含 ':'
+    // Key 命名空间：garrison:temp:<prefix>:<random>；prefix 区分业务场景（invite / reset / verify），不可包含 ':'
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let handler = TempCredentialHandler::new(dao);
     println!("[1] TempCredentialHandler 构建完成\n");
@@ -131,7 +127,6 @@ pub async fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     // 5. revoke 撤销凭据（幂等）
     // ----------------------------------------------------------------
-    // 先签发一个新凭据
     let verify_key = handler.issue("verify", "email-code-123456", 60).await?;
     println!("[5] revoke（撤销，幂等）:");
     println!("    签发 key = {}...", &verify_key[..24]);

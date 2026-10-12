@@ -3,14 +3,9 @@
 
 //! 基础登录示例：演示 Garrison 完整业务场景的最小可用登录流程。
 //!
-//! 流程：
-//! 1. 准备依赖（DAO + Config + Interface）
-//! 2. 初始化 GarrisonManager
-//! 3. 执行登录（login）
-//! 4. 在 task_local 上下文中校验登录状态（check_login / get_login_id）
-//! 5. 执行权限校验（check_permission / check_role）
-//! 6. 执行登出（logout）
-//! 7. 验证登出后校验失败
+//! 流程：1. 准备依赖（DAO + Config + Interface）2. 初始化 GarrisonManager 3. 执行登录（login）
+//! 4. 在 task_local 上下文中校验登录状态（check_login / get_login_id）5. 执行权限校验（check_permission / check_role）
+//! 6. 执行登出（logout）7. 验证登出后校验失败
 //!
 //! 运行方式：
 //! ```sh
@@ -31,18 +26,14 @@ use std::sync::Arc;
 // 业务方实现 GarrisonInterface：提供权限/角色数据
 // ============================================================================
 
-/// 示例接口实现：基于内存 HashMap 存储 login_id → 权限/角色列表。
-///
-/// 生产环境通常从数据库或 RBAC 系统读取，此处仅作演示。
+/// 示例接口实现：基于内存 HashMap 存储 login_id → 权限/角色列表，生产环境通常从数据库或 RBAC 系统读取。
 pub struct MyInterface {
     permissions: HashMap<String, Vec<String>>,
     roles: HashMap<String, Vec<String>>,
 }
 
 impl MyInterface {
-    /// 创建 MyInterface 实例。
-    ///
-    /// 为 login_id=1001 预置权限 `["user:read", "user:write"]` + 角色 `["admin"]`。
+    /// 创建 MyInterface 实例，为 login_id=1001 预置权限 `["user:read", "user:write"]` + 角色 `["admin"]`。
     pub fn new() -> Self {
         let mut permissions = HashMap::new();
         permissions.insert(
@@ -73,9 +64,6 @@ impl GarrisonInterface for MyInterface {
 }
 
 /// 运行基础登录示例。
-///
-/// 演示 GarrisonManager 初始化 → login → check_login / get_login_id →
-/// check_permission / check_role → logout → 验证登出后校验失败的完整流程。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 基础登录示例 ===\n");
 
@@ -83,7 +71,7 @@ pub async fn run() -> GarrisonResult<()> {
     // 1. 准备依赖：DAO + Config + Interface
     // ----------------------------------------------------------------
 
-    // 使用 oxcache 内存后端（无需外部数据库，对应 cache-memory feature）
+    // 使用 oxcache 内存后端（对应 cache-memory feature）
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
 
     // 使用默认配置（timeout=30天，token_style=uuid，throw_on_not_login=true）
@@ -106,9 +94,8 @@ pub async fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     // 3. 执行登录：生成 token 并创建会话
     // ----------------------------------------------------------------
-    // 登录与后续权限/角色校验在 TENANT(42) scope 内执行：
-    // tenant-isolation feature 启用时，check_permission/check_role 强制要求
-    // 租户上下文（fail-closed），无上下文会返回 Config 错误。
+    // 登录与后续权限/角色校验在 TENANT(42) scope 内执行：tenant-isolation feature
+    // 启用时，check_permission/check_role 强制要求租户上下文（fail-closed），无上下文会返回 Config 错误。
     let tenant_ctx = TenantContext {
         tenant_id: 42,
         resolved_from: TenantSource::Header,
@@ -125,9 +112,8 @@ pub async fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     // 4-6. 在 task_local 上下文中执行校验与登出
     // ----------------------------------------------------------------
-    // 注意：check_login / get_login_id / logout 等方法依赖 task_local 中的 token，
-    // 实际应用中由 Web 中间件（如 axum middleware）设置；此处显式调用 with_current_token。
-    // 租户上下文同理由中间件解析注入，此处用 TENANT.scope 显式模拟。
+    // 注意：check_login / get_login_id / logout 依赖 task_local 中的 token，实际应用中由 Web
+    // 中间件（如 axum middleware）设置，此处显式调用 with_current_token；租户上下文同理由中间件解析注入，此处用 TENANT.scope 显式模拟。
     let token_for_closure = token.clone();
     let tenant_for_closure = tenant_ctx.clone();
     let ctx_result: Result<(), GarrisonError> = TENANT
@@ -176,7 +162,6 @@ pub async fn run() -> GarrisonResult<()> {
             e
         ),
     }
-    // 无论是 Ok(false) 还是 Err，都说明登出后无法通过校验
     assert!(
         matches!(result, Ok(false)) || result.is_err(),
         "登出后 check_login 应返回 false 或错误"

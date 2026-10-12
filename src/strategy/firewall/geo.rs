@@ -1,54 +1,33 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! IP 地理位置查询抽象（firewall-anomalous / firewall-geoip 共享）。
-//!
-//! 定义 [`GeoCoord`](crate::strategy::firewall::geo::GeoCoord) 坐标结构与
-//! [`GeoLookup`](crate::strategy::firewall::geo::GeoLookup) /
-//! [`CountryLookup`](crate::strategy::firewall::geo::CountryLookup) 两个 trait：
-//! - [`GeoLookup`](crate::strategy::firewall::geo::GeoLookup)：IP → 坐标（lat/lon），供 `AnomalousLoginStrategy` 算 haversine 距离
-//! - [`CountryLookup`](crate::strategy::firewall::geo::CountryLookup)：IP → 国家码（ISO 3166-1 alpha-2），供 `GeoIPStrategy` 做 allow/block 匹配
-//!
-//! 生产实现委托 limiteron `GeoMatcher`（mmdb 读取 + LRU 查询缓存 + 批量查询），
-//! 测试可用 mock 实现（避免依赖真实数据库文件）。
+//! IP 地理位置查询抽象（firewall-anomalous / firewall-geoip 共享）：`GeoLookup` 提供 IP → 坐标（供
+//! haversine 距离计算），`CountryLookup` 提供 IP → ISO 3166-1 alpha-2 国家码（供 allow/block 匹配）。
+//! 生产实现委托 limiteron `GeoMatcher`（mmdb 读取 + LRU 缓存），测试可用 mock 避免依赖真实数据库文件。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 
-/// limiteron GeoMatcher 生产后端（由 `firewall-maxminddb` feature 启用；
-/// 后端实现已从 maxminddb 直读迁移至 limiteron GeoMatcher，feature 名保持不变）。
+/// limiteron GeoMatcher 生产后端（由 `firewall-maxminddb` feature 启用）。
 #[cfg(feature = "firewall-maxminddb")]
 pub mod matcher;
 
-/// 地理坐标（纬度 / 经度，十进制度）。
+/// 地理坐标（纬度 / 经度，十进制度）；`lat ∈ [-90, 90]`、`lon ∈ [-180, 180]`、非 NaN 不变量由
+/// [`GeoCoord::new`] / [`GeoCoord::from_csv`] 构造时校验。
 ///
-/// # 不变量与构造方式
-///
-/// `lat ∈ [-90.0, 90.0]`、`lon ∈ [-180.0, 180.0]`、非 NaN 的不变量由
-/// [`GeoCoord::new`] / [`GeoCoord::from_csv`] 在构造时校验。**字段为 `pub`**，
-/// 外部代码可用结构体字面量 `GeoCoord { lat, lon }` 绕过校验（如注入
-/// `NAN` / 越界值，污染 haversine 距离计算与 allow/block 判定）。
-/// 字段无法私有化：crate 内 `anomalous` / `geo::maxminddb` 等模块及外部
-/// 使用方均直接读取字段（破坏性变更超出本修复范围）。
-/// **调用方应始终经 `new` / `from_csv` 构造**；对不可信来源的坐标，
-/// 消费侧可用 [`GeoCoord::new`] 二次校验（`is_err()` 即越界/NaN）。
+/// **字段为 `pub`**（crate 内外均有直接读取方，无法私有化），可用结构体字面量绕过校验注入 NaN /
+/// 越界值，污染 haversine 距离与 allow/block 判定；**调用方应始终经 `new` / `from_csv` 构造**，
+/// 消费侧对不可信来源的坐标可用 [`GeoCoord::new`] 二次校验。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GeoCoord {
-    /// 纬度（-90.0 ~ 90.0）。
-    ///
-    /// 直接字面量构造可绕过 `new` 校验（见类型文档），消费侧勿信任未校验来源。
+    /// 纬度（-90.0 ~ 90.0）；可由字面量绕过 `new` 校验（见类型文档）。
     pub lat: f64,
-    /// 经度（-180.0 ~ 180.0）。
-    ///
-    /// 直接字面量构造可绕过 `new` 校验（见类型文档），消费侧勿信任未校验来源。
+    /// 经度（-180.0 ~ 180.0）；可由字面量绕过 `new` 校验（见类型文档）。
     pub lon: f64,
 }
 
 impl GeoCoord {
-    /// 创建地理坐标，校验 lat ∈ [-90.0, 90.0]、lon ∈ [-180.0, 180.0]。
-    ///
-    /// # 错误
-    /// - 坐标越界时返回 `GarrisonError::InvalidParam`。
+    /// 创建地理坐标，校验 lat ∈ [-90, 90]、lon ∈ [-180, 180]（越界返回 `InvalidParam`）。
     pub fn new(lat: f64, lon: f64) -> Result<Self, GarrisonError> {
         if !(-90.0..=90.0).contains(&lat) {
             return Err(GarrisonError::InvalidParam(format!(
@@ -70,11 +49,7 @@ impl GeoCoord {
         format!("{},{}", self.lat, self.lon)
     }
 
-    /// 从 "lat,lon" 字符串解析。
-    ///
-    /// # 返回
-    /// - `Some(coord)`: 解析成功。
-    /// - `None`: 格式错误或字段缺失。
+    /// 从 "lat,lon" 字符串解析；格式错误或坐标越界返回 `None`。
     pub fn from_csv(s: &str) -> Option<Self> {
         let mut parts = s.splitn(2, ',');
         let lat: f64 = parts.next()?.trim().parse().ok()?;
@@ -83,36 +58,18 @@ impl GeoCoord {
     }
 }
 
-/// IP 地理位置查询 trait（抽象 maxminddb 等后端）。
-///
-/// 生产实现：`GeoMatcherLookup`（委托 limiteron GeoMatcher，读取 GeoIP2-City 数据库）。
-/// 测试实现：`MockGeoLookup`（硬编码 IP → 坐标映射）。
+/// IP 地理坐标查询 trait：生产实现 `GeoMatcherLookup`（委托 limiteron GeoMatcher），测试实现 `MockGeoLookup`。
 #[async_trait]
 pub trait GeoLookup: Send + Sync {
-    /// 查询 IP 的地理坐标。
-    ///
-    /// # 返回
-    /// - `Ok(Some(coord))`: 查询成功，返回坐标。
-    /// - `Ok(None)`: IP 无法定位（如私有 IP、数据库无记录）。
-    /// - `Err(_)`: 查询失败（如数据库读取错误）。
+    /// 查询 IP 坐标；无法定位（私有 IP、数据库无记录）返回 `Ok(None)`，查询失败返回 `Err`。
     async fn lookup(&self, ip: &str) -> GarrisonResult<Option<GeoCoord>>;
 }
 
-/// IP → 国家码查询 trait（抽象 maxminddb 等后端）。
-///
-/// 与 [`GeoLookup`](crate::strategy::firewall::geo::GeoLookup) 并列（单一职责）：`GeoLookup` 返回坐标供 haversine 距离计算，
-/// `CountryLookup` 返回 ISO 3166-1 alpha-2 国家码（如 `"CN"` / `"US"`）供 allow/block 匹配。
-///
-/// 生产实现：`GeoMatcherCountryLookup`（委托 limiteron GeoMatcher）。
-/// 测试实现：`MockCountryLookup`（硬编码 IP → 国家码映射）。
+/// IP → 国家码查询 trait：返回 ISO 3166-1 alpha-2 国家码（如 `"CN"` / `"US"`，大写，供 allow/block 匹配）；
+/// 生产实现 `GeoMatcherCountryLookup`，测试实现 `MockCountryLookup`。
 #[async_trait]
 pub trait CountryLookup: Send + Sync {
-    /// 查询 IP 的国家码（ISO 3166-1 alpha-2，大写）。
-    ///
-    /// # 返回
-    /// - `Ok(Some(country))`: 查询成功，返回国家码（如 `"CN"`）。
-    /// - `Ok(None)`: IP 无法定位（如私有 IP、数据库无记录）。
-    /// - `Err(_)`: 查询失败（如数据库读取错误）。
+    /// 查询 IP 的国家码（ISO 3166-1 alpha-2，大写）；无法定位返回 `Ok(None)`，查询失败返回 `Err`。
     async fn lookup_country(&self, ip: &str) -> GarrisonResult<Option<String>>;
 }
 
@@ -212,8 +169,7 @@ mod tests {
         assert_eq!(coord.to_csv(), "-33.865143,151.2099");
     }
 
-    /// 验证 mock `GeoLookup` / `CountryLookup` trait 可被实现并经 trait 对象调用
-    ///（生产用 maxminddb 后端，测试用 mock 避免依赖真实数据库文件）。
+    /// mock `GeoLookup` / `CountryLookup` 可经 trait 对象调用（测试用 mock 避免依赖真实数据库文件）。
     #[tokio::test]
     async fn mock_geo_and_country_lookup_trait_objects() {
         struct MockGeo;

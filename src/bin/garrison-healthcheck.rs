@@ -3,14 +3,13 @@
 
 //! `garrison-healthcheck`——容器 HEALTHCHECK 探针（零依赖零 feature）。
 //!
-//! 探测/判定逻辑全部委托 `garrison::health::probe`（纯 std 共享模块），
-//! 与 `garrison-cli healthcheck` 子命令共用同一组函数，两个入口对同一
-//! 存活/停服目标行为一致。本 bin 只负责环境变量读取与退出码映射。
+//! 探测/判定逻辑全部委托 `garrison::health::probe`（纯 std 共享模块，与
+//! `garrison-cli healthcheck` 共用，两入口对同一目标行为一致）；本 bin 只负责
+//! 环境变量读取与退出码映射。
 //!
-//! 探测 `GET http://127.0.0.1:{GARRISON_EXTERNAL_PORT:-8080}/healthz`。该路由是
-//! sdforge 的 liveness 探针（`server-health-check` feature 下挂载，进程存活即恒
-//! 200，绕过限流/审计中间件），**不是**库消费者的 `/health/live`（readiness 语义
-//! 由业务方在自己的端口上自行暴露）。
+//! 探测 `GET http://127.0.0.1:{GARRISON_EXTERNAL_PORT:-8080}/healthz`——sdforge 的
+//! liveness 探针（`server-health-check` feature 下挂载，进程存活即恒 200，绕过限流/
+//! 审计中间件），**不是**库消费者的 `/health/live`（readiness 语义由业务方自行暴露）。
 //!
 //! 判定：HTTP/1.1 状态行 2xx → exit 0；连接失败/超时/非 2xx/畸形响应 → exit 1，
 //! 原因以单行输出 stderr（供 `docker inspect` / 编排平台定位）。

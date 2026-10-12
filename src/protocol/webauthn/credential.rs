@@ -3,13 +3,11 @@
 
 //! WebAuthn 凭据领域模型与 SQL 行双向映射。
 //!
-//! [`WebauthnCredential`] 持有 webauthn-rs 的 [`Credential`] 协议态：
-//! `public_key` 列存其完整 JSON（公钥 COSEKey / attestation 对象 / 注册期
-//! policy / extensions——注册后不变的密钥材料）；`sign_count` / backup
-//! flags 为**可变认证器状态**，以投影列为权威（认证仪式单调推进后由
-//! `update_authenticator_state` 落库）。`from_row` 重建时以投影值覆盖协议
-//! 态中的可变字段，并核对身份字段（credential_id）一致——不一致即行被
-//! 篡改或写路径漂移，显性报错。
+//! [`WebauthnCredential`] 持有 webauthn-rs 的 [`Credential`] 协议态：`public_key`
+//! 列存注册期不变的密钥材料 JSON，`sign_count` / backup flags 为可变认证器状态、
+//! 以投影列为权威（认证后由 `update_authenticator_state` 落库）；`from_row` 以
+//! 投影值覆盖协议态可变字段，并核对 credential_id 一致——不一致即显性报错
+//! （行被篡改或写路径漂移）。
 
 use crate::dao::repository::WebauthnCredentialRow;
 use crate::error::{GarrisonError, GarrisonResult};

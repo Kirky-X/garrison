@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! keycloak_oidc 示例测试（keycloak-oidc feature）。
-//!
-//! 验证 run() 完整执行（仅构造 KeycloakConfig/KeycloakProvider，不实际调用 discover，无外部网络依赖）。
+//! keycloak_oidc 示例测试（keycloak-oidc feature）：验证 run() 完整执行（仅构造 KeycloakConfig/KeycloakProvider，不实际调用 discover，无外部网络依赖）。
 
 #![cfg(feature = "keycloak-oidc")]
 

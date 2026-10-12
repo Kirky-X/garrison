@@ -3,35 +3,17 @@
 
 //! 会话模块，提供双模会话管理（Account-Session + Token-Session）。
 //!
-//! 对应 `SaSession`，
-//! 提供会话级数据存储与 Token 列表管理。
+//! Account-Session 以 login_id 为 key（`account:session:{login_id}`，TTL = `active_timeout`），存储该账号
+//! token 列表与最后活跃时间；Token-Session 以 token 为 key（`token:session:{token}`，TTL = `timeout`）。
 //!
-//! ## 双模会话
-//!
-//! 1. **Account-Session**：以 login_id 为 key，存储该账号所有 token 列表与最后活跃时间
-//! - key: `account:session:{login_id}`
-//! - TTL: `active_timeout`（账号级 activity 超时）
-//! 2. **Token-Session**：以 token 为 key，存储 login_id/创建时间/自定义属性
-//! - key: `token:session:{token}`
-//! - TTL: `timeout`（token 级超时）
-//!
-//! ## 过期机制
-//!
-//! - **token 级过期**：由 oxcache TTL 自动管理，过期后 get 返回 None
-//! - **Account-Session 级过期**：由 oxcache TTL 自动管理 + `is_valid` 惰性检查
-//! - **活跃续期**：`touch(token)` 更新 last_active_at 并重置 TTL
-//! - **主动续期**：`renew(token)` 重置过期时间为完整 timeout
-//!
-//! ## 存储委托
-//!
-//! 会话数据通过 `GarrisonDao` 持久化（oxcache / dbnexus），不自行实现缓存逻辑。
+//! token 级过期由 DAO TTL 自动管理，Account-Session 级过期由 DAO TTL + `is_valid` 惰性检查共同管理；
+//! `touch` 活跃续期（更新 last_active_at 并重置 TTL），`renew` 主动续期（重置为完整 timeout）。
+//! 会话数据经 `GarrisonDao` 持久化（oxcache / dbnexus），不自行实现缓存逻辑。
 
 /// Session 安全监听器（IP 变更检测）。
 pub mod security_listener;
 
-/// Re-export SessionSecurityListener（mod.rs 暴露接口）。
-///
-/// 通过 `garrison::session::SessionSecurityListener` 直接访问，无需 `security_listener::` 前缀。
+/// Re-export SessionSecurityListener：经 `garrison::session::SessionSecurityListener` 直接访问，无需 `security_listener::` 前缀。
 pub use security_listener::SessionSecurityListener;
 
 /// 设备管理模块（需要 sha2，由多个协议/安全 feature 启用）。
@@ -46,10 +28,7 @@ pub use security_listener::SessionSecurityListener;
 ))]
 pub mod device;
 
-/// Re-export 设备管理类型（与 `device` 模块 feature gate 一致）。
-///
-/// 启用任一启用 `device` 模块的 feature 后，可通过 `garrison::session::DeviceManager`
-/// / `garrison::session::DeviceSession` 直接访问，无需 `device::` 前缀。
+/// Re-export 设备管理类型（与 `device` 模块 feature gate 一致）：经 `garrison::session::DeviceManager` / `DeviceSession` 直接访问，无需 `device::` 前缀。
 #[cfg(any(
     feature = "protocol-jwt",
     feature = "account-credential",
@@ -85,9 +64,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex as TokioMutex;
 
-/// Account-Session 的 token 信息条目。
-///
-/// 存储 token 字符串、创建时间与最后活跃时间。
+/// Account-Session 的 token 信息条目：token 字符串、创建时间与最后活跃时间。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenInfo {
     /// token 字符串。
@@ -98,10 +75,7 @@ pub struct TokenInfo {
     pub last_active_at: i64,
 }
 
-/// Account-Session 数据（以 login_id 为 key）。
-///
-/// 对应 Account-Session，
-/// 存储账号所有 token 列表与最后活跃时间。
+/// Account-Session 数据（以 login_id 为 key）：账号所有 token 列表与最后活跃时间。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountSession {
     /// 登录主体标识。
@@ -114,10 +88,7 @@ pub struct AccountSession {
     pub last_active_at: i64,
 }
 
-/// Token-Session 数据（以 token 为 key）。
-///
-/// 对应 Token-Session，
-/// 存储 token 关联的 login_id、创建时间与自定义属性。
+/// Token-Session 数据（以 token 为 key）：token 关联的 login_id、创建时间与自定义属性。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenSession {
     /// token 字符串。
@@ -130,79 +101,39 @@ pub struct TokenSession {
     pub last_active_at: i64,
     /// 自定义属性（键值对）。
     pub attrs: HashMap<String, String>,
-    /// 登录设备标识。
-    ///
-    /// 由业务方在 login 后通过 `set_device` 设置（如 "web-chrome"/"mobile-ios"/"api-client"）。
-    /// `kickout_by_device` 按此字段过滤踢出。未设置时为 `None`，不参与设备级踢出。
+    /// 登录设备标识：login 后由业务方经 `set_device` 设置（如 "web-chrome"/"mobile-ios"/"api-client"），`kickout_by_device` 按此字段过滤踢出；未设置时不参与。
     #[serde(default)]
     pub device: Option<String>,
-    /// 客户端 IP 地址。
-    ///
-    /// 由 `create_token_session` 在 login 时从 `LoginParams.ip` 写入。
-    /// 未设置时为 `None`。
+    /// 客户端 IP 地址：`create_token_session` 在 login 时从 `LoginParams.ip` 写入；未设置时为 `None`。
     #[serde(default)]
     pub ip: Option<String>,
-    /// 客户端 User-Agent。
-    ///
-    /// 由 `create_token_session` 在 login 时从 `LoginParams.user_agent` 写入。
-    /// 未设置时为 `None`。
+    /// 客户端 User-Agent：`create_token_session` 在 login 时从 `LoginParams.user_agent` 写入；未设置时为 `None`。
     #[serde(default)]
     pub user_agent: Option<String>,
-    /// 二级认证（Safe Auth）瞬态标记。
-    ///
-    /// key: service 名称（如 "default" / "payment"）
-    /// value: 过期时间戳（Unix 秒），`now > value` 表示已过期。
-    ///
-    /// `open_safe` 写入，`is_safe` 查询，`close_safe` 移除。
-    /// `#[serde(default)]` 反序列化遇到缺失字段时默认为空 HashMap。
+    /// 二级认证（Safe Auth）瞬态标记：key 为 service 名称，value 为过期时间戳（Unix 秒，`now > value` 即过期）；
+    /// `open_safe` 写入、`is_safe` 查询、`close_safe` 移除，`#[serde(default)]` 缺失时为空 HashMap。
     #[serde(default)]
     pub safe_services: HashMap<String, i64>,
-    /// 动态活跃超时（秒）。
-    ///
-    /// 启用 `dynamic-active-timeout` feature 后存在。为 `None` 时使用全局 `active_timeout`，
-    /// 为 `Some(secs)` 时该 token 使用自定义的活跃超时。
-    /// `#[serde(default)]` 反序列化遇到缺失字段时默认为 `None`。
+    /// 动态活跃超时（秒，启用 `dynamic-active-timeout` feature 后存在）：`None` 用全局 `active_timeout`，`Some(secs)` 用自定义活跃超时；`#[serde(default)]` 缺失时为 `None`。
     #[cfg(feature = "session-extra")]
     #[serde(default)]
     pub dynamic_active_timeout: Option<i64>,
-    /// 是否为匿名 Session。
-    ///
-    /// 启用 `anonymous-session` feature 后存在。匿名 Session 的 `login_id` 为空字符串 `""`，
-    /// 通过 `token:session:anon:{token}` key 空间与登录 Session 隔离。
-    /// `#[serde(default)]` 反序列化遇到缺失字段时默认为 `false`。
+    /// 是否为匿名 Session（启用 `anonymous-session` feature 后存在）：匿名 Session 的 `login_id` 为空串，经 `token:session:anon:{token}` key 空间与登录 Session 隔离；`#[serde(default)]` 缺失时为 `false`。
     #[cfg(feature = "session-extra")]
     #[serde(default)]
     pub is_anon: bool,
-    /// remember-me 生效时的权威 token TTL（秒）。
-    ///
-    /// stp login 收口在 `remember_me_enabled` 为 true 且
-    /// `LoginParams.remember_me == true` 时写入 `Some(remember_me_timeout)`，
-    /// 否则为 `None`（使用全局 `timeout`）。过期判定以本字段为权威来源，
-    /// 避免 DB/缓存 TTL 与业务语义漂移。
-    /// `#[serde(default)]` 反序列化遇到缺失字段时默认为 `None`。
+    /// remember-me 生效时的权威 token TTL（秒）：stp login 收口在 `remember_me_enabled` 且 `LoginParams.remember_me == true` 时写 `Some(remember_me_timeout)`，否则 `None`（用全局 `timeout`）；过期判定以本字段为权威来源，避免 DB/缓存 TTL 与业务语义漂移。
     #[serde(default)]
     pub effective_timeout: Option<i64>,
-    /// 因子账本：按完成顺序记录的认证步骤（MFA 编排基座）。
-    ///
-    /// 主登录时按 `seed_primary_amr` 配置播种主因子条目（pwd / AAL 1，默认
-    /// 播种；凭证委托部署可关闭），step-up 经
-    /// [`GarrisonSession::append_amr_entry`](crate::session::GarrisonSession::append_amr_entry)
-    /// 追加次因子。签发 token 时映射为 RFC 8176 `amr` claim。
-    /// `#[serde(default)]` 反序列化遇到缺失字段时默认为空列表。
+    /// 因子账本：按完成顺序记录的认证步骤（MFA 编排基座）。主登录按 `seed_primary_amr` 播种主因子（pwd / AAL 1，默认播种，凭证委托部署可关闭），step-up 经 `append_amr_entry` 追加次因子；签发 token 时映射为 RFC 8176 `amr` claim。
     #[serde(default)]
     pub amr_ledger: Vec<crate::stp::mfa::AmrEntry>,
-    /// 主认证完成时刻（Unix 秒）——OIDC `auth_time` claim 的权威来源。
-    ///
-    /// 登录播种（随 `seed_primary_amr` 开关）时写入；后续 step-up 不移动
-    /// （`auth_time` 表达主认证时刻，step-up 只升级账本 AAL）。
-    /// `#[serde(default)]` 反序列化遇到缺失字段时默认为 `None`。
+    /// 主认证完成时刻（Unix 秒）——OIDC `auth_time` claim 的权威来源。登录播种时写入，后续 step-up 不移动（auth_time 表达主认证时刻）；`#[serde(default)]` 缺失时为 `None`。
     #[serde(default)]
     pub auth_time: Option<i64>,
 }
 
-/// 会话过期监听器 trait。
-///
-/// 在 session 过期时触发回调。listener 失败时记录 `tracing::warn!` 但不中断调用方
+/// 会话过期监听器 trait：在 session 过期时触发回调，listener 失败时记录 `tracing::warn!` 但不中断调用方。
 ///
 /// # 使用
 ///
@@ -230,27 +161,13 @@ pub struct TokenSession {
 /// ```
 #[async_trait]
 pub trait SessionExpiryListener: Send + Sync {
-    /// 会话过期回调。
-    ///
-    /// # 参数
-    /// - `login_id`: 过期会话关联的登录主体标识。
-    /// - `token`: 过期的 token 字符串（Account-Session 级过期时为空字符串 `""`）。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 回调成功。
-    /// - `Err`: 回调失败，调用方记录 `tracing::warn!` 但不中断主流程或后续 listener。
+    /// 会话过期回调：Account-Session 级过期时 `token` 为空串；回调失败时调用方记录 `tracing::warn!` 但不中断主流程或后续 listener。
     async fn on_session_expired(&self, login_id: &str, token: &str) -> GarrisonResult<()>;
 }
 
-/// 会话管理器，封装 `GarrisonDao` 提供双模会话操作。
+/// 会话管理器，封装 `GarrisonDao` 提供双模会话操作（对应 `SaSession` 管理逻辑）。
 ///
-/// 对应 `SaSession` 管理逻辑，
-/// 持有 DAO 引用与超时配置，提供会话 CRUD / 过期检查 / 续期 / 登出。
-///
-/// # 存储格式
-///
-/// - `account:session:{login_id}` → `AccountSession`（JSON）
-/// - `token:session:{token}` → `TokenSession`（JSON）
+/// 存储格式：`account:session:{login_id}` → `AccountSession`（JSON），`token:session:{token}` → `TokenSession`（JSON）。
 pub struct GarrisonSession {
     /// DAO 引用（oxcache / dbnexus 实现）。
     dao: Arc<dyn GarrisonDao>,
@@ -258,77 +175,30 @@ pub struct GarrisonSession {
     timeout: u64,
     /// Account-Session 级 activity 超时（秒）。
     active_timeout: u64,
-    /// remember-me 扩展后的 token TTL（秒）。
-    ///
-    /// stp login 收口（`create_session_with_quota`）在 `config.remember_me_enabled`
-    /// 为 true 且 `LoginParams.remember_me == true` 时传入 remember-me 标记，
-    /// Token-Session 的 DAO TTL 与该 TokenSession 的 `effective_timeout` 均取此值，
-    /// 否则使用 `timeout`（TTL 权威来源写入会话记录）。
-    ///
-    /// 非 `remember_me` 登录路径仍使用 `timeout`，`effective_timeout` 为 `None`。
-    /// 直接调用 session 层 `create` / `create_token_session`（未过 stp 收口）时
-    /// 按调用方传入的 remember_me 标记生效——开关的消费点在 stp 收口。
+    /// remember-me 扩展后的 token TTL（秒）：stp login 收口（`create_session_with_quota`）在 `remember_me_enabled` 且 `LoginParams.remember_me == true` 时传入，Token-Session 的 DAO TTL 与 `effective_timeout` 均取此值，否则用 `timeout`；开关消费点在 stp 收口。
     remember_me_timeout: u64,
-    /// 匿名 Session 超时（秒）。
-    ///
-    /// 启用 `anonymous-session` feature 后存在。由 `anon` 模块的 `get_anon_token_session`
-    /// 用作匿名 Token-Session 的 TTL。
+    /// 匿名 Session 超时（秒，启用 `anonymous-session` feature 后存在）：由 `anon` 模块用作匿名 Token-Session 的 TTL。
     #[cfg(feature = "session-extra")]
     anon_session_timeout: u64,
     /// per-login_id 操作锁，保护 Account-Session 的 read-modify-write 序列。
     ///
-    /// # 清理策略
-    ///
-    /// **不清理**：entry 一旦创建即永久驻留 DashMap，直到 `GarrisonSession` 实例销毁。
-    /// 原因：login_id 是有限业务实体（用户/服务账号），总量可控且可预估；
-    /// 长期驻留可避免高频登录用户的锁 entry 反复创建/销毁开销。
-    ///
-    /// 与 `core::auth::AuthLogicDefault::renew_locks` 的清理策略**有意不同**：
-    /// `renew_locks` 的 key 是 token（高基数、攻击者可控），必须在 renew 流程结束
-    /// 时按 `Arc::strong_count == 1` 清理，防止 OOM（CWE-770）；本字段的 key 是
-    /// login_id（低基数、业务可控），无需清理。详见
-    /// `AuthLogicDefault::renew_locks` 字段文档。
+    /// **不清理**：entry 永久驻留 DashMap 直到实例销毁——login_id 是有限业务实体（总量可控），长期驻留
+    /// 避免高频登录用户锁 entry 反复创建/销毁开销；与 `renew_locks`（key 为高基数、攻击者可控的 token，
+    /// 必须按 `Arc::strong_count == 1` 清理防 CWE-770）的清理策略有意不同。
     login_locks: DashMap<String, Arc<TokioMutex<()>>>,
-    /// per-token 操作锁，保护 Token-Session 的 read-modify-write 序列。
+    /// per-token 操作锁，保护 Token-Session 的 read-modify-write 序列（`set`/`set_device`/`touch`/`set_active_timeout` 等；只读操作不需要锁）。
     ///
-    /// 用于 `set`/`set_device`/`touch`/`set_active_timeout` 等 modifying TokenSession
-    /// 操作的串行化，避免并发 read-modify-write 导致 lost update。只读操作（如 `is_safe`）不需要锁。
-    ///
-    /// # 清理策略
-    ///
-    /// **清理**：`with_token_session_lock` 在 `f.await` 结束后按 `Arc::strong_count == 1`
-    /// 清理无等待者的 entry（与 `core::auth::AuthLogicDefault::renew_locks` 一致）。
-    ///
-    /// 原因：`with_token_session_lock` 的 `token: &str` 参数来自调用方（用户面 API
-    /// `set`/`touch`/`set_device`/`set_active_timeout` 等），**攻击者可直接控制 key**。
-    /// 若不清理，攻击者用大量随机 token 调用 `set("random-token-N", ...)` 会在
-    /// `token_session_locks` 创建大量 entry（即使 `get_token_session` 后续返回 None
-    /// 早退，entry 已驻留），导致 CWE-770 资源耗尽。
-    ///
-    /// 与 `login_locks` 的清理策略对比：`login_locks` 的 key 是 login_id（低基数、
-    /// 业务可控，无需清理）；本字段 key 是 token（高基数、攻击者可控，必须清理）。
-    /// 与 `renew_locks` 的清理策略一致：两者都面临 token 灌满攻击，都用
-    /// `Arc::strong_count == 1` 清理。
+    /// **清理**：`f.await` 结束后按 `Arc::strong_count == 1` 清理无等待者 entry——`token: &str` 来自调用方
+    /// （用户面 API），攻击者可直接控制 key，不清理会撑爆 `token_session_locks`（CWE-770）。
     token_session_locks: DashMap<String, Arc<TokioMutex<()>>>,
-    /// login_id → token 列表的内存索引，用于并发登录控制快速查询。
-    ///
-    /// 与 DAO 持久化的 `AccountSession.tokens` 保持同步：
-    /// - `create`/`create_token_session` 时 `add_login_token`
-    /// - `logout`/`kickout_by_device`（经 `logout_inner`）/`logout_by_login_id` 时 `remove_login_token`
+    /// login_id → token 列表的内存索引，用于并发登录控制快速查询：`create`/`create_token_session` 时 `add_login_token`，`logout`/`kickout`/`logout_by_login_id` 时 `remove_login_token`，与 DAO 持久化的 `AccountSession.tokens` 同步。
     login_token_map: DashMap<String, Vec<String>>,
-    /// 监听器管理器。
-    ///
-    /// 注入后 `kickout_by_device` 会广播 `GarrisonEvent::Kickout` 事件。
-    /// 未注入时 `kickout_by_device` 仍正常执行踢出，仅跳过事件广播。
+    /// 监听器管理器：注入后 `kickout_by_device` 广播 `GarrisonEvent::Kickout` 事件；未注入时仍正常踢出，仅跳过广播。
     #[cfg(feature = "listener")]
     listener_manager: Option<Arc<crate::listener::GarrisonListenerManager>>,
-    /// 会话过期监听器列表。
-    ///
-    /// 按 FIFO 顺序调用。listener 失败时记录 `tracing::warn!` 但不中断后续 listener。
+    /// 会话过期监听器列表：按 FIFO 顺序调用，listener 失败时记录 `tracing::warn!` 但不中断后续 listener。
     expiry_listeners: Vec<Arc<dyn SessionExpiryListener>>,
-    /// 每个登录主体的最后活跃时间（login_id → unix 毫秒时间戳）。
-    ///
-    /// 仅当 `session_hover_timeout > 0` 时由 `check_login` 路径更新与检查。
+    /// 每个登录主体的最后活跃时间（login_id → unix 毫秒时间戳）：仅当 `session_hover_timeout > 0` 时由 `check_login` 路径更新与检查。
     last_active_time: DashMap<String, i64>,
 }
 
@@ -364,10 +234,6 @@ mod tests {
         let session = GarrisonSession::new(dao.clone(), timeout, active_timeout, 0);
         (dao, session)
     }
-
-    // ------------------------------------------------------------------------
-    // 创建 Account-Session / 创建 Token-Session
-    // ------------------------------------------------------------------------
 
     /// 验证 create 双写 Account-Session 与 Token-Session。
     #[tokio::test]
@@ -406,10 +272,6 @@ mod tests {
         assert_eq!(ts.login_id, "1001");
     }
 
-    // ------------------------------------------------------------------------
-    // Account-Session 记录多 token
-    // ------------------------------------------------------------------------
-
     /// 验证同一账号登录两次后 token 列表包含两个 token。
     #[tokio::test]
     async fn account_session_records_multiple_tokens() {
@@ -422,10 +284,6 @@ mod tests {
         assert_eq!(as_.tokens[0].token, "T1");
         assert_eq!(as_.tokens[1].token, "T2");
     }
-
-    // ------------------------------------------------------------------------
-    // Account-Session 随登出更新
-    // ------------------------------------------------------------------------
 
     /// 验证登出 T1 后 Account-Session 移除 T1 但保留 T2。
     #[tokio::test]
@@ -454,10 +312,6 @@ mod tests {
         assert!(as_.unwrap().tokens.is_empty());
     }
 
-    // ------------------------------------------------------------------------
-    // Token-Session 存储自定义属性
-    // ------------------------------------------------------------------------
-
     /// 验证 set/get Token-Session 自定义属性。
     #[tokio::test]
     async fn token_session_stores_custom_attrs() {
@@ -480,10 +334,6 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // token 过期自动失效 / Activity 超时
-    // ------------------------------------------------------------------------
-
     /// 验证 token 不存在时 is_valid 返回 false。
     #[tokio::test]
     async fn is_valid_returns_false_for_nonexistent_token() {
@@ -501,10 +351,7 @@ mod tests {
         assert!(valid);
     }
 
-    /// 验证 Account-Session 过期后 token 视为无效（惰性检查）。
-    ///
-    ///
-    /// Account-Session 过期后，所有关联 token 失效。
+    /// 验证 Account-Session 过期后 token 视为无效（惰性检查）：Account-Session 过期后所有关联 token 失效。
     #[tokio::test]
     async fn is_valid_returns_false_when_account_session_expired() {
         let (dao, session) = make_session(3600, 86400);
@@ -520,18 +367,13 @@ mod tests {
         assert!(!valid, "Account-Session 过期后 token 应视为无效");
     }
 
-    // ------------------------------------------------------------------------
-    // 活跃续期 / 主动续期
-    // ------------------------------------------------------------------------
-
     /// 验证 touch 更新 last_active_at 并重置 TTL。
     #[tokio::test]
     async fn touch_updates_last_active_and_renews_ttl() {
         let (_dao, session) = make_session(3600, 86400);
         session.create("1001", "T1").await.unwrap();
 
-        // 等待一小段时间，确保 touch 后 last_active_at 变化
-        // 1500ms 容差避免高负载下时间精度不足导致 flaky
+        // 等待一小段时间，确保 touch 后 last_active_at 变化；1500ms 容差避免高负载下时间精度不足导致 flaky
         tokio::time::sleep(Duration::from_millis(1500)).await;
 
         session.touch("T1").await.unwrap();
@@ -552,8 +394,7 @@ mod tests {
     /// 验证 renew 重置过期时间（token 短 TTL + renew 后仍有效）。
     #[tokio::test]
     async fn renew_resets_ttl() {
-        // token TTL=5 秒，sleep 总计 3 秒，留 2 秒 margin 避免高负载下 sleep
-        // 精度问题（原 TTL=3 margin=1 在 CI 高负载时 flaky）
+        // token TTL=5 秒，sleep 总计 3 秒，留 2 秒 margin 避免高负载下 sleep 精度问题（原 TTL=3 margin=1 在 CI 高负载时 flaky）
         let (_dao, session) = make_session(5, 86400);
         session.create("1001", "T1").await.unwrap();
 
@@ -580,10 +421,6 @@ mod tests {
             "renew 不存在的 token 应返回 InvalidToken"
         );
     }
-
-    // ------------------------------------------------------------------------
-    // 登出
-    // ------------------------------------------------------------------------
 
     /// 验证 logout 删除 Token-Session。
     #[tokio::test]
@@ -618,13 +455,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    // ------------------------------------------------------------------------
-    // 错误分支补充测试：反序列化失败 / touch 不存在的 token
-    // ------------------------------------------------------------------------
-
-    /// 验证 get_token_session 在 DAO 中存储了非法 JSON 时返回 Session 错误。
-    ///
-    /// 覆盖 `get_token_session` 中 `serde_json::from_str(&json).map_err(...)` 错误路径。
+    /// 验证 get_token_session 在 DAO 中存储了非法 JSON 时返回 Session 错误（覆盖 `serde_json::from_str` 错误路径）。
     #[tokio::test]
     async fn get_token_session_corrupt_json_errors() {
         let (dao, session) = make_session(3600, 86400);
@@ -640,9 +471,7 @@ mod tests {
         );
     }
 
-    /// 验证 get_account_session 在 DAO 中存储了非法 JSON 时返回 Session 错误。
-    ///
-    /// 覆盖 `get_account_session` 中 `serde_json::from_str(&json).map_err(...)` 错误路径。
+    /// 验证 get_account_session 在 DAO 中存储了非法 JSON 时返回 Session 错误（覆盖 `serde_json::from_str` 错误路径）。
     #[tokio::test]
     async fn get_account_session_corrupt_json_errors() {
         let (dao, session) = make_session(3600, 86400);
@@ -658,9 +487,7 @@ mod tests {
         );
     }
 
-    /// 验证 touch 不存在的 token 返回 InvalidToken 错误。
-    ///
-    /// 覆盖 `touch` 方法中 `ok_or_else(|| GarrisonError::InvalidToken(...))` 错误路径。
+    /// 验证 touch 不存在的 token 返回 InvalidToken 错误（覆盖 `ok_or_else` 错误路径）。
     #[tokio::test]
     async fn touch_nonexistent_token_errors() {
         let (_dao, session) = make_session(3600, 86400);
@@ -672,8 +499,6 @@ mod tests {
     }
 
     /// 验证 get 在 token 不存在时返回 None（不抛错）。
-    ///
-    /// 覆盖 `get` 方法中 `None => Ok(None)` 分支。
     #[tokio::test]
     async fn get_attr_nonexistent_token_returns_none() {
         let (_dao, session) = make_session(3600, 86400);
@@ -681,11 +506,7 @@ mod tests {
         assert!(result.is_none(), "token 不存在时 get 属性应返回 None");
     }
 
-    /// 验证 create 在已存在 Account-Session 时追加 token 而非覆盖。
-    ///
-    /// 覆盖 `create` 中 `unwrap_or_else` 的 Some 分支（读取已存在的 account）。
-    /// 此场景实际已被 account_session_records_multiple_tokens 覆盖，
-    /// 但此处显式断言已存在的 token 列表被保留。
+    /// 验证 create 在已存在 Account-Session 时追加 token 而非覆盖（覆盖 `unwrap_or_else` 的 Some 分支；此场景已被 account_session_records_multiple_tokens 覆盖，此处显式断言已存在 token 列表被保留）。
     #[tokio::test]
     async fn create_appends_to_existing_account_session() {
         let (_dao, session) = make_session(3600, 86400);
@@ -699,10 +520,6 @@ mod tests {
         assert_eq!(as_.tokens[1].token, "T2");
         assert_eq!(as_.tokens[2].token, "T3");
     }
-
-    // ------------------------------------------------------------------------
-    // Token-Session 存储 SSO ticket 引用
-    // ------------------------------------------------------------------------
 
     /// 验证 link_sso_ticket / get_sso_ticket 往返。
     #[tokio::test]
@@ -736,10 +553,6 @@ mod tests {
         assert!(ticket.is_none(), "token 不存在时应返回 None");
     }
 
-    // ------------------------------------------------------------------------
-    // Token-Session 存储 OAuth2 access_token
-    // ------------------------------------------------------------------------
-
     /// 验证 link_oauth2_token / get_oauth2_token 往返。
     #[tokio::test]
     async fn link_oauth2_token_stores_access_token_in_token_session() {
@@ -772,10 +585,6 @@ mod tests {
         assert!(access_token.is_none(), "token 不存在时应返回 None");
     }
 
-    // ------------------------------------------------------------------------
-    // 临时凭证关联会话
-    // ------------------------------------------------------------------------
-
     /// 验证 link_temp_credential / get_temp_credential 往返。
     #[tokio::test]
     async fn link_temp_credential_stores_key_in_token_session() {
@@ -806,12 +615,7 @@ mod tests {
         assert!(stored.is_none(), "token 不存在时应返回 None");
     }
 
-    // ------------------------------------------------------------------------
-    // link 方法对不存在的 token 报错
-    // ------------------------------------------------------------------------
-
-    /// 验证 link_sso_ticket / link_oauth2_token / link_temp_credential
-    /// 对不存在的 token 返回 InvalidToken 错误。
+    /// 验证 link_sso_ticket / link_oauth2_token / link_temp_credential 对不存在的 token 返回 InvalidToken 错误。
     #[tokio::test]
     async fn link_methods_return_error_for_nonexistent_token() {
         let (_dao, session) = make_session(3600, 86400);
@@ -838,10 +642,6 @@ mod tests {
             "link_temp_credential 不存在的 token 应返回 InvalidToken"
         );
     }
-
-    // ------------------------------------------------------------------------
-    // SSO ticket 销毁联动（logout 联动）
-    // ------------------------------------------------------------------------
 
     /// 验证 logout 时联动删除 Token-Session 关联的 SSO ticket。
     #[tokio::test]
@@ -891,10 +691,6 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // 临时凭证过期联动（is_valid 联动）
-    // ------------------------------------------------------------------------
-
     /// 验证 is_valid 在 token 关联的临时凭证仍存在时返回 true。
     #[tokio::test]
     async fn is_valid_returns_true_when_temp_credential_exists() {
@@ -910,9 +706,7 @@ mod tests {
         assert!(valid, "临时凭证存在时 token 应有效");
     }
 
-    /// 验证 is_valid 在 token 关联的临时凭证已被删除时返回 false。
-    ///
-    /// "临时凭证过期后 T1 立即失效，不论 token 自身 timeout 是否到期"。
+    /// 验证 is_valid 在 token 关联的临时凭证已被删除时返回 false（临时凭证过期后 T1 立即失效，不论 token 自身 timeout 是否到期）。
     #[tokio::test]
     async fn is_valid_returns_false_when_temp_credential_expired() {
         let (dao, session) = make_session(3600, 86400);
@@ -945,10 +739,6 @@ mod tests {
         assert!(valid, "未关联临时凭证时 token 有效性应遵循 0.1.0 既有行为");
     }
 
-    // ------------------------------------------------------------------------
-    // String-form login_id 接入测试
-    // ------------------------------------------------------------------------
-
     /// 验证 `GarrisonSession::create` 接受 String 形式 login_id。
     #[tokio::test]
     async fn create_accepts_login_id_numeric() {
@@ -975,10 +765,6 @@ mod tests {
         session.logout_by_login_id("1001").await.unwrap();
         assert!(session.get_token_session("T1").await.unwrap().is_none());
     }
-
-    // ------------------------------------------------------------------------
-    // set_device + kickout_by_device
-    // ------------------------------------------------------------------------
 
     /// 验证 set_device 设置 TokenSession.device 字段。
     #[tokio::test]
@@ -1023,9 +809,7 @@ mod tests {
         assert!(session.get_token_session("T2").await.unwrap().is_some());
     }
 
-    /// 验证 kickout_by_device 不影响其他设备。
-    ///
-    /// 验收标准“不影响该 login_id 在其他 device 上的 session”。
+    /// 验证 kickout_by_device 不影响其他设备（验收标准：不影响该 login_id 在其他 device 上的 session）。
     #[tokio::test]
     async fn kickout_by_device_preserves_other_devices() {
         let (_dao, session) = make_session(3600, 86400);
@@ -1043,8 +827,6 @@ mod tests {
     }
 
     /// 验证 kickout_by_device device 不存在时幂等返回 Ok。
-    ///
-    /// 验收标准“device 不存在时返回 Ok(())”。
     #[tokio::test]
     async fn kickout_by_device_nonexistent_device_is_noop() {
         let (_dao, session) = make_session(3600, 86400);
@@ -1059,8 +841,6 @@ mod tests {
     }
 
     /// 验证 kickout_by_device account session 不存在时幂等返回 Ok。
-    ///
-    /// 验收标准“account session 不存在时返回 Ok(())”。
     #[tokio::test]
     async fn kickout_by_device_no_account_session_is_noop() {
         let (_dao, session) = make_session(3600, 86400);
@@ -1101,10 +881,6 @@ mod tests {
         assert!(session.get_token_session("T1").await.unwrap().is_none());
     }
 
-    // ------------------------------------------------------------------------
-    // kickout_by_device listener 广播（feature = "listener"）
-    // ------------------------------------------------------------------------
-
     /// 验证 kickout_by_device 注入 listener_manager 后广播 Kickout 事件。
     #[cfg(feature = "listener")]
     #[tokio::test]
@@ -1131,9 +907,7 @@ mod tests {
         }
 
         let mgr = Arc::new(GarrisonListenerManager::new());
-        // 注入自定义监听器（直接 push 到 listeners，需要扩展 API）
-        // 由于 GarrisonListenerManager 通过 inventory 收集，测试中无法直接注入
-        // 改为验证 with_listener_manager 链式构造成功，且 kickout 不报错
+        // GarrisonListenerManager 经 inventory 收集，测试中无法直接注入，改为验证 with_listener_manager 链式构造成功且 kickout 不报错
         let (_dao, session) = make_session(3600, 86400);
         let session = session.with_listener_manager(mgr);
 
@@ -1157,13 +931,7 @@ mod tests {
         assert!(session.listener_manager.is_some());
     }
 
-    // ------------------------------------------------------------------------
-    // 覆盖率补充：SSO ticket 删除失败 warn 路径
-    // ------------------------------------------------------------------------
-
-    /// 测试用 DAO wrapper，在 delete 特定 key 时返回错误。
-    ///
-    /// 用于测试 logout 联动删除 SSO ticket 失败时的 warn 日志路径（行 528）。
+    /// 测试用 DAO wrapper：delete 特定 key 时返回错误，用于测试 logout 联动删除 SSO ticket 失败时的 warn 日志路径。
     struct FailingDeleteDao {
         inner: Arc<MockDao>,
         fail_delete_key: String,
@@ -1192,10 +960,7 @@ mod tests {
         crate::atomic_test_fallback!();
     }
 
-    /// logout 联动删除 SSO ticket 失败时记录 warn 但不中断主流程。
-    ///
-    /// 覆盖行 528（SSO ticket 删除失败的 warn 日志路径）。
-    /// 6: plugin/listener/集成失败不中断主流程。
+    /// logout 联动删除 SSO ticket 失败时记录 warn 但不中断主流程（plugin/listener 集成失败不中断主流程）。
     #[tokio::test]
     async fn logout_sso_ticket_delete_failure_logs_warn_without_failing() {
         let inner = Arc::new(MockDao::new());
@@ -1249,10 +1014,6 @@ mod tests {
         let ts = session.get_token_session("T1").await.unwrap();
         assert!(ts.is_none(), "logout 后 Token-Session 应已删除");
     }
-
-    // ----------------------------------------------------------------
-    // SessionExpiryListener 测试
-    // ----------------------------------------------------------------
 
     /// 修改 TokenSession 的 last_active_at 为过去时间（模拟 session 级过期）。
     async fn expire_token_session_in_dao(dao: &Arc<MockDao>, token: &str, timeout: u64) {
@@ -1442,15 +1203,9 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // 并发竞态测试
-    // ------------------------------------------------------------------------
-
-    /// SlowDao wrapper：在 `get` account session key 后插入延迟，
-    /// 放大 Account-Session read-modify-write 窗口，使竞态可靠复现。
+    /// SlowDao wrapper：在 `get` account session key 后插入延迟，放大 Account-Session read-modify-write 窗口，使竞态可靠复现。
     ///
-    /// 无锁时：两个并发 `create` 都会在对方的 `set(account)` 之前读到空的 account session，
-    /// 导致 lost update（最终 tokens 列表只有 1 个 token 而非 2 个）。
+    /// 无锁时两个并发 `create` 会读到空 account session 导致 lost update（最终 tokens 列表只有 1 个 token 而非 2 个）。
     struct SlowDao {
         inner: Arc<MockDao>,
         delay: Duration,
@@ -1481,11 +1236,7 @@ mod tests {
         crate::atomic_test_fallback!();
     }
 
-    /// 两个并发 `create` 同一 login_id，Account-Session 的 token 列表应包含两个 token。
-    ///
-    /// 修复前（无 per-login_id 锁）：两个并发 create 的 read-modify-write 交错，
-    /// 后写入的 account session 覆盖先写入的，导致丢失一个 token（lost update）。
-    /// 修复后（per-login_id 锁）：两个 create 串行化，tokens 列表完整保留两个 token。
+    /// 两个并发 `create` 同一 login_id，Account-Session 的 token 列表应包含两个 token（per-login_id 锁串行化 create，tokens 列表完整保留）。
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[serial_test::serial]
     async fn concurrent_login_same_user_creates_consistent_session() {
@@ -1552,10 +1303,6 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // 会话悬停超时测试
-    // ------------------------------------------------------------------------
-
     /// `session_hover_timeout == -1` 时 `check_hover_timeout` 始终返回 true。
     #[test]
     fn check_hover_timeout_disabled_when_negative() {
@@ -1599,9 +1346,7 @@ mod tests {
         );
     }
 
-    /// 悬停超时后返回 false（踢出）。
-    ///
-    /// 设置 last_active_time 为 5 秒前，hover_timeout=1 秒，应返回 false。
+    /// 悬停超时后返回 false（踢出）：设置 last_active_time 为 5 秒前，hover_timeout=1 秒，应返回 false。
     #[test]
     fn check_hover_timeout_evicts_after_timeout() {
         let (_dao, session) = make_session(3600, 86400);
@@ -1633,10 +1378,6 @@ mod tests {
             "last_active_time 应接近当前时间"
         );
     }
-
-    // ------------------------------------------------------------------------
-    // create_token_session：LoginParams 写入 device/ip/user_agent
-    // ------------------------------------------------------------------------
 
     /// 验证 `create_token_session` 将 LoginParams 中的 device/ip/user_agent 写入 TokenSession。
     #[tokio::test]
@@ -1674,10 +1415,6 @@ mod tests {
         assert!(ts.ip.is_none(), "ip 应为 None");
         assert!(ts.user_agent.is_none(), "user_agent 应为 None");
     }
-
-    // ------------------------------------------------------------------------
-    // login_token_map：login_id → token 列表内存索引
-    // ------------------------------------------------------------------------
 
     /// 验证 `add_login_token` 为同一 login_id 累积多个 token，且 `get_tokens_by_login_id` 返回完整列表。
     #[test]
@@ -1723,10 +1460,6 @@ mod tests {
             "entry 已移除，应返回 None"
         );
     }
-
-    // ------------------------------------------------------------------------
-    // cleanup_expired_tokens：清理 login_token_map 中的过期/已注销 token
-    // ------------------------------------------------------------------------
 
     /// 验证 `login_token_map` 为空时 `cleanup_expired_tokens` 返回 0。
     #[tokio::test]
@@ -1861,14 +1594,7 @@ mod tests {
         assert_eq!(tokens_2002, vec!["T4".to_string()]);
     }
 
-    // ----------------------------------------------------------------
-    // 单 token DAO 失败不中断清理周期
-    // ----------------------------------------------------------------
-
-    /// 测试用 DAO wrapper，在 get 特定 key 时返回错误。
-    ///
-    /// 用于测试 `cleanup_expired_tokens` 单 token DAO 读取失败时
-    /// 不中断整个清理周期。
+    /// 测试用 DAO wrapper：get 特定 key 时返回错误，用于测试 `cleanup_expired_tokens` 单 token DAO 读取失败时不中断整个清理周期。
     struct FailingGetDao {
         inner: Arc<MockDao>,
         fail_get_key: String,
@@ -1897,10 +1623,7 @@ mod tests {
         crate::atomic_test_fallback!();
     }
 
-    /// 测试用 DAO wrapper，在 update 特定 key 时返回错误。
-    ///
-    /// 用于测试 `add_login_token_persistent` / `remove_login_token_persistent`
-    /// 在 DAO update 失败时不写入内存层（保证双层一致性）。
+    /// 测试用 DAO wrapper：update 特定 key 时返回错误，用于测试 persistent 方法在 DAO update 失败时不写入内存层（保证双层一致性）。
     #[cfg(feature = "session-extra")]
     struct FailingUpdateDao {
         inner: Arc<MockDao>,
@@ -1933,8 +1656,7 @@ mod tests {
 
     /// 单 token DAO 读取失败不中断整个清理周期，改为 warn 日志并跳过该 token。
     ///
-    /// 场景：3 个 token（T1 有效 / T2 DAO get 失败 / T3 已注销），
-    /// 验证 T2 的 DAO 失败不中断遍历，T3 仍被清理，T1/T2 保留在 map 中。
+    /// 场景：3 个 token（T1 有效 / T2 DAO get 失败 / T3 已注销），验证 T2 的 DAO 失败不中断遍历，T3 仍被清理，T1/T2 保留在 map 中。
     #[tokio::test]
     async fn cleanup_expired_tokens_dao_failure_skips_token_without_aborting() {
         let inner = Arc::new(MockDao::new());
@@ -2000,14 +1722,7 @@ mod tests {
         assert!(!tokens.contains(&"T3".to_string()), "T3（已注销）应被清理");
     }
 
-    // ------------------------------------------------------------------------
-    // dynamic_active_timeout 字段默认值（feature = "session-extra"）
-    // ------------------------------------------------------------------------
-
-    /// 验证 `TokenSession` 创建后 `dynamic_active_timeout` 默认为 `None`。
-    ///
-    /// 启用 `dynamic-active-timeout` feature 后，新创建的 TokenSession
-    /// 的 `dynamic_active_timeout` 字段应为 `None`（未设置自定义活跃超时）。
+    /// 验证 `TokenSession` 创建后 `dynamic_active_timeout` 默认为 `None`（未设置自定义活跃超时）。
     #[cfg(feature = "session-extra")]
     #[tokio::test]
     async fn token_session_dynamic_active_timeout_defaults_to_none() {
@@ -2021,14 +1736,7 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // set_active_timeout：设置 per-token 动态活跃超时
-    // ------------------------------------------------------------------------
-
-    /// 验证 `set_active_timeout` 设置 `dynamic_active_timeout` 为指定值。
-    ///
-    /// 创建 token session 后调用 `set_active_timeout(token, 600)`，
-    /// 验证 `get_token_session` 返回的 `dynamic_active_timeout` 为 `Some(600)`。
+    /// 验证 `set_active_timeout` 设置 `dynamic_active_timeout` 为指定值（调用后 `get_token_session` 返回 `Some(600)`）。
     #[cfg(feature = "session-extra")]
     #[tokio::test]
     async fn set_active_timeout_sets_dynamic_timeout() {
@@ -2049,8 +1757,6 @@ mod tests {
     }
 
     /// 验证 `set_active_timeout` 对不存在的 token 返回错误。
-    ///
-    /// 对不存在的 token 调用 `set_active_timeout`，验证返回 `Err`。
     #[cfg(feature = "session-extra")]
     #[tokio::test]
     async fn set_active_timeout_returns_error_for_nonexistent_token() {
@@ -2067,9 +1773,7 @@ mod tests {
         );
     }
 
-    /// 验证 `set_active_timeout` 拒绝 `timeout_secs=0`（Spec 定义 0 非法）。
-    ///
-    /// 0 既不是有效超时也不是 -1（永不过期），应返回 `InvalidParam`。
+    /// 验证 `set_active_timeout` 拒绝 `timeout_secs=0`（Spec 定义 0 非法）：0 既不是有效超时也不是 -1（永不过期），应返回 `InvalidParam`。
     #[cfg(feature = "session-extra")]
     #[tokio::test]
     async fn set_active_timeout_zero_returns_invalid_param() {
@@ -2083,11 +1787,7 @@ mod tests {
         );
     }
 
-    /// 验证 `dynamic_active_timeout=Some(-1)` 表示永不过期（Spec 定义 -1 = never）。
-    ///
-    /// 即使 `last_active_at` 为当前时间，-1 也不应触发过期。
-    /// 修复前：`last_active_at + (-1) < now` 几乎总成立，token 被立即判过期。
-    /// 修复后：`effective_active_timeout < 0` 时跳过活跃超时检查。
+    /// 验证 `dynamic_active_timeout=Some(-1)` 表示永不过期：即使 `last_active_at` 为当前时间也不触发过期（`effective_active_timeout < 0` 时跳过活跃超时检查）。
     #[cfg(feature = "session-extra")]
     #[tokio::test]
     async fn set_active_timeout_negative_one_means_never_expire() {
@@ -2104,10 +1804,6 @@ mod tests {
             "dynamic_active_timeout=-1 表示永不过期，is_valid 应返回 true"
         );
     }
-
-    // ------------------------------------------------------------------------
-    // rebuild_login_token_map：从 DAO 重建内存索引（feature = "session-extra"）
-    // ------------------------------------------------------------------------
 
     /// 验证空 DAO（无 Account-Session）重建后 `login_token_map` 为空。
     #[cfg(feature = "session-extra")]
@@ -2163,14 +1859,7 @@ mod tests {
         assert!(tokens3.contains(&"T6".to_string()));
     }
 
-    // ------------------------------------------------------------------------
-    // add_login_token_persistent / remove_login_token_persistent（feature = "session-extra"）
-    // ------------------------------------------------------------------------
-
-    /// 验证 `add_login_token_persistent` 同时写入 DAO AccountSession.tokens 和内存 login_token_map。
-    ///
-    /// 场景：已存在 AccountSession（含 T1，内存已有 T1），调用 persistent 添加 T2，
-    /// 验证 DAO 与内存两层都包含 T1 和 T2。
+    /// 验证 `add_login_token_persistent` 同时写入 DAO AccountSession.tokens 和内存 login_token_map（场景：已存在 AccountSession 含 T1，调用 persistent 添加 T2，两层都含 T1 和 T2）。
     #[cfg(feature = "session-extra")]
     #[tokio::test]
     async fn add_login_token_persistent_adds_to_both_layers() {
@@ -2201,10 +1890,7 @@ mod tests {
         assert!(mem_tokens.contains(&"T2".to_string()));
     }
 
-    /// 验证 `remove_login_token_persistent` 同时从 DAO AccountSession.tokens 和内存 login_token_map 移除。
-    ///
-    /// 场景：AccountSession 含 T1 和 T2，调用 persistent 移除 T1，
-    /// 验证 DAO 与内存两层都只剩 T2。
+    /// 验证 `remove_login_token_persistent` 同时从 DAO AccountSession.tokens 和内存 login_token_map 移除（场景：AccountSession 含 T1 和 T2，persistent 移除 T1，两层都只剩 T2）。
     #[cfg(feature = "session-extra")]
     #[tokio::test]
     async fn remove_login_token_persistent_removes_from_both_layers() {
@@ -2235,10 +1921,7 @@ mod tests {
         assert!(mem_tokens.contains(&"T2".to_string()));
     }
 
-    /// 验证 DAO update 失败时内存不写（返回 Err），保证双层一致性。
-    ///
-    /// 场景：使用 FailingUpdateDao 让 account:session:user1 的 update 失败，
-    /// 调用 add_login_token_persistent 应返回 Err，且内存 login_token_map 未被写入。
+    /// 验证 DAO update 失败时内存不写（返回 Err），保证双层一致性（场景：FailingUpdateDao 让 update 失败，add_login_token_persistent 返回 Err 且内存未被写入）。
     #[cfg(feature = "session-extra")]
     #[tokio::test]
     async fn add_login_token_persistent_dao_failure_skips_memory_write() {
@@ -2270,15 +1953,7 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // create / logout 端到端双层一致性（feature = "session-extra"）
-    // ------------------------------------------------------------------------
-
-    /// 验证 login → logout 后 DAO AccountSession.tokens 与内存 login_token_map 一致。
-    ///
-    /// 场景：create(user1, T1) 后 DAO 与内存两层都包含 T1；
-    /// logout(T1) 后 DAO AccountSession.tokens 为空、内存 login_token_map 不包含 T1。
-    /// 这验证了 create_inner/logout_inner 现有双写逻辑在 persistent 特性下的一致性。
+    /// 验证 login → logout 后 DAO AccountSession.tokens 与内存 login_token_map 一致（create(user1, T1) 后两层都含 T1，logout(T1) 后 DAO 为空、内存不含 T1）。
     #[cfg(feature = "session-extra")]
     #[tokio::test]
     async fn login_logout_persistent_consistency() {
@@ -2320,10 +1995,6 @@ mod tests {
             mem_tokens
         );
     }
-    // ============================================================================
-    // 因子账本（amr ledger）—— MFA 编排基座
-    // ============================================================================
-
     /// create 时账本播种主因子 pwd（aal 1）并写入 auth_time（主登录即认证时刻）。
     #[tokio::test]
     async fn create_seeds_pwd_ledger_and_auth_time() {

@@ -3,10 +3,9 @@
 
 //! Logout token 签发（OIDC Back-Channel Logout 1.0 §2）。
 //!
-//! 复用 `protocol::jwt` 的 `JwtHandler` 密钥材料与算法-密钥匹配校验签发；
-//! claim 集收敛为协议要求的最小面：`iss` / `aud` / `iat` / `exp` / `jti` /
-//! `events`，身份面仅 `sub`（可选 `sid`）——不含 `login_id` / `device` 等
-//! Garrison 身份扩展，也不含协议禁止的 `nonce`。
+//! 复用 `protocol::jwt` 的 `JwtHandler` 密钥材料与算法-密钥匹配校验签发；claim 集收敛为协议要求的最小面
+//! （`iss` / `aud` / `iat` / `exp` / `jti` / `events`），身份面仅 `sub`（可选 `sid`）——
+//! 不含 `login_id` / `device` 等 Garrison 身份扩展，也不含协议禁止的 `nonce`。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::protocol::jwt::JwtHandler;
@@ -17,10 +16,8 @@ use std::sync::Arc;
 /// Back-Channel Logout 事件 URI（OIDC Back-Channel Logout 1.0 §2.3 固定值）。
 pub const BACKCHANNEL_LOGOUT_EVENT_URI: &str = "http://schemas.openid.net/event/backchannel-logout";
 
-/// logout token 有效期（秒）。
-///
-/// RP 收到即消费；投递队列按自身 MaxTtl 控制重试窗口，token 本身短时效
-/// 限制过期 token 被迟到的 RP 接受的窗口。
+/// logout token 有效期（秒）：RP 收到即消费，投递队列另按自身 MaxTtl 控制重试窗口，
+/// 短时效限制过期 token 被迟到的 RP 接受的窗口。
 pub const LOGOUT_TOKEN_TTL_SECS: i64 = 120;
 
 /// OIDC Back-Channel Logout Token claims。
@@ -64,12 +61,7 @@ impl LogoutTokenIssuer {
         }
     }
 
-    /// 为单个 RP 签发 logout token（JWT 紧凑序列化）。
-    ///
-    /// # 参数
-    /// - `client_id`：目标 RP（写入 `aud`）。
-    /// - `sub`：登出主体；`None` 时不序列化 `sub`。
-    /// - `sid`：OP 侧会话标识；`None` 时不序列化 `sid`。
+    /// 为单个 RP 签发 logout token（JWT 紧凑序列化）；`sub` / `sid` 为 `None` 时不序列化对应 claim。
     pub fn issue(
         &self,
         client_id: &str,
@@ -129,9 +121,8 @@ mod tests {
             .claims
     }
 
-    /// events 含 backchannel-logout 空对象；除 sub/sid 外无身份
-    /// claim（login_id / device / nonce 均不出现）；iss/aud/jti 就位；
-    /// exp = iat + TTL。
+    /// events 仅含 backchannel-logout 空对象，除 sub/sid 外无身份 claim（login_id / device / nonce 均不出现），
+    /// iss/aud/jti 就位，exp = iat + TTL。
     #[test]
     fn logout_token_carries_events_and_no_identity_claims_beyond_subject() {
         let token = issuer()

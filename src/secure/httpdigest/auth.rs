@@ -19,39 +19,22 @@ const NONCE_HMAC_HKDF_INFO: &[u8] = b"garrison-httpdigest-nonce-v1";
 
 /// 默认 nonce 有效期（秒），RFC 7616 §3.2.1 建议 nonce 应有合理 TTL。
 const DEFAULT_NONCE_TTL_SECONDS: u64 = 300;
-/// Authorization header 最大长度（字节），修复：防止超长 header 导致 DoS。
-///
-/// 8KB 覆盖正常 Digest Auth header（通常 < 1KB），拒绝明显恶意的超长输入。
-/// 超过此长度时 validate_inner 直接返回 false（拒绝认证），不进入 parse_authorization
-/// 避免 O(n) 解析 + 多次 hash 计算被恶意输入放大。
+/// Authorization header 上限 8KB（正常 Digest header < 1KB）；超限时 `validate_inner` 直接拒绝认证，
+/// 不进入 O(n) 解析 + 多次 hash，防恶意超长输入放大 CPU。
 const MAX_AUTHORIZATION_HEADER_LEN: usize = 8 * 1024;
-/// DAO 错误日志采样间隔（防止 DAO 持续故障期间日志洪水）。
-///
-/// 每 `DAO_ERROR_LOG_INTERVAL` 次 DAO 错误只打一次 `warn!`，其余降级为 `debug!`。
-/// 100 是平衡可观测性与 I/O 开销的经验值（1000 QPS × 30s 故障 = 30000 次 → 300 条 warn）。
+/// DAO 错误日志采样间隔：每 N 次错误只 warn 一次，其余降级 `debug!`，防 DAO 持续故障时日志洪水。
 const DAO_ERROR_LOG_INTERVAL: u64 = 100;
-/// DAO 错误日志采样计数器（进程级，跨所有 `HttpDigestAuth` 实例共享）。
-///
-/// **设计选型**：进程级共享（而非 per-instance）保证采样比例准确——若每个实例独立计数，
-/// 多实例部署时 warn 总量 = 实例数 × (错误数 / INTERVAL)，仍可能打满日志磁盘。
-/// 进程级共享确保无论多少实例，warn 总量 = 错误数 / INTERVAL。
+/// DAO 错误日志采样计数器（进程级共享）：保证 warn 总量 = 错误数 / INTERVAL，与实例数无关。
 static DAO_ERROR_LOG_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 impl HttpDigestAuth {
-    /// 创建新的 Digest 认证工具。
+    /// 创建 Digest 认证工具（`algorithm` 取 "MD5" / "SHA256"，大小写不敏感）。
     ///
-    /// # 参数
-    /// - `realm`: 认证域。
-    /// - `algorithm`: 算法字符串（"MD5" / "SHA256"，大小写不敏感）。
-    ///
-    /// # 返回
-    /// - `Ok(Self)`: 构造成功。
-    /// - `Err(GarrisonError::Internal)`: 不支持的算法。
+    /// 不支持的算法返回 `Err(GarrisonError::Internal)`。
     pub fn new(realm: &str, algorithm: &str) -> GarrisonResult<Self> {
         let algorithm: DigestAlgorithm = algorithm.parse()?;
         if algorithm == DigestAlgorithm::Md5 {
-            // MD5 无编译期 feature 门控，改为运行时告警便于审计每次使用
-            // （MD5 已被证明存在碰撞攻击，新系统应使用 SHA256）
+            // MD5 无 feature 门控，改为运行时告警便于审计每次使用（碰撞攻击风险，新系统须用 SHA256）
             tracing::warn!(
                 realm = %realm,
                 algorithm = "MD5",
@@ -67,35 +50,13 @@ impl HttpDigestAuth {
         })
     }
 
-    /// 注入 DAO 用于 nc 单调性校验（RFC 7616 §3.4.6）。
+    /// 注入 DAO 用于 nc 单调性校验（RFC 7616 §3.4.6）：跟踪每个 nonce 的最后 nc，拒绝回退/重复（重放）。
     ///
-    /// 注入后 `validate` / `validate_with_body` 会通过 DAO 跟踪每个 nonce 的最后 nc 值，
-    /// 拒绝 nc 回退或重复（重放攻击）。DAO 为可选依赖：未注入时跳过 nc 校验，
-    /// 仅依赖 nonce TTL 防护，300s 窗口内仍可重放——生产环境强烈建议注入 DAO。
-    ///
-    /// # 参数
-    /// - `dao`: 分布式 DAO 实现（Redis / dbnexus / MockDao 等）。
-    ///
-    /// # 运行时要求
-    ///
-    /// `validate` / `validate_with_body` 是 sync API，但 DAO 操作是 async。
-    /// 注入 DAO 后，validate 内部使用 `tokio::task::block_in_place` + `Handle::block_on`
-    /// 桥接 sync-to-async，**要求在 multi_thread tokio runtime 上下文中调用**。
-    /// 在无 runtime 或 current_thread runtime 下调用会拒绝 nc 校验（fail-closed，
-    /// 原 fail-open 实现允许重放，违背 RFC 7616 §3.4.6）并记录 warn。
-    ///
-    /// # 容量规划
-    ///
-    /// `block_in_place` 会把当前 tokio worker thread 转为 blocking thread。
-    /// 高频 digest auth 场景（如 API 网关）下，多个并发请求会同时占用 worker thread
-    /// 等 DAO I/O，可能耗尽默认 worker pool。建议通过 `tokio::runtime::Builder::worker_threads(n)`
-    /// 调优 worker 数量，或使用 `max_blocking_threads` 增加 blocking 线程上限。
-    ///
-    /// # 运维注意
-    ///
-    /// fail-closed 策略下，DAO 持续故障会导致所有 digest auth 请求被拒绝
-    /// （等同 digest auth 服务不可用）。建议部署 DAO 健康度监控 + 告警，
-    /// DAO 故障视为 P1 事件。生产环境必须使用高可用 DAO（Redis Sentinel/Cluster）。
+    /// 未注入时跳过 nc 校验，仅靠 nonce TTL（默认 300s 窗口内仍可重放），生产环境强烈建议注入。
+    /// `validate*` 是 sync API 而 DAO 是 async：内部用 `block_in_place` + `Handle::block_on` 桥接，
+    /// **须在 multi_thread tokio runtime 调用**（无 runtime / current_thread 下 fail-closed 并 warn）。
+    /// `block_in_place` 会把 worker 转 blocking，高 QPS（如 API 网关）下需调优 worker / `max_blocking_threads`；
+    /// fail-closed 下 DAO 持续故障会使 digest auth 整体不可用（等同 P1），需健康度监控与高可用 DAO（Sentinel/Cluster）。
     pub fn with_dao(mut self, dao: std::sync::Arc<dyn crate::dao::GarrisonDao>) -> Self {
         self.dao = Some(dao);
         self
@@ -107,13 +68,9 @@ impl HttpDigestAuth {
         self
     }
 
-    /// 注入服务端签名密钥：以 HKDF 从 `secret` 域分隔派生 32 字节 HMAC 密钥。
+    /// 注入服务端签名密钥：`HKDF-SHA256(salt = realm, ikm = secret, info = NONCE_HMAC_HKDF_INFO)` 派生 32 字节 HMAC 密钥（复用 protocol-sign 域分隔范式）。
     ///
-    /// 派生：`HKDF-SHA256(salt = realm, ikm = secret, info = NONCE_HMAC_HKDF_INFO)`，
-    /// 复用 protocol-sign 的 HKDF 域分隔范式，避免密钥域混用。
-    ///
-    /// 注入后 `generate_nonce` 生成的 nonce 带服务端 HMAC 签名，
-    /// `is_nonce_valid` 会先验签名再校验时间戳，拒绝自铸（无有效签名）的 nonce。
+    /// 注入后 nonce 带服务端 HMAC 签名，`is_nonce_valid` 先验签名再校验时间戳，拒绝自铸（无有效签名）的 nonce。
     pub fn with_server_key(mut self, secret: &[u8]) -> Self {
         let hkdf = Hkdf::<Sha256>::new(Some(self.realm.as_bytes()), secret);
         let mut key = [0u8; 32];
@@ -133,11 +90,7 @@ impl HttpDigestAuth {
         self.algorithm
     }
 
-    /// 生成 WWW-Authenticate 质询头。
-    ///
-    /// # 返回
-    /// 形如 `Digest realm="...", nonce="...", qop="auth,auth-int", algorithm=SHA256` 的字符串。
-    /// nonce 为 `base64(timestamp:random_uuid)` 格式，validate 时校验时间戳。
+    /// 生成 `WWW-Authenticate` 质询头：`Digest realm="...", nonce="...", qop="auth,auth-int", algorithm=...`。
     pub fn challenge(&self) -> String {
         let nonce = self.generate_nonce();
         format!(
@@ -148,16 +101,7 @@ impl HttpDigestAuth {
         )
     }
 
-    /// 生成带时间戳的 nonce。
-    ///
-    /// 格式（无 `server_key`）：
-    /// - `base64("{timestamp}:{random_uuid}")`
-    ///
-    /// 格式（注入 `server_key`）：
-    /// - `base64("{timestamp}:{random_uuid}:{hmac_sha256(server_key, timestamp:random_uuid)}")`
-    /// - timestamp: 当前 Unix 秒
-    /// - random_uuid: UUID v4（保证唯一性）
-    /// - mac: 服务端签名，签名验过才接受 nonce（杜绝自铸 nonce）
+    /// 生成带时间戳的 nonce：`base64("{timestamp}:{random_uuid}")`；注入 `server_key` 时为 `base64("{timestamp}:{uuid}:{hmac_sha256(server_key, timestamp:uuid)}")`。
     fn generate_nonce(&self) -> String {
         let timestamp = current_unix_seconds();
         let random = Uuid::new_v4().simple().to_string();
@@ -171,14 +115,7 @@ impl HttpDigestAuth {
         STANDARD.encode(raw.as_bytes())
     }
 
-    /// 校验 nonce 是否有效（格式正确且未过期，且签名有效）。
-    ///
-    /// nonce 格式（无 `server_key`，无签名）：`base64("{timestamp}:{random}")`
-    /// nonce 格式（注入 `server_key`）：`base64("{timestamp}:{random}:{mac}")`
-    ///
-    /// 注入 `server_key` 时：先验 HMAC 签名（公共常量时间比较原语
-    /// `crate::secure::ct_eq::constant_time_eq`，ADR-0003），再校验时间戳，
-    /// 任一步失败即拒绝。未注入 `server_key` 时无签名校验（仅时间戳 TTL 防护）。
+    /// 校验 nonce 是否有效：格式正确、注入 `server_key` 时 HMAC 签名有效（公共常量时间原语，ADR-0003）、时间戳未过期；任一步失败即拒绝。
     pub(super) fn is_nonce_valid(&self, nonce: &str) -> bool {
         let decoded = match STANDARD.decode(nonce) {
             Ok(d) => d,
@@ -234,38 +171,15 @@ impl HttpDigestAuth {
         }
     }
 
-    /// 校验 nc（nonce count）单调性，拒绝重放攻击（RFC 7616 §3.4.6）。
+    /// 校验 nc 单调性防重放（RFC 7616 §3.4.6）：DAO 跟踪 `digest:nc:{nonce}` 的最后接受 nc（TTL 同 `nonce_ttl`）。
     ///
-    /// 通过 DAO 跟踪每个 nonce 的最后接受的 nc 值，拒绝 nc 回退或重复。
-    /// - `dao` 为 None：跳过校验（返回 true）。
-    ///   **安全代价**：仅依赖 nonce TTL 防护（默认 300s），300s 窗口内可任意重放。
-    ///   生产环境强烈建议通过 `with_dao` 注入 DAO；仅单元测试 / 无重放风险场景可省略。
-    /// - `dao` 为 Some：get `digest:nc:{nonce}` → 比较 → set 更新
-    /// - DAO 错误：fail-closed（返回 false，原 fail-open 实现允许重放，
-    ///   违背 RFC 7616 §3.4.6；nonce TTL 不足以防重放，仅时间 bounded）
-    /// - nc 非法 hex 格式：返回 false（拒绝畸形请求）
-    /// - 无 runtime / current_thread runtime：fail-closed（返回 false）
-    ///
-    /// # Key 格式
-    ///
-    /// `digest:nc:{nonce}` — value 为最后接受的 nc 十进制字符串。
-    /// TTL 与 `nonce_ttl` 一致，nonce 过期后 nc 记录自动清理。
-    ///
-    /// # 运行时要求
-    ///
-    /// `validate` / `validate_with_body` 是 sync API，但 DAO 操作是 async。
-    /// 注入 DAO 后，本方法使用 `tokio::task::block_in_place` + `Handle::block_on`
-    /// 桥接 sync-to-async，要求 multi_thread tokio runtime。
-    /// 无 runtime / current_thread runtime 时 fail-closed（返回 false）并记录 warn
-    /// （原 fail-open 实现允许重放）。
+    /// 无 DAO 时跳过校验（fail-open：仅 TTL 防护，300s 内可重放，进程级 warn 一次）；DAO 错误或 nc 非法 hex
+    /// 返回 false（fail-closed）；无 runtime / current_thread runtime 亦 fail-closed + warn（桥接约束同 `with_dao`）。
     fn validate_nc(&self, nonce: &str, nc_hex: &str) -> bool {
         let dao = match &self.dao {
             Some(d) => d,
             None => {
-                // fail-open：未注入 DAO 时跳过 nc 单调性校验（DAO 为可选依赖），
-                // 仅依赖 nonce TTL 防护（默认 300s），300s 窗口内可任意重放。
-                // 进程级一次性 warn：提醒运维注入 DAO 以启用 RFC 7616 §3.4.6 重放防护，
-                // 明确标注当前为 fail-open 语义（非 fail-closed）。
+                // fail-open：未注入 DAO 时跳过 nc 校验（仅 TTL 防护，300s 内可重放）；进程级 warn 一次提醒注入 DAO。
                 static WARNED_NO_DAO: std::sync::atomic::AtomicBool =
                     std::sync::atomic::AtomicBool::new(false);
                 if !WARNED_NO_DAO.swap(true, std::sync::atomic::Ordering::Relaxed) {
@@ -282,12 +196,8 @@ impl HttpDigestAuth {
             Ok(v) => v,
             Err(_) => return false,
         };
-        // 桥接 sync-to-async：要求 multi_thread tokio runtime。
-        // `Handle::try_current()` 对 multi_thread 和 current_thread runtime
-        // 都返回 `Ok(handle)`，但 `block_in_place` 在 current_thread runtime 下会 panic
-        // （"Cannot block the current thread from within a runtime"）。
-        // 原 fail-open 实现允许重放，改为 fail-closed（拒绝请求），
-        // 强制要求 multi_thread runtime 才能使用 DAO 注入的 nc 校验。
+        // 桥接 sync-to-async 要求 multi_thread runtime：`block_in_place` 在 current_thread 下会 panic，
+        // 故 current_thread / 无 runtime 一律 fail-closed 拒绝（拒绝优于放行）。
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
                 if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
@@ -314,15 +224,9 @@ impl HttpDigestAuth {
         }
     }
 
-    /// `validate_nc` 的 async 实现（通过 `block_in_place` + `block_on` 调用）。
+    /// `validate_nc` 的 async 实现：经 `dao.compare_and_update_if_greater` 原子完成「读 last_nc → 比较 → 写」，消除 TOCTOU。
     ///
-    /// 通过 `dao.compare_and_update_if_greater` 原子地完成「读取当前 last_nc → 比较 → 写入新 nc」，
-    /// 消除 TOCTOU 竞态（多个并发请求都读到相同的 last_nc 值，都通过 nc > last_nc 检查）。
-    ///
-    /// 逻辑：
-    /// - `compare_and_update_if_greater` 返回 `Ok(true)`：nc > last_nc，已更新 → return true
-    /// - `compare_and_update_if_greater` 返回 `Ok(false)`：nc <= last_nc，重放/回退 → return false
-    /// - DAO 错误 → fail-closed（return false）+ warn（原 fail-open 实现允许重放）
+    /// 返回 `Ok(true)` 表示 nc > last_nc 已更新，`Ok(false)` 表示重放/回退；DAO 错误 fail-closed（返回 false）。
     async fn validate_nc_async(
         dao: &std::sync::Arc<dyn crate::dao::GarrisonDao>,
         realm: &str,
@@ -337,13 +241,8 @@ impl HttpDigestAuth {
         {
             Ok(updated) => updated,
             Err(e) => {
-                // fail-closed：DAO 错误时拒绝请求，强制要求 DAO 可用。
-                // nonce TTL 不足以防重放（300s 窗口内仍可重放），必须 fail-closed。
-                //
-                // 日志采样：DAO 持续故障期间每次请求都会触发错误，
-                // 高 QPS 下会瞬间打满日志磁盘。每 DAO_ERROR_LOG_INTERVAL 次错误只 warn 一次，
-                // 其余降级为 debug!（仅含 count，不传 error 避免 Display 求值开销），
-                // warn 中含采样计数 + realm + error，可推算真实错误量并定位受影响实例。
+                // fail-closed：DAO 错误即拒绝（nonce TTL 不足以防重放）。日志采样：每 N 次错误只 warn 一次，
+                // 其余降级 debug!（不传 error 避免 Display 求值开销）；warn 含采样计数 + realm + error 便于推算真实错误量。
                 let count =
                     DAO_ERROR_LOG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if count % DAO_ERROR_LOG_INTERVAL == 0 {
@@ -366,50 +265,22 @@ impl HttpDigestAuth {
         }
     }
 
-    /// 计算 HA1 = H(username:realm:password)。
-    ///
-    /// HA1 为预先计算的摘要，避免框架持有明文密码。
-    /// 算法依据实例配置（MD5 或 SHA256）。
-    ///
-    /// # 参数
-    /// - `username`: 用户名。
-    /// - `password`: 密码。
+    /// 计算 HA1 = H(username:realm:password)（预计算摘要，避免框架持有明文密码；算法依实例配置）。
     pub fn compute_ha1(&self, username: &str, password: &str) -> String {
         let data = format!("{}:{}:{}", username, self.realm, password);
         self.algorithm.hash(data.as_bytes())
     }
 
-    /// 校验客户端 Authorization header（仅支持 qop=auth）。
+    /// 校验客户端 Authorization header（仅 qop=auth）；qop=auth-int 直接拒绝，须改用 [`validate_with_body`](Self::validate_with_body) 传入请求体。
     ///
-    /// 客户端响应 qop=auth-int 时本方法**直接拒绝**（返回 false）：
-    /// auth-int 需要 body 参与 HA2 计算，必须改用
-    /// [`validate_with_body`](Self::validate_with_body) 传入请求体。
-    ///
-    /// # 参数
-    /// - `authorization_header`: 客户端发送的 Authorization header 值。
-    /// - `method`: HTTP method（如 "GET" / "POST"）。
-    /// - `uri`: 请求 URI。
-    /// - `ha1`: 预先计算的 HA1 = H(user:realm:pass)。
-    ///
-    /// # 返回
-    /// - `true`: 校验通过。
-    /// - `false`: 校验失败（密码错误 / method 不匹配 / qop=auth-int 未携带 body /
-    ///   qop 不支持 / nonce 过期 / 格式错误）。
+    /// 失败（返回 `false`）覆盖：密码错 / method 不匹配 / qop 不支持 / nonce 过期或格式错 / nc 重放 / uri 不一致。
     pub fn validate(&self, authorization_header: &str, method: &str, uri: &str, ha1: &str) -> bool {
         self.validate_inner(authorization_header, method, uri, None, ha1)
     }
 
-    /// 校验客户端 Authorization header（支持 qop=auth 和 qop=auth-int）。
+    /// 校验客户端 Authorization header（支持 qop=auth 与 qop=auth-int）。
     ///
-    /// qop=auth-int 时，HA2 = H(method:uri:H(body))，需传入请求体。
-    /// qop=auth 时，HA2 = H(method:uri)，body 参数被忽略。
-    ///
-    /// # 参数
-    /// - `authorization_header`: 客户端 Authorization header。
-    /// - `method`: HTTP method。
-    /// - `uri`: 请求 URI。
-    /// - `body`: 请求体字节（用于 auth-int 计算 HA2）。
-    /// - `ha1`: 预先计算的 HA1。
+    /// auth-int 时 HA2 = H(method:uri:H(body))（需传入请求体）；qop=auth 时 HA2 = H(method:uri)，body 被忽略。
     pub fn validate_with_body(
         &self,
         authorization_header: &str,
@@ -430,20 +301,16 @@ impl HttpDigestAuth {
         body: Option<&[u8]>,
         ha1: &str,
     ) -> bool {
-        // 修复：input validation，拒绝过长的 Authorization header 防 DoS。
-        // 超长 header 会触发 O(n) parse_authorization + 多次 hash 计算，
-        // 恶意客户端可发送超大 header 耗尽 CPU。8KB 上限覆盖所有合法 Digest Auth 请求。
+        // 超长 header 会放大 O(n) 解析 + 多次 hash 计算；8KB 上限覆盖所有合法请求并拒绝恶意输入。
         if authorization_header.len() > MAX_AUTHORIZATION_HEADER_LEN {
             return false;
         }
         match self.parse_authorization(authorization_header) {
             Ok(resp) => {
-                // 检查 nonce 是否有效（格式 + 过期）
                 if !self.is_nonce_valid(&resp.nonce) {
                     return false;
                 }
-                // nc 单调性校验（RFC 7616 §3.4.6）
-                // 拒绝同一 nonce 的 nc 回退或重复，防止重放攻击
+                // nc 单调性校验：拒绝同一 nonce 的 nc 回退/重复（防重放，RFC 7616 §3.4.6）
                 if !self.validate_nc(&resp.nonce, &resp.nc) {
                     return false;
                 }
@@ -458,10 +325,8 @@ impl HttpDigestAuth {
                         self.algorithm.hash(ha2_input.as_bytes())
                     },
                     Some("auth-int") => {
-                        // auth-int 需要 body，HA2 = H(method:uri:H(body))。
-                        // body 缺失时拒绝（fail-closed）：原实现 `body.unwrap_or(&[])`
-                        // 以空 body 计算 HA2，攻击者可用空 body 预计算合法 response，
-                        // 通过不携带 body 的 validate() 绕过 body 绑定校验。
+                        // auth-int 的 HA2 = H(method:uri:H(body))；body 缺失即拒绝（fail-closed），
+                        // 防用空 body 预计算合法 response 绕过 body 绑定校验。
                         let body_bytes = match body {
                             Some(b) => b,
                             None => return false,
@@ -483,9 +348,8 @@ impl HttpDigestAuth {
                     ha2
                 );
                 let expected = self.algorithm.hash(response_input.as_bytes());
-                // 常量时间比较，避免时序攻击；response 长度是公开协议参数
-                // （hex 后 MD5 32 / SHA-256 64），长度不符必然不等，提前短路——
-                // 客户端可控的输入长度不得进入比较循环放大计算量
+                // 常量时间比较防时序攻击；response 长度是公开协议参数（hex 后 MD5 32 / SHA-256 64），
+                // 长度不符必然不等，提前短路——客户端可控长度不得进入比较循环放大计算量
                 resp.response.len() == expected.len()
                     && constant_time_eq(expected.as_bytes(), resp.response.as_bytes())
             },
@@ -553,8 +417,7 @@ impl HttpDigestAuth {
 
 /// Digest 响应参数（解析自客户端 Authorization header）。
 ///
-/// 仅保留 `validate()` 实际使用的字段；username/realm/uri 虽由 RFC 7616 要求且
-/// 在 `parse_authorization` 中校验存在性，但不存储（避免死字段）。
+/// 仅保留 `validate()` 实际使用的字段；username/realm 虽由 RFC 7616 要求且校验存在性，但不存储（避免死字段）。
 #[derive(Debug, Clone)]
 struct DigestResponse {
     nonce: String,

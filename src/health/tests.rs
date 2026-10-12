@@ -10,16 +10,10 @@ use super::*;
 use crate::config::GarrisonConfig;
 use std::sync::Arc;
 
-// ============================================================================
 // 测试 fixture：HangDao（探测路径超时测试共享）
-// ============================================================================
 
-/// Hang DAO：`get` 调用时 sleep 10s（远超 `HEALTH_PROBE_TIMEOUT` 的 2s），
-/// 模拟数据库/Redis 后端网络不可达。
-///
-/// 其他方法返回 `Ok` 以保证 `GarrisonManager::builder()` 不触发非预期错误路径。
-///
-/// 仅在探测路径（db-postgres / db-mysql / cache-redis）feature 启用时编译。
+/// Hang DAO：`get` sleep 10s（远超 `HEALTH_PROBE_TIMEOUT` 2s）模拟数据库/Redis 后端
+/// 网络不可达，其他方法返回 `Ok`；仅探测路径（db-postgres / db-mysql / cache-redis）编译。
 #[cfg(any(feature = "db-postgres", feature = "db-mysql", feature = "cache-redis"))]
 struct HangDao;
 
@@ -51,9 +45,7 @@ impl crate::dao::GarrisonDao for HangDao {
     crate::atomic_test_fallback!();
 }
 
-// ============================================================================
 // HealthStatus 测试
-// ============================================================================
 
 #[test]
 fn health_status_serializes_to_lowercase() {
@@ -87,9 +79,7 @@ fn health_status_equality() {
     assert_eq!(HealthStatus::Healthy, HealthStatus::Healthy);
 }
 
-// ============================================================================
 // HealthRegistry 测试
-// ============================================================================
 
 #[tokio::test]
 async fn empty_registry_returns_healthy() {
@@ -145,9 +135,7 @@ async fn registry_unhealthy_overrides_degraded() {
     assert_eq!(report.overall, HealthStatus::Unhealthy);
 }
 
-// ============================================================================
 // ConfigHealthCheck 测试
-// ============================================================================
 
 #[tokio::test]
 async fn config_health_check_returns_healthy_for_valid_config() {
@@ -167,16 +155,10 @@ async fn config_health_check_returns_unhealthy_for_invalid_config() {
     assert!(result.is_err());
 }
 
-// ============================================================================
 // CacheHealthCheck 测试（feature-gated）
-// ============================================================================
 
-/// 快路径下（仅 `cache-memory`，未启用 `cache-redis`）：进程存活即 Healthy。
-///
-/// `cache-memory` 后端为 oxcache 内存缓存，无网络 I/O，无需探测。
-/// 此测试仅在快路径下编译；探测路径（`cache-redis` 启用）下行为不同，
-/// 由 `cache_health_check_returns_unhealthy_on_probe_timeout`（超时）和
-/// `cache_health_check_unhealthy_when_manager_uninitialized`（manager 未初始化）覆盖。
+/// 快路径下（仅 `cache-memory`）：进程存活即 Healthy（oxcache 内存后端无网络 I/O，无需
+/// 探测）；探测路径（`cache-redis`）行为由超时/manager 未初始化测试覆盖。
 #[cfg(all(feature = "cache-memory", not(feature = "cache-redis")))]
 #[tokio::test]
 async fn cache_health_check_returns_healthy() {
@@ -186,16 +168,10 @@ async fn cache_health_check_returns_healthy() {
     assert_eq!(result, HealthStatus::Healthy);
 }
 
-// ============================================================================
 // DbHealthCheck 测试（feature-gated）
-// ============================================================================
 
-/// 快路径下（仅 `db-sqlite`，未启用 `db-postgres`/`db-mysql`）：进程存活即 Healthy。
-///
-/// SQLite 嵌入式数据库无独立服务进程，进程存活即数据库可用，无需探测。
-/// 此测试仅在快路径下编译；探测路径（`db-postgres`/`db-mysql` 启用）下行为不同，
-/// 由 `db_health_check_unhealthy_when_manager_uninitialized`（manager 未初始化）和
-/// `db_health_check_returns_unhealthy_on_probe_timeout`（超时）覆盖。
+/// 快路径下（仅 `db-sqlite`）：进程存活即 Healthy（SQLite 嵌入式数据库无独立服务进程，
+/// 无需探测）；探测路径（`db-postgres`/`db-mysql`）行为由 manager 未初始化/超时测试覆盖。
 #[cfg(all(
     feature = "db-sqlite",
     not(any(feature = "db-postgres", feature = "db-mysql"))
@@ -208,19 +184,11 @@ async fn db_health_check_returns_healthy() {
     assert_eq!(result, HealthStatus::Healthy);
 }
 
-// ============================================================================
 // 健康检查真实探测 + 超时测试（探测路径专属）
-// ============================================================================
 
-/// 探测路径下，`GarrisonManager` 未初始化时 `DbHealthCheck` 返回 `Unhealthy`。
-///
-/// 仅在启用 `db-postgres` 或 `db-mysql`（探测路径）时编译。
-/// `db-sqlite-only`（快路径）下不适用，因 SQLite 嵌入式数据库进程存活即 Healthy，
-/// 不依赖 `GarrisonManager` 初始化。
-///
-/// # 验证点
-/// - 未 init manager 时，`DbHealthCheck::check` 必须返回 `Ok(Unhealthy)`（而非误报 `Healthy`）
-/// - 返回 `Ok` 而非 `Err`，避免 `HealthRegistry` 把错误统一转为 "check failed" 通用消息
+/// 探测路径下（`db-postgres` / `db-mysql`），`GarrisonManager` 未初始化时
+/// `DbHealthCheck` 返回 `Ok(Unhealthy)`——不误报 `Healthy`，也避免 `Err` 被
+/// HealthRegistry 转为通用 "check failed"；`db-sqlite-only` 快路径不适用。
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
 #[tokio::test]
 #[serial_test::serial]
@@ -241,10 +209,7 @@ async fn db_health_check_unhealthy_when_manager_uninitialized() {
     );
 }
 
-/// 探测路径下未注入连接池（`new()` 默认）时返回 `Degraded`，不再误报 `Healthy`。
-///
-/// 原实现探测内存 KV DAO（Postgres 宕机仍 Healthy，K8s 摘流失效）；
-/// 无连接池句柄即诚实降级。
+/// 探测路径下未注入连接池（`new()` 默认）时返回 `Degraded`（诚实降级，不误报 `Healthy`）。
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
 #[tokio::test]
 #[serial_test::serial]
@@ -275,10 +240,8 @@ async fn db_health_check_degraded_without_pool() {
     GarrisonManager::reset_for_test();
 }
 
-/// 注入连接池后执行真实 ping——数据库可达 → `Healthy`。
-///
-/// 用 sqlite 内存池验证 `with_pool` 的 ping 接线路径（真实 pg/mysql 服务连通性
-/// 由 e2e_matrix 覆盖；此处验证接线与 ping 调用本身）。
+/// 注入连接池后执行真实 ping——数据库可达 → `Healthy`；用 sqlite 内存池验证 `with_pool`
+/// 的接线与 ping 调用本身（真实 pg/mysql 连通性由 e2e_matrix 覆盖）。
 #[cfg(all(
     any(feature = "db-postgres", feature = "db-mysql"),
     feature = "db-sqlite"
@@ -314,14 +277,8 @@ async fn db_health_check_with_pool_pings_real_db() {
     GarrisonManager::reset_for_test();
 }
 
-/// 探测路径下，`dao.get` hang 时 `CacheHealthCheck` 在 `HEALTH_PROBE_TIMEOUT`（2s）内返回 `Unhealthy`。
-///
-/// 仅在启用 `cache-redis`（探测路径）时编译。
-/// `cache-memory-only`（快路径）下不适用，因 oxcache 内存后端进程存活即 Healthy。
-///
-/// # 验证点
-/// - `dao.get` 长时间不返回时，`CacheHealthCheck::check` 必须在 2s 超时后返回 `Ok(Unhealthy)`
-/// - 整体耗时应在 `HEALTH_PROBE_TIMEOUT`（2s）附近，而非等到 dao 返回（10s）
+/// 探测路径下（`cache-redis`），`dao.get` hang 时 `CacheHealthCheck` 在
+/// `HEALTH_PROBE_TIMEOUT`（2s）内返回 `Unhealthy`，而非等 dao 返回（10s）。
 #[cfg(feature = "cache-redis")]
 #[tokio::test]
 #[serial_test::serial]
@@ -369,19 +326,8 @@ async fn cache_health_check_returns_unhealthy_on_probe_timeout() {
     GarrisonManager::reset_for_test();
 }
 
-/// 探测路径下，`GarrisonManager` 未初始化时 `CacheHealthCheck` 返回 `Unhealthy`。
-///
-/// 仅在启用 `cache-redis`（探测路径）时编译。
-/// `cache-memory-only`（快路径）下不适用，因 oxcache 内存后端进程存活即 Healthy，
-/// 不依赖 `GarrisonManager` 初始化。
-///
-/// # 对称性
-/// 与 `db_health_check_unhealthy_when_manager_uninitialized` 对称，覆盖 CacheHealthCheck
-/// 的 manager 未初始化边界场景，避免未来修改 CacheHealthCheck 时未测试路径 silent regression。
-///
-/// # 验证点
-/// - 未 init manager 时，`CacheHealthCheck::check` 必须返回 `Ok(Unhealthy)`（而非误报 `Healthy`）
-/// - 返回 `Ok` 而非 `Err`，避免 `HealthRegistry` 把错误统一转为 "check failed" 通用消息
+/// 探测路径下（`cache-redis`），`GarrisonManager` 未初始化时 `CacheHealthCheck` 返回
+/// `Unhealthy`（不误报 `Healthy`）；与 `db_health_check_unhealthy_when_manager_uninitialized` 对称。
 #[cfg(feature = "cache-redis")]
 #[tokio::test]
 #[serial_test::serial]
@@ -402,17 +348,7 @@ async fn cache_health_check_unhealthy_when_manager_uninitialized() {
 }
 
 /// 未注入连接池时，即使 manager 的 DAO hang，`DbHealthCheck::check` 也立即返回
-/// `Degraded`（诚实降级），不再探测 dao.get。
-///
-/// 仅在启用 `db-postgres` 或 `db-mysql`（探测路径）时编译。
-/// `db-sqlite-only`（快路径）下不适用，因 SQLite 嵌入式数据库进程存活即 Healthy。
-///
-/// # 语义迁移说明
-///
-/// 探测目标已从内存 KV DAO（dao.get 委托进程内存储，无法反映数据库状态）
-/// 切换为注入连接池的真实 ping（见 `checks.rs` 探测路径注释）。旧语义
-/// 「dao.get 超时 → Unhealthy」随之失效：timeout → Unhealthy 分支现仅存在于
-/// `with_pool` 注入真实池后的 ping 超时路径（需真实数据库，属集成层覆盖）。
+/// `Degraded`（诚实降级，不再探测 dao.get）；仅在 `db-postgres` / `db-mysql` 探测路径编译。
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
 #[tokio::test]
 #[serial_test::serial]
@@ -460,9 +396,7 @@ async fn db_health_check_returns_degraded_without_pool_even_when_dao_hangs() {
     GarrisonManager::reset_for_test();
 }
 
-// ============================================================================
 // HealthReport 序列化测试
-// ============================================================================
 
 #[test]
 fn health_report_serializes_correctly() {
@@ -495,9 +429,7 @@ fn health_report_skips_none_message() {
     assert!(!json.contains("message"));
 }
 
-// ============================================================================
 // axum_routes 测试（feature = "web-axum"）
-// ============================================================================
 
 /// 测试 axum liveness 探针始终返回 200。
 #[cfg(feature = "web-axum")]
@@ -594,9 +526,7 @@ async fn test_axum_ready_returns_503_when_unhealthy() {
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
-// ============================================================================
 // warp_routes 测试（feature = "web-warp"）
-// ============================================================================
 
 /// 测试 warp liveness 探针返回 200。
 #[cfg(feature = "web-warp")]
@@ -649,9 +579,7 @@ async fn test_warp_ready_filter_returns_503_when_unhealthy() {
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
-// ============================================================================
 // HealthRegistry Default / register 链式调用测试
-// ============================================================================
 
 /// 测试 HealthRegistry 的 Default 实现返回空 registry。
 #[tokio::test]
@@ -682,15 +610,10 @@ async fn test_health_registry_register_chain() {
     assert_eq!(report.overall, HealthStatus::Degraded);
 }
 
-// ============================================================================
 // 覆盖率补测：Default 实现 + 探测成功分支 + warp 合并 filter
-// ============================================================================
 
-/// 探测路径下（`cache-redis` 启用）：`CacheHealthCheck::default()` 创建的检查器
-/// 在 manager 已初始化且 `dao.get` 可达时返回 `Healthy`。
-///
-/// 覆盖 `checks.rs` 中 `CacheHealthCheck` 的 `Default` 实现与探测成功分支
-/// `Ok(Ok(_)) => Healthy`（与超时/未初始化分支互补）。
+/// 探测路径下（`cache-redis`）：`CacheHealthCheck::default()` 与 `new()` 等价，manager
+/// 已初始化且 `dao.get` 可达时返回 `Healthy`（覆盖 `Default` 与探测成功分支）。
 #[cfg(feature = "cache-redis")]
 #[tokio::test]
 #[serial_test::serial]
@@ -711,8 +634,7 @@ async fn cache_health_check_default_returns_healthy_when_probe_succeeds() {
         .await
         .expect("init with InMemoryDao 应成功");
 
-    // Default 实现与 new() 等价
-    //（allow：本测试的目的就是执行 Default impl，改写为单元结构体字面量会使覆盖失效）
+    // Default 实现与 new() 等价（allow：本测试目的就是执行 Default impl，改写为单元结构体字面量会使覆盖失效）
     #[allow(clippy::default_constructed_unit_structs)]
     let checker = CacheHealthCheck::default();
     assert_eq!(checker.name(), "cache");
@@ -739,10 +661,8 @@ async fn cache_health_check_default_impl_fast_path() {
     assert_eq!(result, HealthStatus::Healthy);
 }
 
-/// 快路径下（仅 `db-sqlite`）：`DbHealthCheck::default()` 等价于 `new()`，
-/// SQLite 嵌入式数据库进程存活即 Healthy。
-///
-/// 覆盖 `checks.rs` 中 `DbHealthCheck` 的 `Default` 实现（既有测试仅覆盖 `new()`）。
+/// 快路径下（仅 `db-sqlite`）：`DbHealthCheck::default()` 等价于 `new()`，SQLite 进程存活
+/// 即 Healthy；覆盖 `Default` 实现（既有测试仅覆盖 `new()`）。
 #[cfg(all(
     feature = "db-sqlite",
     not(any(feature = "db-postgres", feature = "db-mysql"))

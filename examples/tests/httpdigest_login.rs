@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! httpdigest_login 示例测试（secure-httpdigest feature）。
-//!
-//! 验证 run() 完整执行（内部已包含 HA2/Response 摘要断言）。
+//! httpdigest_login 示例测试（secure-httpdigest feature）：验证 run() 完整执行（内部已包含 HA2/Response 摘要断言）。
 
 #![cfg(feature = "protocol-httpdigest")]
 

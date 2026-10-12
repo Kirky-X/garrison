@@ -17,8 +17,6 @@
 //!
 //! 本示例使用内存 SQLite + oxcache 内存 DAO，无需外部依赖即可运行。
 
-// 占位值，生产环境必须从环境变量/KMS 加载
-
 use async_trait::async_trait;
 use dbnexus::DbPool;
 use garrison::context::tenant::{TenantContext, TenantSource, TENANT};
@@ -234,6 +232,7 @@ async fn query_audit_logs(audit_listener: Arc<AuditLogListener>) -> DemoResult<(
 fn demo_keycloak_config() -> DemoResult<()> {
     println!("[6] Keycloak OIDC RP 配置演示...");
 
+    // 占位值，生产环境必须从环境变量/KMS 加载
     let kc_config = KeycloakConfig {
         base_url: "https://kc.example.com:8443/realms/myrealm".into(),
         client_id: "garrison-rp".into(),
@@ -262,10 +261,7 @@ fn demo_wechat_config() -> DemoResult<()> {
     Ok(())
 }
 
-/// 运行 综合演示。
-///
-/// 仅做顺序编排：init → audit listener → logic → tenant demo → audit query →
-/// keycloak config → wechat config → 总结。每步打印步骤标题。
+/// 运行综合演示：顺序编排 init → audit listener → logic → tenant demo → audit query → keycloak/wechat config，每步打印步骤标题。
 pub async fn run() -> DemoResult<()> {
     println!("=== Garrison v0.5.0 生产能力综合演示 ===\n");
 

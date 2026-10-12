@@ -1,31 +1,16 @@
-// Copyright (c) 2026 Kirky.X🌠
-// SPDX-License-Identifier: Apache-2.0
-
 //! Set-Cookie 单一构建点。
 //!
-//! garrison 全部 Set-Cookie 写路径（三框架适配器、axum 续签中间件、CSRF 中间件）
-//! 统一经 [`build_set_cookie_value`] 构建，写点不再自行拼接属性串。
-//! 设计吸收 Keycloak `DefaultCookieProvider.set(CookieType, …)` 的类型化 Cookie
-//! 与 Pocket-ID 的 `__Host-` / `__Secure-` 前缀命名，按纯函数自由构建器重设计：
-//! 无框架依赖，可脱离 HTTP 单测。
+//! garrison 全部 Set-Cookie 写路径（三框架适配器、axum 续签中间件、CSRF 中间件）统一经
+//! [`build_set_cookie_value`] 构建，写点不再自行拼接属性串；纯函数自由构建器，无框架依赖。
 //!
 //! ## 构建点不变式（调用方无法绕过）
 //!
-//! 1. **HttpOnly 恒定**：[`CookieScope`] 三个变体均输出 HttpOnly。
-//! 2. **SameSite 白名单 fail-fast**：非 `["Lax", "Strict", "None"]`（复用
-//!    `crate::config::COOKIE_SAME_SITE_VALUES`，与启动期配置校验同一份常量）
-//!    返回错误，不产出 Set-Cookie。
-//! 3. **None→Lax 降级**：`SameSite=None` 仅在 Secure 上下文（`cookie_secure=true`，
-//!    作为「非 Secure 上下文」的确定性信号）合法；非 Secure 上下文自动降级为
-//!    `Lax` 并输出一次 warn——浏览器对不带 Secure 的 `SameSite=None` 会整体拒收。
-//! 4. **production 前缀强制**：`production` feature + Secure 上下文时，
-//!    Path=/ 且无 Domain 的 cookie 强制 `__Host-` 前缀，其余（限定路径或跨子域
-//!    共享）强制 `__Secure-` 前缀；非 Secure 上下文（http 调试）不加前缀。
-//!    读侧必须用 [`token_cookie_name`] / [`CookieType::resolved_name`] 解析同名，
-//!    保证写读一致。
-//! 5. **注入防护**：name/value 复用 `validate_cookie_name_value` 校验，
-//!    拒绝 `;`、控制字符等分隔符；path 拒 `;` 与控制字符，domain 仅允许
-//!    主机名字符（字母数字连字符点），非法值不产出任何 Set-Cookie。
+//! - HttpOnly 恒定：三个 [`CookieScope`] 变体均输出 HttpOnly。
+//! - SameSite 白名单 fail-fast：非 `["Lax", "Strict", "None"]` 返回错误，不产出 Set-Cookie。
+//! - `SameSite=None` 仅在 Secure 上下文合法，非 Secure 上下文自动降级 `Lax` 并 warn（浏览器整体拒收不带 Secure 的 `None`）。
+//! - production 前缀强制：`Path=/` 且无 Domain 强制 `__Host-`，其余强制 `__Secure-`；读侧须用
+//!   [`token_cookie_name`] / [`CookieType::resolved_name`] 解析同名，保证写读一致。
+//! - 注入防护：name/value / path / domain 校验拒绝分隔符与控制字符，非法值不产出任何 Set-Cookie。
 
 use std::sync::Once;
 
@@ -38,8 +23,7 @@ static NONE_DOWNGRADE_WARN: Once = Once::new();
 
 /// Cookie 作用域：定死 SameSite × HttpOnly 的合法组合。
 ///
-/// 作用域是封闭枚举而非自由字符串，所有组合强制 HttpOnly，
-/// 调用方无法构造「无 HttpOnly 的会话 cookie」。
+/// 封闭枚举而非自由字符串，所有组合强制 HttpOnly，调用方无法构造「无 HttpOnly 的会话 cookie」。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CookieScope {
     /// `SameSite=Lax`（默认：顶级导航 GET 携带，跨站 POST 不携带）。
@@ -51,12 +35,8 @@ pub enum CookieScope {
 }
 
 impl CookieScope {
-    /// 从配置字符串解析作用域（match 主判，未知值 fail-fast）。
-    ///
-    /// 合法值与启动期配置校验白名单 `crate::config::COOKIE_SAME_SITE_VALUES`
-    /// 一一对应（由 `same_site_whitelist_matches_scope_variants` 跨引用测试锁定，
-    /// 防白名单与 match 分支双源漂移）；非法值（含大小写不符、空白尾随）返回
-    /// [`GarrisonError::Context`]。
+    /// 从配置字符串解析作用域（match 主判，未知值 fail-fast）：合法值与启动期白名单 `crate::config::COOKIE_SAME_SITE_VALUES`
+    /// 一一对应（由跨引用测试锁定防双源漂移），非法值返回 [`GarrisonError::Context`]。
     pub fn from_same_site(same_site: &str) -> GarrisonResult<Self> {
         match same_site {
             "Lax" => Ok(Self::LaxHttpOnly),
@@ -92,8 +72,7 @@ impl CookieScope {
 pub enum CookiePath {
     /// `Path=/`（默认，全站可用）。
     Root,
-    /// 限定路径作用域（预留）：为短时 token 将 cookie 携带范围收窄到
-    /// 该路径及其子路径、缩小暴露面而设。当前无生产写点，供下游写点预留。
+    /// 限定路径作用域（预留）：将 cookie 携带范围收窄到该路径及其子路径以缩小暴露面；当前无生产写点。
     Of(String),
 }
 
@@ -107,15 +86,11 @@ impl CookiePath {
     }
 }
 
-/// Set-Cookie 构建参数（单一构建点的输入）。
-///
-/// garrison 的 cookie 名来自配置（`token_name` / CSRF `cookie_name`）而非硬编码
-/// 枚举，故本类型为可构造 pub struct + 便捷构造器：`CookieType::token(config)`
-/// 承接会话 token cookie，其余写点按字段直接构造。
+/// Set-Cookie 构建参数（单一构建点的输入）：cookie 名来自配置（`token_name` / CSRF `cookie_name`）而非硬编码枚举，
+/// 故为可构造 pub struct + 便捷构造器，`CookieType::token(config)` 承接会话 token cookie，其余写点按字段直接构造。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CookieType {
-    /// Cookie 基础名（不含 `__Host-` / `__Secure-` 前缀；前缀在构建时按 Secure
-    /// 上下文解析，见 [`CookieType::resolved_name`]）。
+    /// Cookie 基础名（不含 `__Host-` / `__Secure-` 前缀；前缀在构建时按 Secure 上下文解析）。
     pub name: String,
     /// SameSite × HttpOnly 作用域。
     pub scope: CookieScope,
@@ -123,20 +98,19 @@ pub struct CookieType {
     pub path: CookiePath,
     /// `Domain` 属性（`None` = 不设置，cookie 仅对当前 host 生效）。
     pub domain: Option<String>,
-    /// `Max-Age` 秒数（`None` = 会话 cookie，不输出 Max-Age；负值构建点拒绝，
-    /// `Some(0)` 合法 = 立即过期）。
+    /// `Max-Age` 秒数（`None` = 会话 cookie，不输出 Max-Age；负值构建点拒绝，`Some(0)` = 立即过期）。
     pub max_age: Option<i64>,
 }
 
 impl CookieType {
-    /// 会话 token cookie：名称取 `config.token_name`，SameSite 取
-    /// `config.cookie_same_site`（白名单 fail-fast），Path=/，无 Domain、无 Max-Age。
+    /// 会话 token cookie：名称取 `config.token_name`，SameSite 取 `config.cookie_same_site`（白名单 fail-fast），
+    /// Path=/，无 Domain 与 Max-Age。
     pub fn token(config: &GarrisonConfig) -> GarrisonResult<Self> {
         Self::session(config.token_name.clone(), config)
     }
 
-    /// 指定名称的会话 cookie：SameSite 取 `config.cookie_same_site`（白名单
-    /// fail-fast），Path=/。供 cookie 名不取自 `token_name` 的写点复用。
+    /// 指定名称的会话 cookie：SameSite 取 `config.cookie_same_site`（白名单 fail-fast），Path=/；
+    /// 供 cookie 名不取自 `token_name` 的写点复用。
     pub fn session(name: impl Into<String>, config: &GarrisonConfig) -> GarrisonResult<Self> {
         Ok(Self {
             name: name.into(),
@@ -147,19 +121,18 @@ impl CookieType {
         })
     }
 
-    /// 解析后的 cookie 名（production + Secure 上下文含 `__Host-` / `__Secure-`
-    /// 前缀）。读侧（Cookie 请求头查找）必须用本方法解析，保证写读同名。
+    /// 解析后的 cookie 名（production + Secure 上下文含 `__Host-` / `__Secure-` 前缀）；
+    /// 读侧（Cookie 请求头查找）必须用本方法解析，保证写读同名。
     pub fn resolved_name(&self, secure: bool) -> String {
         resolve_cookie_name(&self.name, secure, &self.path, self.domain.as_deref())
     }
 }
 
-/// 解析带安全前缀的 cookie 名（吸收 Pocket-ID `__Host-` / `__Secure-` 前缀命名）。
+/// 解析带安全前缀的 cookie 名（Pocket-ID 风格 `__Host-` / `__Secure-` 命名）。
 ///
-/// - `production` feature + Secure 上下文：`Path=/` 且无 Domain → `__Host-<name>`
-///   （host-locked，浏览器禁止其携带 Domain 与非 / Path，攻击面最小）；
-///   其余 → `__Secure-<name>`。
-/// - 非 Secure 上下文（http 降级）或非 production 构建：原样返回。
+/// `production` feature + Secure 上下文：`Path=/` 且无 Domain → `__Host-<name>`（浏览器禁止其携带
+/// Domain 与非 / Path，攻击面最小），其余 → `__Secure-<name>`；非 Secure（http 降级）或非 production
+/// 构建原样返回。
 fn resolve_cookie_name(
     name: &str,
     secure: bool,
@@ -182,10 +155,7 @@ fn resolve_cookie_name(
     name.to_string()
 }
 
-/// 会话 token cookie 的解析名（读侧统一入口）。
-///
-/// 写侧（适配器 / 续签中间件）经构建点产出的名字与本函数一致——
-/// production + Secure 上下文下两侧同为 `__Host-<token_name>`。
+/// 会话 token cookie 的解析名（读侧统一入口）：production + Secure 上下文下与构建点写出的名字一致。
 pub fn token_cookie_name(config: &GarrisonConfig) -> String {
     resolve_cookie_name(
         &config.token_name,
@@ -195,9 +165,9 @@ pub fn token_cookie_name(config: &GarrisonConfig) -> String {
     )
 }
 
-/// 校验 `Domain` 属性值：仅允许主机名字符（ASCII 字母数字、连字符、点），
-/// 拒绝空格、`;`、控制字符与非 ASCII——含属性分隔符的值可注入 `SameSite` 等
-/// 附加属性（如 `evil.com; SameSite=None`）。
+/// 校验 `Domain` 属性值：仅允许主机名字符（ASCII 字母数字、连字符、点）。
+///
+/// 含属性分隔符的值可注入 `SameSite` 等附加属性（如 `evil.com; SameSite=None`）。
 fn validate_cookie_domain(domain: &str, cookie_name: &str) -> GarrisonResult<()> {
     let domain_ok = !domain.is_empty()
         && domain
@@ -227,22 +197,10 @@ fn validate_cookie_path(path: &str, cookie_name: &str) -> GarrisonResult<()> {
 /// 属性输出顺序统一：
 /// `name=value; HttpOnly; [Secure; ]SameSite=<ss>; Path=<p>[; Domain=<d>][; Max-Age=<n>]`。
 ///
-/// # 参数
-///
-/// - `cookie`: 构建参数（名称 / 作用域 / 路径 / Domain / Max-Age）。
-/// - `value`: cookie 值（空串合法，用于清除 cookie）。
-/// - `secure`: Secure 上下文标志（取 `config.cookie_secure`；同时决定
-///   production 前缀与 SameSite=None→Lax 降级）。
-///
-/// # 错误
-///
-/// - name/value 含注入字符（复用 `validate_cookie_name_value`）；
-/// - `CookiePath::Of` 为空串，或 path / domain 含注入字符
-///   （path 拒 `;` 与控制字符，domain 仅允许主机名字符）；
-/// - `max_age` 为负值——负 `Max-Age` 是浏览器「删除 cookie」语义，写点误用会
-///   静默清 cookie（`Some(0)` 合法，立即过期）。
-///
-/// 错误时调用方不得产出任何 Set-Cookie 头（fail-fast）。
+/// `value` 空串合法（用于清除 cookie）；`secure` 取 `config.cookie_secure`，同时决定 production
+/// 前缀与 SameSite=None→Lax 降级。以下情况返回错误（调用方不得产出任何 Set-Cookie 头，fail-fast）：
+/// name/value 含注入字符；`CookiePath::Of` 为空串或 path / domain 含注入字符；`max_age` 为负值
+/// （负 `Max-Age` 是浏览器「删除 cookie」语义，写点误用会静默清 cookie，`Some(0)` 合法）。
 pub fn build_set_cookie_value(
     cookie: &CookieType,
     value: &str,
@@ -302,12 +260,8 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // CookieScope：None→Lax 降级不变式
-    // ========================================================================
-
-    /// NoneHttpOnly + 非 Secure 上下文：降级为 SameSite=Lax，不输出 SameSite=None
-    /// 与 Secure（http 降级），且 HttpOnly 恒定。
+    /// NoneHttpOnly + 非 Secure 上下文：降级为 SameSite=Lax，不输出 SameSite=None 与 Secure，HttpOnly 恒定。
     #[test]
     fn none_scope_insecure_downgrades_to_lax() {
         let value =
@@ -357,10 +311,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // production 前缀（cfg 拆分：production 门禁 / 非 production 回归锁）
-    // ========================================================================
-
     #[cfg(feature = "production")]
     mod production_prefix {
         use super::*;
@@ -508,10 +459,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // SameSite 白名单 fail-fast
-    // ========================================================================
-
     /// 非法 same_site（小写 / 空串 / 空白尾随）构造即报错，不产出 Set-Cookie。
     #[test]
     fn token_constructor_rejects_invalid_same_site() {
@@ -529,9 +477,9 @@ mod tests {
         }
     }
 
-    /// 白名单跨引用：COOKIE_SAME_SITE_VALUES 每个合法值经 from_same_site 命中对应
-    /// 变体，且作用域属性输出与输入一致（不落兜底）。机制性锁：若未来白名单加值
-    /// 而 match 未加对应臂，未知值走 Err（match 主判）→ 本测试必红。
+    /// 白名单跨引用：COOKIE_SAME_SITE_VALUES 每个合法值经 from_same_site 命中对应变体，且属性输出与输入一致。
+    ///
+    /// 机制性锁：若未来白名单加值而 match 未加臂，未知值走 Err（match 主判）→ 本测试必红。
     #[test]
     fn same_site_whitelist_matches_scope_variants() {
         for value in crate::config::COOKIE_SAME_SITE_VALUES {
@@ -568,10 +516,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // 输入防护与属性段
-    // ========================================================================
-
     /// value 含注入字符（`;` / 控制字符 / 空格 / 逗号）时报错，不产出 Set-Cookie。
     #[test]
     fn rejects_injected_value() {
@@ -668,9 +613,7 @@ mod tests {
         assert!(!value.contains("Max-Age"), "实际: {}", value);
     }
 
-    /// max_age 为负值时构建点拒绝（负 Max-Age 是浏览器「删除 cookie」语义，
-    /// 写点误用会静默清 cookie），不产出 Set-Cookie；Some(0) 合法（立即过期），
-    /// 放行并输出 Max-Age=0。
+    /// max_age 负值构建点拒绝（负 Max-Age 是浏览器「删除 cookie」语义）；Some(0) 合法并输出 Max-Age=0。
     #[test]
     fn rejects_negative_max_age_allows_zero() {
         let negative = CookieType {

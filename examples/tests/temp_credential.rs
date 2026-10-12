@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! temp_credential 示例测试（protocol-temp feature）。
-//!
-//! 验证 run() 完整执行（内部已包含 issue/get/consume/revoke 断言）。
+//! temp_credential 示例测试（protocol-temp feature）：验证 run() 完整执行（内部已包含 issue/get/consume/revoke 断言）。
 
 #![cfg(feature = "protocol-temp")]
 

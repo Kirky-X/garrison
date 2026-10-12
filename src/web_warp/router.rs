@@ -1,12 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! `GarrisonRouter` 实现：warp 路由规则构建器。
-//!
-//! 承接 `mod.rs` 的 `GarrisonRouter` 结构体定义：
-//! - `new` / `with_interceptor` / `route_protected`：构建器 API
-//! - `into_filter`：消费路由器生成 warp 守卫 Filter，按路径匹配执行 interceptor 鉴权
-//! - `Default`：使用 `DefaultGarrisonInterceptor` + 默认配置
+//! `GarrisonRouter` 实现（warp）：`new`/`with_interceptor`/`route_protected` 构建器 API、
+//! `into_filter` 生成按路径匹配执行 interceptor 鉴权的守卫 Filter、`Default` 使用 `DefaultGarrisonInterceptor` + 默认配置。
 
 use crate::annotation::Annotation;
 use crate::config::GarrisonConfig;
@@ -28,13 +24,9 @@ fn normalize_route_path(path: &str) -> &str {
     }
 }
 
-/// 路由规则匹配：支持精确匹配、单段参数与尾部通配。
-///
-/// - 精确段：逐段相等比较（尾斜杠归一化后，`/api/users/` 命中 `/api/users`）
-/// - `{param}` / `:param`：匹配任意非空单段（与 axum/actix 参数语义对齐）
-/// - `*` / `{*rest}`：匹配剩余所有段（零段或多段，前缀保护语义，如 `/api/*`）
-///
-/// 返回 true 表示 `pattern` 覆盖请求 `path`。
+/// 路由规则匹配：精确段逐段比较（尾斜杠归一化，`/api/users/` 命中 `/api/users`），
+/// `{param}`/`:param` 匹配任意非空单段，`*`/`{*rest}` 匹配剩余所有段（零段或多段，如 `/api/*`）；
+/// true 表示 `pattern` 覆盖请求 `path`。
 fn route_matches_rule(pattern: &str, path: &str) -> bool {
     let pattern = normalize_route_path(pattern);
     let path = normalize_route_path(path);
@@ -46,11 +38,9 @@ fn route_matches_rule(pattern: &str, path: &str) -> bool {
             (Some(seg), None) => return is_wildcard_segment(seg),
             (Some(seg), Some(part)) => {
                 if is_wildcard_segment(seg) {
-                    // 尾部通配：吞掉剩余所有段（含零段）
                     return true;
                 }
                 if is_param_segment(seg) {
-                    // 单段参数：匹配任意非空段
                     if part.is_empty() {
                         return false;
                     }
@@ -89,27 +79,18 @@ impl super::GarrisonRouter {
         self
     }
 
-    /// 添加受保护路由：注册路径 + 注解映射。
+    /// 添加受保护路由：注册路径 + 注解映射（warp 路由本身仍需 `warp::path()` 链配置，此处仅记录规则）。
     ///
-    /// 注意：warp 的路由注册需在 `warp::path()` 链中单独配置，
-    /// 此方法仅记录鉴权规则，由 `into_filter()` 生成的守卫 Filter 执行鉴权。
-    ///
-    /// # 路径校验
-    ///
-    /// - 路径必须非空且以 `/` 开头：非法路径被**拒绝注册**并记录 error 日志
-    ///   （此类路径永不匹配请求，静默注册将导致路由不受保护）。
-    /// - 支持参数化模式：`{id}` / `:id` 单段参数、`*` / `{*rest}` 尾部通配
-    ///   （`into_filter` 按段匹配，注册 `/api/*` 即保护全部子路径）。
-    ///
-    /// # 重复注册
-    ///
-    /// 重复注册同一路径时保留 last-wins 语义，但记录 warn 日志（不静默覆盖）。
+    /// 路径必须非空且以 `/` 开头，非法路径拒绝注册并记 error（否则永不匹配请求，路由静默不受保护）；
+    /// 支持 `{id}`/`:id` 参数段与 `*`/`{*rest}` 尾部通配（注册 `/api/*` 即保护全部子路径）。
+    /// 重复注册保留 last-wins 语义并记 warn（不静默覆盖）。
     pub fn route_protected(mut self, path: &str, annotation: Annotation) -> Self {
         // 路径校验：非空 + 前导斜杠（fail-fast，避免畸形路径静默不受保护）
         if path.is_empty() || !path.starts_with('/') {
             tracing::error!(
                 path = %path,
-                "GarrisonRouter::route_protected 拒绝非法路径（必须非空且以 '/' 开头），该路由不会受鉴权保护"
+                "{}",
+                crate::i18n::translate_detail("logs-router-invalid-path-protected", &[])
             );
             return self;
         }
@@ -117,18 +98,16 @@ impl super::GarrisonRouter {
         if self.rules.contains_key(path) {
             tracing::warn!(
                 path = %path,
-                "GarrisonRouter::route_protected 重复注册同一路径，原注解将被覆盖（last-wins）"
+                "{}",
+                crate::i18n::translate_detail("logs-router-duplicate-path-override", &[])
             );
         }
         self.rules.insert(path.to_string(), annotation);
         self
     }
 
-    /// 消费路由器，生成 warp 守卫 Filter。
-    ///
-    /// 该 Filter 检查请求路径是否命中已注册规则（精确 / 参数段 / 尾部通配，
-    /// 尾斜杠归一化），命中则执行 interceptor 鉴权。
-    /// 鉴权通过返回 `Ok(())`，失败返回 `Rejection`。
+    /// 消费路由器生成守卫 Filter：按已注册规则（精确/参数段/尾部通配，尾斜杠归一化）匹配路径并执行
+    /// interceptor 鉴权；通过返回 `Ok(())`，失败返回 `Rejection`。
     pub fn into_filter(self) -> impl Filter<Extract = ((),), Error = warp::Rejection> + Clone {
         let rules = Arc::new(self.rules);
         let interceptor = self.interceptor;
@@ -143,16 +122,14 @@ impl super::GarrisonRouter {
                 let config = config.clone();
                 async move {
                     let path_str = path.as_str().to_string();
-                    // 规则匹配支持参数段与尾部通配，
-                    // 参数化/子路径不再因精确匹配失败而静默跳过鉴权
+                    // 规则匹配支持参数段与尾部通配，避免参数化/子路径静默跳过鉴权
                     let annotation = rules
                         .iter()
                         .find(|(pattern, _)| route_matches_rule(pattern, &path_str))
                         .map(|(_, annotation)| annotation.clone());
 
                     if let Some(annotation) = annotation {
-                        // Token 可选：与 actix-web middleware 对齐，
-                        // Ignore 注解的 pre_handle 直接返回 Ok(())，不需要 token。
+                        // Token 可选：Ignore 注解的 pre_handle 直接 Ok(())，不需要 token（与 actix middleware 对齐）
                         let token = extract_token_from_headers(&headers, &config)
                             .map_err(|e| warp::reject::custom(super::GarrisonRejection(e)))?;
 

@@ -1,20 +1,12 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 异常登录定时分析引擎（双引擎的定时部分）。
+//! 异常登录定时分析引擎（双引擎的定时部分）：`AnomalousLoginAnalyzer` 与实时引擎 `AnomalousLoginStrategy` 互补——
+//! 实时引擎（`anomalous.rs`）登录时即时检测异地跳变（haversine 距离），定时引擎（本模块）定期扫描历史登录记录识别模式。
 //!
-//! `AnomalousLoginAnalyzer` 与实时引擎 `AnomalousLoginStrategy` 互补：
-//! - 实时引擎（`anomalous.rs`）：登录时即时检测异地跳变（haversine 距离）
-//! - 定时引擎（本模块）：定期扫描历史登录记录，识别 burst / geo_jump / device_mutation 模式
-//!
-//! # 算法
-//!
-//! 1. `record_login` 将每次登录记录写入 DAO（key: `anomalous:login:{login_id}:{timestamp}`，TTL 24h）
-//! 2. `analyze_once` 扫描时间窗口内（1h）所有登录记录，按 login_id 分组
-//! 3. 检测 3 种异常：
-//! - `burst_login`：单个 login_id 登录次数 > `burst_threshold`（默认 5）
-//! - `geo_jump`：单个 login_id 不同 geo > 2（None 不计入）
-//! - `device_mutation`：单个 login_id 不同 device > 3（None 不计入）
+//! 流程：`record_login` 将每次登录写入 DAO（key `anomalous:login:{login_id}:{nanos}`，TTL 24h）；`analyze_once` 扫描时间窗口（1h）内记录
+//! 按 login_id 分组，检测 3 种异常：`burst_login`（登录次数 > `burst_threshold`，默认 5）、`geo_jump`（不同 geo > 2，None 不计入）、
+//! `device_mutation`（不同 device > 3，None 不计入）。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -27,8 +19,7 @@ use tokio::sync::watch;
 
 /// 最大扫描 key 数量（DoS 防护）。
 const MAX_SCAN: usize = 10_000;
-/// login_id 最大长度（DoS 防护）：超长 login_id 会构造极端长的 Redis key
-/// （`anomalous:login:{login_id}:{nanos}`），造成 key 膨胀/内存压力。
+/// login_id 最大长度（DoS 防护）：超长 login_id 会构造极端长的 Redis key（`anomalous:login:{login_id}:{nanos}`），造成 key 膨胀/内存压力。
 const MAX_LOGIN_ID_LEN: usize = 128;
 /// 登录记录 TTL（秒，24h）。
 const RECORD_TTL_SECS: u64 = 86_400;
@@ -90,12 +81,7 @@ impl Default for AnomalousAnalyzerConfig {
 }
 
 impl AnomalousAnalyzerConfig {
-    /// 校验配置合法性。
-    ///
-    /// # 错误
-    /// - `interval_secs` 为 0
-    /// - `burst_threshold` 为 0
-    /// - `max_scan` 为 0
+    /// 校验配置合法性：`interval_secs` / `burst_threshold` / `max_scan` 任一为 0 返回 `Config` 错误。
     pub fn validate(&self) -> GarrisonResult<()> {
         if self.interval_secs == 0 {
             return Err(GarrisonError::Config(
@@ -143,10 +129,7 @@ impl From<AnomalousLoginDetected> for GarrisonEvent {
     }
 }
 
-/// 异常登录定时分析引擎。
-///
-/// 通过 `start(self)` 消费自身并 spawn 定时任务，
-/// 调用方持有 `shutdown_tx` 以优雅停止。
+/// 异常登录定时分析引擎：`start(self)` 消费自身并 spawn 定时任务，调用方持有 `shutdown_tx` 以优雅停止。
 pub struct AnomalousLoginAnalyzer {
     /// DAO 抽象层（用于登录记录持久化与扫描）。
     dao: Arc<dyn GarrisonDao>,
@@ -159,13 +142,8 @@ pub struct AnomalousLoginAnalyzer {
 }
 
 impl AnomalousLoginAnalyzer {
-    /// 创建分析器实例。
-    ///
-    /// # 参数
-    /// - `dao`: DAO 抽象层。
-    /// - `config`: 分析器配置。
-    /// - `shutdown_rx`: shutdown 信号接收端（调用方持有 `shutdown_tx`）。
-    /// - `listener_manager`: 监听器管理器（None 时不广播事件）。
+    /// 创建分析器实例：`dao` 为 DAO 抽象层，`config` 为分析器配置，`shutdown_rx` 为 shutdown 接收端（调用方持有发送端），
+    /// `listener_manager` 为监听器管理器（None 时不广播事件）。
     pub fn new(
         dao: Arc<dyn GarrisonDao>,
         config: AnomalousAnalyzerConfig,
@@ -180,21 +158,14 @@ impl AnomalousLoginAnalyzer {
         }
     }
 
-    /// 记录一次登录事件。
-    ///
-    /// 将登录记录序列化为 JSON 存入 DAO，
-    /// key 格式 `anomalous:login:{login_id}:{nanos}`，TTL 24h。
+    /// 记录一次登录事件：序列化为 JSON 存入 DAO，key 格式 `anomalous:login:{login_id}:{nanos}`，TTL 24h。
     ///
     /// # 纳秒精度
-    /// key 使用纳秒精度时间戳（而非 record.timestamp 的秒级），
-    /// 避免同一秒内同一 login_id 的多次登录互相覆盖。
+    /// key 用纳秒精度时间戳（而非 record.timestamp 的秒级），避免同一秒内同一 login_id 的多次登录互相覆盖；
     /// `record.timestamp` 仍为秒级（用于时间窗口过滤），key 的纳秒仅用于唯一性。
     ///
     /// # 错误
-    /// - `login_id` 为空 → `InvalidParam`
-    /// - `login_id` 包含 `:` → `InvalidParam`（破坏 key 解析）
-    /// - `login_id` 长度超过 128 字节 → `InvalidParam`（防超长 key DoS）
-    /// - 序列化失败 → `Internal`
+    /// `login_id` 为空 / 含 `:`（破坏 key 解析）/ 超 128 字节（防超长 key DoS）→ `InvalidParam`；序列化失败 → `Internal`。
     pub async fn record_login(&self, record: &AnomalousLoginRecord) -> GarrisonResult<()> {
         if record.login_id.is_empty() {
             return Err(GarrisonError::InvalidParam(
@@ -219,10 +190,7 @@ impl AnomalousLoginAnalyzer {
         self.dao.set(&key, &value, RECORD_TTL_SECS).await
     }
 
-    /// 生成存储 key（纳秒精度避免同秒覆盖）。
-    ///
-    /// key 格式：`anomalous:login:{login_id}:{nanos}`
-    /// `nanos` 取自 `SystemTime::now()` 的纳秒时间戳，保证同秒内多次调用产生不同 key。
+    /// 生成存储 key（纳秒精度避免同秒覆盖），格式 `anomalous:login:{login_id}:{nanos}`；`nanos` 取自 `SystemTime::now()`，保证同秒内多次调用产生不同 key。
     fn make_storage_key(login_id: &str, timestamp_secs: i64) -> String {
         use std::time::{SystemTime, UNIX_EPOCH};
         let nanos = SystemTime::now()
@@ -230,8 +198,7 @@ impl AnomalousLoginAnalyzer {
             .map(|d| d.as_nanos())
             .unwrap_or(timestamp_secs as u128);
         if nanos == timestamp_secs as u128 {
-            // fallback 命中说明系统时钟异常（before UNIX_EPOCH），纳秒唯一性保证失效，
-            // 同秒同 login_id 的并发写入可能互相覆盖——显式 warn 提示（不中断记录）
+            // fallback 命中说明系统时钟异常（before UNIX_EPOCH），纳秒唯一性保证失效，同秒同 login_id 的并发写入可能互相覆盖——显式 warn 提示（不中断记录）
             tracing::warn!(
                 login_id,
                 fallback_ts = timestamp_secs,
@@ -241,28 +208,18 @@ impl AnomalousLoginAnalyzer {
         format!("anomalous:login:{}:{}", login_id, nanos)
     }
 
-    /// 执行一次分析扫描（使用当前时间戳）。
-    ///
-    /// 扫描时间窗口内的所有登录记录，返回检测到的异常事件列表。
+    /// 执行一次分析扫描（使用当前时间戳），返回检测到的异常事件列表。
     pub async fn analyze(&self) -> GarrisonResult<Vec<AnomalousLoginDetected>> {
         let now = chrono::Utc::now().timestamp();
         Self::analyze_once(&self.dao, &self.config, now).await
     }
 
-    /// 核心分析逻辑。
-    ///
-    /// 关联函数，接收固定 `now` 参数便于测试。
-    ///
-    /// # 算法
-    /// 1. `dao.keys("anomalous:login:*")` 获取所有 key（受 `max_scan` 限制）
-    /// 2. 反序列化每条记录，失败的 `tracing::warn!` 跳过
-    /// 3. 过滤时间窗口内记录（`timestamp >= now - 3600 && timestamp <= now`）
-    /// 4. 按 login_id 分组
-    /// 5. 检测 3 种异常：burst / geo_jump / device_mutation
+    /// 核心分析逻辑（关联函数，接收固定 `now` 参数便于测试）：`dao.keys("anomalous:login:*")`（受 `max_scan` 限制）→ 反序列化
+    /// （失败 `tracing::warn!` 跳过）→ 过滤时间窗口（`timestamp >= now - 3600 && timestamp <= now`）→ 按 login_id 分组 → 检测
+    /// burst / geo_jump / device_mutation 3 种异常。
     ///
     /// # 性能监控
-    /// 记录扫描总耗时，超过 1s 时 `tracing::warn!`（Redis 后端 N+1 查询需优化为批量 mget）。
-    /// oxcache 内存后端 get_sync <100ns，10000 次 get ~1ms，无需优化。
+    /// 记录扫描总耗时，超过 1s 时 `tracing::warn!`（Redis 后端 N+1 查询需优化为批量 mget；oxcache 内存后端 get_sync <100ns，10000 次 get ~1ms，无需优化）。
     async fn analyze_once(
         dao: &Arc<dyn GarrisonDao>,
         config: &AnomalousAnalyzerConfig,
@@ -273,11 +230,8 @@ impl AnomalousLoginAnalyzer {
         let keys = dao.keys("anomalous:login:*").await?;
         let keys: Vec<String> = keys.into_iter().take(config.max_scan).collect();
 
-        // 已知性能问题：keys 后逐 key dao.get
-        // 构成 N+1 查询，Redis 后端在 keys 数接近 max_scan（默认 10000）时产生
-        // 等量网络往返。保持原因：`GarrisonDao` trait 无 mget/get_many 批量接口
-        // （扩 trait 属 breaking change，不在本修复范围），缓解措施为
-        // `max_scan` 上限（本行 take）+ 扫描耗时 > 1s 的 warn 监控（见函数尾部）。
+        // 已知性能问题：keys 后逐 key dao.get 构成 N+1 查询，Redis 后端在 keys 数接近 max_scan（默认 10000）时产生等量网络往返。
+        // 保持原因：`GarrisonDao` trait 无 mget/get_many 批量接口（扩 trait 属 breaking change），缓解为 max_scan 上限（本行 take）+ 扫描耗时 > 1s 的 warn 监控。
         // 修复路径：DAO 层提供批量读取接口后改为分批 mget/SCAN 迭代。
         let mut grouped: HashMap<String, Vec<AnomalousLoginRecord>> = HashMap::new();
 
@@ -369,17 +323,10 @@ impl AnomalousLoginAnalyzer {
         Ok(events)
     }
 
-    /// 启动定时分析任务。
+    /// 启动定时分析任务：消费 `self`，spawn 一个 tokio 任务——按 `interval_secs` 间隔执行 `analyze_once`；检测到异常时经
+    /// `listener_manager` 广播事件（若 Some）；分析失败仅 `tracing::warn!` 不中断循环；收到 shutdown 信号时优雅停止。
     ///
-    /// 消费 `self`，spawn 一个 tokio 任务：
-    /// - 按 `interval_secs` 间隔定期执行 `analyze_once`
-    /// - 检测到异常时通过 `listener_manager` 广播事件（若 Some）
-    /// - 分析失败仅 `tracing::warn!`，不中断循环
-    /// - 收到 shutdown 信号时优雅停止
-    ///
-    /// # 返回
-    /// `JoinHandle<()>`，调用方可 `.await` 等待任务结束，
-    /// 或通过 [`shutdown`](Self::shutdown) 优雅停止。
+    /// 返回 `JoinHandle<()>`，调用方可 `.await` 等待任务结束，或通过 [`shutdown`](Self::shutdown) 优雅停止。
     pub fn start(self) -> tokio::task::JoinHandle<()> {
         let dao = self.dao;
         let config = self.config;
@@ -417,18 +364,9 @@ impl AnomalousLoginAnalyzer {
         })
     }
 
-    /// 优雅停止分析器任务（默认 5 秒超时）。
-    ///
-    /// 发送 shutdown 信号后等待任务结束，超时则强制 abort。
-    /// 适用于异步上下文（GarrisonManager 的同步 Drop 仍用 `handle.abort()`）。
-    ///
-    /// # 参数
-    /// - `handle`: [`start`](Self::start) 返回的 `JoinHandle<()>`。
-    /// - `shutdown_tx`: `watch::Sender<bool>` shutdown 信号发送端。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 任务正常结束（或已被 cancelled）。
-    /// - `Err(Internal)`: 任务 panic 或超时被 abort。
+    /// 优雅停止分析器任务（默认 5 秒超时）：发送 shutdown 信号后等待任务结束，超时则强制 abort；适用于异步上下文
+    /// （GarrisonManager 的同步 Drop 仍用 `handle.abort()`）。`handle` 为 [`start`](Self::start) 返回的 `JoinHandle<()>`，
+    /// `shutdown_tx` 为 `watch::Sender<bool>`；任务正常结束（或已被 cancelled）返回 `Ok(())`，panic 或超时被 abort 返回 `Err(Internal)`。
     pub async fn shutdown(
         handle: tokio::task::JoinHandle<()>,
         shutdown_tx: watch::Sender<bool>,
@@ -436,20 +374,8 @@ impl AnomalousLoginAnalyzer {
         Self::shutdown_with_timeout(handle, shutdown_tx, DEFAULT_SHUTDOWN_TIMEOUT).await
     }
 
-    /// 优雅停止分析器任务（自定义超时）。
-    ///
-    /// 1. 发送 shutdown 信号（`shutdown_tx.send(true)`）
-    /// 2. 用 `tokio::time::timeout` 包裹 `handle.await`
-    /// 3. 超时后调用 `abort_handle.abort()` 强制终止
-    ///
-    /// # 参数
-    /// - `handle`: [`start`](Self::start) 返回的 `JoinHandle<()>`。
-    /// - `shutdown_tx`: `watch::Sender<bool>` shutdown 信号发送端。
-    /// - `timeout`: 超时时间。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 任务正常结束（或已被 cancelled）。
-    /// - `Err(Internal)`: 任务 panic 或超时被 abort。
+    /// 优雅停止分析器任务（自定义超时）：发送 shutdown 信号（`shutdown_tx.send(true)`）→ 用 `tokio::time::timeout` 包裹
+    /// `handle.await` → 超时后 `abort_handle.abort()` 强制终止。返回语义同 [`shutdown`](Self::shutdown)。
     pub async fn shutdown_with_timeout(
         handle: tokio::task::JoinHandle<()>,
         shutdown_tx: watch::Sender<bool>,
@@ -480,9 +406,7 @@ mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
 
-    // ========================================================================
     // LoginResult 序列化测试
-    // ========================================================================
 
     #[test]
     fn login_result_serde_roundtrip() {
@@ -498,9 +422,7 @@ mod tests {
         assert_eq!(failed_de, LoginResult::Failed);
     }
 
-    // ========================================================================
     // AnomalousLoginRecord 序列化与字段测试
-    // ========================================================================
 
     #[test]
     fn anomalous_login_record_serde_roundtrip() {
@@ -539,9 +461,7 @@ mod tests {
         assert_eq!(de.result, LoginResult::Failed);
     }
 
-    // ========================================================================
     // AnomalousAnalyzerConfig 测试
-    // ========================================================================
 
     #[test]
     fn analyzer_config_default() {
@@ -587,9 +507,7 @@ mod tests {
         assert!(config.validate().is_err());
     }
 
-    // ========================================================================
     // record_login 测试
-    // ========================================================================
 
     #[tokio::test]
     async fn record_login_persists_record() {
@@ -693,9 +611,7 @@ mod tests {
         );
     }
 
-    /// 同秒内多次 record_login 不覆盖。
-    /// 同一 login_id 同一秒内调用 record_login 3 次，
-    /// keys() 应返回 3 个不同的 key（纳秒精度避免覆盖）。
+    /// 同秒内多次 record_login 不覆盖：同一 login_id 同一秒内调用 3 次，keys() 应返回 3 个不同的 key（纳秒精度避免覆盖）。
     #[tokio::test]
     async fn record_login_same_second_no_overwrite() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -727,9 +643,7 @@ mod tests {
         assert_eq!(unique.len(), 3, "3 个 key 应互不相同");
     }
 
-    // ========================================================================
     // analyze_once 测试（核心检测逻辑）
-    // ========================================================================
 
     /// 辅助函数：创建并插入登录记录到 DAO。
     async fn insert_records(dao: &Arc<dyn GarrisonDao>, records: &[AnomalousLoginRecord]) {
@@ -1115,9 +1029,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // 时间窗口与 max_scan 测试
-    // ========================================================================
 
     #[tokio::test]
     async fn analyze_time_window_filter() {
@@ -1191,9 +1103,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // 反序列化容错测试
-    // ========================================================================
 
     #[tokio::test]
     async fn analyze_deserialization_failure_skips() {
@@ -1228,9 +1138,7 @@ mod tests {
         assert_eq!(burst.unwrap().detail["count"], 6);
     }
 
-    // ========================================================================
     // 多用户场景测试
-    // ========================================================================
 
     #[tokio::test]
     async fn analyze_multiple_users() {
@@ -1275,9 +1183,7 @@ mod tests {
         assert!(login_ids.contains("1002"));
     }
 
-    // ========================================================================
     // start + shutdown 集成测试
-    // ========================================================================
 
     #[tokio::test]
     async fn start_shutdown_stops_task() {
@@ -1299,9 +1205,7 @@ mod tests {
             .expect("任务不应 panic");
     }
 
-    // ========================================================================
     // From<AnomalousLoginDetected> for GarrisonEvent 测试
-    // ========================================================================
 
     #[test]
     fn from_anomalous_login_detected_to_garrison_event() {
@@ -1329,13 +1233,9 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // shutdown + shutdown_with_timeout 测试
-    // ========================================================================
 
-    /// shutdown_with_timeout 对慢任务（不响应 shutdown 信号）超时后强制 abort。
-    ///
-    /// 创建一个永远 pending 的任务，100ms 超时后应返回 Err 且错误信息包含"超时"。
+    /// shutdown_with_timeout 对慢任务（不响应 shutdown 信号）超时后强制 abort：创建一个永远 pending 的任务，100ms 超时后应返回 Err。
     #[tokio::test]
     async fn shutdown_with_timeout_aborts_slow_task() {
         let handle = tokio::spawn(async {
@@ -1370,9 +1270,7 @@ mod tests {
         assert!(result.is_ok(), "正常结束的任务应返回 Ok");
     }
 
-    /// shutdown_with_timeout 对响应 shutdown 信号的任务返回 Ok。
-    ///
-    /// 任务通过 `rx.has_changed()` 检测信号并退出，验证 shutdown 信号机制有效。
+    /// shutdown_with_timeout 对响应 shutdown 信号的任务返回 Ok：任务通过 `rx.has_changed()` 检测信号并退出。
     #[tokio::test]
     async fn shutdown_with_timeout_responds_to_signal() {
         let (tx, rx) = watch::channel(false);
@@ -1430,10 +1328,7 @@ mod tests {
         );
     }
 
-    /// start + shutdown 集成测试：正常 shutdown 信号路径。
-    ///
-    /// 创建真实 analyzer，start 后用 shutdown_with_timeout 停止，
-    /// 验证任务在 1 秒内响应 shutdown 信号退出。
+    /// start + shutdown 集成测试：创建真实 analyzer，start 后用 shutdown_with_timeout 停止，验证任务在 1 秒内响应 shutdown 信号退出。
     #[tokio::test]
     async fn start_then_shutdown_normal_stop() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());

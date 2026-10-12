@@ -1,35 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
-//! AuthExecutor 核心。
+//! AuthExecutor 核心：按 [`AuthenticationFlow`] 步骤顺序执行认证逻辑。
 //!
-//! 提供认证流程执行引擎，按 [`AuthenticationFlow`] 步骤顺序执行认证逻辑。
-//!
-//! # 设计冲突解决（严格 5 字段 vs Login 步骤需要 CredentialBuilder）
-//!
-//! [`AuthExecutor`] 要求严格 5 字段，但 Login 步骤需要
-//! `CredentialModel → dyn Credential` 转换（需 `CredentialBuilder`）。
-//!
-//! 解决方案：定义 [`CredentialBuilder`] trait 作为 `execute_with_builder` 的参数
-//! （非 struct 字段），保持 5 字段不变。`execute` 在遇到 Login
-//! 步骤时返回 `Failed`（无 builder），完整 Login 支持使用 `execute_with_builder`。
-//!
-//! # SocialProvider + SsoServer 步骤扩展
-//!
-//! 同样的设计模式应用于社交登录与 SSO 登录步骤：定义 [`SocialProviderResolver`] /
-//! [`SsoServerResolver`] trait 作为 [`AuthExecutor::execute_with_full`] 的参数
-//! （非 struct 字段），保持 5 字段不变。
-//!
-//! resolver trait 方法返回 `GarrisonResult<String>`（login_id），由实现方在内部委托
-//! `protocol::social::SocialLoginProvider::exchange_token` /
-//! `protocol::sso::server::SsoServer::validate_ticket`。这样 `executor.rs` 不直接
-//! 依赖 `protocol` 模块，避免 feature gate 链穿透 `account-authflow` feature。
-//!
-//! # 核心类型
-//!
-//! - [`CredentialBuilder`]：凭证构造 trait（`CredentialModel → Box<dyn Credential>`）
-//! - [`SocialProviderResolver`]：社交登录 provider 解析 trait
-//! - [`SsoServerResolver`]：SSO Server 解析 trait
-//! - [`AuthExecutor`]：认证执行器（5 字段：logic / credential_repo / policy_engine / lockout / registry）
+//! 5 字段约束下（logic / credential_repo / policy_engine / lockout / registry），[`CredentialBuilder`] /
+//! [`SocialProviderResolver`] / [`SsoServerResolver`] 以 trait 参数注入，不作 struct 字段；resolver 使本模块
+//! 不直接依赖 `protocol`，避免 feature gate 链穿透 `account-authflow`
+//! （SocialProvider 仅 `social-wechat`/`social-alipay`、SsoServer 仅 `protocol-sso-server` 启用时编译）。
 
 use super::registry::FlowRegistry;
 use super::{
@@ -52,21 +28,9 @@ use std::sync::Arc;
 /// AuthenticationFlow 嵌套递归最大深度（防止循环引用导致栈溢出）。
 const MAX_FLOW_DEPTH: usize = 10;
 
-// ============================================================================
-// CredentialBuilder trait（解决五字段约束）
-// ============================================================================
-
-/// 凭证构造 trait，将 `CredentialModel` 转换为 `Box<dyn Credential>`。
-///
-/// Login / Mfa(Some) 步骤需要通过此 trait 将 DAO 查询到的 [`CredentialModel`]
-/// 转换为可校验的 [`Credential`] 实例（如 `PasswordCredential` / `TotpCredential`）。
-///
-/// # 设计理由
-///
-/// 此 trait 不作为 [`AuthExecutor`] 的字段（严格 5 字段约束），
-/// 而是作为 [`AuthExecutor::execute_with_builder`] 的参数传入。
-/// [`AuthExecutor::execute`] 不接收 builder，
-/// 遇到 Login 步骤时返回 `Failed`。
+/// 凭证构造 trait：将 DAO 查询到的 [`CredentialModel`] 转为可校验的 [`Credential`]（如
+/// `PasswordCredential` / `TotpCredential`）。受 5 字段约束不作 [`AuthExecutor`] 字段，经
+/// [`AuthExecutor::execute_with_builder`] 注入；[`AuthExecutor::execute`] 无 builder 时 Login 步骤返回 `Failed`。
 ///
 /// # 示例
 ///
@@ -85,43 +49,18 @@ const MAX_FLOW_DEPTH: usize = 10;
 /// }
 /// ```
 pub trait CredentialBuilder: Send + Sync {
-    /// 将 [`CredentialModel`] 构造为 `Box<dyn Credential>`。
-    ///
-    /// # 错误
-    /// - 凭证类型不支持：`GarrisonError::InvalidParam`
-    /// - 哈希器初始化失败：透传 `GarrisonError`
+    /// 将 [`CredentialModel`] 构造为 `Box<dyn Credential>`；凭证类型不支持等构造失败返回 `Err`。
     fn build(&self, model: CredentialModel) -> GarrisonResult<Box<dyn Credential>>;
 }
 
-// ============================================================================
-// SocialProviderResolver / SsoServerResolver（解决五字段约束）
-// ============================================================================
-
-/// 社交登录 provider 解析 trait。
-///
-/// 在 [`AuthExecutor::execute_with_full`] 中作为参数传入（非 struct 字段，保持
-/// 5 字段不变）。实现方在内部委托
-/// `protocol::social::SocialLoginProvider::exchange_token(code, state)` 并返回
-/// `provider_user_id`（作为 `login_id`）。
+/// 社交登录解析 trait：用授权码换取 login_id（实现方委托 `SocialLoginProvider::exchange_token(code, state)`，
+/// 取 `provider_user_id`）。经 [`AuthExecutor::execute_with_full`] 参数注入（非 struct 字段，保持 5 字段）；
+/// `code` 取 `ctx.input`、`state` 取 `ctx.extras["state"]`（CSRF 防护）；provider 未注册返回 `InvalidParam`，调用失败透传。
 ///
 /// # 设计理由
 ///
-/// `executor.rs` 不直接 `use protocol::social::SocialLoginProvider`，避免 feature gate
-/// 链穿透 `account-authflow` feature（社交登录仅在 `social-wechat`/`social-alipay`
-/// 启用时编译）。resolver 实现方负责 provider 注册表维护与 OAuth2 调用细节。
-///
-/// # 参数语义
-///
-/// - `provider`: provider 名称（`AuthStep::SocialProvider { provider }` 字段，如
-/// `"wechat"` / `"alipay"` / `"keycloak"`）
-/// - `code`: OAuth2 授权码（来自 `ctx.input`）
-/// - `state`: OAuth2 state 参数（来自 `ctx.extras["state"]`，CSRF 防护）
-///
-/// # 返回
-///
-/// - `Ok(login_id)`: 社交用户标识（`SocialUserInfo.provider_user_id`）
-/// - `Err(GarrisonError::InvalidParam)`: provider 未注册
-/// - `Err(_)`: provider 调用失败 / 网络错误 / 授权码无效
+/// 不直接依赖 `protocol::social`，避免 feature gate 链穿透 `account-authflow`（社交登录仅在
+/// `social-wechat`/`social-alipay` 启用时编译）。
 ///
 /// # 示例
 ///
@@ -157,30 +96,14 @@ pub trait SocialProviderResolver: Send + Sync {
     ) -> GarrisonResult<String>;
 }
 
-/// SSO Server 解析 trait。
-///
-/// 在 [`AuthExecutor::execute_with_full`] 中作为参数传入（非 struct 字段，保持
-/// 5 字段不变）。实现方在内部委托
-/// `protocol::sso::server::SsoServer::validate_ticket(ticket, client_id)` 并返回
-/// `login_id`。
+/// SSO Server 解析 trait：验证 ticket 并返回 login_id（实现方委托 `SsoServer::validate_ticket(ticket, client_id)`，
+/// ticket 一次性消费）。经 [`AuthExecutor::execute_with_full`] 注入（非 struct 字段）；`ticket` 取 `ctx.input`、
+/// `client_id` 取 `ctx.extras["client_id"]`；server 未注册返回 `InvalidParam`，ticket 无效返回 `InvalidToken`。
 ///
 /// # 设计理由
 ///
-/// 同 [`SocialProviderResolver`]：`executor.rs` 不直接 `use protocol::sso::server::SsoServer`，
-/// 避免 feature gate 链穿透 `account-authflow` feature（SSO Server 仅在
-/// `protocol-sso-server` 启用时编译）。
-///
-/// # 参数语义
-///
-/// - `server_id`: SSO 服务器标识（`AuthStep::SsoServer { server_id }` 字段）
-/// - `ticket`: SSO 票据（来自 `ctx.input`）
-/// - `client_id`: 客户端标识（来自 `ctx.extras["client_id"]`，解析为 `i64`）
-///
-/// # 返回
-///
-/// - `Ok(login_id)`: ticket 对应的登录主体标识
-/// - `Err(GarrisonError::InvalidParam)`: server 未注册
-/// - `Err(GarrisonError::InvalidToken)`: ticket 无效 / 已过期 / client_id 不匹配
+/// 同 [`SocialProviderResolver`]：不直接依赖 `protocol::sso::server`，避免 feature gate 链穿透
+/// `account-authflow`（SSO Server 仅在 `protocol-sso-server` 启用时编译）。
 #[async_trait]
 pub trait SsoServerResolver: Send + Sync {
     /// 验证 ticket 并返回 login_id（内部委托 `SsoServer::validate_ticket`）。
@@ -192,30 +115,11 @@ pub trait SsoServerResolver: Send + Sync {
     ) -> GarrisonResult<String>;
 }
 
-// ============================================================================
-// AuthExecutor
-// ============================================================================
-
-/// 认证流程执行器。
+/// 认证流程执行器：按 [`AuthenticationFlow`] 步骤顺序执行，支持 Login / Mfa / Conditional /
+/// SubFlow / SocialProvider / SsoServer 六种步骤。
 ///
-/// 按 [`AuthenticationFlow`] 步骤顺序执行认证逻辑，支持 Login / Mfa / Conditional /
-/// SubFlow / SocialProvider / SsoServer 六种步骤类型。
-///
-/// # 5 字段 schema
-///
-/// | 字段 | 类型 | 说明 |
-/// |:---|:---|:---|
-/// | `logic` | `Arc<GarrisonLogicDefault>` | 核心认证逻辑（SessionLogic + MfaLogic） |
-/// | `credential_repo` | `Arc<dyn CredentialRepository>` | 凭证存储抽象 |
-/// | `policy_engine` | `Option<Arc<PasswordPolicyEngine>>` | 密码策略引擎（可选，用于 RequiredAction） |
-/// | `lockout` | `Option<Arc<UserLockoutStrategy>>` | 用户级锁定策略（可选） |
-/// | `registry` | `Arc<FlowRegistry>` | 流程注册表（用于 SubFlow 查询） |
-///
-/// # 设计冲突解决
-///
-/// Login 步骤需要 `CredentialBuilder` 将 `CredentialModel → dyn Credential` 转换，
-/// 但执行器限制为 5 字段。解决方案：[`CredentialBuilder`] 作为
-/// [`execute_with_builder`](Self::execute_with_builder) 的参数而非 struct 字段。
+/// 5 字段：logic / credential_repo / policy_engine / lockout / registry（后两者可选）；
+/// Login 所需的 [`CredentialBuilder`] 经 [`execute_with_builder`](Self::execute_with_builder) 参数注入。
 ///
 /// # 示例
 ///
@@ -250,17 +154,12 @@ pub struct AuthExecutor {
     custom_evaluators: HashMap<String, Arc<dyn CustomConditionEvaluator>>,
 }
 
-/// 步骤执行结果（内部类型，非公开）。
-///
-/// [`execute_step`](AuthExecutor::execute_step) 返回此枚举，
+/// 步骤执行结果（内部类型）：由 [`execute_step`](AuthExecutor::execute_step) 返回，
 /// [`execute_inner`](AuthExecutor::execute_inner) 据此决定继续/中断/暂停。
 #[derive(Debug)]
 enum StepOutcome {
-    /// 步骤成功，`token` 为 Login 步骤生成的会话 token（非 Login 步骤为 None）。
-    Success {
-        /// Login 步骤生成的会话 token（其他步骤为 None）。
-        token: Option<String>,
-    },
+    /// 步骤成功，携带 Login 步骤生成的会话 token（非 Login 步骤为 None）。
+    Success { token: Option<String> },
     /// 步骤失败，携带失败原因。
     Failed(String),
     /// 需要挑战（如 MFA 需要用户输入验证码）。
@@ -273,17 +172,8 @@ enum StepOutcome {
 }
 
 impl AuthExecutor {
-    /// 创建认证执行器实例。
-    ///
-    /// # 参数
-    /// - `logic`: 核心认证逻辑（`Arc<GarrisonLogicDefault>`）。
-    /// - `credential_repo`: 凭证存储抽象。
-    /// - `policy_engine`: 密码策略引擎（可选，`None` 时 RequiredAction 步骤返回 Failed）。
-    /// - `lockout`: 用户级锁定策略（可选，`None` 时跳过锁定检查）。
-    /// - `registry`: 流程注册表（用于 SubFlow 查询）。
-    ///
-    /// # 返回
-    /// 新建的 `AuthExecutor` 实例。
+    /// 创建认证执行器：`policy_engine` 为 `None` 时 RequiredAction 步骤返回 Failed，
+    /// `lockout` 为 `None` 时跳过锁定检查。
     pub fn new(
         logic: Arc<GarrisonLogicDefault>,
         credential_repo: Arc<dyn CredentialRepository>,
@@ -308,9 +198,7 @@ impl AuthExecutor {
         self
     }
 
-    /// 注册自定义条件求值器（`Custom(name)` 运行期扩展点）。
-    ///
-    /// 未注册的 Custom 条件在求值时返回
+    /// 注册自定义条件求值器（`Custom(name)` 运行期扩展点）；未注册的 Custom 条件求值时返回
     /// [`GarrisonError::InvalidParam`]（显性错误，不静默 false）。
     pub fn with_custom_evaluator(
         mut self,
@@ -331,25 +219,12 @@ impl AuthExecutor {
         self.lockout.as_ref()
     }
 
-    /// 执行认证流程（无 CredentialBuilder / 无 Resolver）。
+    /// 执行认证流程（无 builder / resolver）：Login、Mfa(Some)、SocialProvider、SsoServer 步骤返回
+    /// `Failed`，Mfa(None) / Conditional / SubFlow 正常执行；完整支持用
+    /// [`execute_with_builder`](Self::execute_with_builder) / [`execute_with_full`](Self::execute_with_full)。
     ///
-    /// 遇到 Login / Mfa(Some) 步骤时返回 `Failed`（无 builder 无法构造 Credential）。
-    /// 遇到 SocialProvider / SsoServer 步骤时返回 `Failed`（无 resolver）。
-    /// Mfa(None) / Conditional / SubFlow 步骤可正常执行。
-    ///
-    /// 完整 Login 支持请使用 [`execute_with_builder`](Self::execute_with_builder)。
-    /// 完整 SocialProvider / SsoServer 支持请使用 [`execute_with_full`](Self::execute_with_full)。
-    ///
-    /// # 参数
-    /// - `flow`: 认证流程定义。
-    /// - `ctx`: 执行上下文（可变引用，执行过程中更新 `completed_steps`）。
-    ///
-    /// # 返回
-    /// - `Ok(AuthResult::Success)`: 全部步骤通过。
-    /// - `Ok(AuthResult::Failed)`: 某步骤失败且 `allow_skip=false`。
-    /// - `Ok(AuthResult::Pending)`: 命中 `pause_after_step` 标记，等待下一步输入。
-    /// - `Ok(AuthResult::ChallengeRequired)`: 步骤需要挑战（如 MFA 需要验证码）。
-    /// - `Err(_)`: 基础设施故障（DAO / session 创建失败等）。
+    /// 返回 `Ok` 为 Success（全部通过）/ Failed（步骤失败且 `allow_skip=false`）/ Pending（命中
+    /// `pause_after_step`）/ ChallengeRequired（如需 MFA 验证码）；基础设施故障（DAO / session）返回 `Err`。
     pub async fn execute(
         &self,
         flow: &AuthenticationFlow,
@@ -359,18 +234,8 @@ impl AuthExecutor {
             .await
     }
 
-    /// 执行认证流程（带 CredentialBuilder，支持 Login 步骤）。
-    ///
-    /// Login 步骤通过 `builder` 将 `CredentialModel` 转换为 `dyn Credential` 后调用 `verify`。
-    /// 遇到 SocialProvider / SsoServer 步骤时返回 `Failed`（无 resolver）。
-    ///
-    /// # 参数
-    /// - `flow`: 认证流程定义。
-    /// - `ctx`: 执行上下文（可变引用）。
-    /// - `builder`: 凭证构造器（将 `CredentialModel → Box<dyn Credential>`）。
-    ///
-    /// # 返回
-    /// 同 [`execute`](Self::execute)。
+    /// 执行认证流程（带 CredentialBuilder，支持 Login 步骤）：Login 经 `builder` 构造 `dyn Credential`
+    /// 后 `verify`；SocialProvider / SsoServer 无 resolver 返回 `Failed`，返回值同 [`execute`](Self::execute)。
     pub async fn execute_with_builder(
         &self,
         flow: &AuthenticationFlow,
@@ -381,26 +246,9 @@ impl AuthExecutor {
             .await
     }
 
-    /// 执行认证流程（带 CredentialBuilder + SocialProviderResolver + SsoServerResolver，
-    /// 支持 Login / SocialProvider / SsoServer 全部步骤类型）。
-    ///
-    /// SocialProvider 步骤通过 `social_resolver` 调用
-    /// `SocialLoginProvider::exchange_token(ctx.input, state)` 取得 `provider_user_id`，
-    /// 然后调用 `logic.login(&login_id)` 建立本地会话。
-    ///
-    /// SsoServer 步骤通过 `sso_resolver` 调用
-    /// `SsoServer::validate_ticket(ctx.input, client_id)` 取得 `login_id`，然后调用
-    /// `logic.login(&login_id)` 建立本地会话。
-    ///
-    /// # 参数
-    /// - `flow`: 认证流程定义。
-    /// - `ctx`: 执行上下文（可变引用）。
-    /// - `builder`: 凭证构造器（Login 步骤用）。
-    /// - `social_resolver`: 社交登录 provider 解析器（SocialProvider 步骤用）。
-    /// - `sso_resolver`: SSO Server 解析器（SsoServer 步骤用）。
-    ///
-    /// # 返回
-    /// 同 [`execute`](Self::execute)。
+    /// 执行认证流程（带 builder + social / sso resolver，支持 Login / SocialProvider / SsoServer 全部步骤类型）：
+    /// SocialProvider 经 resolver 换 `provider_user_id`、SsoServer 经验证 ticket 取 `login_id`，再以
+    /// `logic.login` 建立本地会话；返回值同 [`execute`](Self::execute)。
     pub async fn execute_with_full(
         &self,
         flow: &AuthenticationFlow,
@@ -421,22 +269,9 @@ impl AuthExecutor {
         .await
     }
 
-    /// 执行认证流程（带 CredentialBuilder + AccountMetrics，支持指标采集）。
-    ///
-    /// 与 [`execute_with_builder`](Self::execute_with_builder) 一致，额外注入
-    /// `metrics` 用于采集 `authflow_execute_duration`（label = `flow.name`）与
-    /// `credential_verify_duration`（label = `credential_type`，Login/Mfa 步骤 verify 前后）。
-    ///
-    /// 保持五字段约束：`metrics` 作为方法参数传入，非 struct 字段。
-    ///
-    /// # 参数
-    /// - `flow`: 认证流程定义。
-    /// - `ctx`: 执行上下文（可变引用）。
-    /// - `builder`: 凭证构造器（将 `CredentialModel → Box<dyn Credential>`）。
-    /// - `metrics`: 账号安全指标（记录流程执行与凭证验证耗时）。
-    ///
-    /// # 返回
-    /// 同 [`execute`](Self::execute)。
+    /// 执行认证流程（带 builder + AccountMetrics）：采集 `authflow_execute_duration`（label = `flow.name`）
+    /// 与 `credential_verify_duration`（label = `credential_type`，Login/Mfa verify 前后）；`metrics` 作方法
+    /// 参数传入以保持 5 字段约束，返回值同 [`execute`](Self::execute)。
     #[cfg(feature = "metrics-prometheus")]
     pub async fn execute_with_metrics(
         &self,
@@ -449,12 +284,8 @@ impl AuthExecutor {
             .await
     }
 
-    /// 执行认证流程核心逻辑（内部方法）。
-    ///
-    /// `builder` 为 `None` 时 Login / Mfa(Some) 步骤返回 `Failed`。
-    /// `social_resolver` 为 `None` 时 SocialProvider 步骤返回 `Failed`。
-    /// `sso_resolver` 为 `None` 时 SsoServer 步骤返回 `Failed`。
-    /// `metrics` 为 `Some` 时记录 `authflow_execute_duration`（label = `flow.name`）。
+    /// 执行认证流程核心逻辑：`builder` / `social_resolver` / `sso_resolver` 为 `None` 时对应步骤返回
+    /// `Failed`；`metrics` 为 `Some` 时记录 `authflow_execute_duration`（label = `flow.name`）。
     async fn execute_inner(
         &self,
         flow: &AuthenticationFlow,
@@ -470,7 +301,6 @@ impl AuthExecutor {
         #[cfg(feature = "metrics-prometheus")]
         let flow_name = flow.name.clone();
 
-        // 空流程：直接返回 Success（无步骤可失败）
         if flow.steps.is_empty() {
             let result = Ok(AuthResult::Success {
                 login_id: ctx.user_id.clone().unwrap_or_default(),
@@ -517,7 +347,6 @@ impl AuthExecutor {
             m.observe_authflow_execute(&flow_name, flow_start.elapsed());
         }
 
-        // 全部步骤通过 或 early_result 中断
         if let Some(result) = early_result {
             return result;
         }
@@ -575,9 +404,7 @@ impl AuthExecutor {
         }
     }
 
-    /// 执行单个认证步骤（内部方法）。
-    ///
-    /// 使用 `Pin<Box<dyn Future>>` 返回类型支持 Conditional 步骤的递归调用
+    /// 执行单个认证步骤；返回 `Pin<Box<dyn Future>>` 以支持 Conditional 递归
     /// （async fn 不支持直接递归，需 boxing）。
     fn execute_step<'a>(
         &'a self,
@@ -673,7 +500,6 @@ impl AuthExecutor {
             return Ok(result);
         }
 
-        // 需要 CredentialBuilder
         let builder = match builder {
             Some(b) => b,
             None => {
@@ -718,7 +544,7 @@ impl AuthExecutor {
         self.handle_login_result(verified, &user_id).await
     }
 
-    /// 检查用户是否被锁定，返回 `Some(Failed)` 表示被锁定，`None` 表示通过。
+    /// 锁定检查：被锁定返回 `Some(Failed)`，通过返回 `None`。
     async fn check_login_lockout(&self, ctx: &AuthContext) -> GarrisonResult<Option<StepOutcome>> {
         if let Some(lockout) = &self.lockout {
             if let Some(user_id) = &ctx.user_id {
@@ -779,13 +605,11 @@ impl AuthExecutor {
 
         match credential_type {
             None => {
-                // Mfa(None): 调用 check_safe（默认返回 Ok）
+                // Mfa(None)：check_safe 默认返回 Ok
                 self.logic.check_safe().await?;
                 Ok(StepOutcome::Success { token: None })
             },
             Some(cred_type) => {
-                // Mfa(Some): 需要 TOTP 等凭证校验
-                // 输入为空时返回 ChallengeRequired
                 if ctx.input.is_empty() {
                     return Ok(StepOutcome::ChallengeRequired {
                         challenge_type: cred_type.clone(),
@@ -797,7 +621,6 @@ impl AuthExecutor {
                     });
                 }
 
-                // 需要 CredentialBuilder
                 let builder = match builder {
                     Some(b) => b,
                     None => {
@@ -846,9 +669,7 @@ impl AuthExecutor {
         }
     }
 
-    /// 执行 SubFlow 步骤（内部方法）。
-    ///
-    /// SubFlow 返回的 Pending 视为 Failed（不支持嵌套 Pending 传播）。
+    /// 执行 SubFlow 步骤；子流程返回的 Pending 视为 Failed（不支持嵌套 Pending 传播）。
     async fn execute_subflow(
         &self,
         flow_name: &str,
@@ -859,7 +680,6 @@ impl AuthExecutor {
         metrics: Option<&crate::account::metrics::AccountMetrics>,
         depth: usize,
     ) -> GarrisonResult<StepOutcome> {
-        // 递归深度检查：防止循环引用导致栈溢出
         if depth >= MAX_FLOW_DEPTH {
             let depth_str = MAX_FLOW_DEPTH.to_string();
             return Ok(StepOutcome::Failed(loc!(
@@ -880,7 +700,6 @@ impl AuthExecutor {
             },
         };
 
-        // 递归深度检查（depth >= MAX_FLOW_DEPTH 时返回 Failed）
         let result = self
             .execute_inner(
                 sub_flow,
@@ -894,8 +713,7 @@ impl AuthExecutor {
             .await?;
 
         match result {
-            // 透传子流程生成的会话 token（Login/Social/SSO 步骤产生），
-            // 不再丢弃；子流程未生成 token（空串）时保持 None 语义。
+            // 透传子流程 token；空串保持 None 语义。
             AuthResult::Success { token, .. } => Ok(StepOutcome::Success {
                 token: if token.is_empty() { None } else { Some(token) },
             }),
@@ -923,15 +741,9 @@ impl AuthExecutor {
         }
     }
 
-    /// 执行 SocialProvider 步骤（内部方法）。
-    ///
-    /// 流程：
-    /// 1. `social_resolver` 为 `None` → `Failed`（需通过 `execute_with_full` 调用）。
-    /// 2. `ctx.input` 为空 → `ChallengeRequired`（提示用户完成社交授权）。
-    /// 3. 从 `ctx.extras["state"]` 取 OAuth2 state（缺失则空串）。
-    /// 4. 调用 `social_resolver.resolve_login_id(provider, ctx.input, state)` 取得 `login_id`。
-    /// 5. 用 `login_id` 调用 `logic.login` 建立本地会话，返回 `token`。
-    /// 6. 写回 `ctx.user_id = Some(login_id)`（供后续步骤使用）。
+    /// 执行 SocialProvider 步骤：`social_resolver` 为 `None` 返回 `Failed`、`ctx.input` 为空返回
+    /// `ChallengeRequired`；`state` 取 `ctx.extras["state"]`（缺失空串），经 resolver 换 `login_id`
+    /// 后 `logic.login` 建会话并写回 `ctx.user_id`。
     async fn execute_social(
         &self,
         provider: &str,
@@ -948,7 +760,6 @@ impl AuthExecutor {
             },
         };
 
-        // ctx.input 为空 → ChallengeRequired（提示用户完成社交授权拿 code）
         if ctx.input.is_empty() {
             return Ok(StepOutcome::ChallengeRequired {
                 challenge_type: format!("social:{}", provider),
@@ -956,10 +767,9 @@ impl AuthExecutor {
             });
         }
 
-        // 从 ctx.extras 取 state（OAuth2 CSRF 防护参数）
+        // state 来自 extras（OAuth2 CSRF 防护）
         let state = ctx.extras.get("state").cloned().unwrap_or_default();
 
-        // 调用 resolver 取得 login_id（内部委托 SocialLoginProvider::exchange_token）
         let login_id = match resolver
             .resolve_login_id(provider, &ctx.input, &state)
             .await
@@ -978,22 +788,15 @@ impl AuthExecutor {
 
         let token = self.logic.login(&login_id, &LoginParams::default()).await?;
 
-        // 写回 ctx.user_id（供后续步骤如 Mfa 使用）
+        // 写回 ctx.user_id 供后续步骤（如 Mfa）使用
         ctx.user_id = Some(login_id.clone());
 
         Ok(StepOutcome::Success { token: Some(token) })
     }
 
-    /// 执行 SsoServer 步骤（内部方法）。
-    ///
-    /// 流程：
-    /// 1. `sso_resolver` 为 `None` → `Failed`（需通过 `execute_with_full` 调用）。
-    /// 2. `ctx.input` 为空 → `ChallengeRequired`（提示用户提交 SSO ticket）。
-    /// 3. 从 `ctx.extras["client_id"]` 取客户端标识（解析为 `i64`，缺失则 0）。
-    /// 4. 调用 `sso_resolver.validate_and_get_login_id(server_id, ctx.input, client_id)`
-    ///    取得 `login_id`（内部委托 `SsoServer::validate_ticket`，一次性消费 ticket）。
-    /// 5. 用 `login_id` 调用 `logic.login` 建立本地会话，返回 `token`。
-    /// 6. 写回 `ctx.user_id = Some(login_id)`。
+    /// 执行 SsoServer 步骤：`sso_resolver` 为 `None` 返回 `Failed`、`ctx.input` 为空返回
+    /// `ChallengeRequired`；`client_id` 取 `ctx.extras["client_id"]`（缺失或解析失败回退 0），
+    /// 经验证 ticket 取 `login_id` 后建会话并写回 `ctx.user_id`。
     async fn execute_sso(
         &self,
         server_id: &str,
@@ -1007,7 +810,6 @@ impl AuthExecutor {
             },
         };
 
-        // ctx.input 为空 → ChallengeRequired（提示用户提交 SSO ticket）
         if ctx.input.is_empty() {
             return Ok(StepOutcome::ChallengeRequired {
                 challenge_type: format!("sso:{}", server_id),
@@ -1015,7 +817,7 @@ impl AuthExecutor {
             });
         }
 
-        // 从 ctx.extras 取 client_id（解析为 i64，缺失默认 0——设计决策；解析失败记录 warn）
+        // client_id 缺失或解析失败回退 0（warn 记录）
         let client_id: i64 = match ctx.extras.get("client_id") {
             Some(s) => s.parse().unwrap_or_else(|e| {
                 tracing::warn!(
@@ -1029,7 +831,6 @@ impl AuthExecutor {
             None => 0,
         };
 
-        // 调用 resolver 验证 ticket 取得 login_id（内部委托 SsoServer::validate_ticket）
         let login_id = match resolver
             .validate_and_get_login_id(server_id, &ctx.input, client_id)
             .await
@@ -1047,13 +848,13 @@ impl AuthExecutor {
 
         let token = self.logic.login(&login_id, &LoginParams::default()).await?;
 
-        // 写回 ctx.user_id（供后续步骤使用）
+        // 写回 ctx.user_id 供后续步骤使用
         ctx.user_id = Some(login_id.clone());
 
         Ok(StepOutcome::Success { token: Some(token) })
     }
 
-    /// 评估条件分支（内部方法）。
+    /// 评估条件分支。
     async fn evaluate_condition(
         &self,
         condition: &AuthCondition,
@@ -1082,7 +883,7 @@ impl AuthExecutor {
             AuthCondition::IpWhitelisted => match &self.ip_whitelist {
                 Some(whitelist) => Ok(whitelist.contains(&ctx.ip)),
                 None => {
-                    // 未注入白名单：恒 false（fail-safe），区别于静默——留 debug 痕迹
+                    // 未注入白名单恒 false（fail-safe），留 debug 痕迹
                     tracing::debug!("authflow-ip-whitelist-not-configured (ip={})", ctx.ip);
                     Ok(false)
                 },
@@ -1099,7 +900,7 @@ impl AuthExecutor {
         }
     }
 
-    /// 生成下一步骤的挑战提示信息（内部方法）。
+    /// 生成下一步骤的挑战提示。
     fn step_challenge(&self, step: &AuthStep) -> String {
         match step {
             AuthStep::Login { credential_type } => {
@@ -1140,9 +941,7 @@ mod tests {
     use crate::strategy::GarrisonPermissionStrategyDefault;
     use std::collections::HashMap;
 
-    // ------------------------------------------------------------------------
     // Mock 类型：MockCredential / MockCredentialBuilder / MockCredentialRepository
-    // ------------------------------------------------------------------------
 
     /// Mock 凭证，`verify` 返回预设的布尔值。
     struct MockCredential {
@@ -1315,9 +1114,7 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
     // 辅助函数
-    // ------------------------------------------------------------------------
 
     /// 构造测试用 `Arc<GarrisonLogicDefault>`。
     fn make_logic() -> Arc<GarrisonLogicDefault> {
@@ -1407,10 +1204,6 @@ mod tests {
         Arc::new(repo)
     }
 
-    // ------------------------------------------------------------------------
-    // 测试 1: password_login_success
-    // ------------------------------------------------------------------------
-
     /// Login 步骤 — 密码校验成功 → AuthResult::Success。
     #[tokio::test]
     async fn password_login_success() {
@@ -1436,10 +1229,6 @@ mod tests {
             other => panic!("应为 Success，实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试 2: password_login_failure
-    // ------------------------------------------------------------------------
 
     /// Login 步骤 — 密码校验失败 → AuthResult::Failed。
     #[tokio::test]
@@ -1473,14 +1262,10 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试 3: mfa_check_safe_success
-    // ------------------------------------------------------------------------
-
     /// Mfa(None) 步骤 — check_safe 默认返回 Ok → Success。
     ///
-    /// 仅在 safe-auth 禁用时有效：safe-auth 启用时 check_safe 调用 inherent is_safe
-    /// 检查 safe_services 标记，未 open_safe 时返回 NotSafe 错误。
+    /// 仅在 security-extra 禁用时有效：启用时 check_safe 检查 safe_services 标记，
+    /// 未 open_safe 返回 NotSafe 错误。
     #[cfg(not(feature = "security-extra"))]
     #[tokio::test]
     async fn mfa_check_safe_success() {
@@ -1498,10 +1283,6 @@ mod tests {
             other => panic!("应为 Success，实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试 4: mfa_totp_success
-    // ------------------------------------------------------------------------
 
     /// Mfa(Some("totp")) 步骤 — TOTP 校验成功 → Success。
     #[tokio::test]
@@ -1525,10 +1306,6 @@ mod tests {
             other => panic!("应为 Success，实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试 5: mfa_totp_failure
-    // ------------------------------------------------------------------------
 
     /// Mfa(Some("totp")) 步骤 — TOTP 校验失败 → Failed。
     #[tokio::test]
@@ -1555,10 +1332,6 @@ mod tests {
             other => panic!("应为 Failed，实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试 6: conditional_true
-    // ------------------------------------------------------------------------
 
     /// Conditional 步骤 — 条件为真执行 if_step（Login verify=false → Failed）。
     #[tokio::test]
@@ -1602,10 +1375,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试 7: conditional_false
-    // ------------------------------------------------------------------------
-
     /// Conditional 步骤 — 条件为假且 else_step=None → 跳过 → Success。
     #[tokio::test]
     async fn conditional_false() {
@@ -1632,10 +1401,6 @@ mod tests {
             other => panic!("应为 Success（条件为假跳过），实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试 8: subflow_executes_child
-    // ------------------------------------------------------------------------
 
     /// SubFlow 步骤 — 子流程 Login 成功 → 父流程 Success。
     #[tokio::test]
@@ -1665,10 +1430,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试 9: empty_steps_returns_success
-    // ------------------------------------------------------------------------
-
     /// 空步骤流程 → 直接返回 Success。
     #[tokio::test]
     async fn empty_steps_returns_success() {
@@ -1687,14 +1448,10 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试 10: multi_step_flow_success
-    // ------------------------------------------------------------------------
-
     /// 多步流程（Login + Mfa(None)）— 两步均通过 → Success。
     ///
-    /// 仅在 safe-auth 禁用时有效：safe-auth 启用时 Mfa(None) 步骤的 check_safe
-    /// 检查 safe_services 标记，未 open_safe 时返回 NotSafe 错误。
+    /// 仅在 security-extra 禁用时有效：启用时 Mfa(None) 的 check_safe 检查 safe_services
+    /// 标记，未 open_safe 时返回 NotSafe 错误。
     #[cfg(not(feature = "security-extra"))]
     #[tokio::test]
     async fn multi_step_flow_success() {
@@ -1724,10 +1481,6 @@ mod tests {
             other => panic!("应为 Success，实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试 11: pending_intermediate_state
-    // ------------------------------------------------------------------------
 
     /// pause_after_step 标记 — Login 成功后暂停 → Pending。
     #[tokio::test]
@@ -1765,10 +1518,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试 12: challenge_required_for_mfa
-    // ------------------------------------------------------------------------
-
     /// Mfa(Some("totp")) 输入为空 → ChallengeRequired。
     #[tokio::test]
     async fn challenge_required_for_mfa() {
@@ -1797,10 +1546,6 @@ mod tests {
             other => panic!("应为 ChallengeRequired，实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试 13: lockout_blocks_login
-    // ------------------------------------------------------------------------
 
     /// Login 步骤前检查锁定 — 用户被锁定 → Failed。
     #[tokio::test]
@@ -1845,10 +1590,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: login_without_user_id_returns_failed
-    // ------------------------------------------------------------------------
-
     /// Login 步骤 — ctx.user_id 为 None → Failed（"Login 步骤需要 user_id"）。
     #[tokio::test]
     async fn login_without_user_id_returns_failed() {
@@ -1879,10 +1620,6 @@ mod tests {
             other => panic!("应为 Failed（无 user_id），实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: login_credential_not_found_returns_failed
-    // ------------------------------------------------------------------------
 
     /// Login 步骤 — 凭证存储为空 → Failed（"未找到 X 类型的凭证"）。
     #[tokio::test]
@@ -1917,10 +1654,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: execute_without_builder_login_returns_failed
-    // ------------------------------------------------------------------------
-
     /// execute() 遇到 Login 步骤 → Failed（无 CredentialBuilder）。
     #[tokio::test]
     async fn execute_without_builder_login_returns_failed() {
@@ -1943,10 +1676,6 @@ mod tests {
             other => panic!("应为 Failed（无 builder），实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: mfa_some_without_builder_returns_failed
-    // ------------------------------------------------------------------------
 
     /// execute() 遇到 Mfa(Some("totp")) 步骤 → Failed（无 CredentialBuilder）。
     /// 需 ctx.input 非空，否则会先返回 ChallengeRequired。
@@ -1971,10 +1700,6 @@ mod tests {
             other => panic!("应为 Failed（无 builder），实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: mfa_without_user_id_returns_failed
-    // ------------------------------------------------------------------------
 
     /// Mfa(Some) 步骤 — ctx.user_id 为 None → Failed（"Mfa 步骤需要 user_id"）。
     #[tokio::test]
@@ -2006,10 +1731,6 @@ mod tests {
             other => panic!("应为 Failed（无 user_id），实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: mfa_credential_not_found_returns_failed
-    // ------------------------------------------------------------------------
 
     /// Mfa(Some) 步骤 — 凭证存储中无对应类型 → Failed（"未找到 X 类型的凭证"）。
     #[tokio::test]
@@ -2045,10 +1766,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: subflow_unknown_flow_returns_failed
-    // ------------------------------------------------------------------------
-
     /// SubFlow 步骤 — registry 中无对应 flow_name → Failed（"未找到子流程: X"）。
     #[tokio::test]
     async fn subflow_unknown_flow_returns_failed() {
@@ -2082,10 +1799,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: subflow_max_depth_exceeded_returns_failed
-    // ------------------------------------------------------------------------
-
     /// SubFlow 步骤 — 递归深度超过 MAX_FLOW_DEPTH（10）→ Failed（"嵌套深度超过上限"）。
     /// 构造自引用流程（flow 引用自身），递归至 depth=10 时被截断。
     #[tokio::test]
@@ -2114,10 +1827,6 @@ mod tests {
             other => panic!("应为 Failed（深度超限），实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: required_action_step_returns_failed
-    // ------------------------------------------------------------------------
 
     /// RequiredAction 步骤未实现 → Failed（错误消息 "RequiredAction 步骤未实现"）。
     /// FlowBuilder 未提供 required_action 方法，直接构造 AuthenticationFlow。
@@ -2148,10 +1857,6 @@ mod tests {
             other => panic!("应为 Failed（RequiredAction 未实现），实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: allow_skip_continues_after_failed_step
-    // ------------------------------------------------------------------------
 
     /// allow_skip=true — 第一步 Failed (RequiredAction) 被跳过，
     /// 第二步 Conditional (IpWhitelisted=false → else_step=None → Success) → 流程 Success。
@@ -2196,10 +1901,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: pause_after_last_step_returns_success
-    // ------------------------------------------------------------------------
-
     /// pause_after_step 指向最后一步 — 无 next_step 可暂停 → 返回 Success（不 Pending）。
     #[tokio::test]
     async fn pause_after_last_step_returns_success() {
@@ -2228,10 +1929,6 @@ mod tests {
             other => panic!("应为 Success（最后一步不暂停），实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: conditional_with_else_step_executed_when_false
-    // ------------------------------------------------------------------------
 
     /// Conditional 步骤 — 条件为假且 else_step=Some(...) → 执行 else_step。
     /// 验证 else_step 不为 None 时分支被实际执行（而非跳过）。
@@ -2280,10 +1977,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: subflow_child_failed_propagates_failed
-    // ------------------------------------------------------------------------
-
     /// SubFlow 步骤 — 子流程返回 Failed → 父流程 Failed（"子流程 X 失败: ..."）。
     #[tokio::test]
     async fn subflow_child_failed_propagates_failed() {
@@ -2329,10 +2022,6 @@ mod tests {
             other => panic!("应为 Failed（子流程失败传播），实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: accessors_return_some_when_provided
-    // ------------------------------------------------------------------------
 
     /// AuthExecutor::policy_engine / lockout 访问器 — 注入 Some 时返回 Some，None 时返回 None。
     #[tokio::test]
@@ -2382,10 +2071,6 @@ mod tests {
             "未注入 lockout 时访问器应返回 None"
         );
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: conditional_is_locked_true_executes_if_step
-    // ------------------------------------------------------------------------
 
     /// Conditional 步骤 — IsLocked 条件为真（用户被锁定）→ 执行 if_step。
     /// 覆盖 evaluate_condition 的 IsLocked 分支返回 true 的路径。
@@ -2440,10 +2125,6 @@ mod tests {
             ),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: conditional_custom_condition_* （Custom 扩展点三态）
-    // ------------------------------------------------------------------------
 
     /// Custom 条件未注册求值器 → 显性 InvalidParam 错误（不再静默 false）。
     #[tokio::test]
@@ -2554,10 +2235,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: ip_whitelist_* （IpWhitelisted 真实求值）
-    // ------------------------------------------------------------------------
-
     /// 白名单命中（IPv4 CIDR）→ IpWhitelisted 为 true → 执行 if_step。
     #[tokio::test]
     async fn conditional_ip_whitelisted_hit_executes_if_step() {
@@ -2659,10 +2336,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: pause_after_step_challenge_for_login_step
-    // ------------------------------------------------------------------------
-
     /// pause_after_step 标记 — 验证 step_challenge 对 Login 步骤的输出格式。
     /// 在 Login 成功后暂停，下一步为 Login → challenge 应含 "请输入"。
     #[tokio::test]
@@ -2711,10 +2384,6 @@ mod tests {
             other => panic!("应为 Pending，实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: login_with_lockout_success_resets_failure_count
-    // ------------------------------------------------------------------------
 
     /// Login 步骤 — lockout=Some 且 verify=true → record_success 重置失败计数。
     /// 验证：[fail, ok, fail] 后第 4 次 login 仍可成功（count=1 < 2）；
@@ -2787,10 +2456,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: login_with_lockout_failure_triggers_lockout
-    // ------------------------------------------------------------------------
-
     /// Login 步骤 — lockout=Some 且 verify=false → record_failure 增加失败计数。
     /// 验证：max_failure_factor=1 时，1 次失败 login 后第 2 次 login 被 lockout.check 拦截。
     #[tokio::test]
@@ -2852,10 +2517,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: subflow_pending_propagates_as_failed
-    // ------------------------------------------------------------------------
-
     /// SubFlow 步骤 — 子流程返回 Pending → 父流程 Failed（"子流程 X 返回 Pending"）。
     /// 子流程含 2 步（Login + Mfa(None)），ctx.extras 设 pause_after_step="0"
     /// 使子流程 Login 成功后返回 Pending。验证不支持嵌套 Pending 传播。
@@ -2915,10 +2576,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: subflow_challenge_required_propagates
-    // ------------------------------------------------------------------------
-
     /// SubFlow 步骤 — 子流程返回 ChallengeRequired → 父流程 ChallengeRequired。
     /// 子流程含 Mfa(Some("totp"))，ctx.input 为空 → ChallengeRequired。
     #[tokio::test]
@@ -2959,10 +2616,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: conditional_has_credential_without_user_id_returns_false
-    // ------------------------------------------------------------------------
-
     /// Conditional 步骤 — HasCredential 条件且 ctx.user_id=None → 返回 false → else_step=None → Success。
     /// 覆盖 evaluate_condition 的 HasCredential 分支中 user_id=None 的路径。
     #[tokio::test]
@@ -2996,10 +2649,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: conditional_is_locked_without_lockout_returns_false
-    // ------------------------------------------------------------------------
-
     /// Conditional 步骤 — IsLocked 条件且 lockout=None → 返回 false → else_step=None → Success。
     /// 覆盖 evaluate_condition 的 IsLocked 分支中 lockout=None 的路径。
     #[tokio::test]
@@ -3027,10 +2676,6 @@ mod tests {
             ),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: conditional_is_locked_without_user_id_returns_false
-    // ------------------------------------------------------------------------
 
     /// Conditional 步骤 — IsLocked 条件且 lockout=Some 但 ctx.user_id=None → 返回 false。
     /// 覆盖 evaluate_condition 的 IsLocked 分支中 user_id=None 的路径。
@@ -3071,10 +2716,6 @@ mod tests {
             ),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: pause_after_step_challenge_for_mfa_some_step
-    // ------------------------------------------------------------------------
 
     /// pause_after_step — 验证 step_challenge 对 Mfa(Some("totp")) 的输出格式。
     /// Login 成功后暂停，下一步为 Mfa(Some("totp")) → challenge 应含 "请输入 totp 验证码"。
@@ -3123,10 +2764,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: pause_after_step_challenge_for_mfa_none_step
-    // ------------------------------------------------------------------------
-
     /// pause_after_step — 验证 step_challenge 对 Mfa(None) 的输出格式。
     /// Login 成功后暂停，下一步为 Mfa(None) → challenge 应为 "请完成 MFA 校验"。
     #[tokio::test]
@@ -3161,10 +2798,6 @@ mod tests {
             other => panic!("应为 Pending，实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: pause_after_step_challenge_for_required_action_step
-    // ------------------------------------------------------------------------
 
     /// pause_after_step — 验证 step_challenge 对 RequiredAction 的输出格式。
     #[tokio::test]
@@ -3215,10 +2848,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: pause_after_step_challenge_for_conditional_step
-    // ------------------------------------------------------------------------
-
     /// pause_after_step — 验证 step_challenge 对 Conditional 的输出格式。
     #[tokio::test]
     async fn pause_after_step_challenge_for_conditional_step() {
@@ -3266,10 +2895,6 @@ mod tests {
             other => panic!("应为 Pending，实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: pause_after_step_challenge_for_subflow_step
-    // ------------------------------------------------------------------------
 
     /// pause_after_step — 验证 step_challenge 对 SubFlow 的输出格式。
     #[tokio::test]
@@ -3323,10 +2948,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: pause_after_step_invalid_value_does_not_pause
-    // ------------------------------------------------------------------------
-
     /// pause_after_step 值非数字 → parse 失败 → 不触发暂停 → 全部步骤完成 → Success。
     #[tokio::test]
     async fn pause_after_step_invalid_value_does_not_pause() {
@@ -3369,10 +2990,6 @@ mod tests {
             other => panic!("应为 Success（无效 pause 值不触发暂停），实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: pause_after_step_out_of_range_index_does_not_pause
-    // ------------------------------------------------------------------------
 
     /// pause_after_step 值越界（99，无对应步骤索引）→ 不触发暂停 → Success。
     #[tokio::test]
@@ -3420,10 +3037,6 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: empty_flow_without_user_id_returns_success_with_empty_login_id
-    // ------------------------------------------------------------------------
-
     /// 空步骤流程且 ctx.user_id=None → Success（login_id 为空串）。
     /// 覆盖 execute_inner 中 `ctx.user_id.clone().unwrap_or_default()` 的 None 分支。
     #[tokio::test]
@@ -3444,10 +3057,6 @@ mod tests {
             other => panic!("应为 Success，实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: sso_step_without_resolver_returns_failed
-    // ------------------------------------------------------------------------
 
     /// SsoServer 步骤 — execute()（无 resolver）→ Failed（"需要 SsoServerResolver"）。
     /// 覆盖 execute_sso 中 sso_resolver=None 的分支（非 门控路径）。
@@ -3472,10 +3081,6 @@ mod tests {
             other => panic!("应为 Failed（无 SSO resolver），实际: {:?}", other),
         }
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: execute_with_metrics_records_durations (metrics-prometheus)
-    // ------------------------------------------------------------------------
 
     /// execute_with_metrics — Login 步骤成功 → 记录 authflow_execute_duration + credential_verify_duration。
     /// 覆盖 execute_with_metrics 方法及 execute_inner / execute_login 中的 metrics 观测分支。
@@ -3519,10 +3124,6 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // 测试: execute_with_metrics_records_mfa_verify_duration (metrics-prometheus)
-    // ------------------------------------------------------------------------
-
     /// execute_with_metrics — Mfa(Some("totp")) 步骤成功 → 记录 credential_verify_duration（label=totp）。
     /// 覆盖 execute_mfa 中的 metrics 观测分支。
     #[cfg(feature = "metrics-prometheus")]
@@ -3558,10 +3159,6 @@ mod tests {
         );
         assert!(gathered.contains("totp"), "应记录 totp 标签: {}", gathered);
     }
-
-    // ------------------------------------------------------------------------
-    // 测试: execute_with_metrics_empty_flow_records_duration (metrics-prometheus)
-    // ------------------------------------------------------------------------
 
     /// execute_with_metrics — 空流程 → 记录 authflow_execute_duration（空流程提前返回路径）。
     #[cfg(feature = "metrics-prometheus")]
@@ -3599,15 +3196,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // SocialProvider + SsoServer 步骤测试
-    // ========================================================================
-    //
-    // 子模块仅在 `social-wechat` + `protocol-sso-server` 同时启用时编译
-    //（与测试命令 `cargo test --features "account-authflow social-wechat
-    // protocol-sso-server cache-memory"` 对应）。mock resolver 内部持有 mock
-    // SocialLoginProvider / SsoServer，证明 executor 通过 resolver 委托调用了
-    // exchange_token / validate_ticket。
+    // SocialProvider + SsoServer 步骤测试：子模块仅在 `social-wechat` + `protocol-sso-server` 同时启用时编译
+    //（测试命令 `cargo test --features "account-authflow social-wechat protocol-sso-server cache-memory"`）；
+    // mock resolver 内部持有 mock provider / server，证明 executor 经 resolver 委托调用 exchange_token / validate_ticket。
 
     #[cfg(all(feature = "social-wechat", feature = "protocol-sso-server"))]
     mod t017 {
@@ -3618,9 +3209,7 @@ mod tests {
         use std::collections::HashMap;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        // --------------------------------------------------------------------
         // Mock 类型
-        // --------------------------------------------------------------------
 
         /// Mock `SocialLoginProvider`，记录 `exchange_token` 调用次数。
         struct MockSocialLoginProvider {
@@ -3813,9 +3402,7 @@ mod tests {
             }
         }
 
-        // --------------------------------------------------------------------
         // 辅助函数
-        // --------------------------------------------------------------------
 
         /// 构造空凭证 repo 的 executor（不依赖凭证，但 make_executor 需要 repo）。
         fn make_t017_executor() -> AuthExecutor {
@@ -3830,10 +3417,6 @@ mod tests {
                 totp_verify_result: false,
             }
         }
-
-        // --------------------------------------------------------------------
-        // 测试 14: t017_social_login_success
-        // --------------------------------------------------------------------
 
         /// SocialProvider 步骤 — exchange_token 成功 → Success。
         /// 验证 executor 通过 resolver 委托调用了 SocialLoginProvider::exchange_token。
@@ -3867,10 +3450,6 @@ mod tests {
             assert_eq!(wechat.exchange_count(), 1, "exchange_token 应被调用 1 次");
         }
 
-        // --------------------------------------------------------------------
-        // 测试 15: t017_social_login_unknown_provider_returns_failed
-        // --------------------------------------------------------------------
-
         /// SocialProvider 步骤 — provider 未注册 → Failed。
         #[tokio::test]
         async fn t017_social_login_unknown_provider_returns_failed() {
@@ -3899,10 +3478,6 @@ mod tests {
                 other => panic!("应为 Failed，实际: {:?}", other),
             }
         }
-
-        // --------------------------------------------------------------------
-        // 测试 16: t017_social_login_empty_input_challenge_required
-        // --------------------------------------------------------------------
 
         /// SocialProvider 步骤 — ctx.input 为空 → ChallengeRequired。
         #[tokio::test]
@@ -3934,10 +3509,6 @@ mod tests {
                 other => panic!("应为 ChallengeRequired，实际: {:?}", other),
             }
         }
-
-        // --------------------------------------------------------------------
-        // 测试 17: t017_social_login_multiple_providers_switch
-        // --------------------------------------------------------------------
 
         /// 多 Provider 切换 — wechat 与 alipay 分别返回不同 login_id。
         #[tokio::test]
@@ -3994,10 +3565,6 @@ mod tests {
             assert_eq!(alipay.exchange_count(), 1);
         }
 
-        // --------------------------------------------------------------------
-        // 测试 18: t017_sso_login_success
-        // --------------------------------------------------------------------
-
         /// SsoServer 步骤 — validate_ticket 成功 → Success。
         /// 验证 executor 通过 resolver 委托调用了 SsoServer::validate_ticket。
         #[tokio::test]
@@ -4029,10 +3596,6 @@ mod tests {
             }
             assert_eq!(server.validate_count(), 1, "validate_ticket 应被调用 1 次");
         }
-
-        // --------------------------------------------------------------------
-        // 测试 19: t017_sso_login_invalid_ticket_returns_failed
-        // --------------------------------------------------------------------
 
         /// SsoServer 步骤 — validate_ticket 失败 → Failed。
         #[tokio::test]
@@ -4074,10 +3637,6 @@ mod tests {
             );
         }
 
-        // --------------------------------------------------------------------
-        // 测试 20: t017_sso_login_empty_input_challenge_required
-        // --------------------------------------------------------------------
-
         /// SsoServer 步骤 — ctx.input 为空 → ChallengeRequired。
         #[tokio::test]
         async fn t017_sso_login_empty_input_challenge_required() {
@@ -4110,10 +3669,6 @@ mod tests {
                 other => panic!("应为 ChallengeRequired，实际: {:?}", other),
             }
         }
-
-        // --------------------------------------------------------------------
-        // 测试 21: t017_social_sso_combined_flow_success
-        // --------------------------------------------------------------------
 
         /// SocialProvider + SsoServer 组合流程 — 两步均成功。
         /// 验证多步流程中 resolver 链可用，且最后一步的 login_id 覆盖前一步。
@@ -4161,10 +3716,6 @@ mod tests {
             assert_eq!(server.validate_count(), 1);
         }
 
-        // --------------------------------------------------------------------
-        // 测试 22: t017_social_step_without_resolver_returns_failed
-        // --------------------------------------------------------------------
-
         /// SocialProvider 步骤 — execute_with_builder 无 resolver → Failed。
         /// 覆盖 execute_with_builder 路径，验证占位失败信息。
         #[tokio::test]
@@ -4193,10 +3744,6 @@ mod tests {
                 other => panic!("应为 Failed（无 resolver），实际: {:?}", other),
             }
         }
-
-        // --------------------------------------------------------------------
-        // 测试: t017_pause_after_step_challenge_for_social_step
-        // --------------------------------------------------------------------
 
         /// pause_after_step — 验证 step_challenge 对 SocialProvider 的输出格式。
         /// Login 成功后暂停，下一步为 SocialProvider("wechat") → challenge 应含 "请完成 wechat 社交登录"。
@@ -4246,10 +3793,6 @@ mod tests {
             }
         }
 
-        // --------------------------------------------------------------------
-        // 测试: t017_pause_after_step_challenge_for_sso_step
-        // --------------------------------------------------------------------
-
         /// pause_after_step — 验证 step_challenge 对 SsoServer 的输出格式。
         /// Login 成功后暂停，下一步为 SsoServer("keycloak") → challenge 应含 "请完成 SSO 登录: keycloak"。
         #[tokio::test]
@@ -4295,10 +3838,6 @@ mod tests {
             }
         }
 
-        // --------------------------------------------------------------------
-        // 测试: t017_sso_login_missing_client_id_uses_zero
-        // --------------------------------------------------------------------
-
         /// SsoServer 步骤 — ctx.extras 中无 client_id → 默认 0 → 仍可成功。
         /// 覆盖 execute_sso 中 client_id 缺失时 unwrap_or(0) 的默认分支。
         #[tokio::test]
@@ -4327,10 +3866,6 @@ mod tests {
             }
             assert_eq!(server.validate_count(), 1, "validate_ticket 应被调用 1 次");
         }
-
-        // --------------------------------------------------------------------
-        // 测试: t017_sso_login_invalid_client_id_uses_zero
-        // --------------------------------------------------------------------
 
         /// SsoServer 步骤 — ctx.extras["client_id"] 非数字 → parse 失败 → 默认 0 → 仍可成功。
         /// 覆盖 execute_sso 中 client_id 解析失败时 unwrap_or(0) 的默认分支。
@@ -4363,10 +3898,6 @@ mod tests {
             assert_eq!(server.validate_count(), 1, "validate_ticket 应被调用 1 次");
         }
 
-        // --------------------------------------------------------------------
-        // 测试: t017_social_login_without_state_succeeds
-        // --------------------------------------------------------------------
-
         /// SocialProvider 步骤 — ctx.extras 中无 state → 默认空串 → 仍可成功。
         /// 覆盖 execute_social 中 state 缺失时 unwrap_or_default() 的默认分支。
         #[tokio::test]
@@ -4395,10 +3926,6 @@ mod tests {
             }
             assert_eq!(wechat.exchange_count(), 1, "exchange_token 应被调用 1 次");
         }
-
-        // --------------------------------------------------------------------
-        // 测试: t017_sso_step_without_resolver_returns_failed
-        // --------------------------------------------------------------------
 
         /// SsoServer 步骤 — execute_with_builder 无 sso_resolver → Failed。
         /// 覆盖 execute_with_builder 路径中 SsoServer 步骤的占位失败信息。
@@ -4431,9 +3958,7 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
     // 覆盖率补充：mock 方法调用 + AuthExecutor 未覆盖方法
-    // ------------------------------------------------------------------------
 
     /// 调用所有 mock 方法以覆盖 async_trait 生成的 async wrapper。
     #[tokio::test]

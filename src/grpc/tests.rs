@@ -1,24 +1,19 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! `grpc` 模块的 inline tests。
-//!
-//! 从 `mod.rs` 迁移而出（mod.rs 接口隔离）。
-//! 覆盖 `GarrisonGrpcInterceptor` 的 token 提取、`Interceptor::call` 行为、
-//! Clone/Debug trait，以及 `health_service()` 健康检查服务。
+//! `grpc` 模块的 inline tests：覆盖 `GarrisonGrpcInterceptor` 的 token 提取、`Interceptor::call`
+//! 行为、Clone/Debug trait 与 `health_service()`。
 
 use super::*;
 use tonic::metadata::MetadataMap;
 use tonic::service::Interceptor;
 
-/// 测试 GarrisonGrpcInterceptor::new() 构造无 panic。
 #[test]
 fn test_interceptor_new() {
     let _interceptor = GarrisonGrpcInterceptor::new();
     let _default: GarrisonGrpcInterceptor = Default::default();
 }
 
-/// 测试 extract_token 成功提取 "Bearer <token>" 格式的 token。
 #[test]
 fn test_extract_token_bearer_success() {
     let mut metadata = MetadataMap::new();
@@ -27,7 +22,7 @@ fn test_extract_token_bearer_success() {
     assert_eq!(token, "abc123");
 }
 
-/// 测试 extract_token 支持 "bearer" 小写（RFC 7235 大小写不敏感）。
+/// extract_token 支持 "bearer"/"BEARER"/混合大小写 scheme（RFC 7235 大小写不敏感）。
 #[test]
 fn test_extract_token_bearer_lowercase() {
     let mut metadata = MetadataMap::new();
@@ -36,7 +31,6 @@ fn test_extract_token_bearer_lowercase() {
     assert_eq!(token, "xyz789");
 }
 
-/// 测试 extract_token 支持 "BEARER" 大写。
 #[test]
 fn test_extract_token_bearer_uppercase() {
     let mut metadata = MetadataMap::new();
@@ -45,8 +39,6 @@ fn test_extract_token_bearer_uppercase() {
     assert_eq!(token, "TOKEN123");
 }
 
-/// 测试 extract_token 支持任意混合大小写 scheme（RFC 7235 大小写不敏感，
-/// 不再限于三种硬编码前缀）。
 #[test]
 fn test_extract_token_bearer_mixed_case() {
     for header in ["BeArEr tok1", "bEaReR tok2", "BEARER tok3", "bearer tok4"] {
@@ -58,7 +50,7 @@ fn test_extract_token_bearer_mixed_case() {
     }
 }
 
-/// 测试 extract_token 拒绝超过 MAX_TOKEN_LEN 的超长 token。
+/// extract_token 拒绝超过 MAX_TOKEN_LEN 的超长 token（边界值恰好 MAX_TOKEN_LEN 应被接受）。
 #[test]
 fn test_extract_token_rejects_overlong_token() {
     let mut metadata = MetadataMap::new();
@@ -70,7 +62,7 @@ fn test_extract_token_rejects_overlong_token() {
     let result = GarrisonGrpcInterceptor::extract_token(&metadata);
     assert!(result.is_err(), "超长 token 应被拒绝");
     assert_eq!(result.unwrap_err().code(), tonic::Code::Unauthenticated);
-    // 边界：恰好 MAX_TOKEN_LEN 应被接受
+
     let mut metadata = MetadataMap::new();
     let exact_token = "a".repeat(super::MAX_TOKEN_LEN);
     metadata.insert(
@@ -80,7 +72,7 @@ fn test_extract_token_rejects_overlong_token() {
     assert!(GarrisonGrpcInterceptor::extract_token(&metadata).is_ok());
 }
 
-/// 测试 extract_token 缺失 Authorization metadata 时返回 UNAUTHENTICATED。
+/// extract_token 缺失 Authorization metadata 时返回 UNAUTHENTICATED。
 #[test]
 fn test_extract_token_missing_metadata() {
     let metadata = MetadataMap::new();
@@ -91,7 +83,7 @@ fn test_extract_token_missing_metadata() {
     assert!(status.message().contains("missing Authorization"));
 }
 
-/// 测试 extract_token 在 Bearer 后 token 为空时返回 UNAUTHENTICATED。
+/// extract_token 在 Bearer 后 token 为空时返回 UNAUTHENTICATED。
 #[test]
 fn test_extract_token_empty_after_bearer() {
     let mut metadata = MetadataMap::new();
@@ -102,10 +94,7 @@ fn test_extract_token_empty_after_bearer() {
     assert_eq!(status.code(), tonic::Code::Unauthenticated);
 }
 
-/// 测试 extract_token 拒绝裸 token（不带 Bearer 前缀），返回 UNAUTHENTICATED。
-///
-/// RFC 7235 严格校验：不接受非 Bearer scheme 的凭证，
-/// 避免 Basic/Digest 凭证被误认为 Bearer token。
+/// extract_token 拒绝裸 token（RFC 7235 严格校验，防 Basic/Digest 凭证误认为 Bearer）。
 #[test]
 fn test_extract_token_bare_token_rejected() {
     let mut metadata = MetadataMap::new();
@@ -120,7 +109,7 @@ fn test_extract_token_bare_token_rejected() {
     );
 }
 
-/// 测试 extract_token 在 Authorization 为空字符串时返回 UNAUTHENTICATED。
+/// extract_token 在 Authorization 为空字符串时返回 UNAUTHENTICATED。
 #[test]
 fn test_extract_token_empty_value() {
     let mut metadata = MetadataMap::new();
@@ -130,7 +119,6 @@ fn test_extract_token_empty_value() {
     assert_eq!(result.unwrap_err().code(), tonic::Code::Unauthenticated);
 }
 
-/// 测试 Interceptor::call() 在合法 token 时返回 Ok。
 #[test]
 fn test_interceptor_call_with_valid_token() {
     let mut interceptor = GarrisonGrpcInterceptor::new();
@@ -142,7 +130,6 @@ fn test_interceptor_call_with_valid_token() {
     assert!(result.is_ok(), "valid token should pass: {:?}", result);
 }
 
-/// 测试 Interceptor::call() 在缺失 metadata 时返回 UNAUTHENTICATED。
 #[test]
 fn test_interceptor_call_missing_metadata() {
     let mut interceptor = GarrisonGrpcInterceptor::new();
@@ -152,8 +139,7 @@ fn test_interceptor_call_missing_metadata() {
     assert_eq!(result.unwrap_err().code(), tonic::Code::Unauthenticated);
 }
 
-/// 测试 Interceptor::call() 把提取的 token 以 GarrisonGrpcToken 注入 request
-/// extensions（不再"提取即弃"），且 Debug 输出脱敏。
+/// Interceptor::call() 把提取的 token 以 GarrisonGrpcToken 注入 request extensions，且 Debug 输出脱敏。
 #[test]
 fn test_interceptor_call_injects_token_into_extensions() {
     let mut interceptor = GarrisonGrpcInterceptor::new();
@@ -167,7 +153,6 @@ fn test_interceptor_call_injects_token_into_extensions() {
         .get::<GarrisonGrpcToken>()
         .expect("token 应注入 request extensions");
     assert_eq!(injected.0, "secret-token-abc");
-    // Debug 脱敏：不得包含 token 明文
     let debug = format!("{:?}", injected);
     assert!(
         !debug.contains("secret-token-abc"),
@@ -176,8 +161,7 @@ fn test_interceptor_call_injects_token_into_extensions() {
     assert!(debug.contains("[REDACTED]"));
 }
 
-/// 测试配置同步校验器后 Interceptor::call() 执行真实鉴权：
-/// 校验失败的 token 以 UNAUTHENTICATED 拒绝，不进入 handler。
+/// 配置同步校验器后校验失败的 token 以 UNAUTHENTICATED 拒绝，不进入 handler。
 #[test]
 fn test_interceptor_with_validator_rejects_invalid_token() {
     struct RejectAll;
@@ -197,7 +181,7 @@ fn test_interceptor_with_validator_rejects_invalid_token() {
     assert_eq!(result.unwrap_err().code(), tonic::Code::Unauthenticated);
 }
 
-/// 测试配置同步校验器后合法 token 放行且 token 注入 extensions。
+/// 配置同步校验器后合法 token 放行且 token 注入 extensions。
 #[test]
 fn test_interceptor_with_validator_accepts_valid_token() {
     struct AcceptAll;
@@ -216,15 +200,14 @@ fn test_interceptor_with_validator_accepts_valid_token() {
     assert!(request.extensions().get::<GarrisonGrpcToken>().is_some());
 }
 
-/// 测试 Clone trait（用于 tonic interceptor 复用）。
+/// Clone trait（用于 tonic interceptor 复用）。
 #[test]
 fn test_interceptor_clone() {
     let i1 = GarrisonGrpcInterceptor::new();
     let _i2 = i1.clone();
-    // 不 panic 即通过
 }
 
-/// 测试 Debug trait。
+/// Debug trait。
 #[test]
 fn test_interceptor_debug() {
     let interceptor = GarrisonGrpcInterceptor::new();
@@ -232,15 +215,9 @@ fn test_interceptor_debug() {
     assert!(debug_str.contains("GarrisonGrpcInterceptor"));
 }
 
-// ========================================================================
 // health_service() 健康检查服务测试
-// ========================================================================
 
-/// 测试 health_service() 成功返回 HealthServer（Serving 状态已设置）。
-///
-/// 断言返回的 server 是标准 gRPC health 服务（NamedService::NAME 正确），
-/// 函数内部通过 HealthReporter 设置 ServingStatus::Serving，
-/// 成功返回即表示状态已正确设置（补真实断言，不再纯冒烟）。
+/// health_service() 成功返回 HealthServer，断言 NamedService::NAME 为标准健康检查服务名。
 #[tokio::test]
 async fn test_health_service_returns_server() {
     let server = super::health_service().await;
@@ -254,9 +231,7 @@ async fn test_health_service_returns_server() {
     );
 }
 
-/// 测试 health_service() 返回的类型实现了 tonic::server::NamedService。
-///
-/// HealthServer<impl Health> 必须实现 NamedService 才能注册到 tonic Server。
+/// health_service() 返回类型实现 tonic::server::NamedService（注册到 tonic Server 的前提）。
 #[tokio::test]
 async fn test_health_service_implements_named_service() {
     fn _assert_named_service<T: tonic::server::NamedService>(_: &T) {}
@@ -264,26 +239,18 @@ async fn test_health_service_implements_named_service() {
     _assert_named_service(&server);
 }
 
-/// 测试 health_service() 返回的 NamedService 名称为标准 gRPC health check 服务名。
-///
-/// grpc.health.v1.Health 是 gRPC 标准健康检查协议定义的服务全名。
-///
-/// 注：`HealthServer<impl Health>` 的 `impl Health` 是不透明类型，
-/// 无法通过泛型函数 `extract_name<T>` 单态化提取 `NamedService::NAME`。
-/// `HealthServer<T>` 在 tonic-health 中 blanket impl `NamedService`
-/// （NAME = "grpc.health.v1.Health"），health_service() 返回有效实例即表示 trait 已实现。
+/// health_service() 返回的 NamedService 名称为标准 gRPC health check 服务名：`HealthServer` 对
+/// `NamedService` 有 blanket impl，返回有效实例即表示 trait 已实现。
 #[tokio::test]
 async fn test_health_service_named_service_name() {
     let server = super::health_service().await;
-    // 补真实断言——验证 NAME 确为标准健康检查服务名，
-    // 而非仅调用后丢弃（原测试无任何断言）。
     fn name_of<T: tonic::server::NamedService>(_: &T) -> &'static str {
         T::NAME
     }
     assert_eq!(name_of(&server), "grpc.health.v1.Health");
 }
 
-/// 测试 health_service() 多次调用返回独立实例（无全局状态泄漏）。
+/// health_service() 多次调用返回独立实例（无全局状态泄漏）。
 #[tokio::test]
 async fn test_health_service_multiple_calls() {
     let _s1 = super::health_service().await;

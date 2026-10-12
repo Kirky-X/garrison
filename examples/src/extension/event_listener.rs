@@ -109,10 +109,7 @@ inventory::submit! {
     GarrisonListenerEntry { factory: failing_listener_factory }
 }
 
-/// 运行事件监听器示例。
-///
-/// 演示 GarrisonListener trait 实现、inventory 编译期注册、
-/// GarrisonListenerManager 收集并广播事件、单个监听器失败不中断广播。
+/// 运行事件监听器示例：GarrisonListener trait、inventory 编译期注册、Manager 收集并广播事件、单个监听器失败不中断广播。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 事件监听器示例 ===\n");
 

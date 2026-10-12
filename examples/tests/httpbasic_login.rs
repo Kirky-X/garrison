@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! httpbasic_login 示例测试（secure-httpbasic feature）。
-//!
-//! 验证 run() 完整执行（内部已包含 encode/decode 断言）。
+//! httpbasic_login 示例测试（secure-httpbasic feature）：验证 run() 完整执行（内部已包含 encode/decode 断言）。
 
 #![cfg(feature = "protocol-httpbasic")]
 

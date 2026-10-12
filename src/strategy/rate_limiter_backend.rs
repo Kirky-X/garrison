@@ -3,30 +3,12 @@
 
 //! 限流后端配置 enum。
 //!
-//! 所有限速实现统一由 `limiteron` 接管：
-//! - 内存限流 → `crate::limiteron::GarrisonDaoDistributedLimiter`
-//! - 分布式限流 → `crate::limiteron::GarrisonDaoDistributedLimiter::atomic_check_and_incr`
-//! - 封禁记录 → `crate::limiteron::GarrisonDaoBanStorage`
-//!
-//! 本模块仅保留 `RateLimitBackend` 配置 enum，用于 `GarrisonConfig`
-//! 表达限流后端选择。运行时由 `GarrisonDaoDistributedLimiter`
-//! 根据 `GarrisonDao` 后端（MockDao/SQLite/Redis 等）自动选择原子或降级实现。
+//! 限流逻辑统一由 `limiteron` 接管(内存/分布式计数 + 封禁记录),运行时由 `GarrisonDaoDistributedLimiter` 按 `GarrisonDao` 后端(MockDao/SQLite/Redis 等)自动选择;本模块仅保留配置 enum 供 `GarrisonConfig` 表达限流后端选择。
 
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
-// RateLimitBackend enum：配置项，选择限流后端
-// ============================================================================
-
-/// 限流后端选择枚举，用于 `GarrisonConfig` 配置。
-///
-/// 默认 `Memory`（进程内限流）。启用 `rate-limit-redis` feature 后可选 `Redis`。
-///
-/// # 行为
-///
-/// 实际限流逻辑统一委托 `crate::limiteron::GarrisonDaoDistributedLimiter`，
-/// 此 enum 仅作为配置占位与可观测性标记，不再驱动具体实现切换（limiteron
-/// 通过 `GarrisonDao` 后端透明支持 Redis 原子操作）。
+/// 限流后端选择枚举，默认 `Memory`（进程内限流）：仅作配置占位与可观测性标记，
+/// 实际限流逻辑统一委托 `crate::limiteron::GarrisonDaoDistributedLimiter`，不驱动实现切换。
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RateLimitBackend {
@@ -40,9 +22,8 @@ pub enum RateLimitBackend {
     },
 }
 
-/// 手动实现 `Debug`：`redis_url` 可能内嵌凭据
-/// （`redis://user:password@host:6379/0`）或敏感 query（`?password=...`），
-/// 派生 `Debug` 会在日志/错误输出中原样泄露。此处对 URL 脱敏后输出。
+/// 手动实现 `Debug`：`redis_url` 可能内嵌凭据（`redis://user:password@host:6379/0`）或敏感 query，
+/// 派生 `Debug` 会在日志/错误输出中原样泄露，故脱敏后输出。
 impl std::fmt::Debug for RateLimitBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -55,8 +36,7 @@ impl std::fmt::Debug for RateLimitBackend {
     }
 }
 
-/// 脱敏 Redis URL：userinfo（`user:pass@`）替换为 `***`，含 query 时整体截断为 `?***`。
-///
+/// 脱敏 Redis URL：userinfo（`user:pass@`）替换为 `***`，含 query 时整体截断为 `?***`；
 /// 无凭据的 URL 原样返回，便于运维识别实例。
 fn redact_redis_url(url: &str) -> String {
     // scheme 之后、host 之前的 userinfo（密码可能含未转义的 '@'，取最后一个 '@' 分界）

@@ -37,27 +37,17 @@ impl HealthRegistry {
 
     /// 并发执行所有注册的检查器，聚合结果。
     ///
-    /// 使用 `futures::future::join_all` 并发调度，避免单检查阻塞 readiness 探针热路径
-    /// 导致 kubelet 超时和 Pod 重启。
-    ///
-    /// 每项检查均有两级护栏：
-    /// - **超时**：单项检查超过 `check_timeout`（默认 5 秒，可用
-    ///   [`Self::with_check_timeout`] 配置）按 `Unhealthy` 聚合，不会无限阻塞请求；
-    /// - **panic 隔离**：单个检查 panic 被 `catch_unwind` 捕获并降级为该检查
-    ///   `Unhealthy`，不再中止整个 `check_all()`。注意 release profile 配置
-    ///   `panic = "abort"` 时此隔离退化为进程终止（见 Cargo.toml 说明）。
-    ///
-    /// 聚合规则：
-    /// - 任一 `Unhealthy`（含超时/panic/返回 Err）→ 整体 `Unhealthy`
-    /// - 任一 `Degraded` 且无 `Unhealthy` → 整体 `Degraded`
-    /// - 全部 `Healthy` → 整体 `Healthy`
-    /// - 空 registry → 整体 `Healthy`
+    /// 用 `futures::future::join_all` 并发调度，避免单检查阻塞 readiness 探针热路径；
+    /// 单项检查超过 `check_timeout`（默认 5 秒，见 [`Self::with_check_timeout`]）或 panic
+    /// 均按该检查 `Unhealthy` 聚合，不会无限阻塞请求（release profile 配 `panic = "abort"`
+    /// 时 panic 隔离退化为进程终止）。聚合规则：任一 `Unhealthy`（含超时/panic/返回 Err）
+    /// → 整体 `Unhealthy`；否则任一 `Degraded` → 整体 `Degraded`；全 `Healthy` 或空
+    /// registry → 整体 `Healthy`。
     pub async fn check_all(&self) -> HealthReport {
         if self.checks.is_empty() {
             return HealthReport::empty();
         }
 
-        // 并发调度：所有 check() 同时执行，join_all 等待全部完成
         let futures: Vec<_> = self
             .checks
             .iter()
@@ -65,8 +55,7 @@ impl HealthRegistry {
                 let name = check.name().to_string();
                 let timeout = self.check_timeout;
                 async move {
-                    // panic 隔离（AssertUnwindSafe：dyn HealthCheck 不承诺 UnwindSafe，
-                    // 此处仅隔离 panic 不重入检查器，跨 catch_unwind 使用安全）
+                    // panic 隔离（AssertUnwindSafe：dyn HealthCheck 不承诺 UnwindSafe，仅隔离 panic 不重入检查器）
                     let checked = AssertUnwindSafe(check.check()).catch_unwind();
                     match tokio::time::timeout(timeout, checked).await {
                         Ok(Ok(Ok(status))) => (name, Ok(status)),
@@ -104,7 +93,8 @@ impl HealthRegistry {
 
         let raw_results = futures::future::join_all(futures).await;
 
-        // 聚合：错误信息仅记录通用描述（不泄漏内部细节到 /health/ready 响应）
+        // 聚合：完整错误用 tracing::warn! 记录到日志（运维可见），HTTP 响应仅暴露通用
+        // 描述，不泄漏内部细节到 /health/ready 响应
         let mut results = Vec::with_capacity(raw_results.len());
         for (name, result) in raw_results {
             match result {
@@ -114,7 +104,6 @@ impl HealthRegistry {
                     message: None,
                 }),
                 Err(e) => {
-                    // 完整错误用 tracing::warn! 记录到日志（运维可见），不通过 HTTP 响应暴露
                     tracing::warn!(
                         check = %name,
                         error = %e,

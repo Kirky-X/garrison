@@ -30,10 +30,8 @@ pub fn generate() -> String {
 
 /// 规范化用户输入的邀请码：trim、大写、移除连字符，并逐字符校验字符集。
 ///
-/// 返回规范化后的无连字符大写形态（与存储键一致）。
-///
-/// # 错误
-/// - `GarrisonError::InvalidParam`: 空输入、超长（规范化后 > 32 字符）或含字符集之外字符。
+/// 空输入、规范化后超长（> 32 字符）或含字符集外字符返回 `InvalidParam`；
+/// 成功返回无连字符大写形态（与存储键一致）。
 pub fn normalize(input: &str) -> GarrisonResult<String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {

@@ -45,25 +45,14 @@ use std::sync::Arc;
 // 复用 mod.rs 的 to_api_response 逻辑（避免重复实现）
 use super::to_api_response;
 
-// ============================================================================
-// A5: 内部端点请求结构体（增加 caller_login_id 所有权校验）
-// ============================================================================
+// 内部端点请求结构体（caller_login_id 所有权校验）
 
-/// get-session / get-token-info 请求体（A5 增强）。
-///
-/// 在 `CheckLoginRequest` 基础上增加可选 `caller_login_id` 字段，
+/// get-session / get-token-info 请求体：在 `CheckLoginRequest` 基础上增加可选 `caller_login_id`，
 /// 用于校验调用者是否有权访问目标 token 的 session。
 ///
-/// # 字段语义
-///
-/// `caller_login_id` 在 serde 层可选（`#[serde(default)]`，兼容存量反序列化），
-/// 但**路由层强制必填**：缺失时返回 400（fail-closed，GAR-23——内网 API Key
-/// 一旦泄露，缺省跳过校验即可静默枚举任意活跃 token 归属）。
-///
-/// # 安全语义
-///
-/// - `caller_login_id` 缺失 → 400（fail-closed）
-/// - `caller_login_id = Some(id)` 且 `id != session.login_id` → `NotPermission` 错误
+/// `caller_login_id` 在 serde 层可选（`#[serde(default)]`，兼容存量反序列化），但**路由层强制必填**，
+/// 缺失返回 400（fail-closed——内网 API Key 一旦泄露，缺省跳过校验即可静默枚举任意活跃 token 归属）；
+/// `Some(id)` 与 `session.login_id` 不符返回 `NotPermission`。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetSessionRequest {
     /// 待查询的 token 字符串。
@@ -73,7 +62,7 @@ pub struct GetSessionRequest {
     pub caller_login_id: Option<String>,
 }
 
-/// GAR-23: caller_login_id 缺失的 fail-closed 拒绝（两所有权校验端点共用）。
+/// caller_login_id 缺失的 fail-closed 拒绝（两所有权校验端点共用）。
 fn missing_caller_login_id() -> ApiError {
     tracing::warn!("caller_login_id missing: ownership check is mandatory, rejecting");
     ApiError::InvalidInput {
@@ -83,9 +72,7 @@ fn missing_caller_login_id() -> ApiError {
     }
 }
 
-// ============================================================================
 // 外网路由（3 端点）
-// ============================================================================
 
 #[forge(
     name = "auth_login",
@@ -135,9 +122,7 @@ async fn refresh(
     Ok(to_api_response(result))
 }
 
-// ============================================================================
 // 内网路由（12 端点）
-// ============================================================================
 
 #[forge(
     name = "auth_check_login",
@@ -247,7 +232,7 @@ async fn get_token_info(
     #[state] backend: Arc<dyn AuthBackend>,
     req: GetSessionRequest,
 ) -> Result<ApiResponse<crate::backend::types::TokenInfo>, ApiError> {
-    // A5/GAR-23: caller 所有权校验——caller_login_id 强制必填（fail-closed）
+    // caller 所有权校验：caller_login_id 强制必填（fail-closed）
     let caller = match req.caller_login_id {
         Some(ref caller) => caller,
         None => return Err(missing_caller_login_id()),
@@ -262,7 +247,8 @@ async fn get_token_info(
         tracing::warn!(
             caller_login_id = %caller,
             session_login_id = %session.login_id,
-            "get_token_info 所有权校验失败：跨用户访问"
+            "{}",
+            crate::i18n::translate_detail("logs-sdforge-token-info-cross-user", &[])
         );
         return Ok(to_api_response(Err(GarrisonError::NotPermission(loc!(
             "caller-login-id-mismatch",
@@ -285,7 +271,7 @@ async fn get_session(
     #[state] backend: Arc<dyn AuthBackend>,
     req: GetSessionRequest,
 ) -> Result<ApiResponse<crate::backend::types::SessionData>, ApiError> {
-    // A5/GAR-23: caller 所有权校验——caller_login_id 强制必填（fail-closed）
+    // caller 所有权校验：caller_login_id 强制必填（fail-closed）
     let caller = match req.caller_login_id {
         Some(ref caller) => caller,
         None => return Err(missing_caller_login_id()),
@@ -298,7 +284,8 @@ async fn get_session(
         tracing::warn!(
             caller_login_id = %caller,
             session_login_id = %session.login_id,
-            "get_session 所有权校验失败：跨用户访问"
+            "{}",
+            crate::i18n::translate_detail("logs-sdforge-session-cross-user", &[])
         );
         return Ok(to_api_response(Err(GarrisonError::NotPermission(loc!(
             "caller-login-id-mismatch",
@@ -372,9 +359,7 @@ async fn health() -> Result<ApiResponse<&'static str>, ApiError> {
     Ok(ApiResponse::ok("ok"))
 }
 
-// ============================================================================
 // Metrics 端点（feature = "metrics-prometheus"）
-// ============================================================================
 
 /// /metrics 端点，暴露 Prometheus 格式指标。
 ///
@@ -384,19 +369,11 @@ async fn health() -> Result<ApiResponse<&'static str>, ApiError> {
 ///
 /// # 设计权衡（已知限制）
 ///
-/// `#[forge]` 宏在非 streaming 模式下用 `Json(value).into_response()` 包装返回值，
-/// 本端点响应 **Content-Type 为 `application/json`**，body 为 JSON 序列化的字符串
-/// （含转义换行符）——**不是**标准 Prometheus `text/plain` 抓取格式。标准
-/// Prometheus scraper（`prometheus::TextEncoder` 消费方）无法直接解析本端点响应；
-/// 集成 Prometheus 抓取时必须改在 `GarrisonAuthServer::external_router()` /
-/// `internal_router()` 中用 axum 原生路由注册 `text/plain` 版 metrics
-/// （绕过 `#[forge]` 宏），或在抓取侧做 JSON 解包转换。本端点保留
-/// `#[forge]` 声明式注册以维持路由定义一致性（既有集成测试固化该 JSON 契约）。
+/// `#[forge]` 宏非 streaming 模式下用 `Json(value)` 包装返回值，故本端点 Content-Type 为 `application/json`、body 为 JSON 序列化字符串，非标准 Prometheus `text/plain` 抓取格式；标准 scraper 无法直接解析，须在 `GarrisonAuthServer::external_router()`/`internal_router()` 用 axum 原生路由注册 text/plain 版（绕过 `#[forge]` 宏）或在抓取侧解包。本端点保留 `#[forge]` 声明式注册以维持路由定义一致性（集成测试固化该 JSON 契约）。
 ///
 /// # 错误
 ///
-/// `TextEncoder::encode` 仅在 buffer 写入失败时返回错误（实际不会发生），
-/// 返回 `ApiError::Internal`（error_id = "metrics-encode-failure"）。
+/// `TextEncoder::encode` 仅在 buffer 写入失败时返回 `ApiError::Internal`（error_id = "metrics-encode-failure"，实际不会发生）。
 #[cfg(feature = "metrics-prometheus")]
 #[forge(
     name = "auth_metrics",
@@ -574,9 +551,7 @@ mod tests {
         json
     }
 
-    // ========================================================================
     // 外网路由测试（3 端点）
-    // ========================================================================
 
     #[tokio::test]
     async fn test_sdforge_login_returns_token() {
@@ -605,9 +580,7 @@ mod tests {
         assert_eq!(resp_json["data"], "renewed-old-token");
     }
 
-    // ========================================================================
     // 内网路由测试（12 端点）
-    // ========================================================================
 
     #[tokio::test]
     async fn test_sdforge_check_login_returns_true() {
@@ -699,9 +672,7 @@ mod tests {
         assert_eq!(resp_json["data"]["login_id"], "mock-user");
     }
 
-    // ========================================================================
-    // A5: get-session 所有权校验 + PII 过滤
-    // ========================================================================
+    // get-session 所有权校验 + PII 过滤
 
     /// A5: get-session 返回数据应过滤 PII 字段（ip/user_agent/device）。
     #[tokio::test]
@@ -754,8 +725,7 @@ mod tests {
         );
     }
 
-    /// GAR-23: 未提供 caller_login_id 时 fail-closed 拒绝（HTTP 400），
-    /// 不再 warn+放行——内网 key 泄露即可静默枚举任意 token 归属的面已消除。
+    /// 未提供 caller_login_id 时 fail-closed 拒绝（HTTP 400，不再 warn+放行——内网 key 泄露不再可静默枚举任意 token 归属）。
     #[tokio::test]
     async fn test_sdforge_get_session_missing_caller_login_id_rejected() {
         let app = make_router();
@@ -773,7 +743,7 @@ mod tests {
         assert!(resp_json.get("data").is_none(), "拒绝响应不得携带会话数据");
     }
 
-    /// GAR-23: get-token-info 缺失 caller_login_id 同样 fail-closed 拒绝。
+    /// get-token-info 缺失 caller_login_id 同样 fail-closed 拒绝。
     #[tokio::test]
     async fn test_sdforge_get_token_info_missing_caller_login_id_rejected() {
         let app = make_router();
@@ -852,9 +822,7 @@ mod tests {
         assert_eq!(resp_json["data"], "ok");
     }
 
-    // ========================================================================
     // 路由计数验证
-    // ========================================================================
 
     #[test]
     fn test_sdforge_route_count() {
@@ -889,9 +857,7 @@ mod tests {
         reg_count + direct_count
     }
 
-    // ========================================================================
     // Metrics 端点测试（feature = "metrics-prometheus"）
-    // ========================================================================
 
     /// /metrics 端点返回 200 + JSON 包装的 Prometheus 文本格式。
     ///

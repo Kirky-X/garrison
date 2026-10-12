@@ -25,27 +25,19 @@ use std::sync::Arc;
 const DEFAULT_REDIS_URL: &str = "redis://127.0.0.1:6379";
 
 /// 创建默认的 L1(内存) DAO 实例（无需 Redis 连接）。
-///
-/// `GarrisonDaoOxcache::new()` 内部使用 `oxcache::Cache::builder().sync_mode(true).ttl_jitter(0.0).build()`，
-/// 仅启用 L1 oxcache 内存缓存，适合开发/测试环境。
+/// `GarrisonDaoOxcache::new()` 内部为 `sync_mode(true).ttl_jitter(0.0)` 的 oxcache Cache，仅启用 L1 内存缓存，适合开发/测试环境。
 pub async fn create_l1_dao() -> GarrisonDaoOxcache {
     GarrisonDaoOxcache::new()
         .await
         .expect("GarrisonDaoOxcache L1 初始化失败")
 }
 
-/// 构造 Redis L2 后端配置（不实际连接）。
-///
-/// 返回 `RedisBackendBuilder`，调用方可在 `build().await` 时实际连接。
-/// 生产环境应使用 `rediss://` 前缀（TLS 加密）。
+/// 构造 Redis L2 后端配置（不实际连接）；生产环境应使用 `rediss://` 前缀（TLS），调用方在 `build().await` 时连接。
 pub fn build_redis_l2_config() -> oxcache::backend::RedisBackendBuilder {
     oxcache::backend::RedisBackend::builder().connection_string(DEFAULT_REDIS_URL)
 }
 
-/// 创建组合 L1(内存) + L2(redis) 的多级缓存（需要 Redis 实例运行）。
-///
-/// 注：`sync_mode(true)` + `backend_arc()` 不兼容（oxcache 0.3 限制），
-/// 此函数使用 async API（无 sync_mode）。
+/// 创建 L1(内存) + L2(redis) 多级缓存（需 Redis 实例）；`sync_mode(true)` + `backend_arc()` 不兼容（oxcache 0.3 限制），故用 async API。
 pub async fn create_tiered_cache(
 ) -> Result<oxcache::Cache<String, String>, Box<dyn std::error::Error>> {
     let redis_backend = build_redis_l2_config().build().await?;
@@ -56,13 +48,7 @@ pub async fn create_tiered_cache(
     Ok(cache)
 }
 
-/// 演示 GarrisonDao 操作（通过 L1 DAO，无需 Redis）。
-///
-/// 展示完整的 CRUD + TTL 流程：
-/// 1. set + get
-/// 2. update（保留 TTL）
-/// 3. expire（更新 TTL）
-/// 4. delete
+/// 演示 GarrisonDao 操作：set/get、update（保留 TTL）、expire、delete。
 pub async fn demo_dao_operations(
     dao: &GarrisonDaoOxcache,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -84,12 +70,7 @@ pub async fn demo_dao_operations(
     Ok(())
 }
 
-/// 运行 cache_redis 示例。
-///
-/// 演示 Redis L2 后端配置 + L1 DAO 操作：
-/// 1. 创建 L1 DAO 并演示 CRUD
-/// 2. 展示 Redis L2 后端配置（不实际连接）
-/// 3. 说明 L1+L2 多级缓存组合方式
+/// 运行 cache_redis 示例：L1 DAO CRUD、Redis L2 后端配置、L1+L2 多级缓存组合。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison cache-redis Redis L2 后端示例 ===\n");
 

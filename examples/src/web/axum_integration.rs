@@ -3,19 +3,7 @@
 
 //! axum 集成示例：完整 Web 应用演示。
 //!
-//! 演示 Garrison + axum 的注解系统集成的完整流程：
-//! 1. 实现 `GarrisonInterface` 提供权限 / 角色数据回调
-//! 2. 使用 oxcache DAO + 默认配置 + Interface 初始化 `GarrisonManager`
-//! 3. 定义 `RoleName` / `PermissionName` marker struct（类型级参数）
-//! 4. 创建 axum app，使用 `GarrisonRouter` + `route_protected` 语法糖
-//! 5. 注册多个受保护路由（`Ignore` / `CheckLogin` / `CheckRole` / `CheckPermission`）
-//! 6. 启动 HTTP 服务器（绑定 `127.0.0.1:3000`）
-//!
-//! # 编译
-//!
-//! ```bash
-//! cargo build -p garrison-examples --bin axum_integration --features "cache-memory,web-axum"
-//! ```
+//! 流程：实现 `GarrisonInterface` → oxcache DAO + 默认配置初始化 `GarrisonManager` → 定义 `RoleName` / `PermissionName` marker struct → `GarrisonRouter` + `route_protected` 注册受保护路由（Ignore / CheckLogin / CheckRole / CheckPermission）→ 启动 HTTP 服务器（`127.0.0.1:3000`）。
 //!
 //! # 运行
 //!
@@ -80,15 +68,10 @@ impl PermissionName for ReadPerm {
 // 2. 实现 GarrisonInterface（提供权限 / 角色数据回调）
 // ============================================================================
 
-/// 业务方接口实现，返回指定 `login_id` 的权限 / 角色列表。
-///
-/// 预置数据：
-/// - `login_id=1001` 持有 `["data:read"]` 权限 + `["admin"]` 角色
-/// - 其他 `login_id` 返回空列表（无权限 / 无角色）
+/// 业务方接口实现：login_id=1001 持有 data:read 权限 + admin 角色，其他 login_id 返回空列表（无权限 / 无角色）。
 pub struct MyInterface;
 
 impl MyInterface {
-    /// 创建接口实例。
     pub fn new() -> Self {
         Self
     }
@@ -145,21 +128,8 @@ pub async fn data_query_handler() -> Json<Value> {
 // 4. setup：初始化 + 路由注册（不启动服务器，便于测试）
 // ============================================================================
 
-/// 准备 axum app 与测试 token（不启动 HTTP 服务器）。
-///
-/// 完成以下工作：
-/// 1. 创建 oxcache DAO + 配置 + Interface
-/// 2. `GarrisonManager::builder()` 注入全局单例
-/// 3. `GarrisonUtil::login(1001)` 生成测试 token
-/// 4. `GarrisonRouter::new` 注册 4 个受保护路由（Ignore / CheckLogin / CheckRole / CheckPermission）
-///
-/// # 返回
-/// `(router, token)`：router 可直接用于 `oneshot` 测试或 `axum::serve` 启动；
-/// token 为 login_id=1001 的有效 token（持有 admin 角色 + data:read 权限）。
-///
-/// # 注意
-/// 调用此函数会覆盖全局 `GarrisonManager` 单例，因此在多测试并行场景需用
-/// `#[serial_test::serial]` 保证串行执行。
+/// 准备 axum app 与测试 token（不启动 HTTP 服务器）：创建 DAO + 配置 + Interface、builder 注入全局单例、login(1001) 生成 token、注册 4 个受保护路由。
+/// 返回 `(router, token)`；调用会覆盖全局 `GarrisonManager` 单例，多测试并行需 `#[serial_test::serial]`。
 pub async fn setup() -> GarrisonResult<(Router, String)> {
     // --- 准备依赖：DAO + Config + Interface ---
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
@@ -208,10 +178,7 @@ pub async fn setup() -> GarrisonResult<(Router, String)> {
 // 5. main：setup + 启动服务器
 // ============================================================================
 
-/// 运行 axum 集成示例。
-///
-/// 调用 [`setup`] 完成初始化与路由注册，随后绑定 `127.0.0.1:3000` 启动 HTTP 服务器。
-/// 服务器将一直运行直到 Ctrl+C 中断。
+/// 运行 axum 集成示例：调用 [`setup`] 完成初始化与路由注册，绑定 `127.0.0.1:3000` 启动 HTTP 服务器（运行至 Ctrl+C）。
 pub async fn run() -> GarrisonResult<()> {
     let (app, token) = setup().await?;
 

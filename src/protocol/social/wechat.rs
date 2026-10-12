@@ -1,16 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 微信扫码登录 provider。
+//! 微信扫码登录 provider（`social-wechat` feature，依赖 `protocol-oauth2` 提供 reqwest HTTP client）。
 //!
-//! 实现 `SocialLoginProvider` trait，覆盖微信开放平台扫码登录的 OAuth2 流程：
-//! - `get_authorization_url`：拼接 `https://open.weixin.qq.com/connect/qrconnect?` 授权页 URL
-//! - `exchange_token`：调用 `https://api.weixin.qq.com/sns/oauth2/access_token` 用 code 换 access_token
-//! - `get_user_info`：调用 `https://api.weixin.qq.com/sns/userinfo` 获取用户昵称头像
-//!
-//! ## Feature 门控
-//!
-//! 启用 `social-wechat` feature 时编译，依赖 `protocol-oauth2`（提供 reqwest HTTP client）。
+//! 实现 `SocialLoginProvider`：`qrconnect` 授权页拼接、`sns/oauth2/access_token` 换 token、`sns/userinfo` 取昵称头像。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::loc;
@@ -21,10 +14,7 @@ use serde_json::Value;
 
 /// 对 reqwest HTTP 错误脱敏。
 ///
-/// 微信端点用 GET 方法传递 `secret`/`access_token`（query string），
-/// `reqwest::Error` 的 `Display` 实现包含完整 URL（含 query），
-/// 直接 `to_string()` 会把密钥写入 `loc!` 消息 → `tracing::warn!` 日志。
-/// 此函数仅保留错误类别，不暴露 URL。
+/// 微信端点用 GET 把 `secret`/`access_token` 放在 query string，`reqwest::Error` 的 `Display` 含完整 URL，直接 `to_string()` 会把密钥写入日志；此函数仅保留错误类别。
 fn sanitize_http_error(e: &reqwest::Error) -> String {
     if e.is_connect() {
         "connection error".to_string()
@@ -37,11 +27,7 @@ fn sanitize_http_error(e: &reqwest::Error) -> String {
     }
 }
 
-/// 从微信原始 JSON 响应中剥离敏感凭据字段（`session_key` / `access_token`）。
-///
-/// 安全修复：`session_key`（小程序数据解密凭据）与 `access_token`（访问令牌）
-/// 属敏感凭据，若原样保留在 `SocialUserInfo.raw`，调用方打印/持久化 `raw`
-/// 时会意外泄露。此处移除这些字段后再返回（openid/unionid 等业务字段保留）。
+/// 从微信原始 JSON 响应剥离敏感凭据（`session_key` 小程序数据解密凭据 / `access_token` 访问令牌），避免调用方打印或持久化 `raw` 时泄露；openid/unionid 等业务字段保留。
 fn strip_sensitive_fields(mut raw: Value) -> Value {
     const SENSITIVE_FIELDS: [&str; 2] = ["session_key", "access_token"];
     if let Some(obj) = raw.as_object_mut() {
@@ -52,10 +38,7 @@ fn strip_sensitive_fields(mut raw: Value) -> Value {
     raw
 }
 
-/// 校验授权回调 URL 的基本格式（必须为 https scheme）。
-///
-/// 微信开放平台要求授权回调域为 https 白名单域名；非 https 的 redirect_uri
-/// 一律拒绝拼接授权 URL（防 open-redirect / 明文回调）。
+/// 校验 redirect_uri 必须为 https：微信要求授权回调域为 https 白名单域名，非 https 拒绝拼接授权 URL（防 open-redirect / 明文回调）。
 fn validate_redirect_uri(redirect_uri: &str) -> GarrisonResult<()> {
     if !redirect_uri.starts_with("https://") {
         return Err(GarrisonError::InvalidParam(loc!(
@@ -69,15 +52,13 @@ fn validate_redirect_uri(redirect_uri: &str) -> GarrisonResult<()> {
 /// 微信扫码登录授权页端点。
 const WECHAT_AUTH_URL: &str = "https://open.weixin.qq.com/connect/qrconnect";
 
-/// 微信 OAuth2 access_token 端点（默认值，可通过 `with_token_url` 覆盖以适配测试）。
+/// 微信 OAuth2 access_token 端点（测试可经 `with_token_url` 覆盖）。
 const WECHAT_TOKEN_URL: &str = "https://api.weixin.qq.com/sns/oauth2/access_token";
 
-/// 微信 OAuth2 userinfo 端点（默认值，可通过 `with_userinfo_url` 覆盖以适配测试）。
+/// 微信 OAuth2 userinfo 端点（测试可经 `with_userinfo_url` 覆盖）。
 const WECHAT_USERINFO_URL: &str = "https://api.weixin.qq.com/sns/userinfo";
 
-/// 微信扫码登录 provider。
-///
-/// 实现 `SocialLoginProvider` trait，封装微信开放平台扫码登录的 OAuth2 流程。
+/// 微信扫码登录 provider（封装微信开放平台扫码登录 OAuth2 流程）。
 ///
 /// # 示例
 ///
@@ -95,18 +76,14 @@ pub struct WechatProvider {
     client_secret: String,
     /// HTTP 客户端（复用连接池）。
     http: reqwest::Client,
-    /// access_token 端点 URL（默认为微信官方端点，测试时可覆盖）。
+    /// access_token 端点 URL（测试可覆盖）。
     token_url: String,
-    /// userinfo 端点 URL（默认为微信官方端点，测试时可覆盖）。
+    /// userinfo 端点 URL（测试可覆盖）。
     userinfo_url: String,
 }
 
 impl WechatProvider {
-    /// 创建 `WechatProvider` 实例。
-    ///
-    /// # 参数
-    /// - `client_id`: 微信开放平台 AppID
-    /// - `client_secret`: 微信开放平台 AppSecret
+    /// 创建 `WechatProvider` 实例（`client_id` 为 AppID，`client_secret` 为 AppSecret）。
     pub fn new(client_id: &str, client_secret: &str) -> Self {
         Self {
             client_id: client_id.to_string(),
@@ -138,25 +115,15 @@ impl WechatProvider {
 
 #[async_trait]
 impl SocialLoginProvider for WechatProvider {
-    /// 拼接微信扫码登录授权页 URL。
+    /// 拼接微信扫码登录授权页 URL（严格遵循《网站应用微信登录》文档）：`response_type=code` 固定，`scope=snsapi_login` 为网站应用唯一 scope，末尾必须带 `#wechat_redirect` 锚点（微信强匹配校验）。
     ///
-    /// 严格遵循微信开放平台《网站应用微信登录》官方文档规范，URL 格式：
-    /// `https://open.weixin.qq.com/connect/qrconnect?appid=APPID&redirect_uri=REDIRECT_URI&response_type=code&scope=snsapi_login&state=STATE#wechat_redirect`
-    ///
-    /// # 参数说明
-    /// - `response_type=code`：固定值（OAuth2 authorization_code 模式）
-    /// - `scope=snsapi_login`：网站应用唯一支持的 scope（用于扫码登录获取用户 openid/unionid）
-    /// - `#wechat_redirect`：必须携带的锚点（微信强匹配校验）
-    ///
-    /// # 参考
-    /// 微信开放平台官方文档：<https://developers.weixin.qq.com/doc/oplatform/Website_App/WeChat_Login/WeChat_Login.html>
+    /// 参考：<https://developers.weixin.qq.com/doc/oplatform/Website_App/WeChat_Login/WeChat_Login.html>
     async fn get_authorization_url(
         &self,
         state: &str,
         redirect_uri: &str,
     ) -> GarrisonResult<String> {
-        // 基本格式校验：redirect_uri 必须为 https（微信授权回调域要求，
-        // 非 https 拒绝拼接，防 open-redirect / 明文回调）
+        // redirect_uri 必须为 https（防 open-redirect / 明文回调）
         validate_redirect_uri(redirect_uri)?;
         Ok(format!(
             "{}?appid={}&redirect_uri={}&response_type=code&scope=snsapi_login&state={}#wechat_redirect",
@@ -167,18 +134,9 @@ impl SocialLoginProvider for WechatProvider {
         ))
     }
 
-    /// 用授权码换取用户信息。
+    /// 用授权码换取 access_token + openid + unionid（GET + query 参数，非 POST form body）；返回的 nickname/avatar 为 None，需再调 `get_user_info`。
     ///
-    /// 严格遵循微信开放平台官方文档：通过 `GET /sns/oauth2/access_token` 端点，
-    /// 将 `appid`/`secret`/`code`/`grant_type` 作为 query 参数传递（非 POST form body）。
-    /// 用授权码换取 access_token + openid + unionid，返回 `SocialUserInfo`
-    /// （nickname/avatar 为 None，需调用 `get_user_info` 获取）。
-    ///
-    /// # 官方文档
-    ///
-    /// - HTTP 方法：GET
-    /// - URL：`https://api.weixin.qq.com/sns/oauth2/access_token?appid=APPID&secret=SECRET&code=CODE&grant_type=authorization_code`
-    /// - code 有效期 10 分钟，仅可使用一次
+    /// 官方文档：`GET https://api.weixin.qq.com/sns/oauth2/access_token?appid=...&secret=...&code=...&grant_type=authorization_code`；code 有效期 10 分钟且仅可使用一次。
     async fn exchange_token(&self, code: &str, _state: &str) -> GarrisonResult<SocialUserInfo> {
         let url = format!(
             "{}?appid={}&secret={}&code={}&grant_type=authorization_code",
@@ -204,8 +162,7 @@ impl SocialLoginProvider for WechatProvider {
             )));
         }
 
-        // JSON 解析错误同样经 sanitize_http_error 脱敏（reqwest::Error 的
-        // Display 含完整 URL，其中 query 携带 client_secret，不得入日志）
+        // JSON 解析错误同样脱敏：reqwest::Error 的 Display 含带 client_secret 的 URL
         let raw: Value = resp.json().await.map_err(|e| {
             let detail = sanitize_http_error(&e);
             GarrisonError::Network(loc!(
@@ -254,27 +211,16 @@ impl SocialLoginProvider for WechatProvider {
             nickname: None,
             avatar: None,
             union_id,
-            // 安全修复：剥离 access_token 等敏感凭据后再存入 raw（原响应含
-            // access_token，调用方打印/持久化 raw 会泄露令牌）
+            // 剥离 access_token 等敏感凭据后再存入 raw（防打印/持久化泄露）
             raw: strip_sensitive_fields(raw),
         })
     }
 
-    /// 用 access_token 获取用户信息。
+    /// 用 access_token 获取用户信息（`sns/userinfo`，取 nickname/headimgurl/openid/unionid）。
     ///
-    /// 调用微信 `sns/userinfo` 端点，获取 nickname/headimgurl/openid/unionid。
+    /// `access_token` 为复合格式 `"{access_token}|{openid}"`：微信 userinfo 端点需同时传两者，而 trait 签名只接受单参数，故用 `|` 编码；调用方应在 `exchange_token` 后保存 `provider_user_id`（openid）并拼接。不含 `|` 时整串作为 access_token、openid 为空（微信返回 errcode，映射为 `GarrisonError::Network`）。
     ///
-    /// # 参数
-    ///
-    /// - `access_token`: 复合格式 `"{access_token}|{openid}"`，用 `|` 分隔 access_token 与 openid。
-    /// 微信 userinfo 端点必须同时传入 access_token 和 openid，而 `SocialLoginProvider::get_user_info`
-    /// trait 签名只接受单参数，故采用复合格式编码两个字段。调用方应在 `exchange_token` 后保存
-    /// `SocialUserInfo.provider_user_id`（即 openid），调用时拼接为 `"access_token|openid"`。
-    /// 若不含 `|`，整个字符串作为 access_token、openid 为空字符串（微信会返回 errcode，最终映射为 `GarrisonError::Network`）。
-    ///
-    /// # 错误
-    ///
-    /// - `GarrisonError::Network`: HTTP 请求失败、状态码非 2xx、JSON 解析失败、或微信返回 errcode != 0。
+    /// 错误：HTTP 请求失败、状态码非 2xx、JSON 解析失败或 errcode != 0 均返回 `GarrisonError::Network`。
     async fn get_user_info(&self, access_token: &str) -> GarrisonResult<SocialUserInfo> {
         // 解析 "{access_token}|{openid}" 复合格式
         let (access_token_value, openid) = match access_token.split_once('|') {
@@ -364,7 +310,7 @@ impl SocialLoginProvider for WechatProvider {
             nickname,
             avatar,
             union_id,
-            // 安全修复：剥离 access_token/session_key 等敏感凭据后再存入 raw
+            // 剥离 access_token/session_key 等敏感凭据后再存入 raw
             raw: strip_sensitive_fields(raw),
         })
     }
@@ -378,24 +324,14 @@ impl Drop for WechatProvider {
     }
 }
 
-// ============================================================================
 // WechatMiniAppProvider：微信小程序登录
-// ============================================================================
 
 /// 微信小程序 `jscode2session` 端点。
 const WECHAT_MINI_APP_JSCODE2SESSION_URL: &str = "https://api.weixin.qq.com/sns/jscode2session";
 
-/// 微信小程序登录 provider。
+/// 微信小程序登录 provider：复用 `SocialLoginProvider`，`get_user_info` 调 `jscode2session`，用 `wx.login()` 的 `js_code` 换 openid + session_key + unionid。
 ///
-/// 复用 `SocialLoginProvider` trait，`get_user_info` 调用 `jscode2session` 端点，
-/// 用小程序客户端 `wx.login()` 返回的 `js_code` 换取 `openid` + `session_key` + `unionid`。
-///
-/// # 与 `WechatProvider` 的差异
-///
-/// - `WechatProvider` 用于网站扫码登录（OAuth2 流程：授权页 → code → access_token → userinfo）
-/// - `WechatMiniAppProvider` 用于小程序登录（`wx.login()` → js_code → jscode2session → openid）
-/// - 小程序无 OAuth2 授权页 URL，`get_authorization_url` 返回 `GarrisonError::NotImplemented`
-/// - 小程序无独立 access_token，`exchange_token` 与 `get_user_info` 均调用 jscode2session
+/// 与 `WechatProvider` 的差异：小程序无 OAuth2 授权页（`get_authorization_url` 返回 `NotImplemented`）、无独立 access_token（`exchange_token` 与 `get_user_info` 均调 jscode2session）。
 ///
 /// # 示例
 ///
@@ -413,16 +349,12 @@ pub struct WechatMiniAppProvider {
     client_secret: String,
     /// HTTP 客户端（复用连接池，与 `WechatProvider` 同构造方式）。
     http: reqwest::Client,
-    /// `jscode2session` 端点 URL（默认为微信官方端点，测试时可覆盖）。
+    /// `jscode2session` 端点 URL（测试可覆盖）。
     jscode2session_url: String,
 }
 
 impl WechatMiniAppProvider {
-    /// 创建 `WechatMiniAppProvider` 实例。
-    ///
-    /// # 参数
-    /// - `client_id`: 小程序 AppID
-    /// - `client_secret`: 小程序 AppSecret
+    /// 创建 `WechatMiniAppProvider` 实例（`client_id` 为 AppID，`client_secret` 为 AppSecret）。
     pub fn new(client_id: &str, client_secret: &str) -> Self {
         Self {
             client_id: client_id.to_string(),
@@ -462,19 +394,10 @@ impl SocialLoginProvider for WechatMiniAppProvider {
         self.get_user_info(code).await
     }
 
-    /// 用 js_code 调用 `jscode2session` 获取用户信息。
+    /// 用 js_code 调 `jscode2session` 获取用户信息（`access_token` 参数位实际传 `wx.login()` 的 `js_code`，trait 签名限制）。
     ///
-    /// # 参数
-    ///
-    /// - `access_token`: 实际为小程序 `wx.login()` 返回的 `js_code`（trait 签名限制，
-    /// 复用 `access_token` 参数位）
-    ///
-    /// # 错误
-    ///
-    /// - `GarrisonError::Network`: HTTP 请求失败、状态码非 2xx、JSON 解析失败、
-    /// 或微信返回 `errcode != 0`、或响应缺少 `openid` 字段
+    /// 错误：HTTP 请求失败、状态码非 2xx、JSON 解析失败、errcode != 0 或响应缺少 `openid` 均返回 `GarrisonError::Network`。
     async fn get_user_info(&self, access_token: &str) -> GarrisonResult<SocialUserInfo> {
-        // access_token 参数位实际为小程序 wx.login() 返回的 js_code
         let js_code = access_token;
 
         let url = format!(
@@ -505,7 +428,7 @@ impl SocialLoginProvider for WechatMiniAppProvider {
             )));
         }
 
-        // JSON 解析错误同样经 sanitize_http_error 脱敏（Display 含带 secret URL）
+        // JSON 解析错误同样脱敏：reqwest::Error 的 Display 含带 secret 的 URL
         let raw: Value = resp.json().await.map_err(|e| {
             let detail = sanitize_http_error(&e);
             GarrisonError::Network(loc!(
@@ -557,8 +480,7 @@ impl SocialLoginProvider for WechatMiniAppProvider {
             nickname: None,
             avatar: None,
             union_id,
-            // 安全修复：剥离 session_key（小程序数据解密凭据）等敏感字段后再存入
-            // raw——原样保留会导致调用方打印/持久化 raw 时泄露解密凭据
+            // 剥离 session_key 等敏感字段后再存入 raw（防打印/持久化泄露解密凭据）
             raw: strip_sensitive_fields(raw),
         })
     }
@@ -576,13 +498,7 @@ impl Drop for WechatMiniAppProvider {
 mod tests {
     use super::*;
 
-    /// 验证 `WechatProvider::get_authorization_url` 返回符合微信扫码登录规范的 URL
-    ///
-    /// 严格遵循微信开放平台《网站应用微信登录》官方文档：
-    /// `https://open.weixin.qq.com/connect/qrconnect?appid=APPID&redirect_uri=REDIRECT_URI&response_type=code&scope=snsapi_login&state=STATE#wechat_redirect`
-    ///
-    /// Red 阶段：`WechatProvider` 类型不存在 → 编译失败。
-    /// 定义 struct + impl 后测试通过。
+    /// `get_authorization_url` 返回符合微信规范的 URL（含 appid/response_type/scope/state 与 `#wechat_redirect` 锚点）。
     #[tokio::test]
     async fn wechat_provider_get_authorization_url_returns_correct_format() {
         let provider = WechatProvider::new("wx_appid", "wx_secret");
@@ -623,11 +539,7 @@ mod tests {
         );
     }
 
-    /// 验证 `WechatProvider::exchange_token` 解析微信 access_token 响应
-    ///
-    /// 官方文档指定 GET 方法 + query 参数（非 POST form body），测试用 query_param 匹配。
-    ///
-    /// 实现 exchange_token 后测试通过。
+    /// `exchange_token` 解析微信响应中的 openid/unionid（GET + query 参数匹配，非 POST form body）。
     #[tokio::test]
     async fn wechat_provider_exchange_token_parses_access_token_from_response() {
         use wiremock::matchers::{method, path, query_param};
@@ -660,17 +572,7 @@ mod tests {
         assert_eq!(user_info.union_id.as_deref(), Some("union789"));
     }
 
-    /// 验证 `WechatProvider::get_user_info` 解析微信 userinfo 响应的 nickname/headimgurl
-    ///
-    /// # 测试流程
-    ///
-    /// 1. wiremock 模拟 `GET /sns/userinfo` 返回 `{"openid":"openid1","nickname":"Alice","headimgurl":"...","unionid":"union1"}`
-    /// 2. 构造 `WechatProvider::with_userinfo_url` 指向 mock server
-    /// 3. 调用 `get_user_info("tok123|openid1")`（access_token|openid 复合格式）
-    /// 4. 断言返回 `SocialUserInfo` 含 nickname/avatar/union_id
-    ///
-    /// Red 阶段：`with_userinfo_url` / `get_user_info` 实现 missing → panic。
-    /// 实现后测试通过。
+    /// `get_user_info` 解析 userinfo 响应的 nickname/headimgurl/unionid（`tok123|openid1` 复合格式）。
     #[tokio::test]
     async fn wechat_provider_get_user_info_parses_nickname_and_avatar() {
         use wiremock::matchers::{method, path, query_param};
@@ -708,10 +610,7 @@ mod tests {
         assert_eq!(user_info.union_id.as_deref(), Some("union1"));
     }
 
-    /// 验证 `WechatProvider::get_user_info` 在 HTTP 错误时返回 `GarrisonError`（不 panic）
-    ///
-    /// Red 阶段：`get_user_info` 未实现 → panic。
-    /// 实现后返回 `Err(GarrisonError::Network(_))`。
+    /// `get_user_info` 在 HTTP 错误时返回 `GarrisonError::Network`（不 panic）。
     #[tokio::test]
     async fn wechat_provider_get_user_info_returns_error_on_http_failure() {
         use wiremock::matchers::{method, path};
@@ -741,15 +640,9 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // WechatMiniAppProvider Red 阶段
-    // ========================================================================
+    // WechatMiniAppProvider
 
-    /// 验证 `WechatMiniAppProvider::get_user_info` 调用 `jscode2session` 成功时
-    /// 返回 `SocialUserInfo`。
-    ///
-    /// Red 阶段：`get_user_info` 含 `(未实现占位)` → panic。
-    /// 实现 jscode2session 调用后测试通过。
+    /// `WechatMiniAppProvider::get_user_info` 调 `jscode2session` 成功时返回 `SocialUserInfo`。
     #[tokio::test]
     async fn wechat_mini_app_get_user_info_success() {
         use wiremock::matchers::{method, path, query_param};
@@ -783,11 +676,7 @@ mod tests {
         assert_eq!(user_info.union_id.as_deref(), Some("union_mini_1"));
     }
 
-    /// 验证 `WechatMiniAppProvider::get_user_info` 在微信返回 `errcode=40029`
-    ///（无效 code）时返回 `GarrisonError`。
-    ///
-    /// Red 阶段：`get_user_info` 含 `(未实现占位)` → panic。
-    /// 实现 errcode 检查后返回 `Err(GarrisonError::Network(_))`。
+    /// 微信返回 `errcode=40029`（无效 code）时返回 `GarrisonError`。
     #[tokio::test]
     async fn wechat_mini_app_get_user_info_invalid_code() {
         use wiremock::matchers::{method, path};
@@ -815,11 +704,7 @@ mod tests {
         );
     }
 
-    /// 验证 `WechatMiniAppProvider::get_user_info` 在 HTTP 500 时返回
-    /// `GarrisonError::Network`。
-    ///
-    /// Red 阶段：`get_user_info` 含 `(未实现占位)` → panic。
-    /// 实现 HTTP 状态码检查后返回 `Err(GarrisonError::Network(_))`。
+    /// HTTP 500 时返回 `GarrisonError::Network`。
     #[tokio::test]
     async fn wechat_mini_app_get_user_info_network_error() {
         use wiremock::matchers::{method, path};
@@ -849,11 +734,7 @@ mod tests {
         }
     }
 
-    /// 验证 `WechatMiniAppProvider::get_user_info` 在响应缺少 `openid` 字段时
-    /// 返回 `GarrisonError`。
-    ///
-    /// Red 阶段：`get_user_info` 含 `(未实现占位)` → panic。
-    /// 实现 openid 缺失检查后返回 `Err(GarrisonError::Network(_))`。
+    /// 响应缺少 `openid` 字段时返回 `GarrisonError`。
     #[tokio::test]
     async fn wechat_mini_app_get_user_info_missing_openid() {
         use wiremock::matchers::{method, path};
@@ -880,11 +761,8 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // WechatProvider 构造与 builder 测试
-    // ========================================================================
 
-    /// WechatProvider::new 正确设置 client_id。
     #[tokio::test]
     async fn wechat_provider_new_sets_client_id() {
         let provider = WechatProvider::new("my_appid", "my_secret");
@@ -905,7 +783,7 @@ mod tests {
         let provider = WechatProvider::new("appid", "secret")
             .with_token_url("https://custom.token.url")
             .with_userinfo_url("https://custom.userinfo.url");
-        // 验证链式调用后 provider 仍可用（redirect_uri 须为 https）
+        // redirect_uri 须为 https
         let url = provider
             .get_authorization_url("s", "https://example.com/cb")
             .await
@@ -929,9 +807,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // WechatProvider::exchange_token 错误路径测试
-    // ========================================================================
 
     /// exchange_token 在微信返回 errcode != 0 时返回 Network 错误。
     #[tokio::test]
@@ -1043,9 +919,7 @@ mod tests {
         assert!(user_info.avatar.is_none());
     }
 
-    // ========================================================================
     // WechatProvider::get_user_info 错误路径与边界测试
-    // ========================================================================
 
     /// get_user_info 在不含 | 分隔符时以整个字符串作为 access_token、openid 为空。
     #[tokio::test]
@@ -1160,11 +1034,8 @@ mod tests {
         assert!(user_info.union_id.is_none());
     }
 
-    // ========================================================================
     // WechatMiniAppProvider 构造与 builder 测试
-    // ========================================================================
 
-    /// WechatMiniAppProvider::new 构造实例可用。
     #[tokio::test]
     async fn wechat_mini_app_provider_new_constructs() {
         let provider = WechatMiniAppProvider::new("mini_appid", "mini_secret");
@@ -1181,7 +1052,7 @@ mod tests {
     async fn wechat_mini_app_provider_with_jscode2session_url_chaining() {
         let provider = WechatMiniAppProvider::new("appid", "secret")
             .with_jscode2session_url("https://custom.jscode2session.url");
-        // 验证链式调用后 provider 仍可用（get_authorization_url 返回 NotImplemented）
+        // get_authorization_url 返回 NotImplemented，验证实例可用
         let result = provider.get_authorization_url("s", "r").await;
         assert!(result.is_err());
     }
@@ -1226,7 +1097,7 @@ mod tests {
         assert_eq!(user_info.provider, provider_names::WECHAT_MINI_APP);
     }
 
-    /// WechatMiniAppProvider::get_user_info 响应缺少 openid 时返回错误。
+    /// 响应体非法 JSON 时返回错误。
     #[tokio::test]
     async fn wechat_mini_app_provider_get_user_info_response_parse_failure() {
         use wiremock::matchers::{method, path};
@@ -1357,9 +1228,7 @@ mod tests {
         assert_eq!(user_info.nickname.as_deref(), Some("Alice"));
     }
 
-    // ========================================================================
     // 安全修复回归测试：redirect_uri 校验 / raw 敏感字段剥离
-    // ========================================================================
 
     /// get_authorization_url 对非 https 的 redirect_uri 返回 InvalidParam
     ///（基本格式校验：防 open-redirect / 明文回调）。
@@ -1417,7 +1286,6 @@ mod tests {
             "raw 不应保留 access_token（敏感凭据剥离），实际: {}",
             user_info.raw
         );
-        // 业务字段保留
         assert_eq!(
             user_info.raw.get("openid").and_then(|v| v.as_str()),
             Some("openid456")

@@ -13,27 +13,22 @@ fn make_client() -> SsoClient {
     SsoClient::new(dao, "test-sso-secret-key-for-unit-tests-01").expect("secret 非空构造应成功")
 }
 
-// ========================================================================
 // SsoClient 构造测试
-// ========================================================================
 
-/// 构造 SsoClient，持有 dao）。
+/// 构造 SsoClient（持有 dao）。
 #[test]
 fn new_creates_client_with_dao() {
     let _client = make_client();
     // 构造成功即验证（dao 通过类型系统保证非空）
 }
 
-// ========================================================================
 // issue_ticket 测试
-// ========================================================================
 
 /// 成功签发票据，格式为 `{64_hex_random}.{hmac_b64}`。
 #[tokio::test]
 async fn issue_ticket_returns_signed_format() {
     let client = make_client();
     let ticket = client.issue_ticket("1001", 2001).await.unwrap();
-    // 格式：{64_hex_random}.{hmac_b64}
     let (random_part, sig) = ticket.split_once('.').expect("ticket 应包含 '.' 分隔符");
     assert_eq!(random_part.len(), 64, "随机部分应为 64 字符 hex");
     assert!(
@@ -43,7 +38,7 @@ async fn issue_ticket_returns_signed_format() {
     assert!(!sig.is_empty(), "签名部分不应为空");
 }
 
-/// 票据随机性：连续签发返回不同票据）。
+/// 票据随机性：连续签发返回不同票据。
 #[tokio::test]
 async fn issue_ticket_generates_unique_tickets() {
     let client = make_client();
@@ -52,7 +47,7 @@ async fn issue_ticket_generates_unique_tickets() {
     assert_ne!(t1, t2);
 }
 
-/// 相同 login_id 多 client 签发独立票据）。
+/// 相同 login_id 多 client 签发独立票据。
 #[tokio::test]
 async fn issue_ticket_same_login_different_clients() {
     let client = make_client();
@@ -61,7 +56,7 @@ async fn issue_ticket_same_login_different_clients() {
     assert_ne!(t1, t2);
 }
 
-/// key 前缀正确）。
+/// key 前缀正确。
 #[tokio::test]
 async fn issue_ticket_uses_correct_key_prefix() {
     let dao = Arc::new(MockDao::new());
@@ -76,11 +71,9 @@ async fn issue_ticket_uses_correct_key_prefix() {
     assert_eq!(data.client_id, 2001);
 }
 
-// ========================================================================
 // validate_ticket 测试
-// ========================================================================
 
-/// 成功校验返回 login_id）。
+/// 成功校验返回 login_id。
 #[tokio::test]
 async fn validate_ticket_success_returns_login_id() {
     let client = make_client();
@@ -116,7 +109,7 @@ async fn validate_ticket_client_id_mismatch_returns_error() {
     }
 }
 
-/// 票据不存在返回错误）。
+/// 票据不存在返回错误。
 #[tokio::test]
 async fn validate_ticket_nonexistent_returns_error() {
     let client = make_client();
@@ -128,7 +121,7 @@ async fn validate_ticket_nonexistent_returns_error() {
     }
 }
 
-/// 一次性使用：第二次校验失败）。
+/// 一次性使用：第二次校验失败。
 #[tokio::test]
 async fn validate_ticket_one_time_use_second_fails() {
     let client = make_client();
@@ -143,11 +136,9 @@ async fn validate_ticket_one_time_use_second_fails() {
     );
 }
 
-// ========================================================================
 // destroy_ticket 测试
-// ========================================================================
 
-/// 销毁存在的票据）。
+/// 销毁存在的票据。
 #[tokio::test]
 async fn destroy_ticket_existing() {
     let client = make_client();
@@ -170,9 +161,7 @@ async fn destroy_ticket_nonexistent_returns_ok() {
     assert_eq!(result.unwrap(), (), "销毁不存在的票据应返回 Ok(())（幂等）");
 }
 
-// ========================================================================
 // with_ticket_ttl 测试
-// ========================================================================
 
 /// with_ticket_ttl 设置 TTL。
 #[test]
@@ -184,9 +173,7 @@ fn with_ticket_ttl_sets_ttl() {
     assert_eq!(client.ticket_ttl_seconds, 120);
 }
 
-// ========================================================================
 // LoginId newtype 接入（impl Into<LoginId>）
-// ========================================================================
 
 /// 验证 `SsoClient::issue_ticket` 接受 String 形式 login_id。
 #[tokio::test]
@@ -197,9 +184,7 @@ async fn issue_ticket_accepts_login_id_numeric() {
     assert_eq!(login_id, "1001");
 }
 
-// ========================================================================
 // TOCTOU 修复测试
-// ========================================================================
 
 /// 并发消费同一 ticket 仅一个成功（TOCTOU 修复核心验证）。
 ///
@@ -235,9 +220,7 @@ async fn validate_ticket_concurrent_only_one_succeeds() {
     assert_eq!(invalid_token, 9, "其他 9 个应返回 InvalidToken");
 }
 
-// ========================================================================
 // ticket HMAC 签名测试
-// ========================================================================
 
 /// 伪造的 ticket（无签名部分）应被拒绝。
 #[tokio::test]
@@ -258,7 +241,6 @@ async fn validate_ticket_rejects_unsigned_ticket() {
 async fn validate_ticket_rejects_tampered_signature() {
     let client = make_client();
     let ticket = client.issue_ticket("1001", 2001).await.unwrap();
-    // 篡改签名部分（在末尾追加字符）
     let tampered_ticket = format!("{}X", ticket);
     let result = client.validate_ticket(&tampered_ticket, 2001).await;
     assert!(
@@ -304,8 +286,7 @@ fn new_rejects_empty_secret() {
     }
 }
 
-/// 短于 32 字节的 secret 构造返回 `InvalidParam`（安全审计 GAR-15：
-/// 与 qrlogin/protocol-sign 对齐，弱密钥可被持票攻击者离线爆破后伪造签名）。
+/// 短于 32 字节的 secret 构造返回 `InvalidParam`（与 qrlogin/protocol-sign 对齐，弱密钥可被离线爆破后伪造签名）。
 #[test]
 fn new_rejects_short_secret() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -321,7 +302,6 @@ fn new_rejects_short_secret() {
         Err(other) => panic!("期望 InvalidParam，实际: {:?}", other),
         Ok(_) => panic!("31 字节 secret 不应构造成功"),
     }
-    // 32 字节（下限）应构造成功
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     assert!(
         SsoClient::new(dao, "a".repeat(32)).is_ok(),
@@ -352,9 +332,7 @@ async fn validate_ticket_client_id_mismatch_message_does_not_leak_ids() {
     }
 }
 
-// ========================================================================
 // DefaultSamlProvider：Destination / Audience 校验与 XML 解析分支
-// ========================================================================
 
 mod saml_provider_tests {
     use super::*;

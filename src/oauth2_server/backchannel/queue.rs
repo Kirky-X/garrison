@@ -1,17 +1,11 @@
-// Copyright (c) 2026 Kirky.X🌠
-// SPDX-License-Identifier: Apache-2.0
-
 //! `oauth2_backchannel_queue` 持久化投递队列存取。
 //!
-//! 表结构由 `migrations/*/core/017_oauth2_backchannel_queue.sql` 创建
-//! （四方言同名成对）。时间列统一存 Unix 毫秒（BIGINT）：drain 排序键为
-//! `(next_attempt_at, created_at, id)`——失败行经 `increment_retries` 把
-//! `next_attempt_at` 按指数退避推后，投递到期的健康行（含更晚入队者）不被
-//! 队头的失败行阻塞；`id` 用 UUID v7（时间有序），作同毫秒 `created_at`
-//! 并列时的稳定 tiebreaker。
+//! 表结构由 `migrations/*/core/017_oauth2_backchannel_queue.sql` 创建（四方言同名成对）；时间列统一存
+//! Unix 毫秒（BIGINT），drain 排序键 `(next_attempt_at, created_at, id)`——失败行经 `increment_retries`
+//! 把 `next_attempt_at` 按指数退避推后，到期健康行不被队头失败行阻塞；`id` 用 UUID v7 作同毫秒
+//! `created_at` 并列时的稳定 tiebreaker。
 //!
-//! 存取走 `DbPool` 直连（admin 会话），与 `AuditLogListener` 同款先例——
-//! `GarrisonDao` 是缓存抽象不支持 SQL，本表不进 Repository trait 面。
+//! 存取走 `DbPool` 直连（admin 会话，与 `AuditLogListener` 同款先例）：`GarrisonDao` 是缓存抽象不支持 SQL，本表不进 Repository trait 面。
 
 use crate::dao::repository::make_statement;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -25,8 +19,7 @@ pub const STATUS_DELIVERED: &str = "delivered";
 /// 已退役（超过 MaxTtl 仍未投递成功，warn 显性化后不再投递）。
 pub const STATUS_FAILED: &str = "failed";
 
-/// 重试退避基数（毫秒）：第 n 次重试的 `next_attempt_at` 推后
-/// `min(base × 2^(n-1), cap)`。
+/// 重试退避基数（毫秒）：第 n 次重试的 `next_attempt_at` 推后 `min(base × 2^(n-1), cap)`。
 pub const DEFAULT_RETRY_BACKOFF_MILLIS: i64 = 5_000;
 /// 重试退避封顶（毫秒）：退避上限 10 分钟，保证 MaxTtl 窗口内仍有重试机会。
 pub const RETRY_BACKOFF_CAP_MILLIS: i64 = 600_000;
@@ -47,8 +40,7 @@ pub fn retry_backoff_millis(base_millis: i64, cap_millis: i64, retries: i64) -> 
 /// 队列行。
 #[derive(Debug, Clone)]
 pub struct QueueEntry {
-    /// 行 ID（UUID v7，时间有序——drain 排序的稳定 tiebreaker；调用方生成，
-    /// 不依赖自增）。
+    /// 行 ID（UUID v7，时间有序；调用方生成，不依赖自增）。
     pub id: String,
     /// 目标 RP 的 client_id。
     pub client_id: String,
@@ -78,9 +70,8 @@ pub struct BackChannelQueue {
 }
 
 impl BackChannelQueue {
-    /// 构造队列存取器。`max_ttl_secs` 为入队行的投递窗口（生产默认 24h，
-    /// 见 [`crate::oauth2_server::backchannel::DEFAULT_MAX_TTL_SECS`]）；
-    /// 退避参数取生产默认（5s 起、10min 封顶）。
+    /// 构造队列存取器；`max_ttl_secs` 为入队行投递窗口（生产默认 24h，
+    /// 见 [`crate::oauth2_server::backchannel::DEFAULT_MAX_TTL_SECS`]），退避参数取生产默认（5s 起、10min 封顶）。
     pub fn new(pool: DbPool, max_ttl_secs: i64) -> Self {
         Self {
             pool,
@@ -122,10 +113,7 @@ impl BackChannelQueue {
         Ok(id)
     }
 
-    /// 取一批到期待投递行（按 `(next_attempt_at, created_at, id)` 升序）。
-    ///
-    /// 退避中的行（`next_attempt_at` 在未来）不进批——失败行不占批次槽位，
-    /// 其后入队的健康行不被队头阻塞。
+    /// 取一批到期待投递行（按 `(next_attempt_at, created_at, id)` 升序）；退避中的行（`next_attempt_at` 在未来）不进批，失败行不占批次槽位，其后入队的健康行不被队头阻塞。
     pub async fn pending_batch(&self, limit: i64) -> GarrisonResult<Vec<QueueEntry>> {
         let session = self
             .pool
@@ -184,11 +172,7 @@ impl BackChannelQueue {
         self.transition(id, STATUS_FAILED).await
     }
 
-    /// 投递失败后的重试登记：计数递增并按指数退避推后 `next_attempt_at`，
-    /// 返回递增后的计数。
-    ///
-    /// 退避使失败行让出批次槽位：到期前 `pending_batch` 不再返回该行，
-    /// 对已知失败 RP 的重发压力随连续失败次数指数衰减。
+    /// 投递失败后的重试登记：计数递增并按指数退避推后 `next_attempt_at`，返回递增后的计数（退避使失败行让出批次槽位，对已知失败 RP 的重发压力随连续失败次数指数衰减）。
     pub async fn increment_retries(&self, id: &str) -> GarrisonResult<i64> {
         let current = self
             .find_by_id(id)
@@ -309,16 +293,14 @@ mod tests {
     use super::*;
     use crate::dao::repository::sqlite::test_support::setup_db;
 
-    /// sqlite 面自动跑（017 迁移由 setup_db 自动应用）；postgres 面的等价
-    /// roundtrip 走下方 `#[ignore]` 集成测试（SQL 经 make_statement 双后端通用）。
+    /// sqlite 面自动跑（017 迁移由 setup_db 自动应用）；postgres 面等价 roundtrip 走下方 `#[ignore]` 集成测试。
     async fn setup_queue(max_ttl_secs: i64) -> (DbPool, BackChannelQueue) {
         let pool = setup_db().await;
         let queue = BackChannelQueue::new(pool.clone(), max_ttl_secs);
         (pool, queue)
     }
 
-    /// 入队 → pending 批次可见，字段 roundtrip 一致；初始即到期
-    /// （`next_attempt_at == created_at`）；id 为时间有序 v7。
+    /// 入队 → pending 批次可见，字段 roundtrip 一致；初始即到期（`next_attempt_at == created_at`）；id 为时间有序 v7。
     #[tokio::test]
     async fn enqueue_then_pending_batch_roundtrip() {
         let (_pool, queue) = setup_queue(3600).await;
@@ -374,8 +356,7 @@ mod tests {
                 .enqueue(&format!("client-{i}"), "t")
                 .await
                 .expect("入队应成功");
-            // created_at 毫秒精度同毫秒可能并列，间隔 5ms 保证 FIFO 断言确定性
-            // （同毫秒并列由 v7 id tiebreaker 稳定，但不保证 FIFO 语义）
+            // created_at 毫秒精度同毫秒可能并列，间隔 5ms 保证 FIFO 断言确定性（同毫秒并列由 v7 id tiebreaker 稳定）
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         let batch = queue.pending_batch(2).await.expect("批次查询应成功");
@@ -401,13 +382,10 @@ mod tests {
         );
     }
 
-    /// 重试退避指数增长且封顶：第 n 次失败后的下次可投时刻按
-    /// `min(base × 2^(n-1), cap)` 推后；退避期内不进批（大退避面，
-    /// 幅度远超 DB 往返延迟）、到期后重新进批（小退避面）。
+    /// 重试退避指数增长且封顶：第 n 次失败后按 `min(base × 2^(n-1), cap)` 推后；退避期内不进批，到期后重新进批。
     #[tokio::test]
     async fn increment_retries_schedules_exponential_backoff() {
-        // 大退避面：退避幅度下界可精确断言（next_attempt_at 相对增量前时刻
-        // ≥ base），且 2s ≫ DB 往返延迟，「不进批」断言无竞态
+        // 大退避面：退避下界可精确断言（相对增量前时刻 ≥ base），且 2s ≫ DB 往返延迟，「不进批」断言无竞态
         let pool = setup_db().await;
         let queue = BackChannelQueue::new(pool.clone(), 3600).with_backoff(2_000, 600_000);
         let slow_id = queue.enqueue("client-slow", "t").await.unwrap();
@@ -454,8 +432,7 @@ mod tests {
             entry.next_attempt_at - before
         );
 
-        // 连续失败至封顶：退避停在 cap=200ms（下界可精确断言；
-        // 精确封顶数学由 retry_backoff_millis 纯函数测试锁定）
+        // 连续失败至封顶：退避停在 cap=200ms（精确封顶数学由 retry_backoff_millis 纯函数测试锁定）
         for _ in 0..4 {
             tokio::time::sleep(std::time::Duration::from_millis(210)).await;
             queue.increment_retries(&id).await.unwrap();
@@ -508,8 +485,7 @@ mod tests {
     }
 }
 
-/// postgres 后端 roundtrip（真实库，需 DATABASE_URL，独立 feature 门控避免
-/// full 组合（db-sqlite 面）引用 db-postgres 专属迁移通道）：
+/// postgres 后端 roundtrip（真实库，需 DATABASE_URL，独立 feature 门控避免 full 组合引用 db-postgres 专属迁移通道）：
 /// `cargo test --features db-postgres --lib backchannel -- --ignored`。
 #[cfg(all(test, feature = "db-postgres"))]
 mod postgres_tests {

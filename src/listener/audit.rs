@@ -1,17 +1,10 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 审计日志模块。
+//! 审计日志模块：`AuditLogListener` 将 `GarrisonEvent` 持久化到 `audit_logs` 表。
 //!
-//! 提供 `AuditLogListener` 实现，将 `GarrisonEvent` 持久化到 `audit_logs` 表，
-//! 支持字段掩码（如 password）与异步写入。
-//!
-//! ## 核心抽象
-//!
-//! - [`AuditConfig`](crate::listener::audit::AuditConfig)：审计日志配置（掩码字段 + 保留天数 + 异步写入开关）
-//! - `AuditLogListener`：实现 `GarrisonListener`，将事件转换为 `AuditEntry` 持久化
-//! - `AuditEntry`：`audit_logs` 表行结构
-//! - `AuditQuery`：审计日志查询条件
+//! 配套抽象：`AuditConfig`（掩码字段 + 保留天数 + 异步写入 + 导出签名）、
+//! `AuditEntry`（表行结构）、`AuditQuery`（查询条件）。
 //!
 //! ## 表结构
 //!
@@ -34,20 +27,11 @@ use crate::config::AuditMaskMode;
 #[cfg(feature = "db-sqlite")]
 use crate::error::{GarrisonError, GarrisonResult};
 
-// ============================================================================
 // AuditConfig 定义
-// ============================================================================
 
 /// 审计日志配置。
 ///
 /// 控制 `AuditLogListener` 的行为：字段掩码、保留天数、异步写入、导出签名。
-///
-/// # 字段
-///
-/// - `mask_fields`: 需掩码的字段列表（如 `password`），metadata JSON 中对应字段值替换为 `"***"`
-/// - `retain_days`: 日志保留天数（过期自动清理，0 表示永不清理）
-/// - `async_write`: 是否异步写入（true 时不阻塞主流程，失败仅 `tracing::warn`）
-/// - `signing_key`: HMAC-SHA256 签名密钥（用于 `export_csv`/`export_json` 的签名链）
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditConfig {
     /// 需掩码的字段列表（如 `password`），metadata JSON 中对应字段值替换为 `"***"`。
@@ -69,16 +53,12 @@ pub struct AuditConfig {
     pub audit_mask_mode: AuditMaskMode,
 }
 
-// ============================================================================
+// ----------------------------------------------------------------------------
 // AuditEntry + AuditLogListener（需 db-sqlite feature）
-// ============================================================================
+// ----------------------------------------------------------------------------
 //
-// 设计取舍：
-// - 说 `pub struct AuditLogListener { pub dao: Arc<dyn GarrisonDao>, .. }`
-// 并在 GarrisonDao trait 新增 `async fn insert_audit_log`
-// - 但 GarrisonDao 是 cache 抽象（4 实现：Oxcache/MockDao/MinimalDao/AloneCache，
-// 均不支持 SQL INSERT），强行加 insert_audit_log 会破坏单一职责
-// - 遵循 RefreshTokenRotation 先例，
+// 设计取舍：GarrisonDao 是 cache 抽象（4 实现均不支持 SQL INSERT），强行加
+// insert_audit_log 会破坏单一职责；遵循 RefreshTokenRotation 先例，
 // AuditLogListener 持 `pool: DbPool` 直连 SQL，不污染 GarrisonDao trait
 
 #[cfg(feature = "db-sqlite")]
@@ -100,16 +80,13 @@ use sha2::Sha256;
 #[cfg(all(feature = "secure-masking", feature = "db-sqlite"))]
 use crate::secure::masking::{MaskType, SensitiveDataMasker};
 
-/// 构造 metadata JSON 字符串。
-///
-/// 接受 `&[(&str, &str)]` 键值对，序列化为 JSON 对象字符串。
-/// 字符串值自动转义（由 `serde_json` 处理）。
+/// 构造 metadata JSON 字符串：接受 `&[(&str, &str)]` 键值对序列化为 JSON 对象，
+/// 字符串值转义由 `serde_json` 完成。
 #[cfg(feature = "db-sqlite")]
-/// 审计层 token 截断（CWE-532 防御）：取前 8 字符 + "…"，对齐 `apikey::public_key_ref`。
+/// 审计层 token 截断（CWE-532 防御）：取前 8 字符 + `…`，对齐 `apikey::public_key_ref`。
 ///
-/// live session token 不得原样落 `audit_logs.token` 列——审计层只需可识别的公开引用，
-/// 完整 token 落库后，攻击者获得 audit_logs 只读权限（SQL 注入副产品/备份泄漏/replica）
-/// 即可在 exp 内重放冒充会话。
+/// live session token 不得原样落 `audit_logs.token` 列——完整 token 落库后，攻击者
+/// 仅凭 audit_logs 只读权限即可在 exp 内重放冒充会话。
 fn mask_audit_token(token: &str) -> String {
     let prefix: String = token.chars().take(8).collect();
     format!("{}\u{2026}", prefix)
@@ -118,10 +95,9 @@ fn mask_audit_token(token: &str) -> String {
 #[cfg(feature = "db-sqlite")]
 /// metadata 字段脱敏内置黑名单（兜底）。
 ///
-/// 即使 operator 未配置 `AuditConfig.mask_fields`，metadata 中这些敏感字段名也替换为
-/// `"***"`（安全默认：黑名单未列即放行是危险的）。与 operator mask_fields 取并集。
-/// 注：`old_token`/`new_token` 在此兜底为 `***`；`token` 列由 `mask_audit_token`
-/// 截断（保留可识别前缀，不走 metadata）。
+/// 即使 operator 未配置 `AuditConfig.mask_fields`，这些敏感字段名也替换为 `"***"`
+/// （安全默认：黑名单未列即放行是危险的），与 operator mask_fields 取并集；
+/// `old_token`/`new_token` 兜底为 `***`，`token` 列由 `mask_audit_token` 截断保留前缀。
 const BUILTIN_MASK_FIELDS: &[&str] = &[
     "password",
     "password_hash",
@@ -249,13 +225,8 @@ fn extract_request_context(event: &GarrisonEvent) -> Option<&super::RequestConte
     }
 }
 
-/// 创建审计默认脱敏器。
-///
-/// 注册常见敏感字段的类型感知脱敏规则：
-/// - `phone` → 手机号脱敏（保留前 3 后 4）
-/// - `email` → 邮箱脱敏（保留首字符 + 域名）
-/// - `id_card` → 身份证脱敏（保留前 3 后 4）
-/// - `bank_card` → 银行卡脱敏（保留前 6 后 4，PCI-DSS 3.4）
+/// 创建审计默认脱敏器：注册 `phone` / `email` / `id_card` / `bank_card` 的类型感知脱敏规则
+/// （如银行卡保留前 6 后 4，PCI-DSS 3.4）。
 #[cfg(all(feature = "secure-masking", feature = "db-sqlite"))]
 fn default_audit_masker() -> SensitiveDataMasker {
     SensitiveDataMasker::new()
@@ -267,20 +238,8 @@ fn default_audit_masker() -> SensitiveDataMasker {
 
 /// `audit_logs` 表行结构。
 ///
-/// 对应 `migrations/sqlite/core/004_audit_logs.sql` 的表定义，
-/// 由 `AuditLogListener::to_audit_entry` 从 `GarrisonEvent` 转换而来。
-///
-/// # 字段
-///
-/// - `tenant_id`: 租户 ID（默认 0，多租户隔离时填充）
-/// - `event_type`: 事件类型（如 "login" / "logout" / "kickout"）
-/// - `login_id`: 登录主体标识（部分事件无 login_id，如 TokenExpired）
-/// - `token`: 关联 token（可选）
-/// - `ip`: 客户端 IP（可选，需从上下文注入）
-/// - `user_agent`: User-Agent（可选）
-/// - `metadata`: 附加元数据 JSON 字符串（可选，已掩码）
-/// - `success`: 事件是否成功（Login= true / LoginFailure = false）
-/// - `created_at`: Unix 时间戳（秒）
+/// 对应 `migrations/sqlite/core/004_audit_logs.sql`，由 `AuditLogListener::to_audit_entry`
+/// 从 `GarrisonEvent` 转换而来。
 #[cfg(feature = "db-sqlite")]
 #[derive(Debug, Clone)]
 pub struct AuditEntry {
@@ -304,25 +263,10 @@ pub struct AuditEntry {
     pub created_at: i64,
 }
 
-/// 审计日志查询条件。
+/// 审计日志查询条件（所有字段 `None` 表示不过滤该维度）。
 ///
-/// 用于 `AuditLogListener::query_audit_logs` 构造复合查询条件，
-/// 所有字段为 `Option`，`None` 表示不过滤该维度。
-///
-/// # 字段
-///
-/// - `tenant_id`: 按租户 ID 过滤（`Some(0)` 查默认租户）
-/// - `event_type`: 按事件类型过滤（如 `Some("login")`）
-/// - `from`: `created_at >= from`（Unix 秒）
-/// - `to`: `created_at <= to`（Unix 秒）
-///
-/// # 设计（依据既有先例）
-///
-/// spec 原文说 `GarrisonDao::query_audit_logs`，
-/// 但 GarrisonDao 是 cache 抽象（get/set/delete），不支持 SQL SELECT；
-/// 强行加 `query_audit_logs` 会破坏单一职责（与 insert 同冲突）。
-/// 遵循既有先例：`query_audit_logs` 作为
-/// `AuditLogListener` 的方法，持 `pool: DbPool` 直连 SQL。
+/// 设计依据见文件头：GarrisonDao 是 cache 抽象，查询与写入同走
+/// `AuditLogListener` 的 `pool: DbPool` 直连 SQL。
 #[cfg(feature = "db-sqlite")]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AuditQuery {
@@ -336,15 +280,8 @@ pub struct AuditQuery {
     pub to: Option<i64>,
 }
 
-/// 审计日志监听器。
-///
-/// 实现 `GarrisonListener`，将 `GarrisonEvent` 转换为 `AuditEntry` 并 INSERT 到 `audit_logs` 表。
-///
-/// # 设计（依据 RefreshTokenRotation 先例）
-///
-/// 持 `pool: DbPool` 直连 SQL，而非 `dao: Arc<dyn GarrisonDao>`。
-/// 原因：GarrisonDao 是 cache 抽象（get/set/delete），不支持 SQL INSERT；
-/// 强行加 `insert_audit_log` 会破坏单一职责。
+/// 审计日志监听器：实现 `GarrisonListener`，将 `GarrisonEvent` 转为 `AuditEntry`
+/// 并 INSERT 到 `audit_logs` 表（直连 SQL 的设计取舍见文件头）。
 #[cfg(feature = "db-sqlite")]
 pub struct AuditLogListener {
     /// dbnexus 连接池，用于 SQL INSERT。
@@ -360,22 +297,13 @@ impl AuditLogListener {
         Self { pool, config }
     }
 
-    /// 将 `GarrisonEvent` 转换为 `AuditEntry`（全变体穷尽 match，无 `_ =>` 兜底）。
-    ///
-    /// `match` 必须穷尽所有变体，新增变体（含 feature-gated）
-    /// 时产生编译错误提醒补实现（原实现存在 `_ =>` 兜底 + match 后 if-let
-    /// 补丁，会把新变体静默归为 `"other"`，与 spec 矛盾，已改为各变体显式映射）。
-    ///
-    /// 14 个 spec 必需变体+ 既有安全变体 + feature-gated 变体
-    /// （`anomalous-detector-dual` / `credit-metering`），全部转换为 AuditEntry。
-    /// `event_type` 使用变体名 snake_case（如 `LoginFailure` → `"login_failure"`）。
-    ///
-    /// 转换后对 `metadata` 调用 `mask_metadata` 进行字段掩码。
+    /// 将 `GarrisonEvent` 转换为 `AuditEntry`：全变体穷尽 match，无 `_ =>` 兜底，
+    /// 新增变体（含 feature-gated）必须显式映射（编译期强制，避免静默归为 "other"）；
+    /// `event_type` 取变体名 snake_case，转换后对 `metadata` 调用 `mask_metadata` 掩码。
     fn to_audit_entry(&self, event: &GarrisonEvent) -> GarrisonResult<AuditEntry> {
         let now = Utc::now().timestamp();
-        // 从 TENANT task_local 读取当前租户 ID
-        // - tenant-isolation feature 关闭：TENANT.try_get() 无上下文时返回 0（单租户默认值）
-        // - tenant-isolation feature 启用：current_tenant_id_or_error() 无上下文时返回 Err（失败显性化）
+        // 从 TENANT task_local 读取租户 ID：tenant-isolation 关闭时无上下文回退 0，
+        // 启用时无上下文显性返回 Err（失败显性化）
         #[cfg(not(feature = "tenant-isolation"))]
         let tenant_id = crate::context::tenant::TENANT
             .try_get()
@@ -827,8 +755,6 @@ impl AuditLogListener {
                     created_at: now,
                 }
             },
-            // anomalous-detector-dual feature-gated 变体显式映射
-            //（原为 match 后 if-let 覆盖 + `_` 兜底，现改为穷尽分支）
             #[cfg(feature = "anomalous-detector-dual")]
             GarrisonEvent::AnomalousLoginDetected {
                 login_id,
@@ -852,17 +778,13 @@ impl AuditLogListener {
                 success: false,
                 created_at: now,
             },
-            // feature-gated 变体由上方 #[cfg] 分支覆盖，此处不再设 `_ =>` 兜底：
-            // match 必须穷尽——新增变体（无论是否 feature-gated）
-            // 必须在此显式映射，否则编译错误提醒补实现（原 `_` 兜底
-            // 会把新变体静默归为 event_type="other"，与文档矛盾）。
+            // match 穷尽无 `_ =>`：feature-gated 变体由上方 #[cfg] 分支覆盖
         };
         // token 列截断（CWE-532）：前 8 字符 + "…"，live session token 不得原样落审计
         entry.token = entry.token.take().as_deref().map(mask_audit_token);
         // 对 metadata 进行字段掩码（如 password → ***），含 BUILTIN 黑名单兜底
         entry.metadata = entry.metadata.map(|m| self.mask_metadata(&m));
-        // 从 event.request_context 提取 ip/user_agent 填充 audit entry
-        // 统一在 match 之后处理，避免每个 arm 重复提取逻辑
+        // match 之后统一从 request_context 提取 ip/user_agent，避免各 arm 重复
         if let Some(ctx) = extract_request_context(event) {
             entry.ip = ctx.ip.clone();
             entry.user_agent = ctx.user_agent.clone();
@@ -870,11 +792,10 @@ impl AuditLogListener {
         Ok(entry)
     }
 
-    /// 对 metadata JSON 字符串进行字段掩码。
+    /// 对 metadata JSON 字符串进行字段掩码（按 mask_fields 与内置黑名单将字段值替换为 `"***"`）。
     ///
-    /// 遍历 `config.mask_fields`，将 metadata JSON 中对应字段值替换为 `"***"`。
-    /// 非法 JSON 落 `tracing::warn!` 后原样返回（不中断审计链路，但脱敏跳过
-    /// 必须显性可观测）；字段不存在时原样返回。
+    /// 非法 JSON 落 `tracing::warn!` 后原样返回：审计链路不中断，但脱敏跳过
+    /// 必须显性可观测，且 warn 不含原文（原文可能正是待脱敏的敏感值）。
     ///
     /// # 示例
     ///
@@ -899,15 +820,11 @@ impl AuditLogListener {
         fields
     }
 
-    /// 对 metadata JSON 字符串进行字段掩码。
+    /// 按 `AuditConfig.audit_mask_mode` 执行脱敏：`Full` 递归掩码所有值，
+    /// `Partial` 仅掩码 operator `mask_fields` ∪ 内置黑名单命中的字段。
     ///
-    /// 按 `AuditConfig.audit_mask_mode` 执行脱敏：
-    /// - `Full`：递归掩码所有值
-    /// - `Partial`：仅掩码 operator `mask_fields` ∪ 内置黑名单命中的字段
-    ///
-    /// 非法 JSON：落 `tracing::warn!`（含错误与长度上下文，不含原文——原文
-    /// 可能正是待脱敏的敏感值）后原样返回。返回值语义保持既有约定（审计
-    /// 链路不因 metadata 非法而中断），但脱敏跳过不再静默。
+    /// 非法 JSON 落 `tracing::warn!`（含错误与长度上下文，不含原文——原文可能
+    /// 正是待脱敏的敏感值）后原样返回：审计链路不中断，但脱敏跳过显性可观测。
     pub fn mask_metadata(&self, metadata: &str) -> String {
         if metadata.is_empty() {
             return metadata.to_string();
@@ -964,12 +881,9 @@ impl AuditLogListener {
 
     /// Partial 模式递归脱敏：使用 `SensitiveDataMasker` 类型感知脱敏。
     ///
-    /// 对 `mask_fields` 中的字段：
-    /// - 字符串值：匹配 `SensitiveDataMasker` 规则的字段（phone/email/id_card/
-    ///   bank_card）→ 类型感知脱敏；无匹配规则的字段 → 回退为 `"***"`（安全优先）
-    /// - 非字符串值（Number/Bool/Null/Array/Object）：黑名单命中即整体替换
-    ///   `"***"`，对齐 Full 模式的 `contains_key` 语义——原实现仅匹配
-    ///   `Value::String`，数字/布尔等敏感值绕过脱敏原样落库（两模式不一致）
+    /// 匹配类型感知规则（phone/email/id_card/bank_card）的字段按规则脱敏，
+    /// 无匹配规则回退 `"***"`（安全优先）；非字符串值黑名单命中即整体替换
+    /// `"***"`，对齐 Full 模式语义，防数字敏感值绕过脱敏。
     #[cfg(feature = "secure-masking")]
     fn mask_value_partial(&self, value: &mut serde_json::Value) {
         let masker = default_audit_masker();
@@ -1035,15 +949,8 @@ impl AuditLogListener {
 
     /// 按复合条件查询审计日志。
     ///
-    /// 动态拼 SQL `WHERE` 子句，所有参数使用占位符 `?` 防止 SQL 注入。
-    /// `AuditQuery` 字段为 `None` 时跳过该过滤维度。
-    /// 结果按 `created_at` 升序排列。
-    ///
-    /// # 设计（依据既有先例）
-    ///
-    /// spec 原文说 `GarrisonDao::query_audit_logs`，
-    /// 但 GarrisonDao 是 cache 抽象，不支持 SQL SELECT。
-    /// 遵循 insert 先例，此方法作为 `AuditLogListener` 的方法，持 `pool: DbPool` 直连 SQL。
+    /// 动态拼 SQL `WHERE` 子句，参数全部走占位符 `?` 防 SQL 注入；`AuditQuery`
+    /// 字段为 `None` 时跳过该过滤维度，结果按 `created_at` 升序。
     pub async fn query_audit_logs(&self, query: AuditQuery) -> GarrisonResult<Vec<AuditEntry>> {
         let session = self
             .pool
@@ -1128,32 +1035,15 @@ impl AuditLogListener {
             .collect()
     }
 
-    /// 导出审计日志为 CSV 字符串。
+    /// 导出审计日志为 CSV 字符串（列：`timestamp,login_id,tenant_id,event_type,signature`）。
     ///
-    /// 列：`timestamp,login_id,tenant_id,event_type,signature`
+    /// `login_id` / `event_type` 按 RFC 4180 转义（引号包裹 + 内嵌双引号翻倍），
+    /// 防列错位与公式注入下游解析器；签名链 `row_content` 仍用原始未转义字段拼接，
+    /// `verify_signature_chain` 从 entries 重算，不受导出侧转义影响。
     ///
-    /// # CSV 注入防护
-    ///
-    /// `login_id` / `event_type` 为调用方可控字符串，含逗号、双引号或换行时
-    /// 按 RFC 4180 转义（引号包裹 + 内嵌双引号翻倍），防止列错位与公式注入
-    /// 下游解析器。简单字段输出保持与历史格式逐字节一致。
-    /// 注意：签名链的 `row_content` 仍使用**原始未转义**字段拼接
-    /// （见 [`Self::compute_signature_chain`]），`verify_signature_chain` 从
-    /// entries 重算，不受导出侧转义影响。
-    ///
-    /// 签名链：每行的 `signature` = HMAC-SHA256(key, prev_signature + row_content)，
-    /// 其中 `row_content` = `timestamp,login_id,tenant_id,event_type`，
-    /// `prev_signature` 初始为空字符串，之后为上一行的 signature。
-    ///
-    /// # 参数
-    ///
-    /// - `entries`: 审计日志条目切片（按时间顺序）
-    ///
-    /// # 返回
-    ///
-    /// - 空 `entries`：返回仅含 header 的 CSV 字符串
-    /// - 非空：返回含 header + 数据行的 CSV 字符串
-    /// - `config.signing_key` 为 `None`：返回 `GarrisonError::Config`
+    /// 签名链：`signature` = HMAC-SHA256(key, prev_signature + row_content)，
+    /// `row_content` = `timestamp,login_id,tenant_id,event_type`，首行 `prev_signature` 为空串；
+    /// `config.signing_key` 为 `None` 时返回 `GarrisonError::Config`。
     #[cfg(feature = "audit-log")]
     pub fn export_csv(&self, entries: &[AuditEntry]) -> GarrisonResult<String> {
         let signatures = self.compute_signature_chain(entries)?;
@@ -1173,20 +1063,10 @@ impl AuditLogListener {
         Ok(csv)
     }
 
-    /// 导出审计日志为 JSON 数组字符串。
+    /// 导出审计日志为 JSON 数组字符串（对象含 `timestamp`/`login_id`/`tenant_id`/`event_type`/`signature`）。
     ///
-    /// 每行一个 JSON 对象，包含 `timestamp`/`login_id`/`tenant_id`/`event_type`/`signature` 字段。
-    /// 签名链算法同 `export_csv`。
-    ///
-    /// # 参数
-    ///
-    /// - `entries`: 审计日志条目切片（按时间顺序）
-    ///
-    /// # 返回
-    ///
-    /// - 空 `entries`：返回 `"[]"`
-    /// - 非空：返回 JSON 数组字符串
-    /// - `config.signing_key` 为 `None`：返回 `GarrisonError::Config`
+    /// 签名链算法同 `export_csv`；`entries` 为空返回 `"[]"`，
+    /// `config.signing_key` 为 `None` 时返回 `GarrisonError::Config`。
     #[cfg(feature = "audit-log")]
     pub fn export_json(&self, entries: &[AuditEntry]) -> GarrisonResult<String> {
         let signatures = self.compute_signature_chain(entries)?;
@@ -1210,21 +1090,9 @@ impl AuditLogListener {
             .map_err(|e| GarrisonError::Config(format!("listener-json-serialize::{}", e)))
     }
 
-    /// 验证 HMAC-SHA256 签名链。
-    ///
-    /// 重新计算 `entries` 的签名链，与提供的 `signatures` 逐行比对。
-    /// 任一行签名不匹配则返回 `Ok(false)`（检测到篡改）。
-    ///
-    /// # 参数
-    ///
-    /// - `entries`: 审计日志条目切片
-    /// - `signatures`: 待验证的签名列表（从 `export_csv`/`export_json` 输出中提取）
-    ///
-    /// # 返回
-    ///
-    /// - `Ok(true)`: 签名链完整，未检测到篡改
-    /// - `Ok(false)`: 检测到篡改（签名不匹配或长度不一致）
-    /// - `Err`: `config.signing_key` 为 `None`
+    /// 验证 HMAC-SHA256 签名链：重算 `entries` 的签名链并与 `signatures` 逐行比对，
+    /// 任一行不匹配或长度不一致返回 `Ok(false)`（检测到篡改）；
+    /// `config.signing_key` 为 `None` 时返回 `Err`。
     #[cfg(feature = "audit-log")]
     pub fn verify_signature_chain(
         &self,
@@ -1235,11 +1103,8 @@ impl AuditLogListener {
             return Ok(false);
         }
         let computed = self.compute_signature_chain(entries)?;
-        // 逐条常量时间比对签名，防止逐元素短路比较引入的时序侧信道
-        // （攻击者同时控制 entries 与 signatures 时可能逐字节推断 HMAC，CWE-208/CWE-347）。
-        // 循环遍历所有签名对，不因任一条不匹配而提前返回。
-        // 长度校验：HMAC-SHA256 hex 编码固定 64 字节，异常长度直接判失败，
-        // 防止外部传入超长 signature 触发常量时间循环被放大成 CPU DoS（CWE-400）。
+        // 逐条常量时间比对（CWE-208/CWE-347），不因任一条不匹配提前返回；
+        // HMAC-SHA256 hex 固定 64 字节，异常长度直接判失败，防超长 signature 放大 CPU DoS（CWE-400）
         const HMAC_SHA256_HEX_LEN: usize = 64;
         let mut all_eq = true;
         for (c, s) in computed.iter().zip(signatures.iter()) {
@@ -1306,26 +1171,19 @@ fn escape_csv_field(field: &str) -> String {
 #[cfg(feature = "db-sqlite")]
 #[async_trait]
 impl GarrisonListener for AuditLogListener {
-    /// 事件处理：转换 + INSERT，失败时 `tracing::warn` 不传播错误。
-    ///
-    /// "失败时 `tracing::warn` 不传播错误"——
-    /// 监听器失败不中断主流程。
+    /// 事件处理：转换 + INSERT，失败时 `tracing::warn` 不传播（监听器失败不中断主流程）。
     ///
     /// # 异步写入的可观测性取舍
     ///
-    /// `async_write=true` 时通过 `tokio::spawn` 派发写入并**即弃 JoinHandle**：
-    /// 任务内失败仅有单条 `tracing::warn`，任务的 panic / 取消以及关停前的
-    /// 完成状态无法被调用方 await 观测。这是保持审计写入不阻塞主流程的
-    /// 性能取舍（审计写入允许"尽力而为"语义）；如需可靠投递（关停前 flush、
-    /// 背压感知、失败重试），请使用 `async_write=false` 的同步路径，或在
-    /// 业务侧自建有界队列 worker。
+    /// `async_write=true` 时经 `tokio::spawn` 写入并**即弃 JoinHandle**：任务内失败
+    /// 仅单条 warn，任务 panic / 取消与关停前完成状态无法 await 观测——这是审计
+    /// 写入"尽力而为、不阻塞主流程"的取舍；如需可靠投递（关停前 flush、背压感知、
+    /// 重试），用 `async_write=false` 同步路径或在业务侧自建有界队列 worker。
     async fn on_event(&self, event: &GarrisonEvent) -> GarrisonResult<()> {
         match self.to_audit_entry(event) {
             Ok(entry) => {
                 if self.config.async_write {
-                    // 异步写入：tokio::spawn 不阻塞主流程。
-                    // 取舍说明见本方法 doc：句柄即弃，失败仅任务内 warn，
-                    // panic/关停不可观测；关停前丢窗口期内未落库的审计条目属已知取舍。
+                    // 取舍见方法 doc：句柄即弃，失败仅任务内 warn，panic/关停不可观测
                     let pool = self.pool.clone();
                     let config = self.config.clone();
                     tokio::spawn(async move {
@@ -1336,7 +1194,7 @@ impl GarrisonListener for AuditLogListener {
                         }
                     });
                 } else {
-                    // 同步写入：失败时 tracing::warn 不传播错误
+                    // 同步写入：失败时 tracing::warn 不传播错误（不中断主流程）
                     match self.insert(&entry).await {
                         Ok(_) => audit_log_written(&entry),
                         Err(e) => tracing::warn!("audit log write failed: {}", e),
@@ -1402,9 +1260,7 @@ mod tests {
     }
 }
 
-// ============================================================================
 // db-sqlite 集成测试（_logs 表迁移 + AuditLogListener）
-// ============================================================================
 
 #[cfg(all(test, feature = "audit-log", feature = "db-sqlite"))]
 mod db_sqlite_tests {
@@ -1434,11 +1290,8 @@ mod db_sqlite_tests {
         pool
     }
 
-    /// 在 `TENANT` task_local 上下文中执行测试体（`tenant-isolation` feature 启用时）。
-    ///
-    /// `to_audit_entry` 在 `tenant-isolation` 启用时调用 `current_tenant_id_strict()`，
-    /// 无 `TENANT.scope` 时返回 `None` → `GarrisonError::Config`（失败显性化）。
-    /// 本 helper 补齐 scope，让测试在正确上下文中运行。
+    /// 在 `TENANT` task_local 上下文中执行测试体：`to_audit_entry` 在
+    /// `tenant-isolation` 启用时无上下文返回 `Config`（失败显性化），此处补齐 scope。
     #[cfg(feature = "tenant-isolation")]
     async fn run_with_tenant_scope<F, Fut, T>(f: F) -> T
     where
@@ -1467,16 +1320,10 @@ mod db_sqlite_tests {
         f().await
     }
 
-    // ========================================================================
     // _logs 表迁移验证
-    // ========================================================================
 
-    /// 验证 SQLite 迁移加载 `004_audit_logs.sql` 后
-    /// `audit_logs` 表存在。
-    ///
-    /// SQL 文件放 `migrations/sqlite/core/004_audit_logs.sql`，
-    /// 复用现有 `migrate_core()` 自动加载机制（与 002_role_hierarchy.sql / 003_refresh_tokens.sql 同惯例），
-    /// 而非 原描述的 `src/dao/repository/sqlite/audit_logs.sql`。
+    /// 验证 SQLite 迁移加载 `migrations/sqlite/core/004_audit_logs.sql` 后
+    /// `audit_logs` 表存在（复用 `migrate_core()` 自动加载机制，与 002/003 同惯例）。
     #[tokio::test(flavor = "multi_thread")]
     async fn audit_logs_table_exists_after_migration() {
         let pool = setup_db().await;
@@ -1495,20 +1342,10 @@ mod db_sqlite_tests {
         );
     }
 
-    // ========================================================================
     // 持久化事件
-    // ========================================================================
 
-    /// AuditLogListener 接收 `GarrisonEvent::Login` 后持久化到 `audit_logs` 表。
-    ///
-    /// 构造 `GarrisonEvent::Login { login_id: "1".to_string(), token: "tok".into(), device: None }`，
-    /// 调用 `AuditLogListener.on_event(&event).await`，
-    /// 断言 `audit_logs` 表新增一行 `event_type="login"` 且 `login_id=1`。
-    ///
-    /// 设计取舍：
-    /// - 说 `pub struct AuditLogListener { pub dao: Arc<dyn GarrisonDao>, .. }`
-    /// - 但 GarrisonDao 是 cache 抽象（4 实现：Oxcache/MockDao/MinimalDao/AloneCache，均不支持 SQL INSERT）
-    /// - 遵循 RefreshTokenRotation 先例（惯例优先），AuditLogListener 持 `pool: DbPool` 直连 SQL
+    /// AuditLogListener 接收 `GarrisonEvent::Login` 后持久化到 `audit_logs` 表：
+    /// 断言新增一行 `event_type="login"` 且 `login_id=1`（直连 SQL 设计见文件头取舍）。
     #[tokio::test(flavor = "multi_thread")]
     async fn audit_log_listener_persists_login_event() {
         run_with_tenant_scope(audit_log_listener_persists_login_event_inner).await
@@ -1554,24 +1391,13 @@ mod db_sqlite_tests {
         assert_eq!(login_id, "1", "login_id 应为 1");
     }
 
-    // ========================================================================
     // 字段掩码（如 password → ***）
-    // ========================================================================
 
     /// `AuditLogListener::mask_metadata` 应将 metadata JSON 中
     /// `config.mask_fields` 列出的字段值替换为 `"***"`。
     ///
-    /// 构造 metadata JSON `{"password":"secret123"}`，
-    /// 调用 `listener.mask_metadata(...)`，
-    /// 断言返回的 JSON 中 `password` 字段值为 `"***"`。
-    ///
-    /// 设计取舍：
-    /// - 说"调用 `on_event`，断言 `audit_logs` 表中该行 metadata 字段 password 值为 ***"
-    /// - 但 `GarrisonEvent::Login { login_id, token, device }` 无 password 字段，
-    /// `to_audit_entry` 产生的 metadata 仅含 `{"device":"..."}`，无法产生含 password 的 metadata
-    /// - 强行让 Login 事件携带 password 违反安全原则（密码不应记录到审计日志）
-    /// - 解决方案：测试 `pub fn mask_metadata(&self, metadata: &str) -> String` 公开方法
-    /// （在 `to_audit_entry` 末尾调用该方法对 metadata 掩码）
+    /// Login 事件本身不携带 password（密码不进审计，安全原则），故直接测
+    /// `pub fn mask_metadata` 公开方法：构造含 password 的 metadata 断言替换为 `"***"`。
     #[tokio::test(flavor = "multi_thread")]
     async fn audit_log_listener_masks_password_field_in_metadata() {
         let pool = setup_db().await;
@@ -1597,18 +1423,11 @@ mod db_sqlite_tests {
         );
     }
 
-    // ========================================================================
     // 覆盖全部 14 事件
-    // ========================================================================
 
-    /// AuditLogListener 应为 GarrisonEvent 的 14 个变体
-    /// 各生成一行 audit_logs 记录，event_type 对应变体名 snake_case。
-    ///
-    /// 对每个变体调用 `on_event(&event).await`，最终断言 `audit_logs` 表行数与变体数匹配，
-    /// 且每种 event_type 各一行。
-    ///
-    /// Green 状态：`to_audit_entry` 已覆盖全部非 feature-gated 变体（含 Replaced、
-    /// Invitation* 系列），credit-metering feature 启用时还覆盖 CreditConsumed/CreditAlert。
+    /// AuditLogListener 应为 14 个非 feature-gated 变体各生成一行 audit_logs 记录，
+    /// `event_type` 对应变体名 snake_case；credit-metering 启用时额外覆盖
+    /// `CreditConsumed` / `CreditAlert`。
     #[tokio::test(flavor = "multi_thread")]
     async fn audit_log_listener_handles_all_14_events() {
         run_with_tenant_scope(audit_log_listener_handles_all_14_events_inner).await
@@ -1849,27 +1668,14 @@ mod db_sqlite_tests {
         }
     }
 
-    // ========================================================================
     // _audit_logs 复合条件查询
-    // ========================================================================
 
-    /// `AuditLogListener::query_audit_logs` 应按 `AuditQuery` 的
-    /// `tenant_id` / `event_type` / `from` / `to` 四个维度复合过滤。
+    /// `AuditLogListener::query_audit_logs` 应按 `tenant_id` / `event_type` /
+    /// `from` / `to` 四维度复合过滤：插入 4 行后依次验证 tenant+type、追加 `to`、
+    /// 追加 `from`、全 `None` 四种组合。
     ///
-    /// 插入 4 行不同 tenant/event_type/created_at 的日志：
-    /// - Row A: tenant=0, event_type="login", created_at=1000
-    /// - Row B: tenant=1, event_type="login", created_at=2000
-    /// - Row C: tenant=0, event_type="logout", created_at=3000
-    /// - Row D: tenant=0, event_type="login", created_at=5000
-    ///
-    /// 验证 4 种过滤组合：
-    /// 1. `tenant_id=Some(0), event_type=Some("login")` → A + D（2 行）
-    /// 2. 上述 + `to=Some(4000)` → 仅 A（1 行，D 被 created_at > 4000 过滤）
-    /// 3. 上述 + `from=Some(3000)` → 仅 D（1 行，A 被 created_at < 3000 过滤）
-    /// 4. 全 `None` → 全部 4 行
-    ///
-    /// 注意：INSERT 通过 `listener.insert(&entry)` 而非原生 SQL，确保与
-    /// `query_audit_logs` 走同一 pool 路径（避免 SQLite in-memory 跨连接隔离）。
+    /// INSERT 经 `listener.insert(&entry)` 而非原生 SQL，确保与查询走同一 pool 路径
+    /// （避开 SQLite in-memory 跨连接隔离）。
     #[tokio::test(flavor = "multi_thread")]
     async fn query_audit_logs_filters_by_tenant_event_type_time_range() {
         let pool = setup_db().await;
@@ -2008,15 +1814,9 @@ mod db_sqlite_tests {
         );
     }
 
-    /// `to_audit_entry` 应从 `TENANT` task_local 读取 tenant_id
-    /// 并填充到返回的 `AuditEntry.tenant_id`。
-    ///
-    /// 在 `TENANT.scope(TenantContext { tenant_id: 42, .. }, async { ... })` 内
-    /// 调用 `to_audit_entry(&GarrisonEvent::Login { ... })`，断言返回的 `AuditEntry.tenant_id == 42`。
-    ///
-    /// 此测试作为 重构（移除 post-match 覆盖、match arm 直接用 tenant_id）的保护网：
-    /// - 在改代码前应通过（因为现有 L445-446 post-match 覆盖 `entry.tenant_id = tenant_id` 正确）
-    /// - 在 改后也应通过（match arm 直接用 tenant_id，行为等价）
+    /// `to_audit_entry` 应从 `TENANT` task_local 读取 tenant_id 填充到
+    /// `AuditEntry.tenant_id`：在 `TENANT.scope(tenant_id=42)` 内调用并断言结果
+    /// （match arm 直取 tenant_id 的保护网）。
     #[tokio::test(flavor = "multi_thread")]
     async fn audit_entry_carries_tenant_id_from_task_local() {
         use crate::context::tenant::{TenantContext, TenantSource, TENANT};
@@ -2056,9 +1856,7 @@ mod db_sqlite_tests {
         );
     }
 
-    // ========================================================================
     // export_csv / export_json / verify_signature_chain 测试（Red）
-    // ========================================================================
 
     /// `export_csv` 应返回有效 CSV 格式字符串。
     ///
@@ -2439,9 +2237,7 @@ mod db_sqlite_tests {
         assert_eq!(json_str, "[]", "空列表 JSON 应为 []");
     }
 
-    // ========================================================================
     // Audit IP/UA 从 request_context 填充
-    // ========================================================================
 
     /// 当 `request_context` 携带 ip 与 user_agent 时，
     /// `to_audit_entry` 应将其提取到返回的 `AuditEntry.ip` 与 `AuditEntry.user_agent`。
@@ -2570,9 +2366,7 @@ mod db_sqlite_tests {
         assert!(entry.user_agent.is_none(), "user_agent 未提供时应为 None");
     }
 
-    // ========================================================================
     // Audit 脱敏配置 Full/Partial 切换
-    // ========================================================================
 
     /// Full 模式下 mask_fields 中的字段值全部替换为 "***"。
     ///
@@ -2639,9 +2433,7 @@ mod db_sqlite_tests {
         );
     }
 
-    // ========================================================================
     // Partial 模式非字符串值脱敏 + 非法 JSON 显性告警（静态-配置与部署-4）
-    // ========================================================================
 
     /// Partial 模式下黑名单字段承载非字符串值（Number/Bool/Null/Array）时
     /// 一律整体替换 "***"，对齐 Full 模式语义。

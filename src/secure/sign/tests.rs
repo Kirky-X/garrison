@@ -5,9 +5,7 @@
 
 use super::Signer;
 
-// ========================================================================
 // HMAC-SHA256 测试
-// ========================================================================
 
 /// RFC 4231 Test Case 1: key=[0x0b;20], data="Hi There"。
 #[test]
@@ -48,9 +46,7 @@ fn hmac_sha256_different_secret_different_result() {
     assert_ne!(a, b);
 }
 
-// ========================================================================
 // HMAC-SHA512 测试
-// ========================================================================
 
 /// RFC 4231 Test Case 1: key=[0x0b;20], data="Hi There"。
 #[test]
@@ -65,9 +61,7 @@ fn hmac_sha512_rfc4231_test_case_1() {
     );
 }
 
-// ========================================================================
 // Base64 测试
-// ========================================================================
 
 /// Base64 编码与解码互逆。
 #[test]
@@ -92,9 +86,7 @@ fn base64_decode_invalid_input_errors() {
     assert!(result.is_err());
 }
 
-// ========================================================================
 // verify_hmac_sha256 测试（常量时间 HMAC 验证）
-// ========================================================================
 
 /// 正确签名返回 true。
 #[test]
@@ -152,9 +144,7 @@ fn verify_hmac_sha256_empty_inputs_boundary() {
     assert!(Signer::verify_hmac_sha256(b"", b"", &sig));
 }
 
-/// 时序无显著差异（多次取均值，错误签名不应明显更快）。
-/// 通过比较正确签名与错误签名的平均耗时，差异不应超过 3 倍。
-/// 注意：时序测试有抖动，使用宽松阈值避免 flaky。
+/// 时序无显著差异（多次取均值，错误签名不应明显更快，差异 ≤ 3 倍；时序测试有抖动，用宽松阈值避免 flaky）。
 #[test]
 fn verify_hmac_sha256_constant_time_no_early_return() {
     use std::time::Instant;
@@ -194,12 +184,9 @@ fn verify_hmac_sha256_constant_time_no_early_return() {
         invalid_nanos += start.elapsed().as_nanos();
     }
 
-    // 常量时间比较：错误签名不应明显快于正确签名（阈值 4x，交错后噪声大幅收敛）。
-    // 守卫边界（三维审查 L 记录）：本测试可捕获「跳过 HMAC/整段比较」类数量级
-    // 回归；「naive 逐字节 ==」类回归耗时比≈1.0-1.2（HMAC 计算占主导），
-    // 无法由时序测试捕获——该类由公共 constant-time 原语（secure::ct_eq，
-    // subtle 全长比较）保证，见 signer.rs 与 src/secure/ct_eq.rs；
-    // 本测试为防回归粗筛而非时序侧信道唯一防线。
+    // 常量时间比较：错误签名不应明显快于正确签名（阈值 4x，交错测量后噪声收敛）。
+    // 本测试只捕获「跳过 HMAC/整段比较」类数量级回归；「naive 逐字节 ==」耗时比 ≈1.0-1.2（HMAC 占主导）无法由时序捕获，
+    // 该类由公共 constant-time 原语保证（secure::ct_eq 的 subtle 全长比较），本测试为防回归粗筛而非唯一防线。
     let ratio = if invalid_nanos < valid_nanos {
         valid_nanos as f64 / invalid_nanos.max(1) as f64
     } else {
@@ -214,9 +201,7 @@ fn verify_hmac_sha256_constant_time_no_early_return() {
     );
 }
 
-// ========================================================================
 // Signer struct 测试
-// ========================================================================
 
 /// `Signer` 可构造且 `Default` 可用。
 #[test]
@@ -224,20 +209,11 @@ fn signer_implements_default() {
     let _signer: Signer = Default::default();
 }
 
-// ========================================================================
 // DEEP-02 死代码守卫：constant_time_eq_manual fallback 已移除
-// ========================================================================
 
-/// DEEP-02: 验证 signer.rs 已移除 `constant_time_eq_manual` 手动 fallback。
+/// DEEP-02 源码级守卫：过滤注释后断言 signer.rs 不再含 `constant_time_eq_manual` 标识符与 `not(subtle)` 分支。
 ///
-/// 审查发现：`verify_hmac_sha256` 中 `#[cfg(not(feature = "subtle"))]` 分支引用的
-/// `constant_time_eq_manual` 与 `secure::ct_eq::constant_time_eq` /
-/// `server::middleware::constant_time_eq` 功能重复；且因 `secure-sign` feature
-/// 强制启用 `dep:subtle`（signer 模块仅在 secure-sign 下编译），该 fallback
-/// 是**永远不可达的死代码**。
-///
-/// 源码级守卫测试：过滤注释后断言真实代码不再包含
-/// `constant_time_eq_manual` 标识符与 `not(subtle)` 分支，防止回归重新引入重复实现。
+/// 该 fallback 与 `secure::ct_eq::constant_time_eq` 功能重复，且在 `secure-sign` 恒启用 subtle 下永远不可达（死代码），防回归重新引入。
 #[test]
 fn deep02_signer_has_no_manual_constant_time_fallback() {
     let source = include_str!("signer.rs");

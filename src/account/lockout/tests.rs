@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! 用户级双态锁定策略测试。
-//!
-//! 测试覆盖各验收标准及 UserLockoutStrategy 行为。
 
 use super::strategy::now_timestamp;
 use super::*;
@@ -144,8 +142,6 @@ fn wait_strategy_linear_formula() {
     assert_eq!(base * 2, 60);
     assert_eq!(base * 3, 90);
 }
-
-// ===== UserLockoutStrategy 测试 =====
 
 /// 辅助：创建默认配置的 UserLockoutStrategy + MockDao。
 fn make_strategy() -> (UserLockoutStrategy, Arc<dyn GarrisonDao>) {
@@ -327,12 +323,9 @@ async fn wait_strategy_linear_record_failure_duration() {
     );
 }
 
-/// 验证 record_success 重置 failure_count，并清除**已触发**的临时锁定状态。
-///
-/// 先以 max_failure_factor=1 触发一次真实临时锁定，
-/// 再调 record_success，验证 failure_count 与临时锁定状态
-/// （temporary_lockout_count / locked_until）被清零、
-/// permanent_locked 不受影响（永久锁定不可通过登录成功解除）。
+/// 验证 record_success 重置 failure_count 并清除已触发的临时锁定状态
+/// （temporary_lockout_count / locked_until 清零）；`permanent_locked` 不受影响
+/// （永久锁定不可通过登录成功解除）。
 #[tokio::test]
 async fn record_success_resets_failure_count() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -345,7 +338,6 @@ async fn record_success_resets_failure_count() {
     };
     let strategy = UserLockoutStrategy::new(config, dao);
 
-    // 1 次失败即触发临时锁定
     strategy.record_failure("user1").await.unwrap();
     let state = strategy.get_state("user1").await.unwrap();
     assert_eq!(state.failure_count, 1);
@@ -382,11 +374,8 @@ async fn record_success_resets_failure_count() {
     );
 }
 
-/// 并发 record_failure 丢失更新回归测试。
-///
-/// 多任务并发对同一用户 record_failure（每次 +1），CAS 原子读改写保证
-/// 全部自增不丢失：最终 failure_count == 并发任务数。
-/// （旧实现 get→mutate→set 非原子，并发下会丢失自增、延迟锁定触发。）
+/// 并发 record_failure 丢失更新回归：CAS 原子读改写保证自增不丢失（最终 failure_count ==
+/// 并发任务数）；旧实现 get→mutate→set 非原子，并发下会丢失自增、延迟锁定触发。
 #[tokio::test]
 async fn concurrent_record_failure_no_lost_updates() {
     use std::sync::Arc as StdArc;
@@ -426,7 +415,6 @@ async fn concurrent_record_failure_no_lost_updates() {
 /// UserLockoutConfig::validate 拒绝零值退化配置。
 #[test]
 fn config_validate_rejects_degenerate_values() {
-    // max_failure_factor = 0 → 首败即锁，应拒绝
     let config = UserLockoutConfig {
         max_failure_factor: 0,
         permanent_lockout: false,
@@ -436,7 +424,7 @@ fn config_validate_rejects_degenerate_values() {
     };
     assert!(config.validate().is_err(), "max_failure_factor=0 应被拒绝");
 
-    // failure_window_seconds = 0 → 窗口判断退化，应拒绝
+    // failure_window_seconds = 0 → 窗口判断退化
     let config = UserLockoutConfig {
         max_failure_factor: 5,
         permanent_lockout: false,
@@ -449,7 +437,7 @@ fn config_validate_rejects_degenerate_values() {
         "failure_window_seconds=0 应被拒绝"
     );
 
-    // permanent_lockout + max_temporary_lockouts = 0 → 首次临时锁定即永久，应拒绝
+    // permanent_lockout + max_temporary_lockouts = 0 → 首次临时锁定即永久
     let config = UserLockoutConfig {
         max_failure_factor: 5,
         permanent_lockout: true,
@@ -462,7 +450,7 @@ fn config_validate_rejects_degenerate_values() {
         "permanent_lockout + max_temporary_lockouts=0 应被拒绝"
     );
 
-    // wait_strategy 零值（锁定时长为 0）应拒绝
+    // wait_strategy 零值（锁定时长为 0）
     let config = UserLockoutConfig {
         max_failure_factor: 5,
         permanent_lockout: false,
@@ -508,8 +496,7 @@ async fn new_with_invalid_config_falls_back_to_default() {
     );
 }
 
-/// 验证 failure_window_seconds 窗口过期后 failure_count 重置。
-/// 场景：失败 3 次后窗口过期，再失败应从 1 开始计数而非 4。
+/// 验证 failure_window_seconds 窗口过期后 failure_count 重置（失败 3 次后窗口过期，再失败从 1 起算）。
 #[tokio::test]
 async fn failure_window_resets_count_after_expiry() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -522,7 +509,6 @@ async fn failure_window_resets_count_after_expiry() {
     };
     let strategy = UserLockoutStrategy::new(config, dao.clone());
 
-    // 失败 3 次（窗口内）
     for _ in 0..3 {
         strategy.record_failure("user1").await.unwrap();
     }
@@ -535,7 +521,6 @@ async fn failure_window_resets_count_after_expiry() {
     state.first_failure_at = Some(now_timestamp() - 301);
     strategy.set_state("user1", &state).await.unwrap();
 
-    // 再次失败：窗口已过期，failure_count 应重置为 1
     strategy.record_failure("user1").await.unwrap();
     let state = strategy.get_state("user1").await.unwrap();
     assert_eq!(
@@ -549,7 +534,6 @@ async fn failure_window_resets_count_after_expiry() {
 #[tokio::test]
 async fn failure_window_accumulates_within_window() {
     let (strategy, _) = make_strategy();
-    // 默认 failure_window_seconds=300，连续失败应累积
     for i in 1..=4 {
         strategy.record_failure("user1").await.unwrap();
         let state = strategy.get_state("user1").await.unwrap();
@@ -559,7 +543,6 @@ async fn failure_window_accumulates_within_window() {
             i, i
         );
     }
-    // 确认 first_failure_at 在首次失败时被设置，后续不变
     let state = strategy.get_state("user1").await.unwrap();
     assert!(
         state.first_failure_at.is_some(),

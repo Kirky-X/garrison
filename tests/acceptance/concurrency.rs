@@ -2,17 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! concurrency 域验收。
-//! `multi_thread` runtime 真实竞争场景，编号 ：
-//! 50 并发登录同账号 / 并发 renew（session.renew 与 auto_renewal 竞争）/
-//! 并发 refresh 同一 refresh token（轮换重用检测）/ kickout 与 login 竞态。
+//! `multi_thread` runtime 真实竞争场景：50 并发登录同账号 / 并发 renew（session.renew
+//! 与 auto_renewal 竞争）/ 并发 refresh 同一 refresh token（轮换重用检测）/ kickout 与
+//! login 竞态。
 //!
-//! `#[serial]` 约定（硬性要求 1）：所有经 `GarrisonTestHarness`（全局单例）
-//! 的测试加 `#[serial]`；不经 `GarrisonManager` 的纯竞争测试（GarrisonSession
-//! 独立实例、RefreshTokenRotation 直测）省略。
+//! `#[serial]` 约定：所有经 `GarrisonTestHarness`（全局单例）的测试加 `#[serial]`；
+//! 不经 `GarrisonManager` 的纯竞争测试（`GarrisonSession` 独立实例、
+//! `RefreshTokenRotation` 直测）省略。
 //!
-//! 文件尾原样并入 3 个 `#[ignore]` 性能基线（tests/e2e/perf.rs 的
-//! perf_login / perf_check_login / perf_check_permission，保留 `#[ignore]`
-//! 与原文档注释；经 `--ignored` 显式触发）。
+//! 文件尾并入 3 个 `#[ignore]` 性能基线（自 e2e perf.rs 移植，保留 `#[ignore]` 与原
+//! 文档注释；经 `--ignored` 显式触发）。
 
 use crate::relay::SendRelayRetry;
 use garrison::dao::{GarrisonDao, InMemoryDao};
@@ -160,12 +159,10 @@ async fn acc_conc_002_concurrent_session_renew_no_token_duplication() {
     assert_eq!(ts.login_id, "1001", "renew 后反查主体应一致");
 }
 
-/// （异常侧）：auto_renewal 并发竞争——10 个并发 `check_login`
-/// 触发同一 token 的自动续签，per-login_id 续签锁 + 锁内二次 TTL 检查保证
-/// **恰一次**续签（其余并发调用被吸收，无 token 泄漏/重复）：
-/// - 恰 1 个 task 产出续签新 token，且与旧 token 不同；
-/// - 新 token 有效且绑定同一主体；旧 token 轮换后失效；
-/// - 产出续签的 task 自身保持登录（Ok(true)），其余 task 不报错。
+/// （异常侧）：10 个并发 `check_login` 触发同一 token 的自动续签，per-login_id 续签锁
+/// + 锁内二次 TTL 检查保证**恰一次**续签（其余并发调用被吸收，无 token 泄漏/重复）：
+/// 恰 1 个 task 产出新 token 且与旧 token 不同；新 token 有效且绑定同一主体；旧 token
+/// 轮换后失效；产出续签的 task 自身保持登录（Ok(true)），其余 task 不报错。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial]
 async fn acc_conc_003_concurrent_auto_renewal_exactly_once() {
@@ -254,15 +251,11 @@ async fn acc_conc_003_concurrent_auto_renewal_exactly_once() {
 
 /// （异常侧）：kickout 与并发 login 竞态——终态一致。
 ///
-/// `GarrisonSession` 对同一 login_id 的 login 写入与 kickout 删除均在
-/// per-login_id 锁（`with_login_lock`）临界区内串行化，故序关系可确定：
-/// - 顺序锚点：kickout 之前签发的 token 全部失效（「kickout 前的 token 全失效」）；
-/// - 顺序锚点：kickout 完成之后签发的 token 有效（「kickout 后登录的 token 有效」）；
-/// - 竞态阶段：`JoinSet` 同时发起 kickout 与 20 个 login，断言确定性不变量：
-/// - kickout 成功，无 task 失败；
-/// - 观察到 kickout 已完成（AtomicBool）才返回的登录 token 必然有效；
-/// - 终态一致：每个登录 token 要么有效（反查一致 + check_login=true）要么
-/// 已失效（反查 None + check_login 不为 Ok(true)），无中间态、无跨账号泄漏。
+/// `GarrisonSession` 对同一 login_id 的 login 写入与 kickout 删除均在 per-login_id 锁
+/// （`with_login_lock`）临界区内串行化，故序关系可确定：kickout 之前签发的 token 全部
+/// 失效、kickout 完成之后签发的 token 有效；竞态阶段断言确定性不变量——kickout 成功、
+/// 观察到 kickout 已完成（AtomicBool）才返回的登录 token 必然有效、终态一致（每个
+/// token 要么有效要么失效，无中间态、无跨账号泄漏）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial]
 async fn acc_conc_004_kickout_login_race_final_state_consistent() {
@@ -378,8 +371,8 @@ async fn acc_conc_004_kickout_login_race_final_state_consistent() {
 // 并发 refresh 同一 refresh token（轮换重用检测）
 // ------------------------------------------------------------------------
 
-// 以下三个表直查辅助（INSERT / 查 revoked 列），镜像
-// tests/integration/refresh_token.rs 的已知良好装配（dbnexus + sea-orm）。
+// 以下三个表直查辅助（INSERT / 查 revoked 列），镜像 tests/e2e 已知良好装配
+// （dbnexus + sea-orm）。
 
 async fn insert_refresh_token(
     pool: &dbnexus::DbPool,
@@ -435,24 +428,16 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
-/// （异常侧）：8 个并发 task 对同一 refresh token 调用
-/// `RefreshTokenRotation::rotate`——恰一次成功（轮换出新的 access+refresh
-/// 对），其余调用全部被重用/已消费识别（`TokenRevoked` 或
-/// `InvalidToken("refresh token not found or already consumed")`），整条链
-/// 终态一致：旧 token revoked=1、新 token revoked=0，无重复签发。
+/// （异常侧）：8 个并发 task 对同一 refresh token 调用 `RefreshTokenRotation::rotate`——
+/// 恰一次成功（轮换出新的 access+refresh 对），其余调用全部被重用/已消费识别
+/// （`TokenRevoked` 或 `InvalidToken`），整条链终态一致：旧 token revoked=1、新 token
+/// revoked=0，无重复签发。
 ///
-/// # 池装配说明（API 偏差记录）
-///
-/// `rotate` 是**非事务性读-改-写**（detect_reuse → SELECT → INSERT → UPDATE，
-/// 无内部锁）；且 dbnexus `sqlite::memory:` 多连接池下每个连接持有独立的
-/// 内存库（并发 get_session 会看到空库）。因此本测试使用
-/// `max_connections=1` 的单连接内存池：rotate 全程持有唯一连接，语句序列
-/// 天然串行，`sqlite::memory:` 仅一份库（迁移/插入/轮换全部可见）。此装配
-/// 使「恰一次成功」成为确定性不变量（非概率性断言），并保留 8 task 并发
-/// 调度的真实竞争形态（连接获取互斥排队）。
-///
-/// 不经 `GarrisonManager`（直接构造 `RefreshTokenRotation` + SQLite 迁移，
-/// 镜像 tests/integration/refresh_token.rs 装配），省略 `#[serial]`。
+/// # 池装配
+/// `rotate` 是非事务性读-改-写（无内部锁），且 dbnexus `sqlite::memory:` 多连接池下
+/// 每个连接持有独立内存库，故用 `max_connections=1` 单连接内存池令语句序列天然串行，
+/// 使「恰一次成功」成为确定性不变量，同时保留 8 task 并发调度的真实竞争形态。本测试不
+/// 经 `GarrisonManager`（直构造 `RefreshTokenRotation` + SQLite 迁移），省略 `#[serial]`。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_conc_005_concurrent_refresh_same_token_exactly_once() {
     let pool = setup_single_connection_db().await;
@@ -486,10 +471,9 @@ async fn acc_conc_005_concurrent_refresh_same_token_exactly_once() {
 
     let mut successes: Vec<(String, String)> = Vec::new();
     let mut reuse_detected = 0usize;
-    // 入口 detect_reuse 命中已 revoked 的落败方走「真重用→吊销整链」路径
-    // （TokenRevoked），该路径会把胜者刚签发的新 token 一并吊销——这是
-    // 正确的重用语义。两种串行化（新 token 存活 / 被链吊销）都合法，终态
-    // 断言按实际发生路径分支。
+    // 入口 detect_reuse 命中已 revoked 的落败方走「真重用→吊销整链」路径（TokenRevoked），
+    // 会把胜者刚签发的新 token 一并吊销；两种串行化（新 token 存活 / 被链吊销）都合法，
+    // 终态断言按实际发生路径分支。
     let mut chain_revoked = 0usize;
     while let Some(result) = set.join_next().await {
         match result.expect("并发 rotate task 不应 panic") {
@@ -553,11 +537,8 @@ async fn acc_conc_005_concurrent_refresh_same_token_exactly_once() {
     }
 }
 
-/// 单连接 SQLite 内存池（`max_connections=min_connections=1`）。
-///
-/// 见 的池装配说明：dbnexus 多连接 `sqlite::memory:` 池的每个
-/// 连接持有独立内存库，并发会话会看到空库；单连接池保证迁移/写入/轮换的
-/// 读-改-写序列串行可见。
+/// 单连接 SQLite 内存池（`max_connections=min_connections=1`）：多连接 `sqlite::memory:`
+/// 池每个连接持独立内存库，并发会话会看到空库；单连接池保证读-改-写序列串行可见。
 async fn setup_single_connection_db() -> dbnexus::DbPool {
     let config = dbnexus::DbConfig {
         url: "sqlite::memory:".to_string(),
@@ -585,14 +566,11 @@ async fn setup_single_connection_db() -> dbnexus::DbPool {
 // 并发 renew 同一 token（移植）
 // ------------------------------------------------------------------------
 
-/// （异常侧）：3 个并发 task 对同一 token 调用
-/// `BackendEmbedded::renew_to_equivalent`（`/api/v1/auth/refresh` 端点的下游，
-/// 见 src/server/sdforge_routes.rs `auth_refresh`）——恰一次成功，其余被
-/// 轮换失效拒绝（`NotLogin`/`InvalidToken`，per-token 异步锁串行化消除
-/// CWE-362 TOCTOU）；新 token 有效、旧 token 失效，无重复签发。
-///
-/// 对应 e2e 原用例经 HTTP 断言「恰好 1 个成功 + 2 个 error_code=NOT_LOGIN」；
-/// 本场景在逻辑层直接断言（同一实现路径），语义等价。
+/// （异常侧）：3 个并发 task 对同一 token 调用 `BackendEmbedded::renew_to_equivalent`
+/// （`/api/v1/auth/refresh` 端点下游）——恰一次成功，其余被轮换失效拒绝（`NotLogin`/
+/// `InvalidToken`，per-token 异步锁串行化消除 CWE-362 TOCTOU）；新 token 有效、旧 token
+/// 失效，无重复签发。由 e2e HTTP 断言（恰好 1 个成功 + 2 个 error_code=NOT_LOGIN）
+/// 移植，逻辑层直断同一实现路径，语义等价。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial]
 async fn acc_conc_006_concurrent_renew_to_equivalent_exactly_once() {
@@ -661,8 +639,7 @@ async fn acc_conc_006_concurrent_renew_to_equivalent_exactly_once() {
 }
 
 // ============================================================================
-// 支持性性能基建（perf_util）：从 tests/e2e/（mod.rs + remote.rs + perf.rs）
-// 原样下沉，供文件尾 3 个 #[ignore] 性能基线编译与运行。
+// 支持性性能基建（perf_util）：自 e2e 下沉，供文件尾 3 个 #[ignore] 性能基线编译运行。
 // ============================================================================
 
 mod perf_util {
@@ -1017,8 +994,7 @@ mod perf_util {
             self
         }
 
-        /// 原样保留的公共 API（e2e/perf.rs 的 LoadRunner 亦有此方法；当前 3 个
-        /// 基线未使用，保留以维持与原实现逐字一致）。
+        /// 原样保留的公共 API（e2e perf.rs 的 LoadRunner 亦有此方法；当前 3 个基线未使用）。
         #[allow(dead_code)]
         pub(super) fn with_max_requests(mut self, max: u64) -> Self {
             self.max_requests = Some(max);
@@ -1127,8 +1103,8 @@ mod perf_util {
 }
 
 // ============================================================================
-// 文件尾：3 个 #[ignore] 性能基线（自 tests/e2e/perf.rs 原样并入，
-// 保留 #[ignore] 与原文档注释；`--ignored` 显式触发）。
+// 文件尾：3 个 #[ignore] 性能基线（自 e2e perf.rs 并入，保留 #[ignore]
+// 与原文档注释；`--ignored` 显式触发）。
 // ============================================================================
 
 /// login 性能基线——P99 < 200ms，RPS >= 1000，error_rate < 0.1%。
@@ -1137,13 +1113,12 @@ mod perf_util {
 /// concurrency=100、duration=10s 的负载测试，断言 P99/RPS/error_rate
 /// 满足基线，并将报告追加到 `logs/perf.jsonl`。
 ///
-/// # 场景语义（2026-09-11 重校准）
-/// 负载使用 **100 个轮转账号**（`perf_user_{n%100}`）而非单一账号：
-/// 登录路径的 Account-Session read-modify-write 由 per-login_id 互斥锁
-/// 保护（`SessionStore::with_login_lock`， TOCTOU 修复，**设计如此**），
-/// 同账号并发登录必然串行化——用单账号压测测出的是锁排队延迟（实测
-/// P99 ~700ms）而非系统登录容量。同账号并发正确性由 concurrency 域
-/// 竞争测试覆盖；本基线度量多用户真实流量下的系统吞吐。
+/// # 场景语义
+/// 负载使用 **100 个轮转账号**（`perf_user_{n%100}`）而非单一账号：登录路径的
+/// Account-Session read-modify-write 由 per-login_id 互斥锁保护（`SessionStore::with_login_lock`，
+/// TOCTOU 修复，设计如此），同账号并发登录必然串行化——单账号压测测出的是锁排队延迟
+/// 而非系统登录容量。同账号并发正确性由 concurrency 域竞争测试覆盖；本基线度量多用户
+/// 真实流量下的系统吞吐。
 ///
 /// # 基线依据
 /// login 涉及 token 生成（含哈希计算）+ DAO 写入，是相对昂贵的操作，

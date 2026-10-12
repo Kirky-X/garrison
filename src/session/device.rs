@@ -1,19 +1,11 @@
-// Copyright (c) 2026 Kirky.X🌠
-// SPDX-License-Identifier: Apache-2.0
-
-//! 设备管理模块。
-//!
-//! 提供设备会话管理与设备指纹生成。
-
+//! 设备管理模块：设备会话管理与设备指纹生成。
 use crate::error::GarrisonResult;
 use crate::session::GarrisonSession;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
-/// 设备会话信息。
-///
-/// 由 [`DeviceManager::list_devices`] 返回，描述一个活跃会话的设备信息。
+/// 设备会话信息（由 [`DeviceManager::list_devices`] 返回的活跃会话设备信息）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceSession {
     /// 设备标识（如 "web"/"ios"/"android" 或自动生成的指纹）。
@@ -30,9 +22,7 @@ pub struct DeviceSession {
     pub last_active_at: i64,
 }
 
-/// 设备管理器，提供设备级会话查询与踢出。
-///
-/// 持有 [`GarrisonSession`] 引用，通过 `login_token_map` 和 `TokenSession` 实现设备管理。
+/// 设备管理器：持有 [`GarrisonSession`] 引用，经 `login_token_map` 和 `TokenSession` 实现设备管理。
 pub struct DeviceManager {
     /// 会话管理器引用。
     session: Arc<GarrisonSession>,
@@ -46,14 +36,7 @@ impl DeviceManager {
 
     /// 列出指定 login_id 的所有设备会话。
     ///
-    /// 遍历 `login_token_map` 中的 token，查询每个 `TokenSession`，
-    /// 映射为 [`DeviceSession`] 返回。已过期或不存在的 token 被跳过（不返回错误）。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    ///
-    /// # 返回
-    /// `Vec<DeviceSession>`，无会话时返回空 Vec。
+    /// 遍历 `login_token_map` 查询每个 TokenSession 并映射为 [`DeviceSession`]，已过期或不存在 token 跳过；无会话返回空 Vec。
     pub async fn list_devices(&self, login_id: &str) -> GarrisonResult<Vec<DeviceSession>> {
         let tokens = self.session.get_tokens_by_login_id(login_id);
         let mut devices = Vec::with_capacity(tokens.len());
@@ -72,17 +55,7 @@ impl DeviceManager {
         Ok(devices)
     }
 
-    /// 踢出指定设备的会话。
-    ///
-    /// 委托 [`GarrisonSession::kickout_by_device`]，踢出指定 login_id 中
-    /// `device` 字段匹配的所有 TokenSession。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `device`: 设备标识。
-    ///
-    /// # 错误
-    /// 透传 `GarrisonSession::kickout_by_device` 的错误。
+    /// 踢出指定设备的会话：委托 [`GarrisonSession::kickout_by_device`]，踢出指定 login_id 中 `device` 字段匹配的所有 TokenSession。
     pub async fn kickout_device(&self, login_id: &str, device: &str) -> GarrisonResult<()> {
         self.session.kickout_by_device(login_id, device).await
     }
@@ -90,18 +63,8 @@ impl DeviceManager {
 
 /// 生成设备指纹：SHA-256(UA `\x1f` IP)，截断 16 字节 hex = 32 字符。
 ///
-/// # 参数
-/// - `user_agent`: 客户端 User-Agent 字符串。
-/// - `ip`: 客户端 IP 地址。
-///
-/// # 返回
-/// 32 字符的十六进制字符串（SHA-256 前 16 字节）。
-///
-/// # 哈希构成
-///
-/// UA 与 IP 以 `\x1f`（Unit Separator）分隔后参与哈希，消除维度拼接歧义
-///（`ua="ab"+ip="c"` 与 `ua="a"+ip="bc"` 在无分隔符时哈希相同，可伪造同指纹）。
-/// 生产登录路径默认使用 [`device_fingerprint_rich`]（多维度指纹）。
+/// UA 与 IP 以 `\x1f`（Unit Separator）分隔后哈希，消除维度拼接歧义（无分隔符时 `ua="ab"+ip="c"` 与
+/// `ua="a"+ip="bc"` 哈希相同，可伪造同指纹）；生产登录路径默认使用 [`device_fingerprint_rich`]（多维度指纹）。
 pub fn device_fingerprint(user_agent: &str, ip: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(user_agent.as_bytes());
@@ -114,10 +77,8 @@ pub fn device_fingerprint(user_agent: &str, ip: &str) -> String {
 
 /// 设备指纹输入维度（A10 强化：防止攻击者仅伪造部分 header 即可复用指纹）。
 ///
-/// 封装参与设备指纹计算的全部维度。`accept_language` / `sec_ch_ua` /
-/// `sec_ch_ua_platform` 为 `Option`，未提供时以哨兵字节 `\0` 参与 hash，
-/// 与 `Some("")` 区分（fail-safe：缺失维度不等于空串维度，防止攻击者
-/// 通过省略 header 绕过维度校验）。
+/// `accept_language` / `sec_ch_ua` / `sec_ch_ua_platform` 未提供时以哨兵字节 `\0` 参与 hash，与 `Some("")`
+/// 区分（fail-safe：缺失维度不等于空串维度，防止省略 header 绕过维度校验）。
 #[derive(Debug, Clone, Copy)]
 pub struct DeviceFingerprintInput<'a> {
     /// 客户端 User-Agent。
@@ -162,10 +123,7 @@ impl<'a> DeviceFingerprintInput<'a> {
     }
 }
 
-/// 将哈希结果的前 16 字节编码为 32 字符小写 hex。
-///
-/// 使用查找表 + `push`（避免逐字节 `format!` 的临时分配，登录热路径每次调用
-/// 均会执行指纹计算）。
+/// 将哈希结果的前 16 字节编码为 32 字符小写 hex（查找表 + push，避免逐字节 `format!` 的临时分配）。
 fn hex_prefix_16(hash: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(32);
@@ -176,18 +134,9 @@ fn hex_prefix_16(hash: &[u8]) -> String {
     out
 }
 
-/// 生成强化设备指纹：SHA-256(ua | ip | accept_language | sec_ch_ua | sec_ch_ua_platform)，
-/// 截断 16 字节 hex = 32 字符（A10 修复）。
+/// 生成强化设备指纹：SHA-256(ua | ip | accept_language | sec_ch_ua | sec_ch_ua_platform)，截断 16 字节 hex = 32 字符。
 ///
-/// 加入 Accept-Language / sec-ch-ua / sec-ch-ua-platform 维度，攻击者仅伪造 UA 或 IP
-/// 无法复用指纹，必须同时匹配全部维度。各维度以 `\x1f`（Unit Separator）分隔，
-/// 防止维度拼接歧义（如 ua="ab"+ip="c" 与 ua="a"+ip="bc" 在无分隔符时 hash 相同）。
-///
-/// # 参数
-/// - `input`: 设备指纹输入维度（[`DeviceFingerprintInput`]）。
-///
-/// # 返回
-/// 32 字符的十六进制字符串（SHA-256 前 16 字节）。
+/// 各维度以 `\x1f`（Unit Separator）分隔，防止维度拼接歧义；攻击者仅伪造 UA 或 IP 无法复用指纹，必须同时匹配全部维度。
 pub fn device_fingerprint_rich(input: &DeviceFingerprintInput<'_>) -> String {
     let mut hasher = Sha256::new();
     const SEP: u8 = 0x1f;
@@ -240,19 +189,13 @@ mod tests {
         assert_eq!(fp.len(), 32, "指纹应为 32 字符（16 字节 hex）");
     }
 
-    /// 指纹分隔符：ua="ab"+ip="c" 与 ua="a"+ip="bc" 应产生不同指纹。
-    ///
-    /// 验证 `\x1f` 分隔符消除维度拼接歧义（与 rich 版对齐）。
+    /// 指纹分隔符：ua="ab"+ip="c" 与 ua="a"+ip="bc" 应产生不同指纹（验证 `\x1f` 分隔符消除维度拼接歧义）。
     #[test]
     fn device_fingerprint_delimiter_prevents_concat_ambiguity() {
         let fp1 = device_fingerprint("ab", "c");
         let fp2 = device_fingerprint("a", "bc");
         assert_ne!(fp1, fp2, "分隔符应防止指纹的维度拼接歧义");
     }
-
-    // ------------------------------------------------------------------------
-    // A10: device_fingerprint_rich 强化指纹测试
-    // ------------------------------------------------------------------------
 
     #[test]
     fn a10_rich_fingerprint_deterministic() {
@@ -394,10 +337,6 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // list_devices
-    // ------------------------------------------------------------------------
-
     /// 辅助函数：创建带 MockDao 的 Arc<GarrisonSession>（供 DeviceManager 使用）。
     fn make_device_session(timeout: u64, active_timeout: u64) -> Arc<GarrisonSession> {
         use crate::dao::tests::MockDao;
@@ -432,10 +371,6 @@ mod tests {
         let devices = mgr.list_devices("nonexistent-user").await.unwrap();
         assert!(devices.is_empty(), "无会话时应返回空列表");
     }
-
-    // ------------------------------------------------------------------------
-    // kickout_device
-    // ------------------------------------------------------------------------
 
     /// 验证 kickout_device 踢出 device 匹配的会话，保留不匹配的会话。
     #[tokio::test]

@@ -1,10 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Credit 消费权重表。
-//!
-//! `CreditSchedule` 定义 resource → credit_weight 映射，
-//! 未配置的 resource 使用 `default_weight`。
+//! Credit 消费权重表：`CreditSchedule` 定义 resource → credit_weight 映射，未配置的
+//! resource 使用 `default_weight`。
 //!
 //! # 权重校验
 //!
@@ -46,11 +44,8 @@ impl CreditSchedule {
         }
     }
 
-    /// 创建带指定默认权重的权重表。
-    ///
-    /// # 错误
-    /// `default_weight = 0` 返回 [`CreditError::ConfigInvalid`]（零权重会使所有
-    /// 未配置资源免费，绕过限额）。
+    /// 创建带指定默认权重的权重表；`default_weight = 0` 返回 [`CreditError::ConfigInvalid`]
+    /// （零权重会使所有未配置资源免费，绕过限额）。
     pub fn with_default(default_weight: u64) -> CreditResult<Self> {
         if default_weight == 0 {
             return Err(CreditError::ConfigInvalid(
@@ -63,9 +58,7 @@ impl CreditSchedule {
         })
     }
 
-    /// 获取 resource 的 credit 权重。
-    ///
-    /// 未配置的 resource 返回 `default_weight`。
+    /// 获取 resource 的 credit 权重，未配置的 resource 返回 `default_weight`。
     pub fn weight_for(&self, resource: &str) -> u64 {
         self.weights
             .get(resource)
@@ -73,11 +66,8 @@ impl CreditSchedule {
             .unwrap_or(self.default_weight)
     }
 
-    /// 设置 resource 的 credit 权重。
-    ///
-    /// # 错误
-    /// `weight = 0` 返回 [`CreditError::ConfigInvalid`]（零权重会使该资源免费，
-    /// 消费 0 credit 绕过限额），且不写入映射。
+    /// 设置 resource 的 credit 权重；`weight = 0` 返回 [`CreditError::ConfigInvalid`]
+    /// （零权重会使该资源免费，绕过限额）且不写入映射。
     pub fn insert(&mut self, resource: impl Into<String>, weight: u64) -> CreditResult<()> {
         if weight == 0 {
             return Err(CreditError::ConfigInvalid(format!(

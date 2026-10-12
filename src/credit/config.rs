@@ -42,14 +42,8 @@ impl Default for CreditConfig {
 impl CreditConfig {
     /// 校验配置合法性。
     ///
-    /// # 校验规则
-    /// - `alert_thresholds` 非空（空阈值表会静默禁用所有告警）
-    /// - 每个值 ∈ [0, 100]（百分比语义）
-    /// - 严格升序排列
-    /// - [`CreditAlertConfig`] 的告警阈值同样满足以上规则（若作为告警配置使用）
-    ///
-    /// # 错误
-    /// - 违反以上任一规则时返回描述性错误消息。
+    /// `alert_thresholds` 必须非空（空阈值表会静默禁用所有告警）、每项 ∈ [0, 100]
+    /// 且严格升序；[`CreditAlertConfig`] 作为告警配置时同规则。
     pub fn validate(&self) -> Result<(), String> {
         validate_thresholds(&self.alert_thresholds, "credit-alert-thresholds")
     }
@@ -67,15 +61,9 @@ pub struct CreditAlertConfig {
 }
 
 impl CreditAlertConfig {
-    /// 校验告警配置合法性。
+    /// 校验告警配置合法性（阈值规则与 [`CreditConfig::validate`] 同源）。
     ///
-    /// # 校验规则（与 [`CreditConfig::validate`] 的阈值规则同源）
-    /// - `thresholds` 非空（空阈值表会静默禁用所有告警）
-    /// - 每个值 ∈ [0, 100]（百分比语义）
-    /// - 严格升序排列
-    ///
-    /// # 错误
-    /// - 违反以上任一规则时返回描述性错误消息。
+    /// `thresholds` 必须非空（空阈值表会静默禁用所有告警）、每项 ∈ [0, 100] 且严格升序。
     pub fn validate(&self) -> Result<(), String> {
         validate_thresholds(&self.thresholds, "credit-alert-thresholds")
     }

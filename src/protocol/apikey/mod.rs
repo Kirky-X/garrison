@@ -1,26 +1,22 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! API Key 协议模块，提供 API Key 生成/校验/吊销/轮换。
-//!
-//! 对应 API 接口鉴权能力，
-//! 适用于服务间调用与开放 API 场景。
-//!
-//! 仅在启用 `protocol-apikey` 特性时编译。
+//! API Key 协议模块（对应 API 接口鉴权能力）：生成/校验/吊销/轮换，适用于服务间
+//! 调用与开放 API。仅在启用 `protocol-apikey` 特性时编译。
 //!
 //! ## Key 命名空间
 //!
-//! 所有 API Key 存储于 `garrison:apikey:<namespace>:<key>`，支持多租户/多场景隔离。
+//! `garrison:apikey:<namespace>:<key_id>`，支持多租户/多场景隔离。
 //!
-//! ## 凭证格式与哈希存储（CWE-916 修复）
+//! ## 凭证格式与哈希存储（CWE-916）
 //!
-//! API Key 采用 `key_id.key_secret` 双段格式（各 32 hex，`.` 分隔）：
-//! - `key_id`：公开标识，作为存储 key 后缀（`garrison:apikey:<ns>:<key_id>`），可安全记录到日志用于审计。
-//! - `key_secret`：机密部分，**永不落库**；仅存储 `sha256(key_secret)` 到 `ApiKeyInfo::secret_hash`，
-//! 校验时用常量时间比较（`subtle::ConstantTimeEq`）。数据库/KV 泄露也无法还原 secret。
+//! `key_id.key_secret` 双段格式（各 32 hex，`.` 分隔）：`key_id` 为公开标识（可入
+//! 审计日志），`key_secret` 永不落库——仅存 `sha256(key_secret)` 到
+//! `ApiKeyInfo::secret_hash`，校验用常量时间比较（`subtle::ConstantTimeEq`），
+//! 数据库/KV 泄露也无法还原 secret。
 //!
-//! `verify` 只接受双段格式：不含 `.` 分隔符的输入无法定位存储记录，直接返回
-//! `InvalidToken`（fail-closed，CWE-916 强化：杜绝任何"按存在性校验"的路径）。
+//! `verify` 只接受双段格式（fail-closed：不含 `.` 的输入无法定位存储记录，直接
+//! 返回 `InvalidToken`，杜绝任何"按存在性校验"的路径（CWE-916 强化）)。
 
 use crate::dao::GarrisonDao;
 // listener_manager 注入（feature-gated）
@@ -31,7 +27,8 @@ use std::sync::Arc;
 
 pub mod handler;
 
-/// API Key 元数据。
+/// API Key 元数据（`namespace`/`key_id`/`secret_hash`/`created_at` 反序列化必需，
+/// 缺失即失败）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ApiKeyInfo {
     /// 登录主体标识。
@@ -42,30 +39,20 @@ pub struct ApiKeyInfo {
     pub expire_at: i64,
     /// 是否已吊销。
     pub revoked: bool,
-    /// 命名空间。
-    ///
-    /// 新生成 key 必带 namespace（默认 `"default"`），与 key 存储路径
-    /// `garrison:apikey:<namespace>:<key_id>` 中的 namespace 严格一致。
-    /// 反序列化时该字段必需，缺失即失败（fail-closed）。
+    /// 命名空间（默认 `"default"`，与存储路径 `garrison:apikey:<namespace>:<key_id>`
+    /// 中的 namespace 严格一致）。
     pub namespace: String,
-    /// 公开 key 标识（32 hex）。
-    ///
-    /// 作为存储 key 后缀，可安全记录到日志用于审计。
-    /// 反序列化时该字段必需，缺失即失败（fail-closed）。
+    /// 公开 key 标识（32 hex；存储 key 后缀，可安全记录到日志用于审计）。
     pub key_id: String,
     /// `sha256(key_secret)` 的 hex 编码（64 字符）。
     ///
-    /// **不存储明文 secret**（CWE-916 修复）。校验时用常量时间比较。
-    /// 反序列化时该字段必需，缺失即失败（fail-closed），不做 secret 比较
-    /// 也不按存在性放行。
+    /// **不存储明文 secret**（CWE-916）；校验时用常量时间比较。
     pub secret_hash: String,
-    /// 归属主体标识（IDOR 防护，#3）。
-    ///
-    /// 生成时默认等于 `login_id`。用于标识 key 的拥有者，供审计与归属校验。
+    /// 归属主体标识（IDOR 防护，生成时默认等于 `login_id`）。
     ///
     /// **注意**：`verify` / `verify_with_namespace` **不校验**该字段与请求主体的
     /// 关系（框架不持有主体上下文）。归属（IDOR）校验属应用层契约：调用方取得
-    /// 返回的 `ApiKeyInfo` 后，应自行比较 `info.owner_id` 与请求主体再做授权决策。
+    /// 返回的 `ApiKeyInfo` 后应自行比较 `info.owner_id` 与请求主体再做授权决策。
     #[serde(default)]
     pub owner_id: Option<String>,
     /// 最后使用时间戳（秒）。
@@ -78,18 +65,13 @@ pub struct ApiKeyInfo {
     /// 由 `limiteron` quota 在请求路径按 `key_id` 实施。
     #[serde(default)]
     pub rate_limit: Option<u32>,
-    /// 创建时间戳（秒）。
-    ///
-    /// 用于 `max_age_secs` 生命周期策略：`created_at + max_age_secs < now` 时拒绝。
-    /// 反序列化时该字段必需，缺失即失败（fail-closed），保证 max_age 策略
-    /// 对所有 key 都可执行。
+    /// 创建时间戳（秒）：`max_age_secs` 生命周期策略依据（`created_at + max_age_secs
+    /// < now` 时拒绝）。
     pub created_at: i64,
 }
 
-/// API Key 作用域枚举（类型安全的常见作用域）。
-///
-/// 提供规范的作用域字符串，供构建 [`ApiKeyHandler::with_allowed_scopes`] 的允许列表使用。
-/// 存储层以 `Vec<String>` 形态保存，本枚举仅用于减少手写字符串的拼写错误。
+/// API Key 作用域枚举（类型安全的常见作用域）：规范字符串供
+/// [`ApiKeyHandler::with_allowed_scopes`] 允许列表使用；存储层以 `Vec<String>` 保存。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiKeyScope {
     /// 只读。
@@ -117,35 +99,27 @@ impl std::fmt::Display for ApiKeyScope {
     }
 }
 
-/// API Key 处理器。
-///
-/// 持有 `Arc<dyn GarrisonDao>` 用于 API Key 存储。
-/// 实现 `Send + Sync`，可在多线程环境共享。
+/// API Key 处理器：持有 `Arc<dyn GarrisonDao>` 用于 API Key 存储。
 pub struct ApiKeyHandler {
     /// DAO 抽象层，用于 API Key 存储。
     dao: Arc<dyn GarrisonDao>,
     /// 可选监听器管理器，注入后 rotate 广播 TokenRotate 事件
     #[cfg(feature = "listener")]
     listener_manager: Option<Arc<GarrisonListenerManager>>,
-    /// 作用域允许列表（opt-in，#6）。
-    ///
-    /// - `None`（默认）：不校验 scopes，允许任意 scope。
-    /// - `Some(list)`：`generate` 时拒绝不在列表中的 scope（返回 `InvalidParam`）。
+    /// 作用域允许列表（opt-in）：`None` 不校验（允许任意 scope）；`Some(list)` 时
+    /// `generate` 拒绝列表外 scope（`InvalidParam`）。
     pub(crate) allowed_scopes: Option<Vec<String>>,
-    /// 是否在 `verify` 成功后节流更新 `last_used_at`（opt-in，#7-b）。
-    ///
-    /// 默认 `false`：`verify` 保持只读语义（无副作用写入），与历史行为一致。
+    /// `verify` 成功后节流更新 `last_used_at`（opt-in，默认 `false` 保持 verify
+    /// 只读语义）。
     pub(crate) track_last_used: bool,
-    /// API Key 最大生命周期（秒）。
-    ///
-    /// - `None`（默认）：不检查生命周期，仅依赖 `expire_at`。
-    /// - `Some(secs)`：`verify` 时检查 `created_at + secs >= now`，超期拒绝。
+    /// API Key 最大生命周期（秒）：`None` 不检查（仅依赖 `expire_at`）；
+    /// `Some(secs)` 时 verify 检查 `created_at + secs >= now`，超期拒绝。
     pub(crate) max_age_secs: Option<i64>,
-    /// 是否允许无命名空间的 `verify()` 全局校验（默认 `false`，fail-closed）。
+    /// 允许无命名空间的 `verify()` 全局校验（默认 `false`，fail-closed）。
     ///
-    /// `verify()` 经反向索引可校验**任意** namespace 的 key，与租户隔离语义冲突。
-    /// 默认禁用：无 namespace 校验必须走 `verify_with_namespace`；确有全局校验
-    /// 需求的部署可经 `with_allow_global_verify(true)` 显式放开（开启时输出 warn）。
+    /// `verify()` 经反向索引可校验**任意** namespace 的 key，与租户隔离语义冲突；
+    /// 默认禁用，无 namespace 校验必须走 `verify_with_namespace`。确有全局校验需求
+    /// 的部署可经 `with_allow_global_verify(true)` 显式放开（开启时输出 warn）。
     pub(crate) allow_global_verify: bool,
 }
 

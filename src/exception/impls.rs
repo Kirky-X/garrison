@@ -6,10 +6,7 @@
 use super::*;
 use crate::i18n::translate_error;
 
-/// extras 敏感 key 黑名单（参照 audit `BUILTIN_MASK_FIELDS` 惯例）。
-///
-/// `with_extra` 接受任意键值对：key（ASCII 小写比较）命中黑名单时，
-/// 值在日志（Debug）与 HTTP 响应体中均替换为 `"***"`。
+/// extras 敏感 key 黑名单（参照 audit `BUILTIN_MASK_FIELDS` 惯例）：`with_extra` 的 key 按 ASCII 小写命中时，值在日志（Debug）与 HTTP 响应体中均替换为 `"***"`。
 const EXTRA_SENSITIVE_KEYS: &[&str] = &[
     "password",
     "password_hash",
@@ -34,12 +31,7 @@ const EXTRA_MAX_VALUE_LEN: usize = 256;
 /// extras 键数量上限（防内部调试元数据滥用响应体）。
 const EXTRA_MAX_ENTRIES: usize = 32;
 
-/// 返回脱敏后的 extras 副本。
-///
-/// - 敏感 key（[`EXTRA_SENSITIVE_KEYS`]）值替换为 `"***"`；
-/// - 超长值按 char boundary 安全截断至 [`EXTRA_MAX_VALUE_LEN`] 字节 + `…`；
-/// - 超过 [`EXTRA_MAX_ENTRIES`] 的键丢弃。
-///
+/// 返回脱敏后的 extras 副本：敏感 key（[`EXTRA_SENSITIVE_KEYS`]）值替换为 `"***"`，超长值按 char boundary 安全截断至 [`EXTRA_MAX_VALUE_LEN`] + `…`，超过 [`EXTRA_MAX_ENTRIES`] 的键丢弃。
 /// 供 `Debug`（日志路径）与 `IntoResponse`（响应体路径）共用，两处输出一致。
 pub(crate) fn sanitize_extras(extras: &HashMap<String, String>) -> HashMap<String, String> {
     extras
@@ -62,9 +54,7 @@ pub(crate) fn sanitize_extras(extras: &HashMap<String, String>) -> HashMap<Strin
         .collect()
 }
 
-/// 统一脱敏 helper：超过 `keep` 字节保留前 `keep` 字节 + `***`；
-/// 不超过 `keep` 字节整体掩码为 `***`（短 token/login_id 全量输出即泄露，
-/// 原 `get(..8).unwrap_or(原值)` 会把短敏感值完整打进日志）。
+/// 统一脱敏 helper：超过 `keep` 字节保留前 `keep` 字节 + `***`，不超过则整体掩码为 `***`（短 token/login_id 全量输出即泄露）。
 /// 用 `get(..keep)` 保证 char boundary 安全（非边界退化为整体掩码，不 panic）。
 fn mask_preview(s: &str, keep: usize) -> String {
     match s.get(..keep) {
@@ -74,10 +64,7 @@ fn mask_preview(s: &str, keep: usize) -> String {
 }
 
 impl NotLoginException {
-    /// 创建新的未登录异常。
-    ///
-    /// # 参数
-    /// - `message`: 异常消息。
+    /// 创建新的未登录异常（`login_type` 默认空串）。
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -86,9 +73,6 @@ impl NotLoginException {
     }
 
     /// 设置登录类型并返回 self（builder 模式）。
-    ///
-    /// # 参数
-    /// - `login_type`: 登录类型。
     pub fn with_login_type(mut self, login_type: impl Into<String>) -> Self {
         self.login_type = login_type.into();
         self
@@ -102,8 +86,7 @@ impl std::fmt::Display for NotLoginException {
         if self.login_type.is_empty() {
             f.write_str(&base)
         } else {
-            // login_type 非空时输出登录类型标注，保证 Display 消费该字段
-            //（否则字段仅存不用，Display 是否读取 login_type 无法被测试捕获）
+            // login_type 非空时追加标注，保证 Display 消费该字段（否则字段仅存不用，读取行为无法被测试捕获）
             write!(f, "{base} (login_type={})", self.login_type)
         }
     }
@@ -113,10 +96,6 @@ impl std::error::Error for NotLoginException {}
 
 impl GarrisonException {
     /// 创建基础异常实例（Builder 入口）。
-    ///
-    /// # 参数
-    /// - `code`: 业务错误码。
-    /// - `message`: 异常消息。
     pub fn new(code: i32, message: impl Into<String>) -> Self {
         Self {
             code,
@@ -166,12 +145,7 @@ impl From<GarrisonException> for GarrisonError {
 }
 
 impl From<GarrisonError> for GarrisonException {
-    /// 将 `GarrisonError` 转换为 `GarrisonException`。
-    ///
-    /// 仅 `Exception` 变体直接返回原始 `GarrisonException`，其他变体根据语义映射 code：
-    /// - `NotLogin` / `InvalidToken` / `ExpiredToken` → code=-1（未登录）
-    /// - `NotPermission` / `NotRole` / `FirewallBlocked` → code=-2（无权限/拦截，403 语义）
-    /// - 其他 → code=500（业务异常）
+    /// 转换 `GarrisonError`：`Exception` 变体原样返回；`NotLogin`/`InvalidToken`/`ExpiredToken` → code=-1（未登录），`NotPermission`/`NotRole`/`FirewallBlocked` → code=-2（403 语义），其他 → code=500。
     fn from(err: GarrisonError) -> Self {
         match err {
             GarrisonError::Exception(ex) => *ex,
@@ -195,20 +169,17 @@ impl std::fmt::Display for GarrisonException {
 
 impl std::fmt::Debug for GarrisonException {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // 脱敏：token_value 仅输出前 8 字符，防止敏感信息泄露到日志
-        //（短于阈值时整体掩码，不再回退输出原值）
+        // 脱敏：token_value 仅输出前 8 字符（短值整体掩码），防日志泄露
         let masked_token = match &self.token_value {
             Some(t) => format!("Some(\"{}\")", mask_preview(t, 8)),
             None => "None".to_string(),
         };
-        // 脱敏：login_id 为 String（可能含手机号/邮箱等 PII），同样仅输出前 4 字符
-        //（String 化后明文输出面扩大；短值整体掩码）
+        // 脱敏：login_id 可能含手机号/邮箱等 PII，仅输出前 4 字符（短值整体掩码）
         let masked_login_id = match &self.login_id {
             Some(id) => format!("Some(\"{}\")", mask_preview(id, 4)),
             None => "None".to_string(),
         };
-        // extras 不再全量 Debug——经 sanitize_extras 掩码/截断/限量后输出，
-        // 防止调用方误放入 extras 的密钥、PII 直接进入日志
+        // extras 经 sanitize_extras 掩码/截断/限量后输出，防误放入的密钥、PII 进入日志
         f.debug_struct("GarrisonException")
             .field("code", &self.code)
             .field("message", &self.message)
@@ -220,31 +191,21 @@ impl std::fmt::Debug for GarrisonException {
     }
 }
 
-// ============================================================================
 // IntoResponse 实现（cfg feature = "web-axum"）
-// ============================================================================
 
-/// 实现 `IntoResponse` 以便 `GarrisonException` 可直接作为 axum 响应返回。
+/// 实现 `IntoResponse`，使 `GarrisonException` 可直接作为 axum 响应返回。
 ///
-/// 状态码映射规则（与 `GarrisonError::IntoResponse` 的 Exception 分支一致）：
-/// - code = -1 → 401 Unauthorized
-/// - code = -2 → 403 Forbidden
-/// - 其他 → 500 Internal Server Error
-///
-/// 响应体为 JSON，包含 `code`、`message` 与 `extras` 字段。
+/// 状态码映射（与 `GarrisonError::IntoResponse` 的 Exception 分支一致）：code=-1 → 401，code=-2 → 403，其他 → 500；响应体 JSON 含 `code`、`message`、`extras`。
 ///
 /// # 安全性
 ///
-/// `extras` 经 `sanitize_extras` 处理后写入响应体：敏感 key 掩码、超长值截断、
-/// 超量键丢弃。`with_extra` 接受任意键值对，调用方仍不应将内部调试元数据、
-/// PII 或密钥放入 extras——脱敏黑名单是兜底而非白名单。
+/// `extras` 经 `sanitize_extras` 处理（敏感 key 掩码、超长值截断、超量键丢弃）后写入响应体；脱敏黑名单是兜底而非白名单，调用方仍不应将内部调试元数据、PII 或密钥放入 extras。
 #[cfg(feature = "web-axum")]
 impl axum::response::IntoResponse for GarrisonException {
     fn into_response(self) -> axum::response::Response {
         use axum::http::StatusCode;
 
-        // 完整异常记录到日志（不返回给客户端）。
-        // ?self 走手动 Debug，token_value/login_id/extras 均已脱敏。
+        // 完整异常记录到日志（不返回客户端）；?self 走手动 Debug，token_value/login_id/extras 均已脱敏
         tracing::error!(exception = ?self, "garrison exception");
 
         let status = match self.code {

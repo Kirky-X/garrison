@@ -3,16 +3,9 @@
 
 //! 安全告警系统模块，提供安全事件广播与异常检测抽象。
 //!
-//! 定义 `SecurityAlertEvent` 枚举（5 个安全事件变体）与 `AnomalyType` 枚举
-//! （4 种异常类型），以及两个核心 trait：
-//! - `AlertListener`：被动订阅 `SecurityAlertEvent`，实现方按事件类型选择性处理
-//! - `AnomalyDetector`：主动检测异常登录行为，返回检测到的告警事件列表
-//!
-//! `AlertListenerManager` 收集并管理所有已注册的 `AlertListener`，
-//! `broadcast_alert` 异步遍历所有 listener 调用 `on_alert`，
-//! 单个 listener 失败仅记录 `tracing::warn!` 日志，不中断广播。
-//!
-//! 此模块仅在启用 `security-alert` 特性时编译。
+//! 定义 `SecurityAlertEvent`（5 个安全事件变体）、`AnomalyType`（5 种异常类型）与两个 trait：
+//! `AlertListener`（被动订阅事件）、`AnomalyDetector`（主动检测异常登录）。
+//! `AlertListenerManager::broadcast_alert` 遍历 listener 调用 `on_alert`，单个失败仅 warn 不中断广播；仅在启用 `security-alert` 特性时编译。
 
 /// 异常检测器实现模块。
 pub mod detector;
@@ -32,8 +25,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// 安全告警事件枚举，定义框架广播的所有安全事件变体。
-///
-/// 派生 `Debug`、`Clone`、`Serialize`、`Deserialize`，便于在监听器中复制、打印与序列化。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SecurityAlertEvent {
     /// 异常登录事件（IP 变化 / 设备变化 / 地理跳跃 / 快速连续登录）。
@@ -86,8 +77,6 @@ pub enum SecurityAlertEvent {
 }
 
 /// 异常类型枚举，描述 `AnomalyLogin` 事件的具体异常分类。
-///
-/// 派生 `Debug`、`Clone`、`PartialEq`、`Eq`、`Serialize`、`Deserialize`，便于在检测器中比较与匹配，并支持序列化。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AnomalyType {
     /// IP 地址变化。
@@ -102,35 +91,19 @@ pub enum AnomalyType {
     SessionHijackSuspected,
 }
 
-/// 告警监听器 trait，提供安全事件订阅抽象。
-///
-/// trait 绑定 `Send + Sync`，核心方法为 `on_alert`，实现方按事件类型选择性处理。
-/// 监听器实现应快速返回或内部 spawn，避免阻塞广播主流程。
+/// 告警监听器 trait，提供安全事件订阅抽象；实现方按事件类型选择性处理，应快速返回或内部 spawn，避免阻塞广播主流程。
 #[async_trait]
 pub trait AlertListener: Send + Sync {
-    /// 告警事件处理方法。
-    ///
-    /// 实现方按事件类型选择性处理，默认空实现返回 `Ok(())`。
+    /// 告警事件处理；默认空实现返回 `Ok(())`。
     async fn on_alert(&self, _event: &SecurityAlertEvent) -> GarrisonResult<()> {
         Ok(())
     }
 }
 
-/// 异常检测器 trait，定义登录场景下的异常检测契约。
-///
-/// 实现方在登录成功或 check_login 时调用，返回检测到的告警事件列表。
-/// 返回空 `Vec` 表示未检测到异常。
+/// 异常检测器 trait，定义登录场景下的异常检测契约：登录成功或 check_login 时调用，返回检测到的告警事件列表（空表示无异常）。
 #[async_trait]
 pub trait AnomalyDetector: Send + Sync {
-    /// 登录成功时检测异常。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `device_id`: 登录设备标识。
-    /// - `ip`: 登录 IP（可选）。
-    ///
-    /// # 返回
-    /// 检测到的告警事件列表（空表示无异常）。
+    /// 登录成功时检测异常，返回告警事件列表（空表示无异常）。
     async fn check_on_login(
         &self,
         login_id: &str,
@@ -138,14 +111,7 @@ pub trait AnomalyDetector: Send + Sync {
         ip: Option<&str>,
     ) -> GarrisonResult<Vec<SecurityAlertEvent>>;
 
-    /// check_login 时检测异常。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `token`: 被校验的 token。
-    ///
-    /// # 返回
-    /// 检测到的告警事件列表（空表示无异常）。
+    /// check_login 时检测异常，返回告警事件列表（空表示无异常）。
     async fn check_on_check_login(
         &self,
         login_id: &str,
@@ -153,12 +119,8 @@ pub trait AnomalyDetector: Send + Sync {
     ) -> GarrisonResult<Vec<SecurityAlertEvent>>;
 }
 
-/// 告警监听器管理器，收集并管理所有已注册的告警监听器。
-///
-/// 使用 `parking_lot::RwLock` 保护 `Vec<Arc<dyn AlertListener>>`，
-/// 支持运行时通过 `add_listener` 追加监听器。
-/// `broadcast_alert` 方法异步遍历所有监听器调用 `on_alert`，
-/// 单个监听器失败时仅记录 `tracing::warn!` 日志，不中断广播。
+/// 告警监听器管理器：`RwLock` 保护监听器列表，支持运行时追加；
+/// 广播时单个监听器失败仅记录 `tracing::warn!`，不中断。
 pub struct AlertListenerManager {
     /// 已注册的告警监听器列表（`RwLock` 保护，支持运行时追加）。
     listeners: Arc<RwLock<Vec<Arc<dyn AlertListener>>>>,

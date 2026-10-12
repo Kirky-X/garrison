@@ -1,20 +1,17 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! /oauth2/authorize 端点 — 两段式票据授权码流程 + PKCE 强制 + consent 记忆。
-//!
-//! 处理 RFC 6749 §4.1 授权码流程，强制 PKCE（RFC 7636 S256 方法）。
+//! /oauth2/authorize 端点 — 两段式票据授权码流程 + PKCE 强制 + consent 记忆（RFC 6749 §4.1 + RFC 7636 S256）。
 //!
 //! ## 流程（两段式票据）
 //!
 //! 1. 校验 response_type=code / PKCE（code_challenge + S256）/ client_id / redirect_uri
-//! 2. 未登录 → 签发 32 字符随机票据，DAO `set_if_absent` 暂存完整请求（TTL 600s），
-//!    重定向登录页（return_to 仅携带 resume 地址 + 票据，不回传请求参数，
-//!    参数注入面被票据化结构性消除）
-//! 3. 登录后凭票据 resume：原子消费票据（GETDEL，二次消费拒），恢复完整请求，
-//!    对客户端存在性 / 白名单 / scope 做 fail-closed 重校验（往返期间注册可能变化）
-//! 4. consent 记忆判定（scope 超集合并 + 属性快照哈希，见 `consent_decision`）：
-//!    记忆覆盖 → 直接签发授权码；记忆不足 → 升级征询页（未配置则 interaction_required）
+//! 2. 未登录 → 签发 32 字符随机票据，DAO `set_if_absent` 暂存完整请求（TTL 600s）并重定向登录页；
+//!    return_to 仅携带 resume 地址 + 票据，不回传请求参数，参数注入面被票据化结构性消除
+//! 3. 登录后凭票据 resume：原子消费票据（GETDEL，二次消费拒），恢复完整请求，并对客户端存在性 /
+//!    白名单 / scope 做 fail-closed 重校验（往返期间注册可能变化）
+//! 4. consent 记忆判定（scope 超集合并 + 属性快照哈希，见 `consent_decision`）：记忆覆盖 → 直接签发
+//!    授权码；记忆不足 → 升级征询页（未配置则 interaction_required）
 //! 5. 签发授权码（10 分钟 TTL，一次性使用）并重定向 redirect_uri?code=xxx&state=xxx
 
 use crate::constants::DaoKeyPrefix;
@@ -31,8 +28,7 @@ use std::sync::Arc;
 /// 授权码有效期（10 分钟，RFC 6749 §4.1.2 建议 ≤ 10 分钟）。
 const AUTH_CODE_TTL_SECONDS: u64 = 600;
 
-/// authorize 暂存票据 TTL（10 分钟；登录往返的合理上限，对齐 tinyauth
-/// CreateAuthorizeRequestTicket 的 10 分钟缓存窗口）。
+/// authorize 暂存票据 TTL（10 分钟；登录往返的合理上限，对齐 tinyauth 的 10 分钟缓存窗口）。
 const AUTHORIZE_TICKET_TTL_SECONDS: u64 = 600;
 
 /// authorize 暂存票据长度（32 字符字母数字，对齐 tinyauth utils.GenerateString(32)）。
@@ -46,8 +42,8 @@ const OAUTH2_CONSENT_KEY_PREFIX: &str = "oauth2:consent:";
 
 /// OAuth2 refresh_token 的 DAO fallback key：`oauth2:rtoken:{token}`。
 ///
-/// 未注入 `RefreshTokenRotation`（需 `db-sqlite`）的部署经 DAO 键值存储
-/// 消费 refresh token（无 reuse detection，安全风险见 `token` 模块文档）。
+/// 未注入 `RefreshTokenRotation`（需 `db-sqlite`）的部署经 DAO 键值存储消费 refresh token
+/// （无 reuse detection，安全风险见 `token` 模块文档）。
 fn oauth2_refresh_token_key(token: &str) -> String {
     debug_assert!(
         !token.contains(':'),
@@ -67,8 +63,7 @@ fn authorize_ticket_key(ticket: &str) -> String {
 
 /// consent 记忆的 DAO key：`oauth2:consent:{tenant_id}:{user_id}:{client_id}`。
 ///
-/// tenant_id / user_id 为数值（不含 ':'），client_id 作为末段可安全承载含 ':'
-/// 的标识（reconcile 解析用 `splitn(3, ':')` 保留末段完整性）。
+/// tenant_id / user_id 为数值（不含 ':'），client_id 作末段（reconcile 用 `splitn(3, ':')` 保留其完整性）。
 fn consent_key(tenant_id: i64, user_id: i64, client_id: &str) -> String {
     debug_assert!(
         !client_id.contains(':'),
@@ -85,9 +80,8 @@ fn ticket_invalid_error() -> GarrisonError {
     GarrisonError::OAuth2("oauth2-server-authorize-ticket-invalid-or-expired".into())
 }
 
-/// 「需要用户交互但 prompt=none 禁止交互」错误（OIDC Core §3.1.2.6）。
-/// prompt/consent 判定的租户解析：缺上下文时回退默认租户 0 并告警
-/// （审查 LOW：静默降级违背 strict 语义；写入与判定同键，方向一致但归属失真须可见）。
+/// 「需要用户交互但 prompt=none 禁止交互」错误（OIDC Core §3.1.2.6）；prompt/consent 判定的租户解析
+/// 缺上下文时回退默认租户 0 并告警（静默降级违背 strict 语义，写入与判定同键、归属失真须可见）。
 fn current_tenant_id_with_warn() -> i64 {
     match crate::context::tenant::current_tenant_id_strict() {
         Some(t) => t,
@@ -104,15 +98,12 @@ fn interaction_required_error() -> GarrisonError {
     GarrisonError::OAuth2("oauth2-server-authorize-interaction-required".into())
 }
 
-/// 授权码已签发 token 的吊销追踪记录 TTL（30 天，覆盖 refresh token 生命周期）。
-///
+/// 授权码已签发 token 的吊销追踪记录 TTL（30 天，覆盖 refresh token 生命周期）；
 /// 用于重放/双花检测时定位并吊销此前签发的 access/refresh token。
 const CODE_USED_RECORD_TTL_SECONDS: u64 = 2_592_000;
 
-/// 授权码已签发 token 的吊销追踪记录。
-///
-/// 授权码被原子消费（删除）后，其签发的 token 仍需可被定位吊销，
-/// 因此将 `access_token` / `refresh_token` 单独持久化于此结构。
+/// 授权码已签发 token 的吊销追踪记录：授权码被原子消费（删除）后，其签发的 token 仍需可定位吊销，
+/// 故 `access_token` / `refresh_token` 单独持久化于此。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CodeUsedRecord {
     access_token: String,
@@ -126,14 +117,11 @@ const CODE_VERIFIER_MAX_LEN: usize = 128;
 
 /// S256 code_challenge 固定长度（BASE64URL_NO_PAD(SHA256(32B)) = 43 字符，RFC 7636 §4.2）。
 ///
-/// 用于在 `verify_pkce` 入口校验 `code_challenge` 长度，防止外部传入超长字符串
-/// 触发常量时间循环被放大成 CPU DoS（CWE-400）。
+/// 在 `verify_pkce` 入口校验长度，防超长字符串放大常量时间循环成 CPU DoS（CWE-400）。
 const S256_CHALLENGE_LEN: usize = 43;
 
-/// URL 查询参数值编码集。
-///
-/// 编码控制字符 + 保留字符 + 不安全字符，防止参数注入和 URL 解析歧义。
-/// `&` / `=` / `#` / `+` / `%` 等保留字符被编码，避免在查询参数值中被误解析。
+/// URL 查询参数值编码集：编码控制字符 + 保留字符 + 不安全字符（`&` / `=` / `#` / `+` / `%` 等），
+/// 防参数注入与 URL 解析歧义。
 const QUERY_VALUE_ENCODE_SET: &AsciiSet = &percent_encoding::CONTROLS
     .add(b' ')
     .add(b'!')
@@ -167,8 +155,7 @@ const QUERY_VALUE_ENCODE_SET: &AsciiSet = &percent_encoding::CONTROLS
 
 /// /oauth2/authorize 请求参数（query string）。
 ///
-/// 两段式票据流程中，校验通过后的完整请求会序列化暂存（TTL 600s），
-/// 登录后凭票据经 `AuthorizeHandler::resume` 原样恢复。
+/// 两段式票据流程中，校验通过后的完整请求会序列化暂存（TTL 600s），登录后经 `resume` 原样恢复。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthorizeRequest {
     /// 授权类型（必须为 "code"）。
@@ -211,10 +198,9 @@ pub enum AuthorizeResponse {
         /// 重定向目标 URL（含 code 和 state 参数）。
         location: String,
     },
-    /// 需要用户交互：重定向到交互页面。
+    /// 需要用户交互：重定向到交互页面（`login_url` 指向登录页或 consent 征询页）。
     ///
-    /// 两种来源：未登录（`login_url` 指向登录页，return_to 仅携带 resume 地址 +
-    /// 一次性票据）；consent 记忆不足（`login_url` 指向征询页并携带重入票据，
+    /// 两种来源：未登录（return_to 仅携带 resume 地址 + 一次性票据）；consent 记忆不足（携带重入票据，
     /// 需 `with_consent_url` 配置，未配置时以 interaction_required 显性失败）。
     LoginRequired {
         /// 交互页面 URL（登录页或 consent 征询页，含 return_to/ticket 参数）。
@@ -266,9 +252,8 @@ pub enum ConsentRequiredReason {
 
 /// 属性快照比较粒度（consent 重征询判定，对齐 cas ConsentReminderOptions 双粒度语义）。
 ///
-/// 双粒度下名哈希恒参与比较；差异仅在值哈希是否参与：
-/// - ATTRIBUTE_NAME：属性值变化不触发重征询（默认，cas 服务级 consent 的常见档位）
-/// - ATTRIBUTE_VALUE：名 + 值哈希都比较，任一变化即重征询
+/// 名哈希恒参与比较，差异仅在值哈希是否参与：ATTRIBUTE_NAME 忽略属性值变化（默认），
+/// ATTRIBUTE_VALUE 名 + 值任一变化即重征询。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AttributeSnapshotGranularity {
     /// 只比较属性名集合哈希（默认）。
@@ -287,13 +272,11 @@ pub enum AuthorizePrompt {
     /// 未指定 prompt：默认流程（未登录引导登录、consent 记忆判定）。
     #[default]
     None,
-    /// prompt=none：不允许任何交互——未登录或 consent 不足一律
-    /// `interaction_required` 显性失败，绝不弹登录/征询页。
+    /// prompt=none：不允许任何交互——未登录或 consent 不足一律 `interaction_required` 显性失败。
     NoInteraction,
     /// prompt=login：即使已有会话也强制重走登录往返。
     ForceLogin,
-    /// prompt=login 的别名形态（OIDC core §3.1.2.1 值集原文），语义同
-    /// [`AuthorizePrompt::ForceLogin`]。
+    /// prompt=login 的别名形态（OIDC core §3.1.2.1 值集原文），语义同 [`AuthorizePrompt::ForceLogin`]。
     Login,
 }
 
@@ -304,8 +287,7 @@ struct ConsentRecord {
     granted_scopes: Vec<String>,
     /// 授权时属性名集合的 SHA-512 十六进制摘要（双粒度都比较）。
     attribute_names_hash: String,
-    /// 授权时属性值的 SHA-512 十六进制摘要（仅 ATTRIBUTE_VALUE 粒度参与比较；
-    /// 恒双写，粒度配置切换不需要强制重征询）。
+    /// 授权时属性值的 SHA-512 十六进制摘要（仅 ATTRIBUTE_VALUE 粒度参与比较；恒双写，粒度切换不需强制重征询）。
     attribute_values_hash: String,
 }
 
@@ -314,20 +296,15 @@ pub struct AuthorizeHandler {
     store: Arc<dyn OAuth2ClientStore>,
     dao: Arc<dyn GarrisonDao>,
     login_url: String,
-    /// consent 征询页 URL：记忆不足时升级重定向的目标；None 时升级路径以
-    /// interaction_required 显性失败（fail-closed，不静默放行）。
+    /// consent 征询页 URL：记忆不足时升级重定向的目标；None 时升级路径以 interaction_required
+    /// 显性失败（fail-closed，不静默放行）。
     consent_url: Option<String>,
     /// 属性快照比较粒度（默认 ATTRIBUTE_NAME）。
     attribute_granularity: AttributeSnapshotGranularity,
 }
 
 impl AuthorizeHandler {
-    /// 创建 handler。
-    ///
-    /// # 参数
-    /// - `store`：OAuth2 客户端存储
-    /// - `dao`：DAO（用于存储授权码 / 暂存票据 / consent 记忆）
-    /// - `login_url`：未登录时重定向的登录页面 URL
+    /// 创建 handler（`dao` 用于存储授权码 / 暂存票据 / consent 记忆；`login_url` 为未登录时的重定向目标）。
     pub fn new(
         store: Arc<dyn OAuth2ClientStore>,
         dao: Arc<dyn GarrisonDao>,
@@ -342,15 +319,12 @@ impl AuthorizeHandler {
         }
     }
 
-    /// 配置 consent 征询页 URL（consent 记忆不足时的升级重定向目标）。
+    /// 配置 consent 征询页 URL（consent 记忆不足时的升级重定向目标）；未配置时征询需求以
+    /// `interaction_required` 显性失败。
     ///
-    /// 未配置时，征询需求以 `interaction_required` 显性失败（不静默放行）。
-    ///
-    /// **prompt=none 属性视图约束（审查记录）**：prompt=none 静默续期判定
-    /// 以空属性视图比对快照——经征询页批准（非空属性视图写入快照）的用户，
-    /// 其 prompt=none 请求会因属性视图变化重新触发 interaction_required
-    /// （fail-safe 方向）。需要 prompt=none 对此类用户生效的部署，须以
-    /// `attributes` 参数传入与征询时一致的属性视图。
+    /// **prompt=none 属性视图约束**：prompt=none 静默续期判定以空属性视图比对快照，故经征询页批准
+    /// （非空属性视图写入快照）的用户其 prompt=none 请求会因属性视图变化重新触发 interaction_required
+    /// （fail-safe 方向）；需对此类用户生效的部署须以 `attributes` 传入与征询时一致的属性视图。
     pub fn with_consent_url(mut self, consent_url: String) -> Self {
         self.consent_url = Some(consent_url);
         self
@@ -362,17 +336,7 @@ impl AuthorizeHandler {
         self
     }
 
-    /// 处理 authorize 请求。
-    ///
-    /// # 参数
-    /// - `req`：请求参数
-    /// - `user_id`：已登录用户 ID（None 表示未登录）
-    ///
-    /// # 返回
-    /// - `Ok(AuthorizeResponse::Redirect)`：授权成功，重定向到 redirect_uri
-    /// - `Ok(AuthorizeResponse::LoginRequired)`：未登录，重定向到登录页
-    ///   （return_to 携带续流票据，登录后经 [`AuthorizeHandler::resume`] 续流）
-    /// - `Err`：请求参数错误（client_id 无效 / redirect_uri 不匹配 / PKCE 校验失败等）
+    /// 处理 authorize 请求（默认流程，等价 `authorize_with_prompt(req, user_id, None)`）。
     pub async fn authorize(
         &self,
         req: &AuthorizeRequest,
@@ -382,17 +346,13 @@ impl AuthorizeHandler {
             .await
     }
 
-    /// 处理带 prompt 语义的 authorize 请求。
-    ///
-    /// # 参数
-    /// - `prompt`：OIDC Core §3.1.2.1 prompt 语义（none / login）
+    /// 处理带 prompt 语义（OIDC Core §3.1.2.1：none / login）的 authorize 请求。
     pub async fn authorize_with_prompt(
         &self,
         req: &AuthorizeRequest,
         user_id: Option<i64>,
         prompt: AuthorizePrompt,
     ) -> GarrisonResult<AuthorizeResponse> {
-        // 1. 校验 response_type / PKCE 方法 / challenge 非空
         validate_request_shape(req)?;
 
         let client = self.load_client(&req.client_id).await?;
@@ -404,7 +364,7 @@ impl AuthorizeHandler {
             )));
         }
 
-        // 4. prompt=login（含别名变体）：已登录也强制重走登录往返（重新认证语义）
+        // prompt=login（含别名变体）：已登录也强制重走登录往返（重新认证语义）
         if matches!(prompt, AuthorizePrompt::ForceLogin | AuthorizePrompt::Login) {
             return self.restage_and_login_redirect(req).await;
         }
@@ -418,11 +378,9 @@ impl AuthorizeHandler {
             return self.restage_and_login_redirect(req).await;
         };
 
-        // 6. 解析 scope 并校验客户端白名单
         let scopes = parse_request_scopes(req);
         client.validate_scopes(&scopes)?;
 
-        // 7. prompt=none：仅当 consent 记忆完整覆盖时直接放行
         if prompt == AuthorizePrompt::NoInteraction {
             let tenant_id = current_tenant_id_with_warn();
             if self
@@ -435,23 +393,17 @@ impl AuthorizeHandler {
             return self.issue_authorization_code(req, &scopes, user_id).await;
         }
 
-        // 8. 授权续流（consent 记忆判定 + 授权码签发）
-        // 直连 authorize 暂不携带属性视图（空视图快照），属性级重征询经
-        // resume / resume_with_consent 路径生效
+        // 授权续流（consent 记忆判定 + 授权码签发）：直连 authorize 不携带属性视图（空视图快照），
+        // 属性级重征询经 resume / resume_with_consent 路径生效
         self.continue_authorization(req, &scopes, user_id, &[])
             .await
     }
 
-    /// 登录后凭票据续流：原子消费票据并恢复完整请求。
+    /// 登录后凭票据续流：原子消费票据并恢复完整请求。`user_id` 为 None 表示仍未登录——以新票据
+    /// 重新暂存（旧票据已消费，一次性语义保持）并再次引导登录。
     ///
     /// 票据一次性（GETDEL 原子消费）：过期 / 未知 / 二次消费统一以
-    /// `oauth2-server-authorize-ticket-invalid-or-expired` 拒绝，不区分三者
-    /// （避免向票据持有者泄露票据状态）。
-    ///
-    /// # 参数
-    /// - `ticket`：authorize 阶段签发的暂存票据
-    /// - `user_id`：登录后的用户 ID；None 表示仍未登录——以新票据重新暂存
-    ///   （旧票据已消费，一次性语义保持）并再次引导登录
+    /// `oauth2-server-authorize-ticket-invalid-or-expired` 拒绝，不区分三者（避免泄露票据状态）。
     pub async fn resume(
         &self,
         ticket: &str,
@@ -479,10 +431,8 @@ impl AuthorizeHandler {
             .await
     }
 
-    /// 以新票据重新暂存请求并构造登录页跳转地址。
-    ///
-    /// return_to 仅携带 resume 地址 + 票据：原始请求参数不进入 return_to，
-    /// 参数注入面被票据化结构性消除。
+    /// 以新票据重新暂存请求并构造登录页跳转地址：return_to 仅携带 resume 地址 + 票据，
+    /// 原始请求参数不进入 return_to（参数注入面被票据化结构性消除）。
     async fn restage_and_login_redirect(
         &self,
         req: &AuthorizeRequest,
@@ -519,8 +469,7 @@ impl AuthorizeHandler {
 
     /// 登录上下文中的授权续流：consent 记忆判定 + 授权码签发。
     ///
-    /// 调用方（直连 authorize / resume）负责客户端与 scope 的 fail-closed
-    /// 重校验；本方法只做 consent 记忆决策与放行/升级。
+    /// 调用方（直连 authorize / resume）负责客户端与 scope 的 fail-closed 重校验，本方法只做 consent 决策与放行/升级。
     async fn continue_authorization(
         &self,
         req: &AuthorizeRequest,
@@ -565,13 +514,7 @@ impl AuthorizeHandler {
 
     /// 判定本次请求是否可由记忆的 consent 覆盖（免征询）。
     ///
-    /// 判定序：记录存在性 → 记录可解析性（fail-safe）→ scope 超集 → 属性快照。
-    ///
-    /// # 参数
-    /// - `tenant_id`：租户 ID（consent 键的第一段；授权续流路径取当前租户上下文，
-    ///   无上下文时为默认租户 0）
-    /// - `requested_scopes`：本次请求的 scope 集合
-    /// - `attributes`：本次请求的属性视图（决定释放哪些属性 → 决定是否重新征询）
+    /// 判定序：记录存在性 → 记录可解析性（fail-safe）→ scope 超集 → 属性快照；`attributes` 决定释放哪些属性。
     pub async fn consent_decision(
         &self,
         tenant_id: i64,
@@ -621,11 +564,10 @@ impl AuthorizeHandler {
         Ok(ConsentDecision::Remembered)
     }
 
-    /// 记录用户批准的 consent（超集合并 + 属性快照快照写入），返回合并后的已授集合。
+    /// 记录用户批准的 consent（超集合并 + 属性快照写入），返回合并后的已授集合。
     ///
-    /// 合并语义：已授集合只增不减——本次批准的 scope 并入既有记录后回写。
-    /// 记录不可解析时以本次批准重建（重建后仍需重新批准既有增量 scope，
-    /// fail-safe 方向是多征询而非少征询）。记录永久驻留（consent 跨会话有效）。
+    /// 合并语义：已授集合只增不减；记录不可解析时以本次批准重建（重建后仍需重新批准既有增量 scope，
+    /// fail-safe 方向是多征询而非少征询）；记录永久驻留（consent 跨会话有效）。
     pub async fn grant_consent(
         &self,
         tenant_id: i64,
@@ -662,11 +604,8 @@ impl AuthorizeHandler {
         Ok(merged)
     }
 
-    /// consent 征询后的重入续流：消费升级时签发的新票据并落实用户决定。
-    ///
-    /// # 参数
-    /// - `approved`：用户批准（true：scope 超集合并后放行）/ 拒绝（false：access_denied）
-    /// - `attributes`：批准时的属性视图（随 consent 记录写入快照）
+    /// consent 征询后的重入续流：消费升级时签发的新票据并落实用户决定：`approved=false` 返回
+    /// access_denied，`approved=true` 将 `attributes` 快照写入 consent 记录后放行。
     pub async fn resume_with_consent(
         &self,
         ticket: &str,
@@ -737,10 +676,8 @@ impl AuthorizeHandler {
         })?;
         self.dao.set(&key, &json, AUTH_CODE_TTL_SECONDS).await?;
 
-        // redirect_uri 白名单为精确匹配，允许自带 query string（如
-        // `https://app.example.com/cb?existing=param`）。RFC 6749 §4.1.2 /
-        // RFC 3986：追加参数须按是否已有 query 选定界符（? 或 &），
-        // 恒拼 `?` 会产生双 `?` 畸形 URL。
+        // redirect_uri 白名单为精确匹配，允许自带 query string；RFC 6749 §4.1.2 / RFC 3986：
+        // 追加参数须按是否已有 query 选定界符（? 或 &），恒拼 `?` 会产生双 `?` 畸形 URL
         let sep = if req.redirect_uri.contains('?') {
             '&'
         } else {
@@ -764,20 +701,14 @@ impl AuthorizeHandler {
         })
     }
 
-    /// 消费授权码（一次性使用，原子消费：读取与删除为单次 DAO 操作）。
+    /// 消费授权码（一次性使用；供 /oauth2/token 端点调用）。
     ///
-    /// 供 /oauth2/token 端点调用：授权码交换 access_token。
+    /// `get_and_delete` 将「读取 + 删除」合并为原子操作，消除 `get` / `delete` 之间的 TOCTOU 竞态
+    /// （并发双花 / 重放）：多个并发请求同一 code 只有一个能取到 `Some`，其余返回 `None`。
     ///
-    /// 使用 `dao.get_and_delete` 将「读取 + 删除」合并为原子操作，消除
-    /// `get` 与 `delete` 之间的 TOCTOU 竞态窗口（并发双花 / 重放攻击）：
-    /// 多个并发请求同一 code 时，只有一个能原子地取到 `Some`，其余返回 `None`。
-    ///
-    /// # 返回
-    /// - `Ok(Some(code))`：授权码有效，返回关联数据
-    /// - `Ok(None)`：授权码不存在、已过期或已被消费（重放/并发双花）
+    /// `Ok(None)` 表示授权码不存在、已过期或已被消费。
     pub async fn consume_code(&self, code: &str) -> GarrisonResult<Option<AuthorizationCode>> {
         let key = DaoKeyPrefix::OAuth2AuthCode.build_key(code);
-        // 原子消费：get_and_delete 在存储层一次性完成「读取并返回 + 删除」
         let json = self.dao.get_and_delete(&key).await?;
         match json {
             Some(json) => {
@@ -790,11 +721,8 @@ impl AuthorizeHandler {
         }
     }
 
-    /// 记录授权码签发的 token，供「重放/双花」时吊销。
-    ///
-    /// 授权码被原子消费（删除）后，其签发的 access/refresh token 仍需可被定位吊销。
-    /// 因此将 `access_token` / `refresh_token` 写入独立的 `oauth2:codeused:` 记录，
-    /// 与授权码主体（已删除）解耦。TTL 取较长值以覆盖 token 生命周期。
+    /// 记录授权码签发的 token，供「重放/双花」时吊销：授权码被原子消费（删除）后其签发的 token 仍需可定位，
+    /// 故写入独立的 `oauth2:codeused:` 记录（TTL 较长以覆盖 token 生命周期）。
     pub async fn record_code_tokens(
         &self,
         code: &str,
@@ -814,14 +742,10 @@ impl AuthorizeHandler {
             .await
     }
 
-    /// 重放/双花检测：授权码已不存在时，吊销其此前签发的 token。
+    /// 重放/双花检测：授权码已不存在时，读取 `oauth2:codeused:` 记录并删除其 access/refresh token 的
+    /// DAO 记录（使 introspection / refresh 失效）；best-effort，删除失败仅告警不阻断主流程。
     ///
-    /// 读取 `oauth2:codeused:` 记录，删除 access/refresh token 的 DAO 记录
-    /// （使 introspection / refresh 失效）。best-effort：删除失败仅记录告警，不阻断主流程。
-    ///
-    /// # 返回
-    /// - `Ok(true)`：存在该 code 的签发记录并已完成吊销
-    /// - `Ok(false)`：无签发记录（code 从未成功签发过 token，纯随机重放）
+    /// `Ok(false)` 表示无签发记录（code 从未成功签发过 token，纯随机重放）。
     pub async fn revoke_replayed_code_tokens(&self, code: &str) -> GarrisonResult<bool> {
         let key = DaoKeyPrefix::OAuth2CodeUsed.build_key(code);
         let json = self.dao.get_and_delete(&key).await?;
@@ -851,9 +775,7 @@ impl AuthorizeHandler {
     }
 }
 
-// ============================================================================
 // 请求校验与解析辅助
-// ============================================================================
 
 /// 校验请求形状：response_type / PKCE 方法 / challenge 非空（错误序与既有端点一致）。
 fn validate_request_shape(req: &AuthorizeRequest) -> GarrisonResult<()> {
@@ -885,17 +807,13 @@ fn parse_request_scopes(req: &AuthorizeRequest) -> Vec<String> {
         .unwrap_or_default()
 }
 
-// ============================================================================
 // PKCE 工具函数
-// ============================================================================
 
 /// 生成授权码（32 字节随机数 → BASE64URL 编码）。
 fn generate_authorization_code() -> String {
     let mut bytes = [0u8; 32];
-    // getrandom::fill 每次直接读 OS CSPRNG（系统调用），无用户态 DRBG 缓冲，
-    // 相比 thread_rng 性能略低（~100-300ns vs ~10-30ns/调用），但消除 reseed 状态机攻击面。
-    // 授权码生成非高频路径（每次用户授权一次），安全优先于性能。
-    // 与项目其余模块（src/web/csrf.rs / src/account/credential/backup_code.rs 等）规范一致。
+    // getrandom::fill 每次直接读 OS CSPRNG，无用户态 DRBG 缓冲：性能略低于 thread_rng，
+    // 但消除 reseed 状态机攻击面；授权码生成非高频路径，安全优先
     getrandom::fill(&mut bytes).expect("OS CSPRNG 不可用");
     URL_SAFE_NO_PAD.encode(bytes)
 }
@@ -947,9 +865,7 @@ fn generate_authorize_ticket() -> String {
     Alphanumeric.sample_string(&mut rand::rng(), AUTHORIZE_TICKET_LEN)
 }
 
-// ============================================================================
 // 属性快照哈希（对齐 cas DefaultConsentDecisionBuilder 的双粒度判定）
-// ============================================================================
 
 /// SHA-512 摘要的小写十六进制编码（128 字符）。
 fn sha512_hex(data: &[u8]) -> String {
@@ -1252,9 +1168,8 @@ mod tests {
         }
     }
 
-    /// 两段式票据化后，未登录 return_to 只携带 resume 地址与一次性票据，
-    /// 原始请求参数（含 redirect_uri 的 `&`/`=`、state 的特殊字符）不再进入
-    /// return_to——参数注入面被票据化结构性消除。
+    /// 两段式票据化后，未登录 return_to 只携带 resume 地址与一次性票据，原始请求参数（含 redirect_uri 的
+    /// `&`/`=`、state 的特殊字符）不再进入 return_to——参数注入面被票据化结构性消除。
     #[tokio::test]
     async fn authorize_return_to_carries_only_resume_ticket() {
         let (handler, dao) = make_handler();
@@ -1339,8 +1254,7 @@ mod tests {
         }
     }
 
-    /// 未登录 authorize：请求校验通过后签发 32 字符票据，
-    /// 经 DAO `set_if_absent` 暂存完整请求（TTL 600s）。
+    /// 未登录 authorize：校验通过后签发 32 字符票据，经 DAO `set_if_absent` 暂存完整请求（TTL 600s）。
     #[tokio::test]
     async fn authorize_not_logged_in_stages_full_request_with_600s_ttl() {
         let (handler, dao) = make_handler();
@@ -2243,8 +2157,7 @@ mod tests {
         );
     }
 
-    /// prompt=none：consent 不足 → interaction_required 错误（RFC 6749 / OIDC
-    /// Core §3.1.2.1：不弹交互页，显性错误返回）。
+    /// prompt=none：consent 不足 → interaction_required 错误（不弹交互页，显性错误返回，OIDC Core §3.1.2.1）。
     #[tokio::test]
     async fn prompt_none_without_consent_is_interaction_required() {
         let (handler, _) = make_handler();
@@ -2343,8 +2256,7 @@ mod tests {
         assert!(matches!(resp, AuthorizeResponse::Redirect { .. }));
     }
 
-    /// redirect_uri 自带 query string（白名单精确匹配允许含 `?` 的 URI）时，
-    /// code 参数必须用 `&` 追加（RFC 6749 §4.1.2 / RFC 3986），
+    /// redirect_uri 自带 query string 时 code 参数必须用 `&` 追加（RFC 6749 §4.1.2 / RFC 3986），
     /// 恒拼 `?` 会产生双 `?` 畸形跳转 URL。
     #[tokio::test]
     async fn authorize_redirect_url_appends_code_with_ampersand_when_query_exists() {
@@ -2538,8 +2450,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    /// 并发原子消费 — 16 个 tokio 任务同时用同一 code 调用 consume_code，
-    /// 仅一个成功（取到 Some），其余全部返回 None，杜绝并发双花 / 重放。
+    /// 并发原子消费：16 个 tokio 任务同时用同一 code 调用 consume_code，仅一个取到 `Some`，其余返回 `None`。
     #[tokio::test]
     async fn consume_code_atomic_concurrent_only_one_wins() {
         let (handler, _) = make_handler();

@@ -3,14 +3,9 @@
 
 //! 注解系统集成测试：完整 axum app + extractor + 鉴权 + 401/403 响应。
 //!
-//! 验证 `CheckLogin` / `CheckRole` / `CheckPermission` extractor 在完整 axum 应用中的行为。
-//!
-//! # production-mock-purge
-//!
-//! - `MockDao` 已替换为产品 `InMemoryDao`（src/dao/in_memory.rs）。
-//! - NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化
-//!   （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
-//!   本文件 `MockInterface` 替身保留）。
+//! 验证 `CheckLogin` / `CheckRole` / `CheckPermission` extractor 在完整 axum 应用中的
+//! 行为。库层无产品 `GarrisonInterface` 实现（框架设计为业务方回调），本文件
+//! `MockInterface` 替身保留；`MockDao` 已替换为产品 `InMemoryDao`。
 
 use async_trait::async_trait;
 use axum::body::Body;
@@ -298,7 +293,7 @@ async fn public_without_token_returns_200() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-/// 验证 401 响应体包含结构化 JSON 错误（不泄漏内部细节，依据 codebase-hardening Task 0.4）。
+/// 验证 401 响应体包含结构化 JSON 错误（不泄漏内部细节）。
 #[tokio::test]
 #[serial]
 async fn unauthorized_response_body_contains_error_json() {

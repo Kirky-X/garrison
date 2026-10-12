@@ -1,32 +1,13 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 策略注册表模块，提供 6 个可插拔策略 trait + Strategy 注册表。
+//! 策略注册表模块：6 个可插拔策略 trait（`LoginHandler` 登录 / `LogoutHandler` 登出 / `PermissionHandler` 权限校验 /
+//! `TokenGenerator` 生成 / `SessionCreator` 会话创建 / `FirewallStrategy` 防火墙），允许运行时替换鉴权策略组件。
 //!
-//! 对应 策略模式设计，
-//! 允许运行时替换鉴权策略组件。
+//! `Strategy` struct 持有 6 个 `Arc<dyn Trait>`，提供 `register_*`/`get_*`/`remove_*` 方法，默认实现委托 `GarrisonLogicDefault`。
 //!
-//! ## 6 个策略 trait
-//!
-//! - [`LoginHandler`]：登录策略
-//! - [`LogoutHandler`]：登出策略
-//! - [`PermissionHandler`]：权限校验策略
-//! - [`TokenGenerator`]：Token 生成策略
-//! - [`SessionCreator`]：会话创建策略
-//! - [`FirewallStrategy`]：防火墙策略
-//!
-//! ## Strategy 注册表
-//!
-//! [`Strategy`] struct 持有 6 个 `Arc<dyn Trait>`，
-//! 提供 `register_*`/`get_*`/`remove_*` 方法。
-//! 默认实现委托 [`GarrisonLogicDefault`](crate::stp::GarrisonLogicDefault)。
-//!
-//! ## 偏差说明
-//!
-//! - `login_id` 使用 `&str` 而非 `LoginId` newtype，遵循子 trait（`SessionLogic` / `PermissionLogic`）现有惯例
-//! （惯例优先于新颖）
-//! - [`FirewallStrategy`] 与现有 [`GarrisonPermissionStrategy`](crate::strategy::GarrisonPermissionStrategy)
-//! trait 共存，两者名称不同，不冲突
+//! 偏差说明：`login_id` 用 `&str` 而非 `LoginId` newtype，遵循子 trait（`SessionLogic` / `PermissionLogic`）现有惯例；
+//! `FirewallStrategy` 与 `GarrisonPermissionStrategy` 名称不同、职责不同（后者做权限/角色校验，前者做登录前钩子检查），可直接共存。
 
 use crate::error::GarrisonResult;
 use crate::stp::{GarrisonLogicDefault, LoginParams, PermissionLogic, SessionLogic, TokenLogic};
@@ -43,36 +24,16 @@ use crate::strategy::hooks::LoginContext;
 use async_trait::async_trait;
 use std::sync::Arc;
 
-// ============================================================================
 // 6 个策略 trait（均为 Send + Sync）
-// ============================================================================
 
-/// 登录策略 trait，定义登录行为的可插拔契约。
-///
-/// 对应 `SaTokenStrategy` 登录部分，
-/// 业务方可通过实现此 trait 替换默认的登录逻辑。
-///
-/// # 默认实现
-///
-/// [`DefaultLoginHandler`] 委托 [`SessionLogic::login`]。
+/// 登录策略 trait，定义登录行为的可插拔契约；默认实现 [`DefaultLoginHandler`] 委托 [`SessionLogic::login`]。
 #[async_trait]
 pub trait LoginHandler: Send + Sync {
     /// 执行登录：生成 token 并创建会话。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    ///
-    /// # 返回
-    /// 生成的 token 字符串。
     async fn handle_login(&self, login_id: &str) -> GarrisonResult<String>;
 }
 
-/// 登出策略 trait，定义登出行为的可插拔契约。
-///
-/// # 默认实现
-///
-/// [`DefaultLogoutHandler`] 委托 [`SessionLogic::logout`] /
-/// [`SessionLogic::logout_by_login_id`]。
+/// 登出策略 trait，定义登出行为的可插拔契约；默认实现 [`DefaultLogoutHandler`] 委托 [`SessionLogic::logout`] / [`SessionLogic::logout_by_login_id`]。
 #[async_trait]
 pub trait LogoutHandler: Send + Sync {
     /// 执行登出：从 task_local 获取当前 token 并销毁。
@@ -82,12 +43,7 @@ pub trait LogoutHandler: Send + Sync {
     async fn handle_logout_by_login_id(&self, login_id: &str) -> GarrisonResult<()>;
 }
 
-/// 权限校验策略 trait，定义权限/角色校验的可插拔契约。
-///
-/// # 默认实现
-///
-/// [`DefaultPermissionHandler`] 委托 [`PermissionLogic::check_permission`] /
-/// [`PermissionLogic::check_role`]。
+/// 权限校验策略 trait，定义权限/角色校验的可插拔契约；默认实现 [`DefaultPermissionHandler`] 委托 [`PermissionLogic::check_permission`] / [`PermissionLogic::check_role`]。
 #[async_trait]
 pub trait PermissionHandler: Send + Sync {
     /// 校验权限：检查当前主体是否持有指定权限。
@@ -97,29 +53,17 @@ pub trait PermissionHandler: Send + Sync {
     async fn handle_check_role(&self, role: &str) -> GarrisonResult<()>;
 }
 
-/// Token 生成策略 trait，定义 token 生成与刷新的可插拔契约。
-///
-/// # 默认实现
-///
-/// [`DefaultTokenGenerator`] 委托 [`SessionLogic::login`]（生成 token）
-/// 与 [`TokenLogic::refresh_token`]（刷新 token）。
+/// Token 生成策略 trait，定义 token 生成与刷新的可插拔契约；默认实现 [`DefaultTokenGenerator`] 委托 [`SessionLogic::login`]（生成）与 [`TokenLogic::refresh_token`]（刷新）。
 #[async_trait]
 pub trait TokenGenerator: Send + Sync {
-    /// 生成 token。
-    ///
-    /// 默认实现委托 [`SessionLogic::login`]，会同时创建会话。
+    /// 生成 token：默认实现委托 [`SessionLogic::login`]，会同时创建会话。
     async fn generate_token(&self, login_id: &str) -> GarrisonResult<String>;
 
     /// 刷新 token。
     async fn refresh_token(&self, token: &str) -> GarrisonResult<String>;
 }
 
-/// 会话创建策略 trait，定义会话创建与登录检查的可插拔契约。
-///
-/// # 默认实现
-///
-/// [`DefaultSessionCreator`] 委托 [`SessionLogic::login_with_token`] /
-/// [`SessionLogic::check_login`]。
+/// 会话创建策略 trait，定义会话创建与登录检查的可插拔契约；默认实现 [`DefaultSessionCreator`] 委托 [`SessionLogic::login_with_token`] / [`SessionLogic::check_login`]。
 #[async_trait]
 pub trait SessionCreator: Send + Sync {
     /// 创建会话：用指定 token 为 login_id 建立会话。
@@ -131,15 +75,8 @@ pub trait SessionCreator: Send + Sync {
 
 /// 防火墙策略 trait，定义登录前安全检查的可插拔契约。
 ///
-/// 与现有 [`GarrisonPermissionStrategy`](crate::strategy::GarrisonPermissionStrategy) trait 共存
-/// ，两者名称不同，职责不同：
-/// - `GarrisonPermissionStrategy`：权限/角色数据查询与校验
-/// - `FirewallStrategy`（本 trait）：登录前防火墙钩子检查
-///
-/// # 默认实现
-///
-/// [`DefaultFirewallStrategy`] 返回 `Ok(())`（no-op）：
-/// 未配置防火墙策略时，登录前安全检查直接放行。
+/// 与 [`GarrisonPermissionStrategy`](crate::strategy::GarrisonPermissionStrategy) 职责不同（后者做权限/角色数据查询与校验，
+/// 本 trait 做登录前防火墙钩子检查）；默认实现 [`DefaultFirewallStrategy`] 返回 `Ok(())`（no-op），未配置时直接放行。
 #[async_trait]
 pub trait FirewallStrategy: Send + Sync {
     /// 登录前防火墙安全检查。
@@ -154,9 +91,7 @@ pub trait FirewallStrategy: Send + Sync {
     async fn check_login_hooks(&self, login_id: &str, ctx: &LoginContext) -> GarrisonResult<()>;
 }
 
-// ============================================================================
 // 默认实现：委托 GarrisonLogicDefault
-// ============================================================================
 
 /// `LoginHandler` 的默认实现，委托 [`SessionLogic::login`]。
 pub struct DefaultLoginHandler {
@@ -177,8 +112,7 @@ impl LoginHandler for DefaultLoginHandler {
     }
 }
 
-/// `LogoutHandler` 的默认实现，委托 [`SessionLogic::logout`] /
-/// [`SessionLogic::logout_by_login_id`]。
+/// `LogoutHandler` 的默认实现，委托 [`SessionLogic::logout`] / [`SessionLogic::logout_by_login_id`]。
 pub struct DefaultLogoutHandler {
     logic: Arc<GarrisonLogicDefault>,
 }
@@ -201,8 +135,7 @@ impl LogoutHandler for DefaultLogoutHandler {
     }
 }
 
-/// `PermissionHandler` 的默认实现，委托 [`PermissionLogic::check_permission`] /
-/// [`PermissionLogic::check_role`]。
+/// `PermissionHandler` 的默认实现，委托 [`PermissionLogic::check_permission`] / [`PermissionLogic::check_role`]。
 pub struct DefaultPermissionHandler {
     logic: Arc<GarrisonLogicDefault>,
 }
@@ -225,8 +158,7 @@ impl PermissionHandler for DefaultPermissionHandler {
     }
 }
 
-/// `TokenGenerator` 的默认实现，委托 [`SessionLogic::login`]（生成）
-/// 与 [`TokenLogic::refresh_token`]（刷新）。
+/// `TokenGenerator` 的默认实现，委托 [`SessionLogic::login`]（生成）与 [`TokenLogic::refresh_token`]（刷新）。
 pub struct DefaultTokenGenerator {
     logic: Arc<GarrisonLogicDefault>,
 }
@@ -249,8 +181,7 @@ impl TokenGenerator for DefaultTokenGenerator {
     }
 }
 
-/// `SessionCreator` 的默认实现，委托 [`SessionLogic::login_with_token`] /
-/// [`SessionLogic::check_login`]。
+/// `SessionCreator` 的默认实现，委托 [`SessionLogic::login_with_token`] / [`SessionLogic::check_login`]。
 pub struct DefaultSessionCreator {
     logic: Arc<GarrisonLogicDefault>,
 }
@@ -273,18 +204,12 @@ impl SessionCreator for DefaultSessionCreator {
     }
 }
 
-/// `FirewallStrategy` 的默认实现，返回 `Ok(())`（no-op）。
-///
-/// [`GarrisonLogicDefault`] 无 `check_login_hooks` 方法，
-/// 默认 no-op 与现有 [`crate::strategy::GarrisonPermissionStrategy`] trait 的
-/// `check_login_hooks` 默认行为一致。
+/// `FirewallStrategy` 的默认实现，返回 `Ok(())`（no-op）：`GarrisonLogicDefault` 无 `check_login_hooks` 方法，
+/// 默认 no-op 与 `GarrisonPermissionStrategy` trait 的 `check_login_hooks` 默认行为一致。
 pub struct DefaultFirewallStrategy;
 
 impl DefaultFirewallStrategy {
-    /// 创建默认防火墙策略实例。
-    ///
-    /// 接受 `logic` 参数以与其他 Default*Handler 保持构造签名一致，
-    /// 但 `check_login_hooks` 为 no-op，不存储 logic。
+    /// 创建默认防火墙策略实例：接受 `logic` 参数仅为与其他 Default*Handler 构造签名一致，`check_login_hooks` 为 no-op，不存储 logic。
     pub fn new(_logic: Arc<GarrisonLogicDefault>) -> Self {
         Self
     }
@@ -305,20 +230,15 @@ impl FirewallStrategy for DefaultFirewallStrategy {
     }
 }
 
-// ============================================================================
 // Strategy 注册表
-// ============================================================================
 
-/// 策略注册表，持有 6 个可插拔策略的 `Arc<dyn Trait>`。
-///
-/// 提供 `register_*`/`get_*`/`remove_*` 方法用于运行时替换、查询、恢复策略。
-/// 默认策略委托 [`GarrisonLogicDefault`]，通过 [`Strategy::new`] 构造。
+/// 策略注册表，持有 6 个可插拔策略的 `Arc<dyn Trait>`：提供 `register_*`/`get_*`/`remove_*` 方法用于运行时替换、
+/// 查询、恢复策略，默认策略委托 [`GarrisonLogicDefault`]，通过 [`Strategy::new`] 构造。
 ///
 /// # 线程安全
 ///
-/// `Strategy` 本身通过 `&self` 提供 `get_*` 方法，通过 `&mut self` 提供 `register_*`/
-/// `remove_*` 方法。在 [`GarrisonManager`](crate::manager::GarrisonManager) 中以
-/// `Arc<RwLock<Strategy>>` 形式持有，保证线程安全。
+/// `get_*` 经 `&self`、`register_*`/`remove_*` 经 `&mut self`；在 [`GarrisonManager`](crate::manager::GarrisonManager)
+/// 中以 `Arc<RwLock<Strategy>>` 形式持有，保证线程安全。
 ///
 /// # 示例
 ///
@@ -372,12 +292,6 @@ pub struct Strategy {
 
 impl Strategy {
     /// 创建策略注册表，6 个策略均初始化为委托 `GarrisonLogicDefault` 的默认实现。
-    ///
-    /// # 参数
-    /// - `logic`: `GarrisonLogicDefault` 引用，默认策略委托其方法。
-    ///
-    /// # 返回
-    /// 新建的 `Strategy` 实例，6 个策略与默认策略均为默认实现。
     pub fn new(logic: Arc<GarrisonLogicDefault>) -> Self {
         let login_handler: Arc<dyn LoginHandler> =
             Arc::new(DefaultLoginHandler::new(logic.clone()));
@@ -407,9 +321,7 @@ impl Strategy {
         }
     }
 
-    // ------------------------------------------------------------------
     // LoginHandler: register / get / remove
-    // ------------------------------------------------------------------
 
     /// 替换登录策略。
     pub fn register_login_handler(&mut self, handler: Arc<dyn LoginHandler>) {
@@ -426,9 +338,7 @@ impl Strategy {
         self.login_handler = self.default_login_handler.clone();
     }
 
-    // ------------------------------------------------------------------
     // LogoutHandler: register / get / remove
-    // ------------------------------------------------------------------
 
     /// 替换登出策略。
     pub fn register_logout_handler(&mut self, handler: Arc<dyn LogoutHandler>) {
@@ -445,9 +355,7 @@ impl Strategy {
         self.logout_handler = self.default_logout_handler.clone();
     }
 
-    // ------------------------------------------------------------------
     // PermissionHandler: register / get / remove
-    // ------------------------------------------------------------------
 
     /// 替换权限校验策略。
     pub fn register_permission_handler(&mut self, handler: Arc<dyn PermissionHandler>) {
@@ -464,9 +372,7 @@ impl Strategy {
         self.permission_handler = self.default_permission_handler.clone();
     }
 
-    // ------------------------------------------------------------------
     // TokenGenerator: register / get / remove
-    // ------------------------------------------------------------------
 
     /// 替换 token 生成策略。
     pub fn register_token_generator(&mut self, generator: Arc<dyn TokenGenerator>) {
@@ -483,9 +389,7 @@ impl Strategy {
         self.token_generator = self.default_token_generator.clone();
     }
 
-    // ------------------------------------------------------------------
     // SessionCreator: register / get / remove
-    // ------------------------------------------------------------------
 
     /// 替换会话创建策略。
     pub fn register_session_creator(&mut self, creator: Arc<dyn SessionCreator>) {
@@ -502,9 +406,7 @@ impl Strategy {
         self.session_creator = self.default_session_creator.clone();
     }
 
-    // ------------------------------------------------------------------
     // FirewallStrategy: register / get / remove
-    // ------------------------------------------------------------------
 
     /// 替换防火墙策略。
     pub fn register_firewall_strategy(&mut self, strategy: Arc<dyn FirewallStrategy>) {
@@ -535,9 +437,7 @@ mod tests {
     use serial_test::serial;
     use std::collections::HashMap;
 
-    // ------------------------------------------------------------------------
     // MockInterface + 辅助函数（MockDao 复用 dao::tests::MockDao）
-    // ------------------------------------------------------------------------
 
     struct MockInterface {
         permissions: HashMap<String, Vec<String>>,
@@ -583,9 +483,7 @@ mod tests {
         ))
     }
 
-    // ========================================================================
     // 6 个策略 trait 可被实现
-    // ========================================================================
 
     /// 验证 `LoginHandler` trait 可被自定义实现。
     #[tokio::test]
@@ -700,9 +598,7 @@ mod tests {
         assert!(fw.check_login_hooks("1001", &ctx).await.is_ok());
     }
 
-    // ========================================================================
     // Strategy 注册表
-    // ========================================================================
 
     /// 验证 `Strategy::new(logic)` 构造成功，6 个策略均为默认实现。
     #[tokio::test]
@@ -836,9 +732,7 @@ mod tests {
         strategy.remove_login_handler();
     }
 
-    // ========================================================================
     // 策略可插拔（替换一个不影响其他）
-    // ========================================================================
 
     /// 验证替换 `LoginHandler` 不影响 `LogoutHandler`。
     #[tokio::test]
@@ -869,10 +763,7 @@ mod tests {
         assert_eq!(token, "custom-1001");
     }
 
-    /// 验证替换后旧策略被 drop（无内存泄漏）。
-    ///
-    /// 使用 `Arc::strong_count` 验证：注册新策略后，旧策略的引用计数降为 0
-    /// （前提：旧策略仅被 Strategy 持有，未被外部引用）。
+    /// 验证替换后旧策略被 drop（weak 引用失效），无内存泄漏。
     #[tokio::test]
     async fn strategy_replace_drops_old_handler() {
         let logic = make_logic();
@@ -962,13 +853,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // 覆盖率补充：Default*Handler 各方法委托 logic 的验证
-    // ========================================================================
 
-    /// 验证 `DefaultLogoutHandler::handle_logout` 委托 `logic.logout`。
-    ///
-    /// 未登录时 logout 返回 Ok（幂等），验证委托路径被覆盖。
+    /// 验证 `DefaultLogoutHandler::handle_logout` 委托 `logic.logout`（未登录时幂等返回 Ok）。
     #[tokio::test]
     #[serial]
     async fn default_logout_handler_handle_logout_delegates() {
@@ -1001,9 +888,7 @@ mod tests {
         );
     }
 
-    /// 验证 `DefaultPermissionHandler::handle_check_role` 委托 `logic.check_role`。
-    ///
-    /// 未登录时 check_role 返回 Err（NotLogin 或 NotRole），验证委托路径被覆盖。
+    /// 验证 `DefaultPermissionHandler::handle_check_role` 委托 `logic.check_role`（未登录时返回 Err，NotLogin 或 NotRole）。
     #[tokio::test]
     #[serial]
     async fn default_permission_handler_handle_check_role_delegates() {
@@ -1035,9 +920,7 @@ mod tests {
         assert!(!token.is_empty(), "生成的 token 不应为空");
     }
 
-    /// 验证 `DefaultTokenGenerator::refresh_token` 委托 `logic.refresh_token`。
-    ///
-    /// 使用一个无效的 token 调用 refresh_token，应返回 Err（InvalidToken）。
+    /// 验证 `DefaultTokenGenerator::refresh_token` 委托 `logic.refresh_token`（无效 token 返回 Err，InvalidToken）。
     #[tokio::test]
     #[serial]
     async fn default_token_generator_refresh_token_delegates() {
@@ -1053,12 +936,8 @@ mod tests {
         );
     }
 
-    /// 验证 `DefaultSessionCreator::check_login` 委托 `logic.check_login`。
-    ///
-    /// 未登录时 check_login 的返回取决于 `throw_on_not_login` 配置：
-    /// - `true`（默认）：返回 `Err(NotLogin)`
-    /// - `false`：返回 `Ok(false)`
-    /// 两种情况都验证了委托路径被覆盖。
+    /// 验证 `DefaultSessionCreator::check_login` 委托 `logic.check_login`：未登录时返回取决于 `throw_on_not_login` 配置
+    /// （`true`（默认）返回 `Err(NotLogin)`，`false` 返回 `Ok(false)`），两种情况都验证委托路径被覆盖。
     #[tokio::test]
     #[serial]
     async fn default_session_creator_check_login_delegates() {

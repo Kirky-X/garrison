@@ -1,21 +1,15 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! FirewallContext 实现块（从 mod.rs 迁移）。
+//! FirewallContext 实现。
 
 use super::FirewallContext;
 use crate::error::{GarrisonError, GarrisonResult};
 
 impl FirewallContext {
-    /// 创建防火墙上下文，仅指定 IP。
-    ///
-    /// # IP 校验
-    ///
-    /// 本构造器**不校验** IP 格式（保持既有签名 `Self`，不破坏调用方），
-    /// 仅在 debug 构建下 `debug_assert` IP 可解析。生产代码建议改用
-    /// [`try_new`](Self::try_new) 在构造期拒绝畸形 IP（空串、URL 编码、
-    /// 带括号 IPv6、任意垃圾字符串等会被下游拼进缓存 key / 封禁目标，
-    /// 产生不可预期的限流与封禁行为）。
+    /// 创建防火墙上下文,仅指定 IP 且**不校验**格式(仅 debug 构建 `debug_assert`);生产代码建议改用
+    /// [`try_new`](Self::try_new) 在构造期拒绝畸形 IP(否则空串、URL 编码、带括号 IPv6 等会被下游拼进
+    /// 缓存 key / 封禁目标,产生不可预期的限流与封禁行为)。
     pub fn new(ip: impl Into<String>) -> Self {
         let ip = ip.into();
         debug_assert!(
@@ -30,13 +24,8 @@ impl FirewallContext {
         }
     }
 
-    /// 创建防火墙上下文并校验 IP 格式（IPv4 / IPv6）。
-    ///
-    /// 与 [`new`](Self::new) 的区别：解析失败返回 `InvalidParam` 而非静默存入，
+    /// 创建防火墙上下文并校验 IP 格式（IPv4 / IPv6）：解析失败返回 `InvalidParam` 而非静默存入，
     /// 防止畸形值流入下游策略（BruteForce count key、封禁目标、限流 key 等）。
-    ///
-    /// # 错误
-    /// - `ip` 不是合法 IPv4/IPv6 地址 → `InvalidParam`
     pub fn try_new(ip: impl Into<String>) -> GarrisonResult<Self> {
         let ip = ip.into();
         if let Err(e) = ip.parse::<std::net::IpAddr>() {

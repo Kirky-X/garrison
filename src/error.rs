@@ -1,21 +1,14 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 错误类型定义模块。
-//!
-//! SaTokenException 异常体系，提供框架统一的错误类型与 Result 别名。
+//! 错误类型定义模块：SaTokenException 异常体系，提供框架统一错误类型与 `GarrisonResult` 别名。
 
 use crate::exception::GarrisonException;
 use thiserror::Error;
 
-/// Garrison 框架统一错误类型。
+/// Garrison 框架统一错误类型，涵盖登录、权限、Token、DAO、配置等各层错误场景。
 ///
-/// 涵盖登录、权限、Token、DAO、配置等各层错误场景。
-///
-/// # Display 行为
-///
-/// - 未启用 `i18n` feature：硬编码中文
-/// - 启用 `i18n` feature：依据线程本地 locale 切换中英文（详见 [`crate::i18n`]）
+/// Display 依据 i18n feature：未启用时硬编码中文，启用时按线程本地 locale 切换（详见 [`crate::i18n`]）。
 #[derive(Error)]
 pub enum GarrisonError {
     /// 未登录异常（对应 NotLoginException）。
@@ -30,9 +23,7 @@ pub enum GarrisonError {
     /// Token 无效异常。
     InvalidToken(String),
 
-    /// Token 已吊销异常（RFC 7009 Token Revocation）。
-    ///
-    /// 适用于 refresh token 重用检测、令牌吊销等场景。
+    /// Token 已吊销异常（RFC 7009 Token Revocation），适用于 refresh token 重用检测、令牌吊销等场景。
     TokenRevoked(String),
 
     /// Token 已过期异常。
@@ -56,10 +47,7 @@ pub enum GarrisonError {
     /// 上下文错误（对应 GarrisonContext / Request / Response / Storage 异常）。
     Context(String),
 
-    /// 业务异常（携带上下文的可恢复异常）。
-    ///
-    /// `Box` 装载控制枚举体积（`GarrisonException` 含 `HashMap`，内联会使
-    /// `Result<_, GarrisonError>` 越过 clippy `result_large_err` 阈值）。
+    /// 业务异常（携带上下文的可恢复异常）；`Box` 装载控制枚举体积（`GarrisonException` 含 `HashMap`，内联会越过 clippy `result_large_err` 阈值）。
     Exception(Box<GarrisonException>),
 
     /// OAuth2 协议错误。
@@ -68,12 +56,8 @@ pub enum GarrisonError {
     /// 网络错误。
     Network(String),
 
-    /// 上游响应无效错误。
-    ///
-    /// HTTP/OAuth2 上游返回了响应，但响应体无法解析（JSON 格式错误、必填字段缺失、
-    /// 响应结构不符合预期）。区别于 [`Network`](Self::Network)（网络层失败）与
-    /// [`OAuth2`](Self::OAuth2)（OAuth2 协议层错误），本变体专指"响应内容解析失败"。
-    /// HTTP 502 Bad Gateway（上游响应问题）。
+    /// 上游响应无效（HTTP 502）：上游返回了响应但响应体无法解析（JSON 格式错误、必填字段缺失等）。
+    /// 区别于 [`Network`](Self::Network)（网络层失败）与 [`OAuth2`](Self::OAuth2)（协议层错误），本变体专指"响应内容解析失败"。
     InvalidResponse(String),
 
     /// 参数无效错误。
@@ -87,12 +71,9 @@ pub enum GarrisonError {
     /// 携带 strategy 名与原因，便于 audit-log 订阅。
     FirewallBlocked(String),
 
-    /// 账号被封禁异常。
+    /// 账号被封禁（对应 DisableServiceException，BW-ERR-010）。
     ///
-    /// 对应 DisableServiceException（BW-ERR-010）。
-    /// `service` 记录被封禁的服务名（如 "default" / "oidc"），
-    /// `until` 为 `Some(time)` 表示定时解封，`None` 表示永久封禁。
-    /// 不泄露 user_id / tenant_id 等敏感信息。
+    /// `service` 为被封禁服务名（如 "default" / "oidc"），`until` 为 `Some(time)` 定时解封、`None` 永久封禁；不泄露 user_id / tenant_id。
     DisableService {
         /// 被封禁的服务名（如 "default" / "oidc"）。
         service: String,
@@ -100,19 +81,13 @@ pub enum GarrisonError {
         until: Option<chrono::DateTime<chrono::Utc>>,
     },
 
-    /// 未完成二次认证异常。
-    ///
-    /// 对应 NotSafeException（BW-ERR-012）。
-    /// `reason` 说明未完成的具体认证（如 "MFA_TOTP_REQUIRED" / "WEBAUTHN_REQUIRED"）。
+    /// 未完成二次认证（对应 NotSafeException，BW-ERR-012）：`reason` 标识未完成的认证（如 "MFA_TOTP_REQUIRED"）。
     NotSafe {
         /// 未完成认证的原因标识。
         reason: String,
     },
 
-    /// 非法状态转换。
-    ///
-    /// 供状态机使用，`from` / `to` 为状态枚举的 Debug 输出。
-    /// HTTP status = 500（内部状态错误，非用户错误）。
+    /// 非法状态转换：`from` / `to` 为状态枚举 Debug 输出，HTTP 500（内部状态错误，非用户错误）。
     InvalidStateTransition {
         /// 源状态（`format!("{:?}", state)` Debug 输出）。
         from: String,
@@ -120,9 +95,7 @@ pub enum GarrisonError {
         to: String,
     },
 
-    /// SMS 限速超出。
-    ///
-    /// `window` 标识触发的窗口（"hourly" / "daily"）。
+    /// SMS 限速超出（`window` = "hourly" / "daily"）。
     SmsRateLimitExceeded {
         /// 触发限速的窗口标识。
         window: String,
@@ -137,19 +110,13 @@ pub enum GarrisonError {
     /// SMS 通道已回收（异常发送检测触发）。
     SmsChannelRecycled,
 
-    /// 请求速率超限（网关层限流，HTTP 429 Too Many Requests）。
-    ///
-    /// `retry_after_secs` 为建议等待秒数（limiteron 快照的 `reset_secs`），
-    /// 经 `Retry-After` 响应头输出（delta-seconds 整数秒，下限 1）。
-    /// 对应 error_id `ratelimit.rate_limited`。
+    /// 请求速率超限（网关层限流，HTTP 429）：`retry_after_secs` 为建议等待秒数（经 `Retry-After` 头输出，下限 1），error_id `ratelimit.rate_limited`。
     RateLimited {
         /// 建议客户端等待的秒数（下限由 `retry_after_secs()` 强制为 1）。
         retry_after_secs: u64,
     },
 
-    /// 邮箱限速超出（`email-verification` feature）。
-    ///
-    /// `window` 标识触发的窗口（"hourly" / "daily"）。
+    /// 邮箱限速超出（`email-verification` feature；`window` = "hourly" / "daily"）。
     #[cfg(feature = "email-verification")]
     EmailRateLimitExceeded {
         /// 触发限速的窗口标识。
@@ -168,10 +135,7 @@ pub enum GarrisonError {
     #[cfg(feature = "email-verification")]
     EmailChannelRecycled,
 
-    /// Credit 不足（多租户配额耗尽，`credit-metering` feature）。
-    ///
-    /// 对应 `CreditError::Insufficient`，HTTP 402 Payment Required。
-    /// 不泄露 credit 配置细节，仅暴露 tenant_id / requested / remaining。
+    /// Credit 不足（多租户配额耗尽，`credit-metering` feature，HTTP 402）：对应 `CreditError::Insufficient`，不泄露 credit 配置细节。
     #[cfg(feature = "credit-metering")]
     CreditInsufficient {
         /// 租户 ID。
@@ -183,15 +147,12 @@ pub enum GarrisonError {
     },
 }
 
-// 手动 Debug 实现：仅输出变体名 + Display 消息摘要（截断至 200 字符），
-// 防止内部路径/堆栈/OAuth2 detail 泄露到日志。
+// 手动 Debug：仅输出变体名 + Display 消息摘要（截断 200 字符），防内部路径/堆栈/OAuth2 detail 泄露到日志
 impl std::fmt::Debug for GarrisonError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let display = self.to_string();
         let truncated = if display.len() > 200 {
-            // 不能用 &display[..197] 按字节硬切——截断点落在
-            // 多字节 UTF-8 字符（中文/emoji）中间会 panic（经 into_response 的
-            // error=?self 日志路径可达，构成远程 DoS）。回退到最近的 char boundary。
+            // 不在多字节 UTF-8 字符中间按字节硬切（经 into_response 的 error=?self 日志路径可达，构成远程 DoS），回退到最近 char boundary
             let mut end = 197;
             while end > 0 && !display.is_char_boundary(end) {
                 end -= 1;
@@ -243,9 +204,7 @@ impl std::fmt::Debug for GarrisonError {
     }
 }
 
-// ============================================================================
 // Display 实现：始终委托 i18n 层翻译（未匹配 key 时回退错误自带文案）
-// ============================================================================
 
 impl std::fmt::Display for GarrisonError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -256,15 +215,9 @@ impl std::fmt::Display for GarrisonError {
 /// Garrison 框架统一 Result 类型别名。
 pub type GarrisonResult<T> = Result<T, GarrisonError>;
 
-// ============================================================================
 // From<CreditError> 实现（cfg feature = "credit-metering"）
-// ============================================================================
 
-/// `CreditError` → `GarrisonError` 转换。
-///
-/// 允许 `?` 操作符将 credit 模块错误自动提升为框架统一错误。
-/// `CreditError::Insufficient` 映射为 `CreditInsufficient`，
-/// 其余变体映射为 `GarrisonError::Config`（配置类错误）或 `Dao`/`Internal`。
+/// `CreditError` → `GarrisonError`（支持 `?` 提升）：`Insufficient` 映射为 `CreditInsufficient`，ConfigInvalid/Dao/CycleExpired 映射为 Config/Dao/Internal。
 #[cfg(feature = "credit-metering")]
 impl From<crate::credit::CreditError> for GarrisonError {
     fn from(err: crate::credit::CreditError) -> Self {
@@ -287,75 +240,38 @@ impl From<crate::credit::CreditError> for GarrisonError {
     }
 }
 
-// ============================================================================
 // response_parts：框架无关的响应分片
-// ============================================================================
 
 impl GarrisonError {
-    // ========================================================================
     // BW-ERR 错误码常量
-    // ========================================================================
-    // 与 response_parts() 返回的字符串 error_code（如 "DISABLE_SERVICE"）解耦：
-    // - response_parts().1 → 面向 HTTP 响应体（既有惯例）
-    // - BW_ERR_XXX 常量 → 面向 audit-log / 监控埋点数值追溯
-    //
-    // 编码规则（项目特定，非 Java 手册 5 位格式）：
-    // error_code = HTTP_status × 1000 + 序号
-    // 示例：409001 = 409 (Conflict) × 1000 + 01（第一个 409 类错误）
-    // 示例：403003 = 403 (Forbidden) × 1000 + 03
+    // BW-ERR 常量：面向 audit-log / 监控埋点的数值追溯，与 response_parts() 的字符串 error_code（面向 HTTP 响应体）解耦
+    // 编码规则（项目特定）：error_code = HTTP_status × 1000 + 序号（如 409001 = 409 × 1000 + 01）
 
-    /// BW-ERR-009：并发登录冲突。
-    ///
-    /// 超出设备并发上限时抛出，HTTP 409 Conflict。
+    /// BW-ERR-009：并发登录冲突（超出设备并发上限，HTTP 409）。
     pub const BW_ERR_009: u32 = 409001;
 
-    /// BW-ERR-010：账号被封禁。
-    ///
-    /// 对应 `GarrisonError::DisableService`，HTTP 403 Forbidden。
+    /// BW-ERR-010：账号被封禁（对应 `GarrisonError::DisableService`，HTTP 403）。
     pub const BW_ERR_010: u32 = 403003;
 
-    /// BW-ERR-011：多账号体系冲突。
-    ///
-    /// 同一 login_id 在不同 account_type 下冲突，HTTP 401 Unauthorized。
+    /// BW-ERR-011：多账号体系冲突（同一 login_id 在不同 account_type 下冲突，HTTP 401）。
     pub const BW_ERR_011: u32 = 401004;
 
-    /// BW-ERR-012：第三方登录失败。
-    ///
-    /// 对应 `GarrisonError::NotSafe`（第三方登录回退），HTTP 400 Bad Request。
+    /// BW-ERR-012：第三方登录失败（对应 `GarrisonError::NotSafe`，HTTP 400）。
     pub const BW_ERR_012: u32 = 400001;
 
-    /// BW-ERR-013：Token 已吊销（RFC 7009 Token Revocation）。
-    ///
-    /// 对应 `GarrisonError::TokenRevoked`，HTTP 401 Unauthorized。
+    /// BW-ERR-013：Token 已吊销（RFC 7009；对应 `GarrisonError::TokenRevoked`，HTTP 401）。
     pub const BW_ERR_013: u32 = 401005;
 
-    /// 返回 HTTP 响应分片 `(status_code, error_code, message, exception_code)`。
+    /// 返回 HTTP 响应分片 `(status_code, error_code, message, exception_code)`；框架无关，axum / actix-web / warp 适配器共用以保证行为一致。
     ///
-    /// 框架无关方法，axum / actix-web / warp 适配器均复用此方法以保证三框架行为一致性
-    ///
-    /// # 返回
-    /// - `status_code`: HTTP 状态码（401/403/500/502/400/501）。
-    /// - `error_code`: 结构化错误码字符串（如 `"NOT_LOGIN"`）。
-    /// - `message`: 通用错误消息（不泄漏内部细节）。
-    /// - `exception_code`: 仅 `Exception` 变体返回 `Some(code)`，其他变体返回 `None`。
-    ///
-    /// # 安全性
-    ///
-    /// 返回的 `message` 仅暴露通用描述（如 "未登录"），完整错误通过 `tracing::error!` 记录。
+    /// `message` 仅暴露通用描述（不泄漏内部细节），完整错误经 `tracing::error!` 记录；`exception_code` 仅 `Exception` 变体返回 `Some(code)`。
     pub fn response_parts(&self) -> (u16, &'static str, &'static str, Option<i32>) {
         let (status, error_code, _, fallback_msg, ex_code, _) = self.parts_and_msg_key();
         (status, error_code, fallback_msg, ex_code)
     }
 
-    /// 稳定的机器可读错误码（如 `"NOT_LOGIN"` / `"SESSION_ERROR"`）。
-    ///
-    /// 与 [`Self::response_parts`] 返回的 HTTP `error_code` 同源（单一事实来源
-    /// `parts_and_msg_key` 私有助手），供日志、监控埋点、audit-log 等非 HTTP
-    /// 场景按变体稳定检索；Display 文案受 i18n 影响时仍可用本方法做机器判别。
-    ///
-    /// 唯一例外：`Exception` 变体在 HTTP 层按业务 `ex.code` 条件复用
-    /// `NOT_LOGIN` / `NOT_PERMISSION`（对客户端语义一致），变体级机器码则
-    /// 固定为 `"EXCEPTION"`，保证本方法对所有变体两两唯一。
+    /// 稳定的机器可读错误码（如 `"NOT_LOGIN"`），与 [`Self::response_parts`] 同源（单一事实来源 `parts_and_msg_key`），供日志、监控埋点等非 HTTP 场景按变体检索。
+    /// 唯一例外：`Exception` 变体在 HTTP 层按 `ex.code` 复用 `NOT_LOGIN` / `NOT_PERMISSION`，变体级机器码固定 `"EXCEPTION"`，保证对所有变体两两唯一。
     pub fn code(&self) -> &'static str {
         match self {
             Self::Exception(_) => "EXCEPTION",
@@ -363,22 +279,14 @@ impl GarrisonError {
         }
     }
 
-    /// 模块前缀错误码（`<module>.<snake>`，如 `auth.not_login` / `ratelimit.rate_limited`）。
-    ///
-    /// 与旧码 [`Self::code`]（`"NOT_LOGIN"` 等冻结原值）并存的新 API：
-    /// 旧码保持兼容输出，不 deprecate；`error_id` 面向新集成方按模块维度检索。
-    /// 单一事实来源为私有 `parts_and_msg_key`（逐 arm 显式静态书写，非自动派生），
-    /// 对所有变体两两唯一（`Exception` 变体的三个子 arm 分别为
-    /// `exception.not_login` / `exception.not_permission` / `exception.default`）。
+    /// 模块前缀错误码（`<module>.<snake>`，如 `auth.not_login`）：与旧码 [`Self::code`]（冻结原值，不 deprecate）并存，面向新集成方按模块维度检索。
+    /// 单一事实来源 `parts_and_msg_key`（逐 arm 显式静态书写，非自动派生），对所有变体两两唯一（Exception 三个子 arm 为 `exception.not_login` / `exception.not_permission` / `exception.default`）。
     pub fn prefixed_code(&self) -> &'static str {
         let (_, _, _, _, _, error_id) = self.parts_and_msg_key();
         error_id
     }
 
-    /// `Retry-After` 头值（秒），仅限流变体返回。
-    ///
-    /// [`Self::RateLimited`] 返回 `Some(max(1, retry_after_secs))`（delta-seconds
-    /// 统一整数秒格式，下限 1 防止 0 秒误导客户端立即重试）；其余变体返回 `None`。
+    /// `Retry-After` 头值（秒）：仅 [`Self::RateLimited`] 返回 `Some(max(1, retry_after_secs))`（下限 1 防 0 秒误导立即重试），其余变体返回 `None`。
     pub fn retry_after_secs(&self) -> Option<u64> {
         match self {
             Self::RateLimited { retry_after_secs } => Some((*retry_after_secs).max(1)),
@@ -386,15 +294,10 @@ impl GarrisonError {
         }
     }
 
-    /// 错误响应渲染的统一日志（axum IntoResponse / actix ResponseError /
-    /// warp Reply 三框架适配器共用）。
+    /// 错误响应渲染的统一日志（axum / actix / warp 三框架适配器共用）。
     ///
-    /// 限流拒绝是预期行为而非错误：429 攻击路径下每个被拒请求一条 error 日志
-    /// 且 error 级无法被 EnvFilter 静音，构成日志洪水向量，故 `RateLimited`
-    /// 降级为 `warn`；其余变体保持 `error` 级。
-    // 调用方仅存在于三个 web 适配器（web-axum/web-actix/web-warp）；三者全关的
-    // feature 组合下方法无调用点，会触发 dead_code（clippy -D warnings 下为
-    // error），故按调用方并集门控。
+    /// 限流拒绝是预期行为：429 攻击路径下 error 级无法被 EnvFilter 静音，构成日志洪水向量，故 `RateLimited` 降级 `warn`；其余变体保持 `error`。
+    // 调用方仅存在于三个 web 适配器，按调用方并集门控避免三者全关时 dead_code
     #[cfg(any(feature = "web-axum", feature = "web-actix", feature = "web-warp"))]
     pub(crate) fn log_rejection(&self) {
         if matches!(self, Self::RateLimited { .. }) {
@@ -404,20 +307,9 @@ impl GarrisonError {
         }
     }
 
-    /// 内部方法：单次 match 产出所有字段（status, error_code, msg_key, fallback_msg, ex_code, error_id）。
+    /// 内部方法：单次 match 产出 (status, error_code, msg_key, fallback_msg, ex_code, error_id)，[`Self::response_parts`] 与 [`Self::response_parts_i18n`] 复用（DRY）。
     ///
-    /// [`Self::response_parts`] 和 [`Self::response_parts_i18n`] 都复用此方法，
-    /// 避免变体 match 被重复维护两份（DRY）。
-    ///
-    /// # 返回
-    /// - `status`: HTTP 状态码
-    /// - `error_code`: 结构化错误码字符串（旧码，冻结原值继续输出）
-    /// - `msg_key`: FTL message key（如 `"not-login-msg"`），用于 i18n 翻译
-    /// - `fallback_msg`: 硬编码中文回退消息（i18n 翻译失败时使用）
-    /// - `ex_code`: 仅 `Exception` 变体返回 `Some(code)`
-    /// - `error_id`: 模块前缀错误码（`<module>.<snake>`，如 `auth.not_login`），
-    ///   与旧码并存的新字段（单一事实来源即本函数，逐 arm 显式静态书写，
-    ///   不自动派生；命名风格与 miette dotted 码 `garrison.not_login` 先例一致）
+    /// `error_code` 为冻结原值的旧码；`msg_key` 为 FTL key（如 `"not-login-msg"`）；`error_id` 为模块前缀码（`<module>.<snake>`，逐 arm 显式静态书写、不自动派生，命名风格与 miette dotted 码先例一致）。
     fn parts_and_msg_key(
         &self,
     ) -> (
@@ -713,35 +605,13 @@ impl GarrisonError {
         }
     }
 
-    /// 返回 i18n 化的 HTTP 响应分片 `(status_code, error_code, message, exception_code)`。
+    /// 返回 i18n 化的 HTTP 响应分片：`message` 经 `translate_detail("xxx-msg", &[])` 按当前 locale 翻译（使用 `locales/{zh,en}.ftl` 的 `-msg` 后缀 keys），其余字段与 [`Self::response_parts`] 一致。
     ///
-    /// 与 [`Self::response_parts`] 的区别：第三字段 `message` 通过 i18n 层翻译
-    /// （`translate_detail("xxx-msg", &[])`），依据当前 thread_local locale
-    /// 返回对应语言文本；其余字段（status_code / error_code / exception_code）
-    /// 与 `response_parts()` 完全一致。
-    ///
-    /// # 返回
-    /// - `status_code`: HTTP 状态码（401/403/500/502/400/501/429）。
-    /// - `error_code`: 结构化错误码字符串（如 `"NOT_LOGIN"`）。
-    /// - `message`: i18n 翻译后的通用错误消息（不泄漏内部细节）。
-    /// - `exception_code`: 仅 `Exception` 变体返回 `Some(code)`，其他变体返回 `None`。
-    ///
-    /// # 安全性
-    ///
-    /// 返回的 `message` 仅暴露通用描述（如 "未登录" / "Not logged in"），
-    /// 不含变体 detail，避免泄露敏感信息；完整错误通过 `tracing::error!` 记录。
-    /// 翻译失败时（如 FTL key 缺失）回退到硬编码 `&'static str`，**不泄露 FTL key**。
-    ///
-    /// # FTL keys
-    ///
-    /// 使用 `locales/{zh,en}.ftl` 中以 `-msg` 后缀结尾的 27 个专用 keys
-    /// （如 `not-login-msg`、`exception-default-msg`），与 `response_parts()`
-    /// 的硬编码中文一一对应。
+    /// `message` 仅暴露通用描述（不含变体 detail）；翻译失败回退硬编码 `&'static str`，不泄露 FTL key，完整错误经 `tracing::error!` 记录。
     pub fn response_parts_i18n(&self) -> (u16, &'static str, String, Option<i32>) {
         let (status, error_code, msg_key, fallback_msg, ex_code, _) = self.parts_and_msg_key();
         let translated = crate::i18n::translate_detail(msg_key, &[]);
-        // 翻译失败时（translate_detail 返回 key 本身）回退到硬编码 fallback，
-        // 避免泄露 FTL key 到 HTTP 响应体（M4 安全修复）。
+        // 翻译失败（translate_detail 返回 key 本身）时回退硬编码 fallback，避免 FTL key 泄露到 HTTP 响应体
         let message = if translated == msg_key {
             fallback_msg.to_string()
         } else {
@@ -750,17 +620,7 @@ impl GarrisonError {
         (status, error_code, message, ex_code)
     }
 
-    /// 构造 JSON 响应体（框架无关，i18n 化）。
-    ///
-    /// 返回 `serde_json::Value`，由各框架适配器自行序列化为响应 body。
-    /// `Exception` 变体额外包含 `code` 字段。
-    ///
-    /// 统一体字段：`error_code`（旧码，冻结原值）、`error_id`（模块前缀码）、
-    /// `message`。当前请求存在 request id（[`crate::context::request_id::current`]）
-    /// 时额外携带 `request_id` 字段，无则省略（omitempty 语义）。
-    ///
-    /// `message` 字段通过 [`Self::response_parts_i18n`] 翻译为当前 locale 文本，
-    /// 避免硬编码中文泄露到 HTTP 响应体（A 类 i18n 遗漏修复）。
+    /// 构造 JSON 响应体（框架无关，i18n 化）：统一字段 `error_code`（冻结旧码）、`error_id`（模块前缀码）、`message`（i18n 翻译）；`Exception` 变体额外含 `code`，请求存在 request id（[`crate::context::request_id::current`]）时含 `request_id`（omitempty）。
     pub fn to_json_body(&self) -> serde_json::Value {
         let (_, error_code, message, ex_code) = self.response_parts_i18n();
         let mut body = serde_json::json!({
@@ -779,21 +639,11 @@ impl GarrisonError {
     }
 }
 
-// ============================================================================
 // IntoResponse 实现（cfg feature = "web-axum"）
-// ============================================================================
 
-/// 实现 `IntoResponse` 以便 extractor 的 `Rejection = GarrisonError` 可直接作为 axum 响应返回。
+/// 实现 `IntoResponse`，使 extractor 的 `Rejection = GarrisonError` 可直接作为 axum 响应返回。
 ///
-/// 状态码映射：
-/// - `NotLogin` / `InvalidToken` / `ExpiredToken` → 401 Unauthorized
-/// - `NotPermission` / `NotRole` → 403 Forbidden
-/// - 其他 → 500 Internal Server Error
-///
-/// # 安全性
-///
-/// 响应体仅暴露结构化错误码 + 通用消息（不泄漏内部错误细节）；
-/// 完整错误通过 `tracing::error!` 记录到日志。
+/// 状态码映射：NotLogin / InvalidToken / ExpiredToken → 401，NotPermission / NotRole → 403，其他 → 500（Exception 按 ex.code）。响应体仅暴露结构化错误码 + 通用消息（不泄漏内部细节），完整错误经 `tracing::error!` 记录。
 #[cfg(feature = "web-axum")]
 impl axum::response::IntoResponse for GarrisonError {
     fn into_response(self) -> axum::response::Response {
@@ -810,9 +660,7 @@ impl axum::response::IntoResponse for GarrisonError {
         let (status_code, _, _, _) = self.response_parts();
         let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 
-        // 防御性截断：限制响应体大小为 4KB
-        // 当前架构下 message 是固定字符串，body 永远 < 4KB；
-        // 此截断保护未来架构变化（如 message 字段包含可变内容时）不会导致响应体过大。
+        // 防御性截断 4KB：当前 message 为固定字符串、body 恒 < 4KB，保护未来 message 含可变内容时不致响应体过大
         const MAX_BODY_SIZE: usize = 4096;
         let body_str = serde_json::to_string(&json_value).unwrap_or_else(|_| {
             // 序列化失败兜底体：携带 error_id 供错误检索（i18n 化英文，不泄露内部细节）
@@ -850,29 +698,13 @@ impl axum::response::IntoResponse for GarrisonError {
     }
 }
 
-// ============================================================================
 // miette::Diagnostic 实现（cfg feature = "miette"）
-// ============================================================================
 //
-// 富错误渲染层：保留 `thiserror::Error` derive（错误定义 + source 链），
-// miette 仅作为 `Diagnostic` trait 实现，提供 `code` / `severity` / `labels` 富上下文。
-// 默认关闭，启用方式：`--features miette`。
-//
-// [借鉴 miette] miette 推荐使用 dotted kebab-case 形式作为错误代码（如 `garrison.not_login`），
-// 与 `response_parts()` 返回的 UPPER_SNAKE_CASE error_code（如 `NOT_LOGIN`）解耦：
-// - `response_parts().error_code` → 面向 HTTP 响应体（与 既有惯例一致）
-// - `Diagnostic::code()` → 面向开发者诊断终端（miette 渲染惯例）
+// 富错误渲染层（默认关闭，`--features miette` 启用）：保留 thiserror derive（错误定义 + source 链），miette 仅实现 Diagnostic trait，提供 code / severity / labels 富上下文。
+// miette 惯例用 dotted kebab-case 错误码（如 `garrison.not_login`），与 response_parts 的 UPPER_SNAKE_CASE（面向 HTTP 响应体）解耦。
 #[cfg(feature = "miette")]
 impl miette::Diagnostic for GarrisonError {
-    /// 返回稳定的错误代码标识符（dotted kebab-case，miette 渲染惯例）。
-    ///
-    /// 形如 `garrison.not_login` / `garrison.config` / `garrison.firewall_blocked`。
-    /// 从 `parts_and_msg_key()` 的 error_code 派生（单一数据源，新增变体无需同步修改）：
-    /// `garrison.` + lowercase(error_code) + 去除尾部 `_error` 后缀。
-    ///
-    /// 与 `response_parts().1` 返回的 UPPER_SNAKE_CASE error_code 解耦：
-    /// - `response_parts` 的 error_code → 面向 HTTP 响应体（与 既有惯例一致）
-    /// - `Diagnostic::code()` → 面向开发者诊断终端（miette 渲染惯例）
+    /// 返回稳定的 dotted kebab-case 错误代码（如 `garrison.not_login`）：从 `parts_and_msg_key()` 的 error_code 派生（`garrison.` + lowercase + 去尾部 `_error`，单一数据源）。
     fn code(&self) -> Option<Box<dyn std::fmt::Display + '_>> {
         let (_, error_code, _, _, _, _) = self.parts_and_msg_key();
         // 派生规则：garrison. + lowercase(error_code) + 去除尾部 "_error"
@@ -881,18 +713,12 @@ impl miette::Diagnostic for GarrisonError {
         Some(Box::new(format!("garrison.{stem}") as String))
     }
 
-    /// 返回错误严重级别。
-    ///
-    /// 当前所有变体均返回 `Severity::Error`（无 Warning/Advice 级别）。
-    /// 设计依据：GarrisonError 表示框架级错误，需触发调用方错误处理路径。
+    /// 所有变体均返回 `Severity::Error`（框架级错误需触发调用方错误处理路径）。
     fn severity(&self) -> Option<miette::Severity> {
         Some(miette::Severity::Error)
     }
 
-    /// 返回源码 span 标签（用于 IDE/CLI 高亮定位）。
-    ///
-    /// `GarrisonError` 变体仅携带 `String` 消息或 `GarrisonException` 结构体（无源码位置信息），
-    /// 返回 `None`。未来若引入带 span 的错误变体（如注解解析失败），可在此分支返回 label。
+    /// 返回 `None`：变体仅携带 `String` 消息或 `GarrisonException`，无源码位置信息（未来引入带 span 变体时可在此返回 label）。
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
         None
     }
@@ -902,8 +728,7 @@ impl miette::Diagnostic for GarrisonError {
 mod tests {
     use super::*;
 
-    /// 验证 `code()` 覆盖全部变体且两两唯一、非空、全大写、稳定（
-    /// 供日志/监控等非 HTTP 场景使用，须与 `response_parts()` 的 error_code 同源防漂移）。
+    /// `code()` 覆盖全部变体且两两唯一、非空、全大写、与 `response_parts` 的 error_code 同源防漂移。
     #[test]
     fn error_code_covers_all_variants_unique_and_stable() {
         // extend/push 分支分别被 email-verification / credit-metering 门控：
@@ -969,8 +794,7 @@ mod tests {
             remaining: 0,
         });
 
-        // 哨兵（架构审查 A2）：新增 GarrisonError 变体时必须同步加入上方
-        // samples 列表，否则本断言失败——防止唯一性/同源性检查静默失去覆盖。
+        // 哨兵：新增 GarrisonError 变体必须同步加入 samples 列表，否则断言失败（防唯一性检查失去覆盖）
         #[cfg(all(feature = "credit-metering", feature = "email-verification"))]
         assert_eq!(
             samples.len(),
@@ -1023,9 +847,7 @@ mod tests {
         assert_eq!(GarrisonError::Session("x".into()).code(), "SESSION_ERROR");
     }
 
-    /// 哨兵（性能审查 P3）：`GarrisonError` 经 `Exception(Box<..>)` 后体积必须
-    /// 远低于 clippy `result_large_err` 阈值（128B），防止未来变体膨胀无声回退
-    /// 到「192 处告警」的级联状态（连带修复的回归锚定）。
+    /// 哨兵：`GarrisonError` 经 `Exception(Box<..>)` 后体积必须远低于 clippy `result_large_err` 阈值（128B），防未来变体膨胀回归。
     #[test]
     fn error_size_stays_within_result_large_err_budget() {
         let size = std::mem::size_of::<GarrisonError>();
@@ -1036,7 +858,6 @@ mod tests {
         );
     }
 
-    /// 验证各 String 变体的 Display 输出包含原始消息（参数化）。
     #[test]
     fn string_variants_display_includes_message() {
         let cases: [(GarrisonError, &str); 16] = [
@@ -1107,7 +928,6 @@ mod tests {
         }
     }
 
-    /// 验证新增变体可通过 GarrisonResult 传播。
     #[test]
     fn new_variants_propagate_via_result() {
         fn fallible() -> GarrisonResult<()> {
@@ -1117,7 +937,6 @@ mod tests {
         assert!(matches!(result, Err(GarrisonError::Session(_))));
     }
 
-    /// 验证新增变体与已有变体共存于同一枚举。
     #[test]
     fn new_variants_coexist_with_existing() {
         let errors = [
@@ -1129,13 +948,8 @@ mod tests {
         assert_eq!(errors.len(), 4);
     }
 
-    // ========================================================================
     // GarrisonResult 类型别名与 IntoResponse 实现测试
-    // ========================================================================
 
-    /// 验证 `GarrisonResult` 类型别名可用于返回 Ok 值。
-    ///
-    /// 覆盖 `pub type GarrisonResult<T> = Result<T, GarrisonError>;` 的使用。
     #[test]
     fn garrison_result_ok_carries_value() {
         fn ok_fn() -> GarrisonResult<i32> {
@@ -1144,9 +958,6 @@ mod tests {
         assert_eq!(ok_fn().unwrap(), 42);
     }
 
-    /// 验证 `GarrisonResult` 类型别名可用于返回 Err 值，且 `?` 可透传错误。
-    ///
-    /// 覆盖 `pub type GarrisonResult<T> = Result<T, GarrisonError>;` 在错误传播路径中的使用。
     #[test]
     fn garrison_result_err_propagates_via_question_mark() {
         fn inner() -> GarrisonResult<()> {
@@ -1159,11 +970,8 @@ mod tests {
         assert!(matches!(outer(), Err(GarrisonError::Dao(_))));
     }
 
-    // ========================================================================
     // IntoResponse 状态码映射测试（参数化，cfg feature = "web-axum"）
-    // ========================================================================
 
-    /// 验证各变体通过 IntoResponse 映射为正确的 HTTP 状态码。
     #[cfg(feature = "web-axum")]
     #[test]
     fn into_response_status_codes() {
@@ -1241,11 +1049,8 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // Exception 变体测试
-    // ========================================================================
 
-    /// 验证 Exception 变体的 Display 输出（委托给 GarrisonException::Display）。
     #[test]
     fn exception_variant_display_includes_code_and_message() {
         use crate::exception::GarrisonException;
@@ -1253,7 +1058,6 @@ mod tests {
         assert_eq!(err.to_string(), "Business exception[-1]: 请先登录");
     }
 
-    /// 验证 code=-1 的 Exception 映射为 401 Unauthorized。
     #[cfg(feature = "web-axum")]
     #[test]
     fn exception_not_login_returns_401() {
@@ -1265,7 +1069,6 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
-    /// 验证 code=-2 的 Exception 映射为 403 Forbidden。
     #[cfg(feature = "web-axum")]
     #[test]
     fn exception_not_permission_returns_403() {
@@ -1277,7 +1080,6 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
-    /// 验证其他 code 的 Exception 映射为 500 Internal Server Error。
     #[cfg(feature = "web-axum")]
     #[test]
     fn exception_other_code_returns_500() {
@@ -1289,23 +1091,14 @@ mod tests {
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    // ========================================================================
     // InvalidResponse 变体测试（上游响应解析失败专用错误类型）
-    // ========================================================================
 
-    /// 验证 InvalidResponse 变体的 Display 输出包含原始消息（默认英文前缀）。
-    ///
-    /// InvalidResponse 输出 "Invalid upstream response: {detail}"。
     #[test]
     fn invalid_response_variant_display_includes_message() {
         let err = GarrisonError::InvalidResponse("JSON 解析失败".to_string());
         assert_eq!(err.to_string(), "Invalid upstream response: JSON 解析失败");
     }
 
-    /// 验证 InvalidResponse 变体的 response_parts 返回 502 + INVALID_RESPONSE。
-    ///
-    /// HTTP status = 502 Bad Gateway（上游响应问题），
-    /// error_code = "INVALID_RESPONSE"。
     #[test]
     fn invalid_response_response_parts_returns_502() {
         let (status, error_code, message, ex_code) =
@@ -1320,10 +1113,6 @@ mod tests {
         assert!(ex_code.is_none(), "InvalidResponse 不携带 exception code");
     }
 
-    /// 验证 InvalidResponse 变体不泄露原始 detail 到响应体 message。
-    ///
-    /// 安全约束：to_json_body 的 message 字段为通用描述，
-    /// 不含变体 detail（如内部解析错误细节）。
     #[test]
     fn invalid_response_to_json_body_does_not_leak_detail() {
         let err = GarrisonError::InvalidResponse(
@@ -1343,11 +1132,7 @@ mod tests {
         );
     }
 
-    /// 验证 `invalid-response-msg` key 在 En/Zh 两个 locale 下均可翻译（I18N-01）。
-    ///
-    /// 覆盖审查发现 I18N-01：`invalid-response-msg` key 曾缺失，导致
-    /// `response_parts_i18n()` 在 En locale 下回退到硬编码中文。补齐 key 后
-    /// En 应返回 "Invalid upstream response"，Zh 返回 "上游响应无效"。
+    /// `invalid-response-msg` 在 En/Zh 两个 locale 均可翻译（曾缺失导致 En 回退中文）。
     #[test]
     fn invalid_response_msg_key_translates_in_both_locales() {
         let err = GarrisonError::InvalidResponse("bad upstream".to_string());
@@ -1367,7 +1152,6 @@ mod tests {
         );
     }
 
-    /// 验证 InvalidResponse 错误映射为 502 Bad Gateway（web-axum feature）。
     #[cfg(feature = "web-axum")]
     #[test]
     fn invalid_response_error_returns_502() {
@@ -1378,13 +1162,8 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     }
 
-    // ========================================================================
     // 覆盖率补充：to_json_body / response_parts / Exception 变体
-    // ========================================================================
 
-    /// 验证 `to_json_body` 对普通错误变体返回包含 error_code 和 message 的 JSON。
-    ///
-    /// 覆盖行 163-164（to_json_body 中的 json! 宏构造）。
     #[test]
     fn to_json_body_returns_error_code_and_message() {
         let err = GarrisonError::NotLogin("token missing".to_string());
@@ -1394,9 +1173,6 @@ mod tests {
         assert!(body.get("code").is_none(), "普通错误变体不应包含 code 字段");
     }
 
-    /// 验证 `to_json_body` 对 Exception 变体额外包含 code 字段。
-    ///
-    /// 覆盖行 166-168（Exception 变体的 code 字段写入）。
     #[test]
     fn to_json_body_includes_code_for_exception_variant() {
         let err = GarrisonError::Exception(Box::new(crate::exception::GarrisonException {
@@ -1412,7 +1188,6 @@ mod tests {
         assert_eq!(body["code"], 1001);
     }
 
-    /// 验证 `response_parts` 对各变体返回正确的 HTTP 状态码和错误码。
     #[test]
     fn response_parts_returns_correct_status_and_code() {
         let (status, code, _, _) = GarrisonError::NotLogin("".to_string()).response_parts();
@@ -1432,15 +1207,9 @@ mod tests {
         assert_eq!(code, "NOT_IMPLEMENTED");
     }
 
-    // ========================================================================
     // 响应体大小限制测试
-    // ========================================================================
 
-    /// 验证响应体大小被限制在 4KB 以内。
-    ///
-    /// 构造超长 error message 的 GarrisonError，断言 response body <= 4096 字节且仍是合法 JSON。
-    /// 防御性测试：当前架构下 message 字段是固定字符串（不泄露变体 String 内容），
-    /// body 永远 < 4KB；此测试保护未来架构变化不会导致响应体过大。
+    /// 响应体限制 4KB：超长 message 截断后仍为合法 JSON（保护未来 message 含可变内容时不致过大）。
     #[cfg(feature = "web-axum")]
     #[tokio::test]
     async fn error_response_body_limited_to_4kb() {
@@ -1474,14 +1243,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // miette::Diagnostic 测试（cfg feature = "miette"）
-    // ========================================================================
 
-    /// 验证 `Diagnostic::code()` 返回稳定的 dotted kebab-case 错误代码。
-    ///
-    /// 覆盖多个变体：NotLogin / NotPermission / FirewallBlocked / NotImplemented / Exception。
-    /// 选择带复合单词的变体（FirewallBlocked / NotImplemented）以验证 snake_case 转换正确性。
+    /// `Diagnostic::code()` 返回稳定 dotted kebab-case（选复合词变体验证 snake_case 转换）。
     #[cfg(feature = "miette")]
     #[test]
     fn diagnostic_code_returns_stable_identifier() {
@@ -1513,8 +1277,7 @@ mod tests {
             ),
         ];
         for (err, expected) in cases {
-            // 全限定调用：GarrisonError 存在固有 `code() -> &'static str`（error_code），
-            // 方法解析优先固有方法，必须显式指定 miette trait 方法。
+            // 固有 code() 会遮蔽 trait 方法，必须全限定调用 miette::Diagnostic::code
             let code =
                 miette::Diagnostic::code(&err).expect("code() 应返回 Some(Box<dyn Display>)");
             assert_eq!(
@@ -1525,9 +1288,6 @@ mod tests {
         }
     }
 
-    /// 验证所有变体的 `severity()` 返回 `Severity::Error`。
-    ///
-    /// 覆盖全部变体，确保无 Warning/Advice 漏网。
     #[cfg(feature = "miette")]
     #[test]
     fn diagnostic_severity_returns_error_for_all_variants() {
@@ -1579,9 +1339,6 @@ mod tests {
         }
     }
 
-    /// 验证 String 携带型变体的 `labels()` 返回 `None`（无源码位置信息）。
-    ///
-    /// `GarrisonError` 的 String 变体仅携带消息字符串，不携带源码 span。
     #[cfg(feature = "miette")]
     #[test]
     fn diagnostic_labels_returns_none_for_string_variants() {
@@ -1599,11 +1356,7 @@ mod tests {
         }
     }
 
-    /// 验证 `miette::Report::new(error)` 可构造，且 Debug 渲染输出包含错误代码。
-    ///
-    /// 验证"source chain 渲染"要求：miette::Report 接受任何
-    /// `Diagnostic + Send + Sync + 'static`，GarrisonError 通过 thiserror::Error derive
-    /// 满足 `std::error::Error`，本测试验证集成可达。
+    /// `miette::Report::new(error)` 可构造且 Debug 渲染含错误代码（Diagnostic + Send + Sync + 'static 集成可达）。
     #[cfg(feature = "miette")]
     #[test]
     fn diagnostic_can_be_rendered_with_miette_handler() {
@@ -1617,22 +1370,14 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // 覆盖率补充：FirewallBlocked 变体
-    // ========================================================================
 
-    /// 验证 FirewallBlocked 变体的 Display 输出包含原始消息。
-    ///
-    /// 覆盖 Display impl 的 FirewallBlocked 分支（i18n 启用时走 fallback_display）。
     #[test]
     fn firewall_blocked_variant_display_includes_message() {
         let err = GarrisonError::FirewallBlocked("IP 1.2.3.4 被拦截".to_string());
         assert_eq!(err.to_string(), "Firewall blocked: IP 1.2.3.4 被拦截");
     }
 
-    /// 验证 FirewallBlocked 变体的 response_parts 返回 403 + FIREWALL_BLOCKED。
-    ///
-    /// 覆盖 response_parts 的 FirewallBlocked 分支（行 149）。
     #[test]
     fn firewall_blocked_response_parts_returns_403() {
         let (status, error_code, message, ex_code) =
@@ -1643,7 +1388,6 @@ mod tests {
         assert!(ex_code.is_none(), "FirewallBlocked 不携带 exception code");
     }
 
-    /// 验证 FirewallBlocked 变体的 to_json_body 返回正确 JSON（无 code 字段）。
     #[test]
     fn firewall_blocked_to_json_body_returns_correct_json() {
         let err = GarrisonError::FirewallBlocked("ratelimit".to_string());
@@ -1656,7 +1400,6 @@ mod tests {
         );
     }
 
-    /// 验证 FirewallBlocked 错误映射为 403 Forbidden（web-axum feature）。
     #[cfg(feature = "web-axum")]
     #[test]
     fn firewall_blocked_error_returns_403() {
@@ -1667,14 +1410,8 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
-    // ========================================================================
     // DisableService / NotSafe / InvalidStateTransition 变体测试
-    //
-    // ========================================================================
 
-    /// 验证 DisableService 变体的 Display 输出包含 service 与 until。
-    ///
-    /// Display 输出 `"账号已被封禁：service={service}, until={until:?}"`。
     #[test]
     fn disable_service_display_includes_service_and_until() {
         let err = GarrisonError::DisableService {
@@ -1706,9 +1443,6 @@ mod tests {
         );
     }
 
-    /// 验证 DisableService 变体的 response_parts 返回 403 + DISABLE_SERVICE。
-    ///
-    /// HTTP status = 403，error_code 字符串 = "DISABLE_SERVICE"。
     #[test]
     fn disable_service_response_parts_returns_403() {
         let err = GarrisonError::DisableService {
@@ -1722,9 +1456,6 @@ mod tests {
         assert!(ex_code.is_none(), "DisableService 不携带 exception code");
     }
 
-    /// 验证 DisableService 变体不泄露敏感信息（service 字段不暴露到响应体）。
-    ///
-    /// to_json_body 的 message 字段为通用描述，不含 service 值。
     #[test]
     fn disable_service_to_json_body_does_not_leak_service() {
         let err = GarrisonError::DisableService {
@@ -1742,9 +1473,6 @@ mod tests {
         );
     }
 
-    /// 验证 NotSafe 变体的 Display 输出包含 reason。
-    ///
-    /// Display 输出 `"未完成二次认证：{reason}"`。
     #[test]
     fn not_safe_display_includes_reason() {
         let err = GarrisonError::NotSafe {
@@ -1756,9 +1484,6 @@ mod tests {
         );
     }
 
-    /// 验证 NotSafe 变体的 response_parts 返回 400 + NOT_SAFE。
-    ///
-    /// HTTP status = 400，error_code = "NOT_SAFE"。
     #[test]
     fn not_safe_response_parts_returns_400() {
         let err = GarrisonError::NotSafe {
@@ -1771,7 +1496,6 @@ mod tests {
         assert!(ex_code.is_none(), "NotSafe 不携带 exception code");
     }
 
-    /// 验证 NotSafe 变体不泄露敏感信息（reason 字段不暴露到响应体）。
     #[test]
     fn not_safe_to_json_body_does_not_leak_reason() {
         let err = GarrisonError::NotSafe {
@@ -1787,9 +1511,6 @@ mod tests {
         );
     }
 
-    /// 验证 InvalidStateTransition 变体的 Display 输出包含 from 与 to。
-    ///
-    /// Display 输出 `"非法状态转换：{from} -> {to}"`。
     #[test]
     fn invalid_state_transition_display_includes_from_and_to() {
         let err = GarrisonError::InvalidStateTransition {
@@ -1802,9 +1523,6 @@ mod tests {
         );
     }
 
-    /// 验证 InvalidStateTransition 变体的 response_parts 返回 500。
-    ///
-    /// HTTP status = 500（内部状态错误）。
     #[test]
     fn invalid_state_transition_response_parts_returns_500() {
         let err = GarrisonError::InvalidStateTransition {
@@ -1821,7 +1539,6 @@ mod tests {
         assert!(ex_code.is_none());
     }
 
-    /// 验证 InvalidStateTransition 变体不泄露内部状态名到响应体。
     #[test]
     fn invalid_state_transition_to_json_body_does_not_leak_states() {
         let err = GarrisonError::InvalidStateTransition {
@@ -1842,11 +1559,8 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // BW-ERR 错误码常量测试
-    // ========================================================================
 
-    /// 验证 BW_ERR 常量值与错误码定义一致。
     #[test]
     fn bw_err_constants_match_frd_spec() {
         assert_eq!(GarrisonError::BW_ERR_009, 409001); // 并发登录冲突
@@ -1855,9 +1569,7 @@ mod tests {
         assert_eq!(GarrisonError::BW_ERR_012, 400001); // 第三方登录失败
     }
 
-    // ========================================================================
-    // RateLimited 变体（R04 统一错误模型）
-    // ========================================================================
+    // RateLimited 变体
 
     /// 全变体样本列表（哨兵：新增变体须同步加入，防唯一性检查失去覆盖）。
     fn all_variant_samples() -> Vec<GarrisonError> {
@@ -1926,7 +1638,6 @@ mod tests {
         samples
     }
 
-    /// RateLimited 变体 response_parts 返回 429 + RATE_LIMITED。
     #[test]
     fn rate_limited_response_parts_returns_429() {
         let (status, error_code, message, ex_code) = GarrisonError::RateLimited {
@@ -1968,9 +1679,7 @@ mod tests {
         );
     }
 
-    /// prefixed_code：全变体两两唯一且格式合法（^[a-z]+(_[a-z]+)*\.[a-z_]+$）。
-    ///
-    /// 手写字符检查替代 regex 依赖（regex 为 optional dep，测试面不引入）。
+    /// prefixed_code：全变体两两唯一且格式合法（手写字符检查替代 regex，测试面不引入 optional dep）。
     #[test]
     fn prefixed_code_covers_all_variants_unique_and_well_formed() {
         fn is_well_formed_error_id(s: &str) -> bool {
@@ -2031,9 +1740,7 @@ mod tests {
         );
     }
 
-    /// 旧码冻结锚定：全部 arm 的 HTTP 状态码 / error_code / 变体级机器码逐一
-    /// 对照字面期望值（新旧并存，不 deprecate）。行数与 `all_variant_samples()`
-    /// 对齐作哨兵——新增变体未同步扩表即失败，防止冻结检查同向漂移。
+    /// 旧码冻结锚定：全 arm 的 HTTP 状态码 / error_code / 变体级机器码逐一对照字面期望（新旧并存，不 deprecate）；行数与 `all_variant_samples()` 对齐作哨兵，防新增变体未同步扩表。
     #[test]
     fn legacy_error_codes_frozen_at_original_values() {
         // (样本, response_parts().0, response_parts().1, code())
@@ -2298,7 +2005,6 @@ mod tests {
         }
     }
 
-    /// 统一体结构：to_json_body 含 error_code + error_id + message。
     #[test]
     fn to_json_body_contains_error_id_alongside_legacy_code() {
         let body = GarrisonError::NotLogin("token missing".into()).to_json_body();
@@ -2307,7 +2013,6 @@ mod tests {
         assert_eq!(body["message"], "Not logged in");
     }
 
-    /// 统一体 request_id：scope 内携带、scope 外省略（omitempty 语义）。
     #[tokio::test]
     async fn to_json_body_request_id_omitted_outside_scope_and_set_inside() {
         let body = GarrisonError::NotLogin("x".into()).to_json_body();
@@ -2324,7 +2029,6 @@ mod tests {
         assert_eq!(body["request_id"], "unified-body-id");
     }
 
-    /// RateLimited 的 -msg FTL key 在 zh/en 两个 locale 下均翻译（防回退）。
     #[test]
     fn rate_limited_msg_key_translates_in_both_locales() {
         let err = GarrisonError::RateLimited {
@@ -2346,7 +2050,6 @@ mod tests {
         );
     }
 
-    /// RateLimited 响应体 message 不携带变体内部数值（复用泄露测试模式）。
     #[test]
     fn rate_limited_to_json_body_does_not_leak_internal_value() {
         let body = GarrisonError::RateLimited {
@@ -2360,7 +2063,6 @@ mod tests {
         );
     }
 
-    /// axum IntoResponse：RateLimited → Retry-After 头等于秒数（下限 1）。
     #[cfg(feature = "web-axum")]
     #[test]
     fn rate_limited_into_response_sets_retry_after_header() {
@@ -2379,7 +2081,6 @@ mod tests {
         assert_eq!(value, "30");
     }
 
-    /// axum IntoResponse：非限流变体不携带 Retry-After 头。
     #[cfg(feature = "web-axum")]
     #[test]
     fn non_rate_limited_into_response_has_no_retry_after_header() {
@@ -2389,7 +2090,6 @@ mod tests {
         assert!(response.headers().get("Retry-After").is_none());
     }
 
-    /// axum IntoResponse：Retry-After 下限 1（retry_after_secs=0 时头值为 "1"）。
     #[cfg(feature = "web-axum")]
     #[test]
     fn rate_limited_into_response_retry_after_floor_is_one() {
@@ -2407,8 +2107,6 @@ mod tests {
         assert_eq!(value, "1");
     }
 
-    /// axum IntoResponse：scope 内 X-Request-ID 头与 body.request_id 一致；
-    /// scope 外两者均省略。
     #[cfg(feature = "web-axum")]
     #[tokio::test]
     async fn into_response_x_request_id_header_matches_body_request_id() {
@@ -2452,7 +2150,6 @@ mod tests {
         assert!(body_json.get("request_id").is_none());
     }
 
-    /// RateLimited 统一体错误响应含 Retry-After 头与 error_id 字段（web-axum）。
     #[cfg(feature = "web-axum")]
     #[tokio::test]
     async fn rate_limited_into_response_unified_body() {
@@ -2476,9 +2173,7 @@ mod tests {
         assert_eq!(body_json["error_id"], "ratelimit.rate_limited");
     }
 
-    /// 日志级别锁定（性能审查 M6）：限流拒绝是预期行为，RateLimited 渲染不得
-    /// 产生 error 级事件（429 攻击路径下 error 级日志无法被 EnvFilter 静音，
-    /// 构成日志洪水向量）；其余变体保持 error 级。
+    /// 日志级别锁定：RateLimited 渲染不得产生 error 级事件（429 攻击路径下无法被 EnvFilter 静音，构成日志洪水向量），其余变体保持 error。
     #[cfg(feature = "web-axum")]
     #[tokio::test]
     #[serial_test::serial]

@@ -3,16 +3,13 @@
 
 //! 扫码登录真实双端验收（feature = "protocol-qrlogin"，依赖 auth-server）。
 //!
-//! 双端语义：Web 端（待登录的 PC 浏览器）与 App 端（已登录的确认设备）各持
-//! **独立的 reqwest Client**（独立连接池，设备间不共享任何客户端状态），唯一
-//! 共享的真实状态在服务器端——MockAuthBackend 会话表与 qrlogin DAO（InMemoryDao）。
-//!
-//! - 全链路：Web create → App 经真实 HTTP `/api/v1/auth/login` 登录 → App scan
-//!   （Bearer App 会话）→ Web poll(scanned) → App confirm → Web poll 兑换出
-//!   真实会话 token → 内网 get-session 闭环核验 token 归属确认者；
-//! - 异常路径：无/假 Bearer 401、伪造票据 400、cancel 流程、并发 poll 仅一胜出；
-//! - Quishing 防御用户可见面：create 的 Chrome UA 经确认页摘要以 `Chrome`
-//!   设备标签回传 App 端。
+//! 双端语义：Web 端（待登录的 PC 浏览器）与 App 端（已登录的确认设备）各持**独立的
+//! reqwest Client**（独立连接池，设备间不共享任何客户端状态），唯一共享的真实状态在
+//! 服务器端——MockAuthBackend 会话表与 qrlogin DAO（InMemoryDao）。全链路：Web create
+//! → App 经真实 HTTP 登录 → App scan（Bearer App 会话）→ Web poll(scanned) → App
+//! confirm → Web poll 兑换出真实会话 token → 内网 get-session 闭环核验归属确认者；
+//! 异常路径：无/假 Bearer 401、伪造票据 400、cancel 流程、并发 poll 仅一胜出；
+//! Quishing 防御用户可见面：create 的 Chrome UA 经确认页摘要以 `Chrome` 设备标签回传。
 //!
 //! 装配同 `server.rs`：随机端口 + `axum::serve` 后台任务 + `#[serial]` 串行。
 

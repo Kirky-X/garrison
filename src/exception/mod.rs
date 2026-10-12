@@ -1,19 +1,13 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 异常模块，定义框架异常类型。
-//!
-//! 对应 异常体系，
-//! 提供细化异常类型与统一错误枚举。
+//! 异常模块，提供细化异常类型与统一错误枚举。
 
 use std::collections::HashMap;
 
-/// 重导出 `crate::error::GarrisonError`，便于从异常模块统一访问。
 pub use crate::error::GarrisonError;
 
-/// 未登录异常，表示请求缺少有效登录态。
-///
-/// 对应 `NotLoginException`。
+/// 未登录异常（对应上游 `NotLoginException`），表示请求缺少有效登录态。
 #[derive(Debug, Clone)]
 pub struct NotLoginException {
     /// 异常消息。
@@ -23,29 +17,13 @@ pub struct NotLoginException {
     pub login_type: String,
 }
 
-/// 携带上下文的业务可恢复异常（）。
+/// 携带上下文的业务可恢复异常（对应 `SaTokenException` 的"携带上下文"语义）。
 ///
-/// 与 `GarrisonError` enum 解耦，提供更丰富的异常上下文（token / login_id / extras）。
-/// 业务方可通过 `GarrisonException::new(code, msg).with_token(t).build()` 链式构造，
-/// 并通过 `Into<GarrisonError>` 转换为 `GarrisonError::Exception` 上抛。
+/// 与 `GarrisonError` enum 解耦，提供 token / login_id / extras 上下文；经 `new(code, msg).with_*(..).build()` 链式构造，`Into<GarrisonError>` 转为 `GarrisonError::Exception` 上抛。
 ///
-/// 对应 SaTokenException 的"携带上下文"语义。
+/// # ⚠️ 安全说明
 ///
-/// # ⚠️ 安全说明（Issues 64, 68）
-///
-/// `GarrisonException` 使用手动 `Debug` 实现，对 `token_value` 默认脱敏
-/// （仅输出前 8 字符 + `***`）。避免敏感信息通过 `{:?}` 格式化泄露到日志。
-///
-/// # 字段可见性说明
-///
-/// 字段保持 `pub`（pre-1.0 兼容既有构造/断言用法）：构造后仍可原地修改字段值。
-/// 已知风险与既有缓解：
-/// - `token_value` / `login_id` 即使被改写，`Debug` 输出仍统一走脱敏
-///   （`mask_preview`），不因后改绕过日志脱敏；
-/// - `extras` 在日志与 HTTP 响应体两条路径均经 `sanitize_extras` 过滤；
-/// - 需要不可变保证的场景应使用 `new(..).with_*(..).build()` 链式构造并不再暴露
-///   `&mut` 访问。若 1.0 前评估需封装，改为 `pub(crate)` + accessor 属破坏性变更，
-///   需配套迁移说明。
+/// 手动 `Debug` 实现：`token_value` 脱敏为前 8 字符 + `***`，防 `{:?}` 泄露到日志；字段保持 `pub`（pre-1.0 兼容），但后改字段仍走脱敏（`mask_preview`），`extras` 在日志与 HTTP 响应体均经 `sanitize_extras` 过滤；需不可变保证场景用链式构造且不暴露 `&mut`。
 #[derive(Clone)]
 pub struct GarrisonException {
     /// 业务错误码（如 -1 表示未登录）。
@@ -60,9 +38,7 @@ pub struct GarrisonException {
     /// 关联的 token（可能为 `None`）。
     pub token_value: Option<String>,
 
-    /// 关联的登录主体（可能为 `None`）。
-    ///
-    /// 与全局 login_id 一致为 `String`（login_id 为 String）。
+    /// 关联的登录主体（与全局 login_id 一致为 `String`，可能为 `None`）。
     pub login_id: Option<String>,
 
     /// 额外键值对上下文。

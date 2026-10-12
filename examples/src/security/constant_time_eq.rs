@@ -5,10 +5,7 @@
 //!
 //! 对应模块：`src/secure/ct_eq.rs`（`secure-ct-eq` feature 开启时可用）。
 //!
-//! 适用场景：
-//! - HMAC 签名验证
-//! - API Key / Token 哈希比对
-//! - PKCE code_challenge 校验
+//! 适用场景：HMAC 签名验证、API Key / Token 哈希比对、PKCE code_challenge 校验。
 //!
 //! 运行方式：
 //! ```sh

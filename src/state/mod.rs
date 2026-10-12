@@ -1,45 +1,15 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 状态机模块，定义 Token 与 User 的显式状态机。
-//! 状态机定义（见下）为权威来源。
+//! 状态机模块，定义 [`TokenState`] 与 [`UserStatus`] 显式状态机；转换路径以本模块定义为准，不混合其他文档。
 //!
-//! ## 设计
-//!
-//! - [`TokenState`]：Token 生命周期状态（5 个状态 + 6 条合法转换路径）
-//! - [`UserStatus`]：用户账号状态（5 个状态 + 9 条合法转换路径）
-//!
-//! 状态转换路径以本模块定义为准，不混合其他文档的路径。
-//!
-//! ## 不在范围内
-//!
-//! 以下集成项**已定义、尚未接入运行路径**（接线计划见
-//! `docs/ROADMAP.md`；本模块文档不再承诺具体版本号）：
-//!
-//! - 与现有 Session / User 模块的集成
-//! - 状态机事件触发
-//! - 状态持久化到 dbnexus
+//! 以下集成项已定义、尚未接入运行路径（接线计划见 `docs/ROADMAP.md`）：与 Session / User 模块集成、状态机事件触发、状态持久化到 dbnexus。
 
 use crate::error::{GarrisonError, GarrisonResult};
 
-// ============================================================================
 // TokenState
-// ============================================================================
 
-/// Token 生命周期状态（5 个状态）。
-///
-/// 状态转换路径如下：
-///
-/// ```text
-/// Issued → Active → Active（续期）
-/// → Expired（TTL 到达）
-/// → Revoked（logout / kickout）
-/// → Refreshed（refresh_token）
-/// Refreshed → Revoked（旧 Token 立即作废）
-/// ```
-///
-/// `Expired` 与 `Revoked` 为终态，不可转换。
-/// `Refreshed` 仅可转换到 `Revoked`（旧 Token 立即作废）。
+/// Token 生命周期状态（5 个）：Issued → Active（可续期），Active → Expired（TTL 到达）/ Revoked（logout / kickout）/ Refreshed（refresh_token），Refreshed → Revoked（旧 Token 立即作废）；Expired 与 Revoked 为终态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenState {
     /// 已签发，客户端尚未首次使用。
@@ -54,21 +24,9 @@ pub enum TokenState {
     Refreshed,
 }
 
-// ============================================================================
 // UserStatus
-// ============================================================================
 
-/// 用户账号状态（5 个状态）。
-///
-/// 依据状态转换规则表，转换路径如下：
-///
-/// ```text
-/// Pending → Active / Suspended
-/// Active → Suspended / Inactive / Deleted
-/// Suspended → Active / Deleted
-/// Inactive → Active / Deleted
-/// Deleted（终态）
-/// ```
+/// 用户账号状态（5 个）：Pending → Active / Suspended；Active → Suspended / Inactive / Deleted；Suspended 与 Inactive → Active / Deleted；Deleted 为终态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UserStatus {
     /// 待激活（注册 / 第三方首次登录）。

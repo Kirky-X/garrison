@@ -9,7 +9,7 @@
 //! 原子递增后判定，超限以 [`GarrisonDao::decr`] 逐次补偿回滚；`refund` 以
 //! `decr` 循环归还，归还量天然钳制不超过已消耗量（账本不为负），key 不存在/
 //! 已过期时 `decr` 语义即 no-op。窗口 TTL 随 `incr` 首创建落盘，无请求时
-//! key 自然过期（与旧时间桶键形的过渡语义见 CHANGELOG）。
+//! key 自然过期。
 
 use crate::dao::GarrisonDao;
 use async_trait::async_trait;
@@ -31,9 +31,6 @@ pub struct GarrisonDaoStorage {
 
 impl GarrisonDaoStorage {
     /// 创建适配器实例。
-    ///
-    /// # 参数
-    /// - `dao`: 内部 DAO 实现。
     pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self { dao }
     }
@@ -72,9 +69,6 @@ pub struct GarrisonDaoQuotaStorage {
 
 impl GarrisonDaoQuotaStorage {
     /// 创建适配器实例。
-    ///
-    /// # 参数
-    /// - `dao`: 内部 DAO 实现。
     pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self { dao }
     }
@@ -180,9 +174,8 @@ impl QuotaStorage for GarrisonDaoQuotaStorage {
             Ok(ConsumeResult::allowed(cur, limit))
         } else {
             // 超限自回滚：每次 decr 1（不存在/值为 0 时 decr 返回 0，不为负）。
-            // 补偿失败仅 warn 不传播：拒绝判定本身已成立，回滚失败只让账本残留
-            // 至窗口 TTL 自然过期（与手写实现的统一回滚错误策略一致），
-            // 不得把「限流拒绝」升级成存储错误。
+            // 补偿失败仅 warn 不传播：拒绝判定本身已成立，回滚失败只让账本残留至窗口
+            // TTL 自然过期，不得把「限流拒绝」升级成存储错误。
             for _ in 0..cost {
                 if let Err(e) = self.dao.decr(&key).await {
                     tracing::warn!(error = %e, key = %key, "quota consume over-limit rollback failed");

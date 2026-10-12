@@ -1,20 +1,9 @@
-// Copyright (c) 2026 Kirky.X🌠
-// SPDX-License-Identifier: Apache-2.0
-
 //! Session 安全监听器（IP 变更检测）。
 //!
-//! 在 login 时记录初始 IP，在后续访问时检测 IP 是否跨网段变更，
-//! 用于识别潜在的 Session 劫持行为。
+//! 在 login 时记录初始 IP，后续访问时检测 IP 是否跨网段变更，用于识别潜在的 Session 劫持。
 //!
-//! ## 存储格式
-//!
-//! - `session:ip:{token}` → 登录 IP 字符串（TTL: 86400 秒 / 24 小时）
-//!
-//! ## 网段比较
-//!
-//! 仅支持 IPv4 /24 网段比较（取前 3 段 `A.B.C` 作为网段标识）。
-//! IPv6 与无效 IP 格式不参与比较（返回 `None`，不阻断主流程）。
-
+//! 存储 `session:ip:{token}` → 登录 IP 字符串（TTL 86400 秒 / 24 小时）；仅支持 IPv4 /24 网段比较
+//! （取前 3 段 `A.B.C`），IPv6 与无效 IP 格式不参与比较（返回 `None`，不阻断主流程）。
 use crate::constants::DaoKeyPrefix;
 use crate::dao::GarrisonDao;
 use crate::error::GarrisonResult;
@@ -47,33 +36,13 @@ pub struct SessionSecurityListener {
 
 impl SessionSecurityListener {
     /// 创建安全监听器实例。
-    ///
-    /// # 参数
-    /// - `dao`: DAO 引用（oxcache / dbnexus）。
-    ///
-    /// # 返回
-    /// 新建的 `SessionSecurityListener` 实例。
     pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self { dao }
     }
 
-    /// 记录 token 登录时的初始 IP。
+    /// 记录 token 登录时的初始 IP（login 流程中调用，后续 `check_ip_change` 经此检测 IP 变更）。
     ///
-    /// 在 login 流程中调用，将 token 与登录 IP 关联存储。
-    /// 后续 `check_ip_change` 通过此记录检测 IP 变更。
-    ///
-    /// # 参数
-    /// - `token`: token 字符串。
-    /// - `login_id`: 登录主体标识（用于日志追踪）。
-    /// - `ip`: 登录时的客户端 IP。
-    ///
-    /// # 存储
-    /// - key: `session:ip:{token}`
-    /// - value: IP 字符串
-    /// - TTL: 86400 秒（24 小时）
-    ///
-    /// # 错误
-    /// - DAO 写入失败：透传 `GarrisonError`。
+    /// 存储 key `session:ip:{token}` → IP 字符串（TTL 86400 秒 / 24 小时）。
     pub async fn record_login_ip(
         &self,
         token: &str,
@@ -91,24 +60,9 @@ impl SessionSecurityListener {
         Ok(())
     }
 
-    /// 检测当前 IP 是否与登录时记录的初始 IP 跨网段。
+    /// 检测当前 IP 是否与登录时记录的初始 IP 跨网段（IPv4 取前 3 段 /24）。
     ///
-    /// 在请求鉴权时调用，比较当前 IP 与 `record_login_ip` 记录的初始 IP 的网段：
-    /// - IPv4 取前 3 段（/24）作为网段标识
-    /// - 同网段返回 `Ok(None)`（不告警）
-    /// - 跨网段返回 `Ok(Some(warning))`，同时记录 `tracing::warn!`
-    /// - 无记录或 IP 格式无效返回 `Ok(None)`（不阻断主流程）
-    ///
-    /// # 参数
-    /// - `token`: token 字符串。
-    /// - `current_ip`: 当前请求的客户端 IP。
-    ///
-    /// # 返回
-    /// - `Ok(None)`: 无记录、同网段、或 IP 格式无效（IPv6 / 非法字符串）。
-    /// - `Ok(Some(warning))`: 跨网段，warning 为告警消息。
-    ///
-    /// # 错误
-    /// - DAO 读取失败：降级为 `Ok(None)`（不阻断认证主流程），同时记录 `tracing::warn!`。
+    /// 同网段、无记录或 IP 格式无效返回 `Ok(None)`（不阻断认证主流程），跨网段返回 `Ok(Some(warning))` 并记录 `tracing::warn!`。
     pub async fn check_ip_change(
         &self,
         token: &str,
@@ -152,16 +106,8 @@ impl SessionSecurityListener {
     }
 }
 
-/// 脱敏 token：长 token 输出前 8 字符 + `***`；短 token 输出固定占位 `***`。
-///
-/// 安全敏感日志绝不输出完整 token（无论长度）：长度不足 8 字符（或 `get(..8)`
-/// 因 UTF-8 字符边界失败）时返回固定占位，防止短 token 完整泄露到日志。
-///
-/// # 参数
-/// - `token`: token 字符串。
-///
-/// # 返回
-/// 脱敏后的 token 字符串（前 8 字符 + `***`，或固定占位 `***`）。
+/// 脱敏 token：长 token 输出前 8 字符 + `***`；短 token（不足 8 字符或 UTF-8 边界失败）输出固定占位 `***`，
+/// 安全敏感日志绝不输出完整 token。
 fn mask_token(token: &str) -> String {
     match token.get(..8) {
         Some(prefix) if token.len() > 8 => format!("{}***", prefix),
@@ -169,14 +115,8 @@ fn mask_token(token: &str) -> String {
     }
 }
 
-/// 提取 IPv4 地址的 /24 网段标识（前 3 段）。
-///
-/// # 参数
-/// - `ip`: IPv4 字符串（格式 `A.B.C.D`）。
-///
-/// # 返回
-/// - `Some("A.B.C")`: 有效 IPv4，返回前 3 段。
-/// - `None`: 非 IPv4 格式（IPv6、无效字符串、段数不为 4、某段非 0-255 数字等）。
+/// 提取 IPv4 地址的 /24 网段标识（前 3 段）：有效 IPv4 返回 `Some("A.B.C")`，
+/// 非 IPv4 格式（IPv6、无效字符串、段数不为 4、某段非 0-255 数字）返回 `None`。
 fn extract_ipv4_subnet(ip: &str) -> Option<String> {
     let parts: Vec<&str> = ip.split('.').collect();
     if parts.len() != 4 {
@@ -203,10 +143,6 @@ mod tests {
         let listener = SessionSecurityListener::new(dao.clone());
         (dao, listener)
     }
-
-    // ------------------------------------------------------------------------
-    // record_login_ip + check_ip_change 行为验证
-    // ------------------------------------------------------------------------
 
     /// 验证 record_login_ip 后 check_ip_change 同 IP 返回 None。
     #[tokio::test]
@@ -259,10 +195,6 @@ mod tests {
             "告警应包含网段标识"
         );
     }
-
-    // ------------------------------------------------------------------------
-    // 边界场景
-    // ------------------------------------------------------------------------
 
     /// 验证无记录时 check_ip_change 返回 None（首次访问不告警）。
     #[tokio::test]
@@ -322,10 +254,6 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // mask_token 脱敏（短 token 固定占位）
-    // ------------------------------------------------------------------------
-
     /// 长 token（>8 字符）输出前 8 字符 + `***`。
     #[test]
     fn mask_token_long_token_prefixes_eight_chars() {
@@ -340,9 +268,6 @@ mod tests {
         assert_eq!(mask_token(""), "***");
     }
 
-    // ------------------------------------------------------------------------
-    // extract_ipv4_subnet 单元测试
-    // ------------------------------------------------------------------------
     /// 验证 extract_ipv4_subnet 对有效 IPv4 返回前 3 段。
     #[test]
     fn extract_ipv4_subnet_valid_ipv4() {

@@ -1,20 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 密码策略错误类型。
-//! 定义 [`PolicyError`]，由 `PasswordPolicyRule::validate` 返回，
-//! `PasswordPolicyEngine::validate` 收集为 `Vec<PolicyError>`。
+//! 密码策略错误类型：[`PolicyError`] 由规则 `validate` 返回，引擎收集为 `Vec<PolicyError>`。
 
 use std::fmt;
 
-/// 密码策略校验错误。
-///
-/// 由规则 `validate` 返回，含触发规则的名称与可展示给用户的错误描述。
-///
-/// # 字段
-///
-/// - `rule_name`: 触发错误的规则名称（对应 `PasswordPolicyRule::name()` 返回值）
-/// - `message`: 错误描述信息（可展示给用户）
+/// 密码策略校验错误：触发规则名 + 可展示给用户的描述。
 #[derive(Debug, Clone)]
 pub struct PolicyError {
     /// 触发错误的规则名称。
@@ -25,10 +16,6 @@ pub struct PolicyError {
 
 impl PolicyError {
     /// 创建 `PolicyError`。
-    ///
-    /// # 参数
-    /// - `rule_name`: 触发错误的规则名称。
-    /// - `message`: 错误描述信息。
     pub fn new(rule_name: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             rule_name: rule_name.into(),

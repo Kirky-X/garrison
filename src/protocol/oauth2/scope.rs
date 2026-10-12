@@ -1,46 +1,23 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! OAuth2 Scope Handler 注册表。
+//! OAuth2 Scope Handler 注册表（`oauth2-scope-handler` feature）：`ScopeHandler` trait + `ScopeRegistry`，在 token 请求前做客户端 scope 策略校验。
 //!
-//! 提供 `ScopeHandler` trait + `ScopeRegistry` 动态注册表，用于在 OAuth2 token
-//! 请求前对 scope 进行客户端策略校验（如拒绝过宽 scope、按用户身份限定 scope 集合等）。
-//!
-//! 仅在启用 `oauth2-scope-handler` feature 时编译。
-//!
-//! ## 设计决策
-//!
-//! - `ScopeHandler` trait 的 `validate(scope, login_id)` 方法接受 login_id 参数。
-//! 但 OAuth2 客户端流程在 token 请求时通常尚未解析出 login_id（password 流需先认证、
-//! client_credentials 流无用户、refresh_token 流需先解码 refresh_token）。
-//! 约定：客户端在 token 请求前调用 `validate_scope(scope)` 时传入 `login_id = 0`，
-//! handler 实现可按需通过其他上下文（如 username / client_id）查询真实 login_id。
-//! 这是 spec 与 OAuth2 客户端实际语义之间的妥协。
-//! - `ScopeRegistry` 用 `parking_lot::RwLock` 保护 `HashMap<String, Arc<dyn ScopeHandler>>`，
-//! 与 `GarrisonPluginManager` / `GarrisonListenerManager` 的 `Vec<Arc<dyn T>>` 模式一致（Arc 而非 Box，
-//! 因为 handler 可能被多处共享；RwLock 因为支持运行时 register/unregister）。
+//! 设计决策：token 请求时通常尚未解析出 login_id（password 流需先认证、client_credentials 无用户），故 `validate_scope(scope)` 传
+//! `login_id = 0` 占位；`ScopeRegistry` 用 `parking_lot::RwLock` 保护 `HashMap<String, Arc<dyn ScopeHandler>>`（支持运行时注册/注销）。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// OAuth2 scope 校验处理器 trait。
-///
-/// 实现方根据 scope 字符串与 login_id 决定是否允许该 scope。
+/// OAuth2 scope 校验处理器：按 scope 字符串与 login_id 决定是否允许。
 pub trait ScopeHandler: Send + Sync {
-    /// 校验指定 login_id 是否持有指定 scope。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 允许该 scope。
-    /// - `Ok(false)`: 拒绝该 scope（不发送 HTTP 请求）。
-    /// - `Err(GarrisonError)`: 校验过程出错（向上传播，Fail Loud）。
+    /// 校验指定 login_id 是否持有指定 scope：拒绝返回 `Ok(false)`（不发 HTTP 请求），出错向上传播（Fail Loud）。
     fn validate(&self, scope: &str, login_id: i64) -> GarrisonResult<bool>;
 }
 
-/// Scope 注册表，支持运行时动态注册/查询/移除 scope handler。
-///
-/// 使用 `parking_lot::RwLock` 保证多线程并发安全。
+/// Scope 注册表，支持运行时动态注册/查询/移除 handler（`parking_lot::RwLock` 保证并发安全）。
 pub struct ScopeRegistry {
     /// scope 名称 → handler 映射。
     handlers: RwLock<HashMap<String, Arc<dyn ScopeHandler>>>,
@@ -54,34 +31,22 @@ impl ScopeRegistry {
         }
     }
 
-    /// 注册 scope handler。
-    ///
-    /// 若 name 已存在，覆盖旧 handler。
+    /// 注册 scope handler（同名覆盖）。
     pub fn register(&self, name: &str, handler: Arc<dyn ScopeHandler>) {
         let mut map = self.handlers.write();
         map.insert(name.to_string(), handler);
     }
 
-    /// 移除 scope handler。
-    ///
-    /// 若 name 不存在，无操作（幂等）。
+    /// 移除 scope handler（name 不存在时无操作）。
     pub fn unregister(&self, name: &str) {
         let mut map = self.handlers.write();
         map.remove(name);
     }
 
-    /// 校验指定 scope 是否允许。
+    /// 校验指定 scope：未注册返回 `GarrisonError::OAuth2`，handler 错误向上传播。
     ///
-    /// # 返回
-    /// - `Ok(true/false)`: 委托 handler 返回结果。
-    /// - `Err(GarrisonError::OAuth2)`: scope 未注册。
-    /// - `Err(GarrisonError)`: handler 内部错误向上传播。
-    ///
-    /// # 并发语义
-    ///
-    /// 读锁仅在克隆 `Arc` 时持有，**不横跨 `handler.validate()` 用户回调**：
-    /// - 慢 handler（I/O / 网络调用）不会阻塞 registry 的并发读与其他操作
-    /// - 消除 handler 内重入 `register` / `unregister`（写锁）导致的自死锁
+    /// 读锁仅在克隆 `Arc` 时持有，不横跨 `handler.validate()` 用户回调——慢 handler 不阻塞
+    /// registry 并发读，也避免 handler 内重入 `register` / `unregister` 造成自死锁。
     pub fn validate(&self, scope: &str, login_id: i64) -> GarrisonResult<bool> {
         let handler = {
             let map = self.handlers.read();
@@ -154,11 +119,8 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // ScopeRegistry 基础测试
-    // ========================================================================
 
-    /// 注册并查询 scope handler 返回 Ok(true)（注册并查询）。
     #[test]
     fn register_and_validate_returns_handler_result() {
         let registry = ScopeRegistry::new();
@@ -167,7 +129,6 @@ mod tests {
         assert!(result);
     }
 
-    /// handler 返回 Ok(false) 时 registry 返回 Ok(false)。
     #[test]
     fn validate_returns_false_when_handler_returns_false() {
         let registry = ScopeRegistry::new();
@@ -176,7 +137,6 @@ mod tests {
         assert!(!result);
     }
 
-    /// 未注册的 scope 返回 OAuth2 错误（未注册的 scope）。
     #[test]
     fn validate_unregistered_scope_returns_oauth2_error() {
         let registry = ScopeRegistry::new();
@@ -190,7 +150,6 @@ mod tests {
         }
     }
 
-    /// handler 实现返回错误时向上传播（错误传播，Fail Loud）。
     #[test]
     fn handler_error_propagates() {
         let registry = ScopeRegistry::new();
@@ -205,7 +164,6 @@ mod tests {
         }
     }
 
-    /// 并发注册线程安全（并发注册线程安全）。
     #[test]
     fn concurrent_register_is_thread_safe() {
         let registry = Arc::new(ScopeRegistry::new());
@@ -223,24 +181,20 @@ mod tests {
             h.join().expect("线程 panic");
         }
         assert_eq!(registry.len(), 10);
-        // 全部 scope 可校验
         for i in 0..10 {
             assert!(registry.validate(&format!("scope-{}", i), 1001).unwrap());
         }
     }
 
-    /// register 覆盖同名 handler。
     #[test]
     fn register_overrides_existing() {
         let registry = ScopeRegistry::new();
         registry.register("s", Arc::new(StubHandler { allowed: false }));
         assert!(!registry.validate("s", 1).unwrap());
-        // 覆盖
         registry.register("s", Arc::new(StubHandler { allowed: true }));
         assert!(registry.validate("s", 1).unwrap());
     }
 
-    /// unregister 移除 handler，之后 validate 返回未注册错误。
     #[test]
     fn unregister_removes_handler() {
         let registry = ScopeRegistry::new();
@@ -250,7 +204,6 @@ mod tests {
         assert!(registry.validate("temp", 1).is_err());
     }
 
-    /// unregister 未注册的 name 是幂等的（无操作）。
     #[test]
     fn unregister_nonexistent_is_idempotent() {
         let registry = ScopeRegistry::new();
@@ -258,7 +211,6 @@ mod tests {
         assert!(registry.is_empty());
     }
 
-    /// validate 委托时正确传递 scope 与 login_id 参数。
     #[test]
     fn validate_delegates_with_correct_params() {
         let handler = Arc::new(RecordingHandler {
@@ -272,7 +224,6 @@ mod tests {
         assert_eq!(*handler.last_login_id.read(), Some(2002));
     }
 
-    /// Default trait 等价于 new。
     #[test]
     fn default_equals_new() {
         let r1 = ScopeRegistry::new();
@@ -281,7 +232,6 @@ mod tests {
         assert!(r2.is_empty());
     }
 
-    /// len / is_empty 反映注册状态。
     #[test]
     fn len_and_is_empty_reflect_state() {
         let registry = ScopeRegistry::new();
@@ -293,9 +243,7 @@ mod tests {
         assert!(!registry.is_empty());
     }
 
-    /// 读锁不得横跨 handler 用户回调：handler 在 validate 期间重入
-    /// registry.register（写锁）不应死锁（旧实现持读锁调用 handler，
-    /// parking_lot RwLock 同线程 read→write 重入会永久阻塞）。
+    /// handler 在 validate 期间重入 `register`（写锁）不得死锁：读锁不横跨用户回调。
     #[test]
     fn validate_allows_reentrant_register_without_deadlock() {
         struct ReentrantHandler {
@@ -303,7 +251,6 @@ mod tests {
         }
         impl ScopeHandler for ReentrantHandler {
             fn validate(&self, scope: &str, _login_id: i64) -> GarrisonResult<bool> {
-                // 用户回调内重入写锁（register/unregister）
                 self.registry.register(
                     &format!("{scope}-nested"),
                     Arc::new(StubHandler { allowed: true }),
@@ -319,7 +266,6 @@ mod tests {
                 registry: registry.clone(),
             }),
         );
-        // 旧实现此处会死锁挂起；修复后应正常返回
         let result = std::thread::spawn(move || registry.validate("reentrant", 1).unwrap())
             .join()
             .expect("handler 重入 register 不得死锁");

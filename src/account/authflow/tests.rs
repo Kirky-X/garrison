@@ -215,16 +215,11 @@ fn auth_result_variants_match() {
     assert!(success && failed && pending && challenge);
 }
 
-/// 验证 AuthenticationFlow 默认 allow_skip=false 的惯例。
-///
-/// `AuthenticationFlow` 无 `Default` 实现（仅 derive Debug/Clone），
-/// struct 字面量构造必须显式给出 `allow_skip`——"默认值"的实际来源是
-/// [`FlowBuilder`]（`allow_skip` 字段初始为 false，仅显式调用 `.allow_skip()`
-/// 才置 true）。本测试验证真实默认链路：FlowBuilder 构造（未调用 .allow_skip()）
-/// 产出的 flow.allow_skip == false；显式开启后 == true。
+/// 验证 `allow_skip` 默认链路：`AuthenticationFlow` 无 `Default` 实现（仅 derive Debug/Clone），
+/// 字面量构造必须显式给出 `allow_skip`，实际默认来源是 [`FlowBuilder`]（初始 false，仅显式调用
+/// `.allow_skip()` 才置 true）；本测试验证未调用时为 false、显式开启后为 true。
 #[test]
 fn authentication_flow_allow_skip_default_false() {
-    // 真实默认路径：FlowBuilder 未显式开启 allow_skip
     let flow = FlowBuilder::new("default").build();
     assert!(
         !flow.allow_skip,

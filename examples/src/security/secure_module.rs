@@ -24,13 +24,7 @@ use garrison::secure::sanitize::sanitize_input;
 #[cfg(feature = "secure-confusable")]
 use garrison::secure::confusable::check_confusable;
 
-/// 运行安全模块示例。
-///
-/// 演示：
-/// 1. SensitiveDataMasker：手机号 / 身份证 / 邮箱 / 银行卡脱敏
-/// 2. XssProtector：全量转义 + 白名单过滤
-/// 3. sanitize_input：移除 null 字节 / 控制字符 / trim / 长度限制
-/// 4. check_confusable：检测 Unicode 同形异义字
+/// 运行安全模块示例：SensitiveDataMasker 脱敏、XssProtector 转义/白名单、sanitize_input 消毒、check_confusable 同形异义字检测。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 安全模块示例 ===\n");
 

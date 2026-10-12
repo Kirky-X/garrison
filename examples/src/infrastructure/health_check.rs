@@ -26,19 +26,8 @@ use std::sync::Arc;
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 健康检查完整流程 ===\n");
 
-    // ================================================================
-    // 场景一：内置检查器 + 聚合报告
-    // ================================================================
     demo_builtin_checks().await?;
-
-    // ================================================================
-    // 场景二：自定义检查器
-    // ================================================================
     demo_custom_check().await?;
-
-    // ================================================================
-    // 场景三：降级场景
-    // ================================================================
     demo_degraded_scenario().await?;
 
     println!("\n=== 健康检查流程演示完成 ===");
@@ -51,13 +40,10 @@ pub async fn run() -> GarrisonResult<()> {
     Ok(())
 }
 
-/// 场景一：内置检查器 + 聚合报告。
-///
-/// 注册 Config / Cache / DB 三个内置检查器，验证全部 Healthy。
+/// 场景一：内置检查器 + 聚合报告：注册 Config / Cache / DB 并验证全部 Healthy。
 async fn demo_builtin_checks() -> GarrisonResult<()> {
     println!("--- 场景一：内置检查器 + 聚合报告 ---");
 
-    // 初始化基础设施
     let config = Arc::new(GarrisonConfig::default_config());
     let _dao = Arc::new(GarrisonDaoOxcache::new().await?);
 
@@ -66,7 +52,6 @@ async fn demo_builtin_checks() -> GarrisonResult<()> {
         GarrisonMigration::with_base_dir(pool.clone(), PathBuf::from("../migrations/sqlite"));
     migration.run_all().await?;
 
-    // 注册检查器
     let mut registry = HealthRegistry::new();
     registry.register(Box::new(ConfigHealthCheck::new(config.clone())));
     registry.register(Box::new(CacheHealthCheck::new()));
@@ -135,7 +120,6 @@ async fn demo_custom_check() -> GarrisonResult<()> {
 
     let mut registry = HealthRegistry::new();
 
-    // 自定义 Redis 检查（模拟连接正常）
     registry.register(Box::new(RedisHealthCheck { connected: true }));
     println!("[1] 注册自定义检查器：Redis（connected=true）");
 
@@ -143,7 +127,6 @@ async fn demo_custom_check() -> GarrisonResult<()> {
     assert_eq!(report.overall, HealthStatus::Healthy);
     println!("    整体状态: {:?} ✓", report.overall);
 
-    // 自定义 Redis 检查（模拟连接断开）
     let mut registry2 = HealthRegistry::new();
     registry2.register(Box::new(RedisHealthCheck { connected: false }));
     println!("[2] 注册自定义检查器：Redis（connected=false）");
@@ -159,9 +142,7 @@ async fn demo_custom_check() -> GarrisonResult<()> {
     Ok(())
 }
 
-/// 场景三：降级场景。
-///
-/// 模拟部分依赖故障：核心服务正常 + 非核心依赖降级。
+/// 场景三：降级场景：核心服务正常 + 非核心依赖降级时的整体状态判定。
 async fn demo_degraded_scenario() -> GarrisonResult<()> {
     println!("--- 场景三：降级场景（部分依赖故障）---");
 

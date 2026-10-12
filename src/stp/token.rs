@@ -2,48 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! TokenLogic trait — Token 类型校验与刷新契约。
-//! 本 trait 承接 token 类型校验、
-//! 显式 token 验证、token 刷新 5 个方法。super-trait 为 [`SessionLogic`]
-//! （token 校验依赖会话状态，默认实现委托 [`check_login`](SessionLogic::check_login)）。
-//!
-//! # 返回类型
-//!
-//! `verify_token()` 返回类型为 `GarrisonResult<String>`
-//! （LoginId 形式：全栈使用 String/&str）。
+//! super-trait 为 [`SessionLogic`]（token 校验依赖会话状态）；`verify_token()` 返回 `GarrisonResult<String>`（LoginId 形式，全栈 String/&str）。
 
 use super::GarrisonLogicDefault;
 use crate::core::token::TokenStyleFactory;
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::loc;
-// GarrisonEvent 仅在 refresh_token（protocol-jwt feature）中使用，故 import 同时门控两个 feature
-// 避免 listener 启用但 protocol-jwt 关闭时出现 unused import 警告
+// GarrisonEvent 仅在 refresh_token（protocol-jwt）中使用，故 import 门控 listener + protocol-jwt，避免 unused import 警告
 #[cfg(all(feature = "listener", feature = "protocol-jwt"))]
 use crate::listener::GarrisonEvent;
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
 
-/// Token 逻辑 trait，定义 token 类型校验、显式验证与刷新契约。
-///
-/// 对应 `StpLogic` 的 token 类型区分与 `getTokenValue` 校验部分。
-///
-/// # 默认实现
-///
-/// - [`check_access_token`](Self::check_access_token) /
-///   [`check_client_token`](Self::check_client_token) /
-///   [`check_temp_token`](Self::check_temp_token)：委托
-///   [`SessionLogic::check_login`]，已登录返回 `Ok(())`，未登录返回 `Err(NotLogin)`。
-///   业务方可在子类 override 实现类型区分（如校验 token 是否为 access_token 类型）。
-/// - [`verify_token`](Self::verify_token) /
-///   [`refresh_token`](Self::refresh_token)：默认返回 `NotImplemented`，
-///   由 `GarrisonLogicDefault` 的 impl 覆写为委托 `core-token::Token::verify` /
-///   `JwtHandler::refresh`。
-///
-/// 私有辅助函数：统一 token 类型校验语义（DEEP-01 DRY 重构）。
-///
-/// `check_access_token` / `check_client_token` / `check_temp_token` 三个默认实现
-/// 的语义完全相同：委托 `SessionLogic::check_login`，已登录返回 `Ok(())`，
-/// 未登录统一返回 `NotLogin`（**不区分 token 类型**，防止类型信息泄露到错误消息）。
-/// 提取为单一实现，避免三处重复代码。
+/// 统一三个 check_*_token 默认实现的语义：委托 [`SessionLogic::check_login`]，未登录统一返回 `NotLogin`（不区分 token 类型，防类型信息泄露）。
 async fn ensure_valid_token_session(session: &dyn SessionLogic) -> GarrisonResult<()> {
     let valid = session.check_login().await?;
     if valid {
@@ -56,36 +27,17 @@ async fn ensure_valid_token_session(session: &dyn SessionLogic) -> GarrisonResul
 }
 
 #[async_trait]
-/// TokenLogic trait — Token 类型校验与刷新契约。
-///
-/// 提供 token 类型校验（access / client / temp）、显式 token 验证与 token 刷新能力。
-/// super-trait 为 [`SessionLogic`]（token 校验依赖会话状态）。
+/// Token 类型校验、显式验证与刷新契约（对应 `StpLogic` 的 token 类型区分与 `getTokenValue` 校验部分）。
+/// 类型校验默认委托 [`SessionLogic::check_login`]；`verify_token` / `refresh_token` 默认 `NotImplemented`，由 `GarrisonLogicDefault` 覆写。
 pub trait TokenLogic: SessionLogic {
-    /// 校验 access_token 类型会话。
-    ///
-    /// 语义别名：默认实现委托 [`check_login`](SessionLogic::check_login)，
-    /// 已登录返回 `Ok(())`，未登录返回 `Err(NotLogin)`。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 当前会话 token 有效（已登录）。
-    ///
-    /// # 错误
-    /// - 未登录：`GarrisonError::NotLogin`。
+    /// 校验 access_token 类型会话：默认委托 [`check_login`](SessionLogic::check_login)，未登录返回 `NotLogin`。
     async fn check_access_token(&self) -> GarrisonResult<()>
     where
         Self: Sized,
     {
         ensure_valid_token_session(self).await
     }
-    /// 校验 client_token 类型会话。
-    ///
-    /// 语义别名：默认实现委托 [`check_login`](SessionLogic::check_login)。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 当前会话 token 有效（已登录）。
-    ///
-    /// # 错误
-    /// - 未登录：`GarrisonError::NotLogin`。
+    /// 校验 client_token 类型会话：默认委托 [`check_login`](SessionLogic::check_login)，未登录返回 `NotLogin`。
     async fn check_client_token(&self) -> GarrisonResult<()>
     where
         Self: Sized,
@@ -93,15 +45,7 @@ pub trait TokenLogic: SessionLogic {
         ensure_valid_token_session(self).await
     }
 
-    /// 校验 temp_token 类型会话。
-    ///
-    /// 语义别名：默认实现委托 [`check_login`](SessionLogic::check_login)。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 当前会话 token 有效（已登录）。
-    ///
-    /// # 错误
-    /// - 未登录：`GarrisonError::NotLogin`。
+    /// 校验 temp_token 类型会话：默认委托 [`check_login`](SessionLogic::check_login)，未登录返回 `NotLogin`。
     async fn check_temp_token(&self) -> GarrisonResult<()>
     where
         Self: Sized,
@@ -109,21 +53,8 @@ pub trait TokenLogic: SessionLogic {
         ensure_valid_token_session(self).await
     }
 
-    /// 验证显式传入的 token 并返回关联的 `String`。
-    ///
-    /// 委托 `core-token::Token::verify` 实现。与
-    /// [`check_login`](SessionLogic::check_login) 区别：
-    /// `check_login` 从 task_local 读取 token；`verify_token` 接收显式 token 参数。
-    ///
-    /// # 参数
-    /// - `token`: 待验证的 token 字符串。
-    ///
-    /// # 返回
-    /// - `Ok(login_id)`: token 有效，返回关联的 `String`。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidToken`: token 无效或不包含 login_id。
-    /// - `GarrisonError::NotImplemented`: 默认实现未委托 Token trait。
+    /// 验证显式传入的 token 并返回关联 login_id：与 [`check_login`](SessionLogic::check_login) 不同，token 由参数传入而非 task_local。
+    /// 默认返回 `NotImplemented`（`GarrisonLogicDefault` 覆写为委托 `core-token::Token::verify`）；token 无效返回 `InvalidToken`。
     async fn verify_token(&self, _token: &str) -> GarrisonResult<String> {
         Err(GarrisonError::NotImplemented(loc!(
             "stp-verify-token-not-implemented",
@@ -131,19 +62,7 @@ pub trait TokenLogic: SessionLogic {
         )))
     }
 
-    /// 刷新 token。
-    ///
-    /// 仅在启用 `protocol-jwt` feature 时由 `JwtHandler` 提供有效实现。
-    ///
-    /// # 参数
-    /// - `token`: 待刷新的旧 token 字符串。
-    ///
-    /// # 返回
-    /// - `Ok(new_token)`: 刷新后的新 token 字符串。
-    ///
-    /// # 错误
-    /// - `GarrisonError::NotImplemented`: 未启用 protocol-jwt feature。
-    /// - `GarrisonError::InvalidToken`: token 已过期或无效。
+    /// 刷新 token，仅在 `protocol-jwt` 下由 `JwtHandler` 提供有效实现；默认返回 `NotImplemented`，token 过期/无效返回 `InvalidToken`。
     async fn refresh_token(&self, _token: &str) -> GarrisonResult<String> {
         Err(GarrisonError::NotImplemented(loc!(
             "stp-refresh-token-not-implemented",
@@ -152,15 +71,12 @@ pub trait TokenLogic: SessionLogic {
     }
 }
 
-// ============================================================================
 // GarrisonLogicDefault impl
-// ============================================================================
 
 #[async_trait]
 impl TokenLogic for GarrisonLogicDefault {
     async fn verify_token(&self, token: &str) -> GarrisonResult<String> {
-        // 委托 core-token::Token::verify
-        // spec: "不泄露 token 具体失效原因（统一 InvalidToken）"
+        // 不泄露 token 具体失效原因：所有失败统一映射 InvalidToken
         let token_handler = TokenStyleFactory::new_with_jwt_keys(
             &self.config.token_style,
             self.config.jwt_secret.as_str(),
@@ -182,7 +98,6 @@ impl TokenLogic for GarrisonLogicDefault {
 
     #[cfg(feature = "protocol-jwt")]
     async fn refresh_token(&self, token: &str) -> GarrisonResult<String> {
-        // 启用 protocol-jwt 时委托 JwtHandler::refresh
         if self.config.token_style != "jwt" {
             return Err(GarrisonError::NotImplemented(loc!(
                 "stp-refresh-token-jwt-only",
@@ -198,9 +113,7 @@ impl TokenLogic for GarrisonLogicDefault {
             self.config.jwt_ec_private_key_pem.as_deref(),
             self.config.jwt_ed_private_key_pem.as_deref(),
         )?;
-        // 黑名单前置检查（复查修复）：verify 只验签名+exp 不读黑名单——若不在此
-        // 拦截，已被 logout/revoke 吊销的旧 token 在自然过期前仍可经 refresh
-        // 铸出全新 jti 的新 token，整体绕过吊销。
+        // 黑名单前置检查：verify 只验签名+exp 不读黑名单，不拦截则已 logout/revoke 的旧 token 在自然过期前仍可 refresh 铸出新 jti 新 token，整体绕过吊销。
         if self.config.enable_jwt_revocation {
             if let Ok(claims) = handler.verify(token) {
                 if let Some(jti) = &claims.jti {
@@ -215,18 +128,13 @@ impl TokenLogic for GarrisonLogicDefault {
             }
         }
         let new_token = handler.refresh(token, self.config.timeout)?;
-        // 旧 token 吊销：签发新 token 后将旧 access token 的 jti 写入黑名单，
-        // 消除「新旧双重有效」窗口（黑名单写失败仅 warn，不阻断签发）。
-        // 注意：带泄露重用检测的完整轮换应使用 RefreshTokenRotation 路径。
+        // 签发新 token 后将旧 jti 写入黑名单，消除新旧双重有效窗口（写失败仅 warn 不阻断）；带泄露重用检测的完整轮换走 RefreshTokenRotation 路径。
         self.blacklist_jwt_jti(token).await;
-        // auto-wire: 触发 plugin on_login（新 token）
+        // 触发 plugin on_login（新 token）
         if let Some(pm) = &self.plugin_manager {
             pm.on_login(&login_id, &new_token);
         }
-        // 广播 TokenRefresh 事件（替换原 Login 事件）。
-        // 事件字段改携掩码后的 token——
-        // listener 若直接打日志，活动会话 token 不再以明文进入日志。
-        // 掩码实现统一收敛到 listener::mask_token_for_event。
+        // 广播 TokenRefresh 事件（替换原 Login 事件），字段携掩码 token（经 listener::mask_token_for_event），避免明文 token 进日志。
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
             lm.broadcast(&GarrisonEvent::TokenRefresh {
@@ -243,8 +151,7 @@ impl TokenLogic for GarrisonLogicDefault {
 
 #[cfg(test)]
 mod tests {
-    // jwt_secret 的 `.into()` 是跨 feature 兼容的必要转换：protocol-zeroize 下字段
-    // 类型为 Zeroizing<String>，feature 关闭时退化为 String，被 clippy 误报。
+    // protocol-zeroize 下 jwt_secret 字段为 Zeroizing<String>，关闭时退化为 String；`.into()` 是跨 feature 兼容的必要转换，被 clippy 误报。
     #![allow(clippy::useless_conversion)]
     use super::*;
     use crate::config::GarrisonConfig;
@@ -253,8 +160,7 @@ mod tests {
     use crate::stp::session::SessionLogic;
     use std::sync::Arc;
 
-    /// 最小 mock：实现 `GarrisonCore` + `SessionLogic`（9 必需方法）。
-    /// `TokenLogic` 5 个方法均有默认实现，空 impl 即可获得全部默认行为。
+    /// 最小 mock：实现 `GarrisonCore` + `SessionLogic`；`TokenLogic` 5 个方法均有默认实现，空 impl 即可。
     struct MockToken {
         config: Arc<GarrisonConfig>,
         logged_in: bool,
@@ -327,9 +233,7 @@ mod tests {
         assert!(matches!(result, Err(GarrisonError::NotLogin(_))));
     }
 
-    /// 验证 `check_client_token` 在已登录时返回 Ok(())。
-    ///
-    /// 覆盖 trait 默认实现 `check_client_token` 的 Ok 分支（token.rs 第 69-78 行）。
+    /// 验证 `check_client_token` 在已登录时返回 Ok(())（覆盖默认实现 Ok 分支）。
     #[tokio::test]
     async fn check_client_token_ok_when_logged_in() {
         let mock = MockToken {
@@ -339,9 +243,7 @@ mod tests {
         mock.check_client_token().await.unwrap();
     }
 
-    /// 验证 `check_client_token` 在未登录时返回 Err(NotLogin)。
-    ///
-    /// 覆盖 trait 默认实现 `check_client_token` 的 Err 分支。
+    /// 验证 `check_client_token` 在未登录时返回 Err(NotLogin)（覆盖默认实现 Err 分支）。
     #[tokio::test]
     async fn check_client_token_denies_when_not_logged_in() {
         let mock = MockToken {
@@ -356,9 +258,7 @@ mod tests {
         );
     }
 
-    /// 验证 `check_temp_token` 在已登录时返回 Ok(())。
-    ///
-    /// 覆盖 trait 默认实现 `check_temp_token` 的 Ok 分支（token.rs 第 89-98 行）。
+    /// 验证 `check_temp_token` 在已登录时返回 Ok(())（覆盖默认实现 Ok 分支）。
     #[tokio::test]
     async fn check_temp_token_ok_when_logged_in() {
         let mock = MockToken {
@@ -368,9 +268,7 @@ mod tests {
         mock.check_temp_token().await.unwrap();
     }
 
-    /// 验证 `check_temp_token` 在未登录时返回 Err(NotLogin)。
-    ///
-    /// 覆盖 trait 默认实现 `check_temp_token` 的 Err 分支。
+    /// 验证 `check_temp_token` 在未登录时返回 Err(NotLogin)（覆盖默认实现 Err 分支）。
     #[tokio::test]
     async fn check_temp_token_denies_when_not_logged_in() {
         let mock = MockToken {
@@ -385,11 +283,7 @@ mod tests {
         );
     }
 
-    /// 验证共享 token 类型校验辅助函数（DEEP-01 DRY 重构）。
-    ///
-    /// 已登录返回 `Ok(())`，未登录统一返回 `NotLogin`（不区分 token 类型，
-    /// 防止类型信息泄露到错误消息）。`check_access_token` / `check_client_token` /
-    /// `check_temp_token` 三个默认实现均委托此辅助函数。
+    /// 共享辅助函数：已登录返回 `Ok(())`，未登录统一返回 `NotLogin`（不区分 token 类型，防类型信息泄露）；三个 check_*_token 均委托它。
     #[tokio::test]
     async fn ensure_valid_token_session_helper_ok_when_logged_in() {
         let mock = MockToken {
@@ -414,8 +308,7 @@ mod tests {
         );
     }
 
-    /// 验证三个 token 类型校验默认实现的错误消息完全一致（DRY 重构后仍保持
-    /// 单一语义：不泄露具体 token 类型）。
+    /// 三个 token 类型校验默认实现的错误消息完全一致（不泄露具体 token 类型）。
     #[tokio::test]
     async fn all_token_type_checks_share_identical_error_semantics() {
         let mock = MockToken {
@@ -460,9 +353,7 @@ mod tests {
         assert!(matches!(result, Err(GarrisonError::NotImplemented(_))));
     }
 
-    // ========================================================================
     // MockToken SessionLogic 方法覆盖测试
-    // ========================================================================
 
     /// MockToken::login 返回 "mock-token"。
     #[tokio::test]
@@ -517,9 +408,7 @@ mod tests {
         assert_eq!(id.as_deref(), Some("42"));
     }
 
-    // ========================================================================
     // GarrisonLogicDefault impl 覆盖测试（verify_token / refresh_token）
-    // ========================================================================
 
     mod default_impl_coverage {
         use super::*;
@@ -551,8 +440,7 @@ mod tests {
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = token_style.to_string();
-            //simple 模式下 verify_token 委托 core-token SimpleTokenStyle（需 HMAC），
-            // 设置非空 jwt_secret 避免 fail-closed。
+            // simple 模式 verify_token 委托 core-token SimpleTokenStyle（需 HMAC），设置非空 jwt_secret 避免 fail-closed。
             if token_style == "simple" {
                 config.jwt_secret = test_jwt_secret(STP_TOKEN_SIMPLE_TEST_SECRET);
             }
@@ -570,19 +458,12 @@ mod tests {
             )
         }
 
-        /// verify_token + simple token_style → 返回 login_id。
-        ///
-        /// 覆盖 token.rs 第 147-159 行 GarrisonLogicDefault::verify_token 的
-        /// `Ok(Some(login_id))` 分支。
-        ///
-        ///SimpleTokenStyle 改为 HMAC-SHA256 签名格式 `<login_id>-<uuid>.<hmac>`，
-        /// 需用 SimpleTokenStyle::new(secret).generate 生成合法 token。
-        /// 注意：login_id 不能含 `-`（verify 在首个 `-` 处分割 login_id 与 uuid 部分）。
+        /// verify_token + simple token_style → 返回 login_id（覆盖 `Ok(Some(login_id))` 分支）。
+        /// SimpleTokenStyle 为 HMAC-SHA256 格式 `<login_id>-<uuid>.<hmac>`，需用其 generate 生成合法 token；login_id 不能含 `-`。
         #[cfg(feature = "secure-simple-token")]
         #[tokio::test]
         async fn verify_token_simple_style_returns_login_id() {
             let logic = make_logic("simple");
-            //用 SimpleTokenStyle 生成合法 HMAC token
             let style =
                 crate::core::token::SimpleTokenStyle::new(STP_TOKEN_SIMPLE_TEST_SECRET.to_string());
             let token = crate::core::token::Token::generate(&style, "verifyuser", 3600).unwrap();
@@ -599,9 +480,7 @@ mod tests {
             );
         }
 
-        /// verify_token + uuid token_style → 返回 InvalidToken（UUID 无法编码 login_id）。
-        ///
-        /// 覆盖 token.rs 第 154-156 行 `Ok(None)` → `Err(InvalidToken)` 分支。
+        /// verify_token + uuid token_style → InvalidToken（UUID 无法编码 login_id，覆盖 `Ok(None)` 分支）。
         #[tokio::test]
         async fn verify_token_uuid_style_returns_invalid_token() {
             let logic = make_logic("uuid");
@@ -613,16 +492,10 @@ mod tests {
             );
         }
 
-        /// verify_token + 无效 simple token（无连字符）→ 返回 InvalidToken。
-        ///
-        /// 覆盖 token.rs 第 157 行 `Err(_) => Err(InvalidToken)` 分支。
-        ///
-        /// 注意：SimpleTokenStyle::parse 在无 `-` 时返回 Err，
-        /// 但 verify 使用 split_once 返回 Ok(None) → InvalidToken。
+        /// verify_token + 无效 simple token（无连字符）→ InvalidToken（verify 用 split_once 返回 Ok(None)，覆盖 `Err(_)` 分支）。
         #[tokio::test]
         async fn verify_token_invalid_simple_token_returns_invalid_token() {
             let logic = make_logic("simple");
-            // 无连字符的 simple token：split_once('-') 返回 None → Ok(None) → InvalidToken
             let result = logic.verify_token("nodashtoken").await;
             assert!(
                 matches!(result, Err(GarrisonError::InvalidToken(_))),
@@ -631,9 +504,7 @@ mod tests {
             );
         }
 
-        /// verify_token + JWT token → 返回 login_id。
-        ///
-        /// 覆盖 token.rs 第 153 行 `Ok(Some(login_id))` 分支（JWT 路径）。
+        /// verify_token + JWT token → 返回 login_id（覆盖 JWT 路径 `Ok(Some(login_id))` 分支）。
         #[cfg(feature = "protocol-jwt")]
         #[tokio::test]
         async fn verify_token_jwt_style_returns_login_id() {
@@ -673,9 +544,7 @@ mod tests {
             );
         }
 
-        /// verify_token + 无效 JWT → 返回 InvalidToken。
-        ///
-        /// 覆盖 token.rs 第 157 行 `Err(_) => Err(InvalidToken("token 无效"))` 分支。
+        /// verify_token + 无效 JWT → InvalidToken（覆盖 `Err(_)` 分支）。
         #[cfg(feature = "protocol-jwt")]
         #[tokio::test]
         async fn verify_token_invalid_jwt_returns_invalid_token() {
@@ -706,9 +575,7 @@ mod tests {
             );
         }
 
-        /// refresh_token + 非 JWT token_style → 返回 NotImplemented。
-        ///
-        /// 覆盖 token.rs 第 164-168 行 `token_style != "jwt"` → NotImplemented 分支。
+        /// refresh_token + 非 JWT token_style → NotImplemented（覆盖 `token_style != "jwt"` 分支）。
         #[cfg(feature = "protocol-jwt")]
         #[tokio::test]
         async fn refresh_token_non_jwt_style_returns_not_implemented() {
@@ -721,9 +588,7 @@ mod tests {
             );
         }
 
-        /// refresh_token + JWT token_style + 有效 token → 返回新 token。
-        ///
-        /// 覆盖 token.rs 第 162-189 行 refresh_token 成功路径。
+        /// refresh_token + JWT + 有效 token → 返回新 token（覆盖 refresh_token 成功路径）。
         #[cfg(feature = "protocol-jwt")]
         #[tokio::test]
         async fn refresh_token_jwt_valid_returns_new_token() {
@@ -764,8 +629,7 @@ mod tests {
             );
         }
 
-        /// 复查修复回归：被吊销（黑名单）的旧 token 不得经 refresh 铸出新 token
-        /// ——verify 只验签名不读黑名单，若无此前置检查则吊销在 refresh 面被整体绕过。
+        /// 回归：黑名单旧 token 不得经 refresh 铸出新 token（verify 不读黑名单，无前置检查则吊销被整体绕过）。
         #[cfg(feature = "protocol-jwt")]
         #[tokio::test]
         async fn refresh_token_rejects_blacklisted_token() {
@@ -805,9 +669,7 @@ mod tests {
             );
         }
 
-        /// refresh_token + 无效 JWT → 返回错误（verify_token 失败）。
-        ///
-        /// 覆盖 token.rs 第 170 行 `let login_id = self.verify_token(token).await?` 错误传播。
+        /// refresh_token + 无效 JWT → verify_token 错误透传。
         #[cfg(feature = "protocol-jwt")]
         #[tokio::test]
         async fn refresh_token_invalid_jwt_returns_error() {
@@ -839,10 +701,7 @@ mod tests {
             );
         }
 
-        /// refresh_token 后旧 access token 的 jti 写入黑名单（旧 token 立即失效）。
-        ///
-        /// 钉住 T015 修复：JwtHandler::refresh 签发新 token 后，stp 层必须将旧
-        /// token 吊销（Stateless JWT 无 session 可销毁，黑名单是唯一撤销手段）。
+        /// refresh_token 后旧 access token jti 入黑名单（立即失效）：Stateless JWT 无 session 可销毁，黑名单是唯一撤销手段。
         #[cfg(feature = "protocol-jwt")]
         #[tokio::test]
         async fn refresh_token_revokes_old_token() {
@@ -877,7 +736,6 @@ mod tests {
                 .expect("refresh 应成功");
             assert_ne!(old_token, new_token);
 
-            // 旧 token 的 jti 已入黑名单
             let handler = crate::protocol::jwt::JwtHandler::from_algorithm_parts(
                 "HS256",
                 test_jwt_secret("jwt-refresh-revoke-secret-32bytes-x").as_str(),

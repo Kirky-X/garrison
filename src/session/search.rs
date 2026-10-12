@@ -1,17 +1,7 @@
-// Copyright (c) 2026 Kirky.X🌠
-// SPDX-License-Identifier: Apache-2.0
-
-//! 会话搜索模块。
+//! 会话搜索模块（启用 `session-search` feature 后编译）。
 //!
-//! 启用 `session-search` feature 后编译。提供按关键字搜索 Token-Session / Account-Session，
-//! 支持分页与排序（创建时间 / 最后活跃时间）。
-//!
-//! ## 搜索方法
-//!
-//! - `search_token_value`: 按 token 值搜索 Token-Session（排除匿名 Session）。
-//! - `search_session_id`: 按 login_id 搜索 Account-Session。
-//! - `search_token_session_id`: 按 TokenSession.login_id 搜索 token（排除匿名 Session）。
-
+//! 三个方法均支持分页与排序（创建时间 / 最后活跃时间）：`search_token_value` 按 token 值搜 Token-Session、
+//! `search_session_id` 按 login_id 搜 Account-Session、`search_token_session_id` 按 login_id 搜 token（前两者排除匿名 Session）。
 use super::{AccountSession, GarrisonSession, TokenSession};
 use crate::error::{GarrisonError, GarrisonResult};
 use serde::{Deserialize, Serialize};
@@ -39,10 +29,7 @@ const ANON_SESSION_PREFIX: &str = "token:session:anon:";
 /// Account-Session key 前缀。
 const ACCOUNT_SESSION_PREFIX: &str = "account:session:";
 
-/// 单次搜索最大扫描 key 数量（防止 DoS）。
-///
-/// 超出时截断、记录 warn 日志，并在返回值中携带 `truncated=true` 截断标志
-/// （调用方可感知结果不完整）。这是性能与可用性的权衡：
+/// 单次搜索最大扫描 key 数量（防止 DoS）：超出截断、记录 warn 并在返回值携带 `truncated=true`，
 /// 生产环境应通过维护反向索引（如 login_token_map）替代全量扫描。
 const MAX_SCAN: usize = 10000;
 
@@ -52,9 +39,7 @@ const MAX_KEYWORD_LEN: usize = 256;
 /// 单次搜索最大返回数量。
 const MAX_SIZE: usize = 1000;
 
-/// 按 sort_type 排序 `(id, created_at, last_active_at)` 元组列表。
-///
-/// 升序使用 `sort_by_key`，降序使用 `sort_by_key` + `Reverse`。
+/// 按 sort_type 排序 `(id, created_at, last_active_at)` 元组：升序 `sort_by_key`，降序 `sort_by_key` + `Reverse`。
 fn sort_entries(entries: &mut [(String, i64, i64)], sort_type: SearchSortType) {
     use std::cmp::Reverse;
     match sort_type {
@@ -65,9 +50,7 @@ fn sort_entries(entries: &mut [(String, i64, i64)], sort_type: SearchSortType) {
     }
 }
 
-/// 脱敏 DAO key：仅保留前缀（最后一个 `:` 及之前）与值的前 4 字符，其余以 `***` 掩码。
-///
-/// 损坏记录的 warn 日志不得输出完整 key（key 含 token / login_id 等敏感值）。
+/// 脱敏 DAO key：仅保留前缀（最后一个 `:` 及之前）与值的前 4 字符，其余掩码（损坏记录的 warn 日志不得输出完整 key）。
 fn mask_key(key: &str) -> String {
     match key.rfind(':') {
         Some(idx) => {
@@ -81,31 +64,10 @@ fn mask_key(key: &str) -> String {
     }
 }
 
-/// 按 token 值搜索 Token-Session。
+/// 按 token 值搜索 Token-Session（排除匿名 Session，空 `keyword` 匹配所有）。
 ///
-/// 搜索 token 值包含 `keyword` 的登录 Session（排除匿名 Session）。空 `keyword` 匹配所有。
-///
-/// # 参数
-/// - `session`: GarrisonSession 引用。
-/// - `keyword`: 搜索关键字（空字符串匹配所有）。
-/// - `start`: 分页偏移量（0-based，超出范围返回空 Vec）。
-/// - `size`: 返回数量上限（0 返回空 Vec）。
-/// - `sort_type`: 排序方式。
-///
-/// # 返回
-/// `(items, truncated)` 元组：匹配的 token 值列表 + 截断标志。
-/// `truncated=true` 表示扫描 key 数超过 `MAX_SCAN` 被截断，结果可能不完整（分页语义不保证）。
-///
-/// # 性能警告
-///
-/// 此方法通过 `dao.keys()` 全量扫描 key，性能与 key 总数线性相关。
-/// 单次搜索最多扫描 `MAX_SCAN`（10000）条 key，超出时截断并记录 warn 日志。
-/// 生产环境大规模部署时应通过反向索引替代全量扫描。
-///
-/// # 错误
-/// - `keyword` 长度超过 `MAX_KEYWORD_LEN`：`GarrisonError::InvalidParam`。
-/// - `size` 超过 `MAX_SIZE`：`GarrisonError::InvalidParam`。
-/// - DAO 操作失败：透传 `GarrisonError`。
+/// 经 `dao.keys()` 全量扫描（最多 `MAX_SCAN` 条，超出截断并 warn）；返回 `(items, truncated)`，
+/// `truncated=true` 表示结果可能不完整。`keyword` 超长或 `size` 超过上限返回 `InvalidParam`。
 pub async fn search_token_value(
     session: &GarrisonSession,
     keyword: &str,
@@ -199,31 +161,10 @@ pub async fn search_token_value(
     ))
 }
 
-/// 按 login_id 搜索 Account-Session。
+/// 按 login_id 搜索 Account-Session（空 `keyword` 匹配所有）。
 ///
-/// 搜索 login_id 包含 `keyword` 的 Account-Session。空 `keyword` 匹配所有。
-///
-/// # 参数
-/// - `session`: GarrisonSession 引用。
-/// - `keyword`: 搜索关键字（空字符串匹配所有）。
-/// - `start`: 分页偏移量（0-based，超出范围返回空 Vec）。
-/// - `size`: 返回数量上限（0 返回空 Vec）。
-/// - `sort_type`: 排序方式。
-///
-/// # 返回
-/// `(items, truncated)` 元组：匹配的 login_id 列表 + 截断标志。
-/// `truncated=true` 表示扫描 key 数超过 `MAX_SCAN` 被截断，结果可能不完整（分页语义不保证）。
-///
-/// # 性能警告
-///
-/// 此方法通过 `dao.keys()` 全量扫描 key，性能与 key 总数线性相关。
-/// 单次搜索最多扫描 `MAX_SCAN`（10000）条 key，超出时截断并记录 warn 日志。
-/// 生产环境大规模部署时应通过反向索引替代全量扫描。
-///
-/// # 错误
-/// - `keyword` 长度超过 `MAX_KEYWORD_LEN`：`GarrisonError::InvalidParam`。
-/// - `size` 超过 `MAX_SIZE`：`GarrisonError::InvalidParam`。
-/// - DAO 操作失败：透传 `GarrisonError`。
+/// 经 `dao.keys()` 全量扫描（最多 `MAX_SCAN` 条，超出截断并 warn）；返回 `(items, truncated)`，
+/// `truncated=true` 表示结果可能不完整。`keyword` 超长或 `size` 超过上限返回 `InvalidParam`。
 pub async fn search_session_id(
     session: &GarrisonSession,
     keyword: &str,
@@ -317,32 +258,10 @@ pub async fn search_session_id(
     ))
 }
 
-/// 按 login_id 搜索 Token-Session 的 token。
+/// 按 login_id 搜索 Token-Session 的 token（排除匿名 Session，空 `keyword` 匹配所有）。
 ///
-/// 搜索 TokenSession 中 `login_id` 包含 `keyword` 的 token（排除匿名 Session）。
-/// 空 `keyword` 匹配所有。
-///
-/// # 参数
-/// - `session`: GarrisonSession 引用。
-/// - `keyword`: 搜索关键字（空字符串匹配所有）。
-/// - `start`: 分页偏移量（0-based，超出范围返回空 Vec）。
-/// - `size`: 返回数量上限（0 返回空 Vec）。
-/// - `sort_type`: 排序方式。
-///
-/// # 返回
-/// `(items, truncated)` 元组：匹配的 token 值列表 + 截断标志。
-/// `truncated=true` 表示扫描 key 数超过 `MAX_SCAN` 被截断，结果可能不完整（分页语义不保证）。
-///
-/// # 性能警告
-///
-/// 此方法通过 `dao.keys()` 全量扫描 key，性能与 key 总数线性相关。
-/// 单次搜索最多扫描 `MAX_SCAN`（10000）条 key，超出时截断并记录 warn 日志。
-/// 生产环境大规模部署时应通过反向索引替代全量扫描。
-///
-/// # 错误
-/// - `keyword` 长度超过 `MAX_KEYWORD_LEN`：`GarrisonError::InvalidParam`。
-/// - `size` 超过 `MAX_SIZE`：`GarrisonError::InvalidParam`。
-/// - DAO 操作失败：透传 `GarrisonError`。
+/// 经 `dao.keys()` 全量扫描（最多 `MAX_SCAN` 条，超出截断并 warn）；返回 `(items, truncated)`，
+/// `truncated=true` 表示结果可能不完整。`keyword` 超长或 `size` 超过上限返回 `InvalidParam`。
 pub async fn search_token_session_id(
     session: &GarrisonSession,
     keyword: &str,
@@ -482,10 +401,6 @@ mod tests {
         dao.set(&key, &json, 3600).await.unwrap();
     }
 
-    // ========================================================================
-    // SearchSortType 枚举
-    // ========================================================================
-
     /// SearchSortType 4 个变体的序列化 + 反序列化 round-trip。
     #[test]
     fn search_sort_type_round_trip() {
@@ -516,10 +431,6 @@ mod tests {
             "\"last_active_desc\""
         );
     }
-
-    // ========================================================================
-    // search_token_value
-    // ========================================================================
 
     /// keyword 匹配 — 搜索 "alpha" 返回 2 个（alpha-1, alpha-2）。
     #[tokio::test]
@@ -594,10 +505,6 @@ mod tests {
         assert_eq!(last_desc, vec!["tok-c", "tok-a", "tok-b"]);
     }
 
-    // ========================================================================
-    // search_session_id
-    // ========================================================================
-
     /// keyword 匹配 — 搜索 "user" 返回 2 个（user1, user2）。
     #[tokio::test]
     async fn search_session_id_keyword_match() {
@@ -629,10 +536,6 @@ mod tests {
 
         assert!(result.is_empty());
     }
-
-    // ========================================================================
-    // search_token_session_id
-    // ========================================================================
 
     /// 验证 search_token_session_id 按 login_id 过滤，并与 search_token_value 对比。
     #[tokio::test]
@@ -681,10 +584,6 @@ mod tests {
             "当 keyword 同时出现在 token 和 login_id 中时，两个方法应返回相同结果"
         );
     }
-
-    // ========================================================================
-    // 匿名 Session 排除
-    // ========================================================================
 
     /// 匿名 Session 不出现在搜索结果中。
     #[tokio::test]
@@ -735,10 +634,6 @@ mod tests {
             "anon Session 不应出现在 login_id 搜索结果"
         );
     }
-
-    // ========================================================================
-    // 输入验证测试（MAX_KEYWORD_LEN / MAX_SIZE）
-    // ========================================================================
 
     /// keyword 超过 MAX_KEYWORD_LEN 时返回 InvalidParam 错误。
     #[tokio::test]
@@ -829,10 +724,6 @@ mod tests {
         assert!(matches!(result, Err(GarrisonError::InvalidParam(_))));
     }
 
-    // ========================================================================
-    // 分页边界测试
-    // ========================================================================
-
     /// start 超出范围时返回空 Vec。
     #[tokio::test]
     async fn search_token_value_start_beyond_range_returns_empty() {
@@ -876,10 +767,6 @@ mod tests {
             .unwrap();
         assert!(result2.is_empty());
     }
-
-    // ========================================================================
-    // 反序列化容错测试
-    // ========================================================================
 
     /// 损坏的 TokenSession JSON 被跳过（不 panic，不传播错误）。
     #[tokio::test]
@@ -959,10 +846,6 @@ mod tests {
         assert_eq!(result[0], "exists-tok");
     }
 
-    // ========================================================================
-    // MAX_SCAN 截断测试
-    // ========================================================================
-
     /// 模拟返回大量 key 的 mock DAO，用于测试 MAX_SCAN 截断。
     struct LargeKeyDao {
         key_count: usize,
@@ -1008,10 +891,7 @@ mod tests {
         crate::atomic_test_fallback!();
     }
 
-    /// MAX_SCAN 截断：keys() 返回超过 MAX_SCAN 条 key 时被截断为 MAX_SCAN。
-    ///
-    /// 验证 DoS 防护：大量 key 不会导致搜索耗时过长；
-    /// 同时验证返回值携带截断标志（truncated=true），调用方可感知结果不完整。
+    /// MAX_SCAN 截断：keys() 返回超过 MAX_SCAN 条 key 时被截断，返回值携带 truncated=true 供调用方感知结果不完整。
     #[tokio::test]
     async fn search_truncates_keys_exceeding_max_scan() {
         let dao = Arc::new(LargeKeyDao::new(MAX_SCAN + 100));
@@ -1040,10 +920,6 @@ mod tests {
         assert!(result.is_empty());
         assert!(!truncated, "恰好 MAX_SCAN 条不应截断");
     }
-
-    // ========================================================================
-    // sort_entries 排序测试
-    // ========================================================================
 
     /// sort_entries 对 CreatedDesc 降序排列正确。
     #[test]

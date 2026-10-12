@@ -3,9 +3,8 @@
 
 //! JWKS（JSON Web Key Set）端点构建：按 RFC 7517/7518 导出非对称签名公钥。
 //!
-//! 供下游 RP 验证 Garrison 签发的 RS256/ES256/EdDSA 令牌；仅含公钥成分
-//! （RSA: n/e、EC: crv/x/y、OKP: x），绝不暴露私钥。`kid` 采用
-//! RFC 7638 JWK thumbprint（SHA-256，确定性，无需额外配置）。
+//! 供下游 RP 验证 Garrison 签发的 RS256/ES256/EdDSA 令牌；仅含公钥成分（RSA: n/e、EC: crv/x/y、
+//! OKP: x），绝不暴露私钥。`kid` 采用 RFC 7638 JWK thumbprint（SHA-256，确定性，无需额外配置）。
 
 use base64::Engine;
 use serde::Serialize;
@@ -55,8 +54,7 @@ pub struct JwkSet {
     pub keys: Vec<Jwk>,
 }
 
-/// RFC 7638 JWK thumbprint：对必选成员按字母序组成的最小化 JSON
-/// 取 SHA-256，再 base64url（无 padding）编码。
+/// RFC 7638 JWK thumbprint：对必选成员按字母序组成的最小化 JSON 取 SHA-256，再 base64url（无 padding）编码。
 fn thumbprint(canonical_json: &str) -> String {
     let digest = Sha256::digest(canonical_json.as_bytes());
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
@@ -64,16 +62,14 @@ fn thumbprint(canonical_json: &str) -> String {
 
 /// 按算法名与私钥 PEM 构建 JWK Set。
 ///
-/// 仅支持非对称算法（RS256/ES256/EdDSA）；对称算法无可公开成分，
-/// 返回错误（端点层应以 404 fail-closed 处理）。
+/// 仅支持非对称算法（RS256/ES256/EdDSA）；对称算法无可公开成分，返回错误（端点层应以 404 fail-closed 处理）。
 pub fn build_jwk_set(jwt_algorithm: &str, private_key_pem: &str) -> GarrisonResult<JwkSet> {
     if !matches!(jwt_algorithm, "RS256" | "ES256" | "EdDSA") {
         return Err(GarrisonError::Config(format!(
             "jwt-jwks-unsupported-alg::{jwt_algorithm}"
         )));
     }
-    // from_algorithm_parts 按算法名只消费对应类型的 PEM；非对称算法统一
-    // 从 private_key_pem 提取公钥成分（不匹配的参数分支不会被读取）
+    // from_algorithm_parts 按算法名只消费对应类型的 PEM：非对称算法统一从 private_key_pem 提取公钥成分
     let parts = JwtHandler::from_algorithm_parts(
         jwt_algorithm,
         "",
@@ -135,31 +131,23 @@ pub fn build_jwk_set(jwt_algorithm: &str, private_key_pem: &str) -> GarrisonResu
 
 /// DAO 状态键（`oauth2:jwks:` 命名空间；值 = 全量密钥快照 JSON，永久驻留）。
 ///
-/// 多实例共享同一状态：轮换经 `compare_and_swap` 以「读到的原始 JSON」为
-/// expected 提交，并发轮换只有一方成功，杜绝中间状态被覆盖。
+/// 多实例共享同一状态：轮换经 `compare_and_swap` 以「读到的原始 JSON」为 expected 提交，并发轮换只有一方成功。
 ///
-/// **后端契约（多实例语义成立的前提）**：该后端必须被全部实例共享，且其
-/// `compare_and_swap` 跨进程原子——进程内后端（InMemoryDao / oxcache L1）
-/// 多实例部署下各持独立状态、Active kid 静默发散；oxcache+Redis 组合因
-/// CAS 无跨进程原子性显性拒绝（fail-closed）。跨进程原子 CAS（如 Redis
-/// Lua）落地前，多实例部署不得启用 keystore 轮换。
+/// **后端契约**：该后端必须被全部实例共享且其 `compare_and_swap` 跨进程原子——进程内后端（InMemoryDao /
+/// oxcache L1）多实例部署下各持独立状态、Active kid 静默发散；oxcache+Redis 组合因 CAS 无跨进程原子性
+/// 显性拒绝（fail-closed）。跨进程原子 CAS 落地前，多实例部署不得启用 keystore 轮换。
 ///
-/// **已知限制（审查记录）**：快照含全部历史私钥 PEM **明文**驻留 DAO——
-/// `field-encryption` 加密面（R17）未覆盖此命名空间（`FieldEncryptionDao`
-/// 对 CAS 敏感命名空间的接入需版本化乐观并发设计，后续变更承接）；
-/// Disabled 钥为审计保留、无物理删除路径。部署侧须以 DAO/Redis 访问控制、
-/// 备份加密与密钥轮换节奏承接该暴露面。
+/// **已知限制**：快照含全部历史私钥 PEM **明文**驻留 DAO，`field-encryption` 加密面未覆盖此命名空间，
+/// Disabled 钥为审计保留、无物理删除路径；部署侧须以 DAO/Redis 访问控制、备份加密与轮换节奏承接该暴露面。
 pub const JWKS_STATE_KEY: &str = "oauth2:jwks:state";
 
 /// 多实例 JWKS 密钥库账本：DAO `compare_and_swap` 之上的轮换 API。
 ///
-/// 职责边界：
-/// - 本结构负责**持久状态**（跨实例一致）——轮换提交、retention 退役、快照装载；
-/// - 内存态三视图（签名/验证/JWKS）由 [`JwkSet`](crate::protocol::jwt::JwkSet)
-///   承载，本结构按需从 DAO 快照恢复。
+/// 职责边界：本结构负责**持久状态**（轮换提交、retention 退役、快照装载），内存态三视图（签名/验证/JWKS）
+/// 由 `protocol::jwt::JwkSet` 承载并按需从 DAO 快照恢复。
 ///
-/// 快照 JSON 含全部私钥 PEM（跨实例恢复签名能力的前提），与配置层的
-/// `jwt_*_private_key_pem` 同级敏感：不得写入日志/调试输出。
+/// 快照 JSON 含全部私钥 PEM（跨实例恢复签名能力的前提），与配置层 `jwt_*_private_key_pem` 同级敏感：
+/// 不得写入日志/调试输出。
 pub struct JwksKeystore {
     dao: Arc<dyn GarrisonDao>,
 }
@@ -176,17 +164,12 @@ impl JwksKeystore {
         Self { dao }
     }
 
-    /// 轮换：新钥转 Active、旧 Active 转 Passive、retention 到期的 Passive 转
-    /// Disabled，一次 CAS 原子提交。
+    /// 轮换：新钥转 Active、旧 Active 转 Passive、retention 到期的 Passive 转 Disabled，一次 CAS 原子提交。
     ///
-    /// 多实例并发轮换仅一方成功：CAS expected 取「本次读到的原始 JSON」，
-    /// 失败方返回 `jwks-rotation-conflict` 显性错误（重读后可重试）。
-    ///
-    /// # 参数
-    /// - `jwt_algorithm`: 非对称算法名（RS256 / ES256 / EdDSA）。
-    /// - `private_key_pem`: 新钥私钥 PEM（对称算法显性拒绝——无可发布公钥成分）。
-    /// - `now_secs`: 本次轮换时刻（Unix 秒），作为 Passive/Active 计时基准。
-    /// - `retention_secs`: Passive 保留时长（超期转 Disabled 并移出 JWKS）。
+    /// 多实例并发轮换仅一方成功：CAS expected 取「本次读到的原始 JSON」，失败方返回
+    /// `jwks-rotation-conflict` 显性错误（重读后可重试）。`jwt_algorithm` 仅接受 RS256 / ES256 / EdDSA
+    /// （对称算法显性拒绝，无可发布公钥成分）；`now_secs` 为 Passive/Active 计时基准，`retention_secs`
+    /// 为 Passive 保留时长（超期转 Disabled 并移出 JWKS）。
     pub async fn rotate(
         &self,
         jwt_algorithm: &str,
@@ -269,8 +252,7 @@ impl JwksKeystore {
 
     /// retention 退役：Passive 超期转 Disabled（CAS 提交），返回退役 kid 列表。
     ///
-    /// 无到期键时不写 DAO（幂等空操作）；CAS 失败显性报错（另一实例正在轮换，
-    /// 由其同批提交承担退役）。
+    /// 无到期键时不写 DAO（幂等空操作）；CAS 失败显性报错（另一实例正在轮换，由其同批提交承担退役）。
     pub async fn retire_expired(
         &self,
         now_secs: i64,
@@ -326,11 +308,9 @@ impl JwksKeystore {
         self.dao.get(JWKS_STATE_KEY).await
     }
 
-    /// JWKS 发布文档：快照装载 + 按当前时刻应用 retention 视图（Active ∪ Passive，
-    /// Disabled 恒不出现在发布面）。
+    /// JWKS 发布文档：快照装载 + 按当前时刻应用 retention 视图（Active ∪ Passive，Disabled 恒不出现）。
     ///
-    /// 装载后未落库的到期键在此按 Disabled 处理（服务视图即时生效；持久化由
-    /// `retire_expired` / 下一次轮换提交）。
+    /// 装载后未落库的到期键在此按 Disabled 处理（服务视图即时生效；持久化由 `retire_expired` / 下一次轮换提交）。
     pub async fn jwks_document(
         &self,
         now_secs: i64,
@@ -551,8 +531,8 @@ dzWfBsm+KAfTJuqbV7VnJL3G
         );
     }
 
-    /// 冻结读测试桩：`get` 对状态键恒返回冻结快照（模拟多实例并发下两个实例
-    /// 读到同一旧状态后各自提交），CAS 委托真实 InMemoryDao（按当前值判定）。
+    /// 冻结读测试桩：`get` 对状态键恒返回冻结快照（模拟多实例并发下两实例读到同一旧状态后各自提交），
+    /// CAS 委托真实 InMemoryDao（按当前值判定）。
     struct FrozenReadDao {
         frozen_state: std::sync::Mutex<String>,
         inner: Arc<InMemoryDao>,
@@ -630,8 +610,8 @@ dzWfBsm+KAfTJuqbV7VnJL3G
         }
     }
 
-    /// 两实例并发轮换仅一成功（CAS 防多实例竞态）：双方基于同一旧状态提交，
-    /// CAS 保证仅首方落库，失败方拿到显性冲突错误、当前状态与胜方写入一致。
+    /// 两实例并发轮换仅一成功（CAS 防多实例竞态）：双方基于同一旧状态提交，CAS 保证仅首方落库，
+    /// 失败方拿到显性冲突错误、当前状态与胜方写入一致。
     #[tokio::test]
     async fn concurrent_rotations_exactly_one_wins_and_loser_sees_consistent_state() {
         // 引导：真实 InMemoryDao 上完成首钥轮换，产出 v1 状态
@@ -901,10 +881,7 @@ MC4CAQAwBQYDK2VwBCIEIOChr1YQD9KWBWWGBLFFjHQiHx9+OznRi69Gh25Uhv8H
 -----END PRIVATE KEY-----
 ";
 
-    // ========================================================================
     // build_jwk_set：三算法 JWK 构建 + 对称/非法输入拒绝
-    // ========================================================================
-
     /// ES256：EC PEM → kty=EC、crv=P-256、x/y 齐备且无私钥成分。
     #[test]
     fn build_jwk_set_ec_produces_ec_key() {

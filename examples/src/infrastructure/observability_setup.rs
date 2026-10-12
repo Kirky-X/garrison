@@ -3,12 +3,7 @@
 
 //! observability_setup 示例（metrics-prometheus + otlp feature）。
 //!
-//! 演示可观测性三层栈配置：
-//! 1. `GarrisonMetrics::new()` / `register_to(&registry)` Prometheus 指标注册
-//! 2. `record_login` / `observe_token_validation` / `record_permission_query` / `record_role_query` 指标记录
-//! 3. `gather()` 收集 Prometheus 文本格式输出
-//! 4. `tracing_subscriber` JSON 日志初始化（幂等）
-//! 5. `init_otlp_tracing(endpoint)` OpenTelemetry OTLP 追踪初始化（全局一次性）
+//! 演示可观测性三层栈配置：GarrisonMetrics 注册与指标记录、gather 收集 Prometheus 文本、tracing_subscriber JSON 日志（幂等）、init_otlp_tracing OTLP 追踪（全局一次性）。
 //!
 //! 运行方式：
 //! ```sh
@@ -18,10 +13,7 @@
 use garrison::observability::GarrisonMetrics;
 use std::time::Duration;
 
-/// 创建 GarrisonMetrics 实例并注册到自定义 registry（避免污染 default registry）。
-///
-/// 生产环境可直接用 `GarrisonMetrics::new()` 注册到 default registry，
-/// 但测试/示例中推荐使用 `register_to` 避免多次注册导致 panic。
+/// 创建 GarrisonMetrics 并注册到自定义 registry（避免示例/测试多次注册 panic）；生产环境可用 `GarrisonMetrics::new()` 注册到 default registry。
 pub fn create_metrics() -> (
     GarrisonMetrics,
     garrison::observability::prometheus::Registry,
@@ -31,14 +23,7 @@ pub fn create_metrics() -> (
     (metrics, registry)
 }
 
-/// 演示记录各类指标（登录 / Token 验证 / 权限查询 / 角色查询）。
-///
-/// 模拟一次完整的认证流程：
-/// 1. 登录成功 → record_login(true)
-/// 2. Token 验证耗时 → observe_token_validation
-/// 3. 权限查询通过 → record_permission_query(true)
-/// 4. 角色查询通过 → record_role_query(true)
-/// 5. 登录失败 → record_login(false)
+/// 演示记录各类指标：登录成功/失败、Token 验证耗时、权限/角色查询通过与拒绝。
 pub fn record_sample_metrics(metrics: &GarrisonMetrics) {
     metrics.record_login(true);
     metrics.observe_token_validation(Duration::from_millis(5));
@@ -51,9 +36,7 @@ pub fn record_sample_metrics(metrics: &GarrisonMetrics) {
     metrics.record_role_query(false);
 }
 
-/// 收集指标为 Prometheus 文本格式（用于 `/metrics` 端点）。
-///
-/// 使用自定义 registry 收集，避免 default registry 的干扰。
+/// 收集指标为 Prometheus 文本格式（自定义 registry，用于 `/metrics` 端点）。
 pub fn gather_metrics(registry: &garrison::observability::prometheus::Registry) -> String {
     use garrison::observability::prometheus::Encoder;
     let mut buffer = Vec::new();
@@ -62,13 +45,7 @@ pub fn gather_metrics(registry: &garrison::observability::prometheus::Registry) 
     String::from_utf8_lossy(&buffer).into_owned()
 }
 
-/// 运行 observability_setup 示例。
-///
-/// 演示完整的可观测性配置流程：
-/// 1. 创建 GarrisonMetrics 并记录样本指标
-/// 2. 收集 Prometheus 文本输出
-/// 3. 初始化 JSON 日志
-/// 4. 初始化 OTLP 追踪（需提供 endpoint）
+/// 运行 observability_setup 示例：创建并记录指标、收集 Prometheus 输出、初始化 JSON 日志与 OTLP 追踪。
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison 可观测性配置示例 ===\n");
 

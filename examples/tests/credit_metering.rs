@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! credit_metering 示例测试（credit-metering + cache-memory feature）。
-//!
-//! 验证 run() 完整执行（内部演示消费/查询/告警/重置全流程）。
+//! credit_metering 示例测试（credit-metering + cache-memory feature）：验证 run() 完整执行（内部演示消费/查询/告警/重置全流程）。
 
 #![cfg(all(feature = "credit-metering", feature = "cache-memory"))]
 

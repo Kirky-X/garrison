@@ -28,8 +28,7 @@ pub const CRYPTO_VALUE_PREFIX: &str = "enc:v1:";
 /// AES-256 密钥长度（字节）。
 pub const KEY_LEN: usize = 32;
 
-/// 测试钥材单点（非退化：字节递增序列 `seed + i`；装配期弱钥检测会拒绝
-/// 单字节重复形态）。跨测试模块共享，避免同一材料多份 const 块漂移。
+/// 测试钥材单点（字节递增 `seed + i`，非退化——装配期弱钥检测拒绝单字节重复形态）；跨测试模块共享，避免多份 const 漂移。
 #[cfg(test)]
 pub(crate) const fn test_key(seed: u8) -> [u8; KEY_LEN] {
     let mut k = [0u8; KEY_LEN];
@@ -44,11 +43,8 @@ pub(crate) const fn test_key(seed: u8) -> [u8; KEY_LEN] {
 /// GCM nonce 长度（字节，NIST SP 800-38D §5.2.1.1 推荐 96 bit）。
 pub const NONCE_LEN: usize = 12;
 
-/// AAD 绑定三元组：`garrison:{tenant}:{table}:{key}`。
-///
-/// - `tenant`：租户（单租户部署用 `"default"`）
-/// - `table`：逻辑表 / DAO key 前缀（如 `oauth2:atoken`）
-/// - `key`：行标识（如 DAO key 去掉前缀后的 id）
+/// AAD 绑定三元组 `garrison:{tenant}:{table}:{key}`：`tenant` 租户（单租户部署用 `"default"`）、
+/// `table` 逻辑表 / DAO key 前缀（如 `oauth2:atoken`）、`key` 行标识（DAO key 去前缀后的 id）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AadBinding {
     /// 租户标识。
@@ -96,13 +92,7 @@ impl CryptoValue {
     /// 编码前缀（结构化别名，双读判定用）。
     pub const PREFIX: &str = CRYPTO_VALUE_PREFIX;
 
-    /// 加密：随机 nonce + AES-256-GCM（AAD 绑定）。
-    ///
-    /// # 参数
-    /// - `key_id`: 密钥标识（非空、不含 `:`，违反即显性报错）
-    /// - `key`: 32 字节 AES-256 密钥
-    /// - `aad`: AAD 绑定三元组
-    /// - `plaintext`: 明文字节
+    /// 加密：随机 nonce + AES-256-GCM（AAD 绑定）；`key_id` 须非空且不含 `:`（违反即显性报错）。
     pub fn seal(
         key_id: &str,
         key: &[u8; KEY_LEN],
@@ -275,8 +265,7 @@ mod tests {
         assert!(matches!(err, GarrisonError::Internal(_)));
     }
 
-    /// 编码格式符合 `enc:v1:<key_id>:<base64(nonce|ciphertext)>`：
-    /// 三段可见、载荷 base64 可解、长度 = nonce + 明文 + tag。
+    /// 编码格式符合 `enc:v1:<key_id>:<base64(nonce|ciphertext)>`：三段可见、载荷可解、长度 = nonce + 明文 + tag。
     #[test]
     fn encode_format_matches_spec() {
         let plaintext = b"secret-value";

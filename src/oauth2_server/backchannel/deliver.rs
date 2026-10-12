@@ -5,17 +5,13 @@
 //!
 //! 投递安全语义（对齐 dex `backchannel.go` 的 `CheckRedirect → ErrUseLastResponse`）：
 //!
-//! - **禁止跟随重定向**：`redirect::Policy::none()` 使 3xx 响应原样返回、
-//!   不改发请求——重定向会把 POST 降级为 GET 并丢弃 `logout_token` 体，
-//!   RP 侧永远收不到 token；302/3xx 一律按未投递处理（计入重试）。
-//! - **单 RP 超时封顶**：client 级总超时（默认 5s），挂起的 RP 不阻塞
-//!   队列 drain；超时按投递失败计入重试。
+//! - **禁止跟随重定向**：`redirect::Policy::none()` 使 3xx 响应原样返回、不改发请求——重定向会把 POST
+//!   降级为 GET 并丢弃 `logout_token` 体，RP 侧永远收不到 token；302/3xx 一律按未投递处理（计入重试）。
+//! - **单 RP 超时封顶**：client 级总超时（默认 5s），挂起的 RP 不阻塞队列 drain；超时按投递失败计入重试。
 //!
-//! 调度语义：投递失败递增 `pending_retries` 并按指数退避推后 `next_attempt_at`
-//! （队列侧执行），退避未到期的行不进批——失败行不占批次槽位，健康行不被
-//! 队头阻塞，对失败 RP 的重发压力随连续失败次数指数衰减。
-//! 退役语义：到达 `max_ttl_at` 仍未成功的行置 `failed` 并 `tracing::warn!`
-//! （不静默丢），后台 drain 不再触碰。
+//! 调度语义：投递失败递增 `pending_retries` 并按指数退避推后 `next_attempt_at`（队列侧执行），退避未到期
+//! 的行不进批，失败行不占批次槽位，健康行不被队头阻塞。退役语义：到达 `max_ttl_at` 仍未成功的行置
+//! `failed` 并 `tracing::warn!`（不静默丢），后台 drain 不再触碰。
 
 use super::queue::{BackChannelQueue, QueueEntry};
 use crate::error::{GarrisonError, GarrisonResult};
@@ -122,9 +118,8 @@ impl BackChannelDeliverer {
         &self.queue
     }
 
-    /// drain 一批 pending 行：逐行投递并落终态/重试计数。
-    ///
-    /// 单行失败不中断本轮（显性化计入 summary），队列读写错误向上传播。
+    /// drain 一批 pending 行：逐行投递并落终态/重试计数；单行失败不中断本轮（显性化计入 summary），
+    /// 队列读写错误向上传播。
     pub async fn drain_once(&self) -> GarrisonResult<DrainSummary> {
         let rows = self.queue.pending_batch(self.config.batch_size).await?;
         let mut summary = DrainSummary::default();
@@ -140,8 +135,7 @@ impl BackChannelDeliverer {
 
     /// 启动后台 drain 任务：按固定间隔取批投递，随 `JoinHandle` 生命周期运行。
     ///
-    /// 单轮失败仅 `warn` 显性化、下轮重试，不终止循环。周期内无 pending 行时
-    /// 空转（无日志噪音）。
+    /// 单轮失败仅 `warn` 显性化、下轮重试，不终止循环；周期内无 pending 行时空转（无日志噪音）。
     pub fn spawn_drain_loop(self: Arc<Self>, interval: Duration) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -154,12 +148,22 @@ impl BackChannelDeliverer {
                             delivered = summary.delivered,
                             retried = summary.retried,
                             failed = summary.failed,
-                            "backchannel-logout drain 完成"
+                            "{}",
+                            crate::i18n::translate_detail(
+                                "logs-backchannel-logout-drain-complete",
+                                &[]
+                            )
                         );
                     },
                     Ok(_) => {},
                     Err(e) => {
-                        tracing::warn!("backchannel-logout drain 失败（下轮重试）::{}", e);
+                        tracing::warn!(
+                            "{}",
+                            crate::i18n::translate_detail(
+                                "logs-backchannel-logout-drain-failed",
+                                &[("error", &crate::i18n::translate_error(&e))]
+                            )
+                        );
                     },
                 }
             }
@@ -192,7 +196,11 @@ impl BackChannelDeliverer {
                         client_id = %row.client_id,
                         retries,
                         reason = %reason,
-                        "backchannel-logout 投递超过 MaxTtl，置 failed 退役（不再投递）"
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "logs-backchannel-logout-max-ttl-retired",
+                            &[]
+                        )
                     );
                     Ok(Verdict::Failed)
                 } else {
@@ -201,7 +209,11 @@ impl BackChannelDeliverer {
                         queue_id = %row.id,
                         client_id = %row.client_id,
                         reason = %reason,
-                        "backchannel-logout 投递失败，计入重试"
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "logs-backchannel-logout-delivery-retried",
+                            &[]
+                        )
                     );
                     self.queue.increment_retries(&row.id).await?;
                     Ok(Verdict::Retried)
@@ -455,8 +467,7 @@ mod tests {
         }
     }
 
-    /// 失败递增计数；超过 MaxTtl 的行置 failed 并 warn 显性化；
-    /// 退役行不再投递（drain 幂等）。
+    /// 失败递增计数；超过 MaxTtl 的行置 failed 并 warn 显性化；退役行不再投递（drain 幂等）。
     #[tokio::test]
     async fn expired_row_fails_with_warn_and_stops_being_retried() {
         use tracing_subscriber::layer::SubscriberExt;
@@ -499,10 +510,13 @@ mod tests {
         );
         assert_eq!(queue.count_by_status("failed").await.unwrap(), 1);
 
-        // warn 显性化：退役必须落日志（含 queue_id 与退役原因）
+        // warn 显性化：退役必须落日志（含 queue_id 与退役原因）；文案按当前 locale 取值
         let captured = logs.0.lock().unwrap().join("\n");
         assert!(
-            captured.contains("置 failed 退役"),
+            captured.contains(&crate::i18n::translate_detail(
+                "logs-backchannel-logout-max-ttl-retired",
+                &[]
+            )),
             "超 MaxTtl 退役必须输出 warn，实际日志: {captured}"
         );
 
@@ -578,8 +592,7 @@ mod tests {
         );
     }
 
-    /// 防饥饿：退避中的死 RP 行不占批次槽位，健康 RP 的后入队行照常投递，
-    /// 且退避期内不对死 RP 重发（二轮 0 请求）。
+    /// 防饥饿：退避中的死 RP 行不占批次槽位，健康 RP 的后入队行照常投递，且退避期内不对死 RP 重发。
     #[tokio::test]
     async fn backed_off_dead_rp_does_not_starve_healthy_rps() {
         let (_pool, queue) = setup(3600).await;

@@ -1,13 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! gRPC async 鉴权层（`GarrisonGrpcAuthLayer`）。
-//!
-//! 消除 `GarrisonGrpcInterceptor`（仅提取 token 不鉴权）的 footgun：
-//! tower `Layer`/`Service` 形态支持 async `GarrisonUtil::check_login()`，
-//! 失败以 `tonic::Status::UNAUTHENTICATED`（trailers-only 响应，经
-//! `Status::into_http` 构造）拒绝，成功则把 token 注入 task_local
-//! （`with_current_token`）后放行，handler 内可直接调用 `GarrisonUtil` API。
+//! gRPC async 鉴权层（`GarrisonGrpcAuthLayer`）：tower `Layer`/`Service` 形态支持 async
+//! `GarrisonUtil::check_login()`，失败以 `tonic::Status::UNAUTHENTICATED` 拒绝，成功后在
+//! `with_current_token` task_local 作用域内放行。
 
 use crate::stp::{with_current_token, with_login_id_scope, GarrisonUtil};
 use std::future::Future;
@@ -16,13 +12,9 @@ use std::task::{Context, Poll};
 use tonic::Status;
 use tower::{Layer, Service};
 
-/// gRPC async 鉴权层（`grpc` feature）。
-///
-/// 对每个请求：
-/// 1. 从 `Authorization: Bearer <token>` 提取 token（复用拦截器的严格 Bearer 校验）；
-/// 2. 缺失/格式错误/未登录/伪造 → `Status::unauthenticated` 拒绝（不再进入 handler）；
-/// 3. 已登录 → 在 `with_current_token` 作用域内调用内层 service，
-///    handler 内 `GarrisonUtil::check_login()` 等静态 API 可直接使用。
+/// gRPC async 鉴权层：每请求从 `Authorization: Bearer <token>` 提取 token（复用拦截器严格校验），
+/// 缺失/格式错误/未登录/伪造一律 `Status::unauthenticated` 拒绝；已登录后在 `with_current_token`
+/// 作用域内调用内层 service，handler 内 `GarrisonUtil` 静态 API 可直接使用。
 ///
 /// # 用法
 /// ```ignore
@@ -32,12 +24,11 @@ use tower::{Layer, Service};
 /// Server::builder().add_service(svc).serve(addr).await?;
 /// ```
 ///
-/// # 已知限制（安全审查 S4）
+/// # 已知限制
 ///
-/// 本层不注入客户端 IP（`with_current_ip`）：`firewall-bruteforce` 的 IP 级
-/// 撞库计数/封禁在 gRPC 路径不生效（IP 由 HTTP 框架 middleware 注入）。
-/// gRPC token 为高熵随机串，在线猜测不可行；如需 IP 级防护，请在 transport
-/// 层提取对端地址后以 `garrison::stp::with_current_ip(ip, fut)` 包裹调用。
+/// 本层不注入客户端 IP（`with_current_ip`），`firewall-bruteforce` 的 IP 级撞库计数/封禁在 gRPC
+/// 路径不生效（gRPC token 为高熵随机串，在线猜测不可行）；如需 IP 级防护，请在 transport 层提取
+/// 对端地址后以 `garrison::stp::with_current_ip(ip, fut)` 包裹调用。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GarrisonGrpcAuthLayer;
 
@@ -71,8 +62,7 @@ where
     }
 
     fn call(&mut self, request: http::Request<tonic::body::Body>) -> Self::Future {
-        // 1. 提取 token（零克隆直读 HTTP 头，与拦截器共享 parse_bearer 单点逻辑；
-        // 失败即拒绝，不进入 handler）
+        // 零克隆直读 HTTP 头，与拦截器共享 parse_bearer；失败即拒绝，不进入 handler
         let token =
             super::GarrisonGrpcInterceptor::extract_token_from_headers(request.headers()).ok();
 
@@ -85,15 +75,10 @@ where
             });
         };
 
-        // 2. 内层 future 先创建（tower 惯例：call() 内即发起；tonic 内置
-        // Routes/Grpc 为 level-based ready 协议，无许可滞留问题。若在
-        // 本层之外叠加容量型中间件如 ConcurrencyLimit，其 poll_ready
-        // 预取的许可在拒绝路径会滞留至 service drop——性能审查 P1/A5 结论），
-        // 鉴权与内层调用同处 `with_current_token` 作用域——handler 经
-        // task_local 看到当前 token，`GarrisonUtil` 静态 API 可直接使用。
+        // 内层 future 先创建（tower 惯例：call() 内即发起；tonic 为 level-based ready 协议无许可滞留，
+        // 但外叠 ConcurrencyLimit 等容量型中间件时其 poll_ready 预取的许可会滞留至 service drop）。
         let response_fut = self.inner.call(request);
-        // 登录身份缓存作用域与 with_current_token 同层——鉴权 + handler
-        // 处理期内 get_login_id/check_permission 可命中缓存免 DAO 读取。
+        // 登录身份缓存作用域与 with_current_token 同层：鉴权 + handler 处理期内 get_login_id/check_permission 命中缓存免 DAO 读取。
         Box::pin(with_login_id_scope(with_current_token(token, async move {
             match GarrisonUtil::check_login().await {
                 Ok(true) => response_fut.await,

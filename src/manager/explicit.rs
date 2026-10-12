@@ -24,7 +24,7 @@
 //!
 //! # `PermissionLogic` trait 与 `Manager` API 的差异
 //!
-//! `PermissionLogic` trait 的 `check_permission` 签名为
+//! `PermissionLogic::check_permission` 签名为
 //! `(&self, permission: &str) -> GarrisonResult<()>`（基于 task_local token 上下文获取 login_id），
 //! 而 `Manager::check_permission` 要求 `(&self, login_id: &str, permission: &str) -> GarrisonResult<bool>`。
 //!
@@ -42,15 +42,14 @@ use crate::stp::{GarrisonLogicDefault, PermissionLogic};
 
 /// 显式依赖注入入口。
 ///
-/// 与 [`GarrisonManager`](crate::manager::GarrisonManager) 的区别：
-/// - `GarrisonManager`：全局单例，通过 `builder().build()` 初始化，静态 API
-/// - `Manager`：实例化注入，构造时传入 `Arc<GarrisonLogicDefault>`，便于测试与多实例
+/// 实例化注入 `Arc<GarrisonLogicDefault>`，便于测试与多实例（与 `GarrisonManager` 全局
+/// 单例静态注入的区别见模块文档）。
 ///
 /// # 生命周期独立
 ///
 /// `Manager` 持有 `Arc<GarrisonLogicDefault>` 的引用计数副本，Drop 时仅减少引用计数，
-/// 不影响 `GarrisonManager` 全局单例（两者共享同一 `GarrisonLogicDefault` 实例时互不干扰）。
-/// 同时 Drop 时 abort 持有的后台 task handle（`builder().build_explicit()` 路径）。
+/// 不影响 `GarrisonManager` 全局单例；同时 abort 持有的后台 task handle
+/// （`builder().build_explicit()` 路径）。
 ///
 /// # 鉴权上下文
 ///
@@ -64,10 +63,7 @@ pub struct Manager {
 }
 
 impl Manager {
-    /// 创建 Manager 实例，注入 `GarrisonLogicDefault` 实现。
-    ///
-    /// # 参数
-    /// - `logic`: `GarrisonLogicDefault` 实现的 `Arc` 引用（可与 `GarrisonManager::logic()` 共享同一实例）。
+    /// 创建 Manager 实例，注入 `GarrisonLogicDefault` 实现（可与 `GarrisonManager::logic()` 共享同一实例）。
     ///
     /// # 示例
     ///
@@ -101,26 +97,15 @@ impl Manager {
 
     /// 鉴权决策：基于 [`AuthRequest`] 返回完整 [`Decision`]。
     ///
-    /// 内部委托 [`PermissionLogic::check_permission`]：
-    /// - `Ok(())` → `Decision::allow()`（`ExplicitAllow`）
-    /// - `Err(NotPermission)` → `Decision::deny(NoMatchingPermission)`
-    /// - 其他错误（未登录 / DAO 故障等）透传
+    /// 内部委托 [`PermissionLogic::check_permission`]：`Ok(())` → `Decision::allow()`
+    /// （`ExplicitAllow`）；`Err(NotPermission)` → `Decision::deny(NoMatchingPermission)`；
+    /// 其他错误（未登录 / DAO 故障等）透传。每次调用生成新的 UUID v7 `trace_id`
+    /// （时间有序）便于跨服务追踪与审计关联；实际 `login_id` 由 task_local token 上下文
+    /// 决定，`req.login_id` 保留在 API 契约中用于未来扩展。
     ///
-    /// # trace_id
-    ///
-    /// `Decision.trace_id` 非空（UUID v7，时间有序）。
-    /// 每次调用 `authorize` 都生成新的 UUID v7，便于跨服务追踪与审计关联。
-    ///
-    /// # 鉴权上下文
-    ///
-    /// 实际 `login_id` 由 task_local token 上下文决定（与 `GarrisonUtil` 一致），
-    /// `req.login_id` 保留在 API 契约中用于未来扩展（如直接 login_id 鉴权路径）。
-    ///
-    /// # 错误
-    ///
-    /// - 未登录且 `throw_on_not_login=true`：透传 `GarrisonError::NotLogin`。
-    /// - DAO 故障等：透传对应 `GarrisonError`。
-    /// - "未持有权限"不是错误，返回 `Ok(Decision { allowed: false, .. })`。
+    /// 错误：未登录且 `throw_on_not_login=true` → 透传 `GarrisonError::NotLogin`；DAO
+    /// 故障等透传对应 `GarrisonError`；"未持有权限"不是错误，返回
+    /// `Ok(Decision { allowed: false, .. })`。
     pub async fn authorize(&self, req: &AuthRequest) -> GarrisonResult<Decision> {
         // trace_id 非空 UUID v7（时间有序）
         let trace_id = Some(uuid::Uuid::now_v7().to_string());
@@ -139,24 +124,9 @@ impl Manager {
 
     /// 校验主体是否持有指定权限，返回 `bool`。
     ///
-    /// 内部委托 [`PermissionLogic::check_permission`]：
-    /// - `Ok(())` → `Ok(true)`
-    /// - `Err(NotPermission)` → `Ok(false)`
-    /// - 其他错误透传
-    ///
-    /// # 鉴权上下文
-    ///
-    /// 实际 `login_id` 由 task_local token 上下文决定（与 `GarrisonUtil` 一致）。
-    /// `login_id` 参数保留以匹配 API 契约，便于未来支持直接 login_id 鉴权。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识（保留用于 API 契约，实际鉴权使用 task_local 上下文）。
-    /// - `permission`: 权限标识字符串。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 持有权限。
-    /// - `Ok(false)`: 未持有权限。
-    /// - `Err(_)`: 鉴权过程出错（未登录 / DAO 故障等）。
+    /// 内部委托 [`PermissionLogic::check_permission`]：`Ok(())` → `Ok(true)`、
+    /// `Err(NotPermission)` → `Ok(false)`、其他错误透传。实际 `login_id` 由 task_local
+    /// token 上下文决定，`login_id` 参数保留以匹配 API 契约。
     pub async fn check_permission(&self, login_id: &str, permission: &str) -> GarrisonResult<bool> {
         let _ = login_id;
         match self.logic.check_permission(permission).await {

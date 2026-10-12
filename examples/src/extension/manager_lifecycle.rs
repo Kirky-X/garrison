@@ -32,18 +32,13 @@ use std::sync::Arc;
 // 业务方实现 GarrisonInterface
 // ============================================================================
 
-/// 示例 GarrisonInterface 实现，提供 login_id → 权限/角色列表。
-///
-/// 预置数据：
-/// - login_id=1001：权限 `["user:read", "user:write"]`，角色 `["admin"]`
-/// - login_id=1002：权限 `["user:read"]`，角色 `["user"]`
+/// 示例 GarrisonInterface，预置 1001（user:read/user:write，admin）与 1002（user:read，user）的权限/角色。
 pub struct MyInterface {
     permissions: HashMap<String, Vec<String>>,
     roles: HashMap<String, Vec<String>>,
 }
 
 impl MyInterface {
-    /// 创建 MyInterface 实例。
     pub fn new() -> Self {
         let mut permissions = HashMap::new();
         permissions.insert(
@@ -77,11 +72,7 @@ impl GarrisonInterface for MyInterface {
     }
 }
 
-/// 运行 Manager 生命周期示例。
-///
-/// 演示 GarrisonManager::builder() 注入、GarrisonUtil 静态方法（login / check_login /
-/// get_login_id / check_permission / check_role / kickout / logout）、
-/// task_local 上下文（with_current_token）、底层 logic 与配置访问。
+/// 运行 Manager 生命周期示例：builder 注入、GarrisonUtil 静态方法、task_local 上下文、底层 logic 与配置访问。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison Manager 生命周期示例 ===\n");
 
@@ -107,8 +98,7 @@ pub async fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     // 3. GarrisonUtil 静态方法：login
     // ----------------------------------------------------------------
-    // 登录与权限/角色校验在 TENANT(42) scope 内执行：tenant-isolation feature
-    // 启用时 check_permission/check_role 强制要求租户上下文（fail-closed）。
+    // TENANT(42) scope 内执行登录与校验：tenant-isolation 启用时 check_permission/check_role 强制要求租户上下文（fail-closed）。
     let tenant_ctx = TenantContext {
         tenant_id: 42,
         resolved_from: TenantSource::Header,
@@ -125,8 +115,7 @@ pub async fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     // 4. task_local 上下文
     // ----------------------------------------------------------------
-    // 注意：check_login / get_login_id / check_permission 等依赖 task_local 中的 token。
-    // 实际应用中由 Web 中间件设置；此处显式调用 with_current_token。
+    // check_login / get_login_id / check_permission 依赖 task_local token，实际由 Web 中间件设置，此处显式调用 with_current_token。
     println!("[4] task_local 上下文:");
     let token_clone = token.clone();
     let ctx_result: Result<(), GarrisonError> = TENANT

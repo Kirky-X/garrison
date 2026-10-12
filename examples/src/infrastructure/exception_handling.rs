@@ -5,10 +5,7 @@
 //!
 //! 对应模块：`src/exception/mod.rs`（always on，无需 feature）。
 //!
-//! 展示：
-//! 1. NotLoginException 构造与 builder 模式
-//! 2. GarrisonException 链式构造（携带 token / login_id / extras 上下文）
-//! 3. GarrisonException ↔ GarrisonError 互转
+//! 展示 NotLoginException 构造与 builder 模式、GarrisonException 链式构造（携带 token / login_id / extras）、GarrisonException ↔ GarrisonError 互转。
 //!
 //! 运行方式：
 //! ```sh
@@ -18,9 +15,7 @@
 use garrison::error::{GarrisonError, GarrisonResult};
 use garrison::exception::{GarrisonException, NotLoginException};
 
-/// 运行异常处理示例。
-///
-/// 演示 NotLoginException / GarrisonException 构造与 GarrisonError ↔ GarrisonException 互转。
+/// 运行异常处理示例：NotLoginException / GarrisonException 构造与 GarrisonError ↔ GarrisonException 互转。
 pub fn run() -> GarrisonResult<()> {
     println!("=== Garrison 异常处理示例 ===\n");
 

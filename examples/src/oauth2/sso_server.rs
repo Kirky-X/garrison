@@ -35,7 +35,6 @@ pub struct InMemoryDao {
 }
 
 impl InMemoryDao {
-    /// 创建 InMemoryDao 实例。
     pub fn new() -> Self {
         Self {
             store: Mutex::new(HashMap::new()),
@@ -128,8 +127,7 @@ impl CenterIdConverter for OffsetConverter {
     }
 }
 
-/// 计数通道：记录 push 调用次数并留存消息原文（演示自定义 SsoChannel 实现
-/// 与订阅侧验签消费）。
+/// 计数通道：记录 push 调用次数并留存消息原文（演示自定义 SsoChannel 与订阅侧验签消费）。
 struct CountingChannel {
     count: AtomicUsize,
     messages: Mutex<Vec<String>>,
@@ -139,8 +137,7 @@ struct CountingChannel {
 impl SsoChannel for CountingChannel {
     async fn push(&self, _topic: &str, message: &str) -> GarrisonResult<()> {
         self.count.fetch_add(1, Ordering::SeqCst);
-        // 生产环境的订阅者从这里（或真实 pub/sub 回调）拿到消息原文，
-        // 该原文是 `push_message` 自动封装的 HMAC 信封 JSON，不是业务消息
+        // 生产环境订阅者从这里（或真实 pub/sub 回调）拿到的是 push_message 自动封装的 HMAC 信封 JSON，不是业务消息
         self.messages.lock().push(message.to_string());
         Ok(())
     }
@@ -154,11 +151,7 @@ impl SsoChannel for CountingChannel {
     }
 }
 
-/// 运行 SSO Server 示例。
-///
-/// 演示 DefaultSsoServer 的 issue_ticket / validate_ticket 完整流程，
-/// 包括 CenterIdConverter 双向转换、SsoServer 与 SsoClient 共享 DAO 通信、
-/// 自定义 SsoChannel 消息推送计数。
+/// 运行 SSO Server 示例：issue_ticket / validate_ticket 往返 + CenterIdConverter 转换 + 共享 DAO 通信 + 自定义 Channel。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison SSO Server 示例 ===\n");
 
@@ -208,12 +201,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ----------------------------------------------------------------
-    // 4. SsoServer 与 SsoClient 通过共享 DAO 间接通信
-    //
-    // 注意：此场景使用 identity converter 的 server（不带 OffsetConverter）。
-    // 因为 SsoClient 不持有 CenterIdConverter，无法将 center_id 转回 login_id，
-    // 所以 cross-communication 场景下 server 端也不做 ID 偏移，保证往返一致。
-    // （参考 src/protocol/sso/server.rs 的 server_and_client_communicate_via_shared_dao 测试）
+    // 4. SsoServer 与 SsoClient 通过共享 DAO 间接通信（此场景用 identity converter 的
+    // server：SsoClient 不持有 CenterIdConverter，server 端不做 ID 偏移以保证往返一致）
     // ----------------------------------------------------------------
     println!("\n[共享 DAO] SsoServer 签发的 ticket 由 SsoClient 校验:");
     let identity_server =
@@ -254,10 +243,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(push_count, 2);
 
     // ----------------------------------------------------------------
-    // 6. 订阅侧验签消费（R2-3：pub/sub 通道无传输层认证，原文不可信）
-    //
-    // push_message 发布侧已自动封装 HMAC-SHA256 信封 {payload, hmac, seq}，
-    // 订阅侧必须经 verify_sso_message 验签取回 payload（secret 与票据签名密钥一致）。
+    // 6. 订阅侧验签消费：pub/sub 通道无传输层认证、原文不可信；push_message 已自动
+    // 封装 HMAC-SHA256 信封，订阅侧必须经 verify_sso_message 验签取回 payload。
     // ----------------------------------------------------------------
     println!("\n[验签] 订阅侧 verify_sso_message 消费信封:");
     let secret = "test-sso-secret-key-for-unit-tests-01";

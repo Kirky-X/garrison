@@ -2,12 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! PermissionLogic trait — 权限与角色校验契约。
-//! 本 trait 承接权限/角色校验 2 个方法。
-//! super-trait 为 [`SessionLogic`]（权限校验需先通过 `get_login_id` 获取当前登录主体）。
+//! super-trait 为 [`SessionLogic`]（校验前需经 `get_login_id` 获取当前登录主体）。
 
 use super::GarrisonLogicDefault;
-// tenant-isolation feature 启用时强制 fail-closed
-// feature 关闭时无租户上下文，TENANT.try_get() 失败视为租户 0（单租户）
+// tenant-isolation 启用时租户缺失强制 fail-closed；关闭时无租户上下文，TENANT 缺失视为租户 0（单租户）
 #[cfg(feature = "tenant-isolation")]
 use crate::context::tenant::current_tenant_id_or_error;
 #[cfg(not(feature = "tenant-isolation"))]
@@ -19,71 +17,18 @@ use crate::listener::GarrisonEvent;
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
 
-/// 权限逻辑 trait，定义权限与角色校验契约。
-///
-/// 对应 `StpLogic` 的 `checkPermission` / `checkRole` / `hasPermission` / `hasRole` 部分。
-///
-/// # 方法
-///
-/// - [`check_permission`](Self::check_permission)：校验权限，未持有抛 `NotPermission`。
-/// - [`check_role`](Self::check_role)：校验角色，未持有抛 `NotRole`。
-/// - [`has_permission`](Self::has_permission)：检查是否持有权限，返回布尔值（）。
-/// - [`has_role`](Self::has_role)：检查是否持有角色，返回布尔值（）。
-///
-/// # 错误
-///
-/// - 未登录且 `throw_on_not_login=true`：`GarrisonError::NotLogin`。
-/// - 未登录且 `throw_on_not_login=false`：降级为 `GarrisonError::NotPermission` / `NotRole`。
-/// - 未持有权限/角色：`GarrisonError::NotPermission` / `NotRole`。
+/// 权限逻辑 trait，定义权限与角色校验契约（对应 `StpLogic` 的 checkPermission / checkRole / hasPermission / hasRole 部分）。
+/// `check_*` 未登录且 `throw_on_not_login=true` 返回 `NotLogin`，`false` 时降级为 `NotPermission` / `NotRole`；未持有权限/角色同后者。
 #[async_trait]
 pub trait PermissionLogic: SessionLogic {
-    /// 校验权限：检查当前登录主体是否持有指定权限。
-    ///
-    /// # 参数
-    /// - `permission`: 权限标识字符串。
-    ///
-    /// # 返回
-    /// 成功（持有权限）返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - 未登录且 `throw_on_not_login=true`：`GarrisonError::NotLogin`。
-    /// - 未登录且 `throw_on_not_login=false`：降级为 `GarrisonError::NotPermission`。
-    /// - 未持有权限：`GarrisonError::NotPermission`。
+    /// 校验权限：未持有返回 `NotPermission`；未登录且 `throw_on_not_login=true` 返回 `NotLogin`，否则降级 `NotPermission`。
     async fn check_permission(&self, permission: &str) -> GarrisonResult<()>;
 
-    /// 校验角色：检查当前登录主体是否持有指定角色。
-    ///
-    /// # 参数
-    /// - `role`: 角色标识字符串。
-    ///
-    /// # 返回
-    /// 成功（持有角色）返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - 未登录且 `throw_on_not_login=true`：`GarrisonError::NotLogin`。
-    /// - 未登录且 `throw_on_not_login=false`：降级为 `GarrisonError::NotRole`。
-    /// - 未持有角色：`GarrisonError::NotRole`。
+    /// 校验角色：未持有返回 `NotRole`；未登录且 `throw_on_not_login=true` 返回 `NotLogin`，否则降级 `NotRole`。
     async fn check_role(&self, role: &str) -> GarrisonResult<()>;
 
-    /// 检查当前登录主体是否持有指定权限。
-    ///
-    /// 与 [`check_permission`](Self::check_permission) 的区别：本方法返回布尔值而非抛出异常。
-    /// 未登录或未持有权限均返回 `Ok(false)`，不抛出 `NotLogin` / `NotPermission`。
-    ///
-    /// # 参数
-    /// - `permission`: 权限标识字符串。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 当前会话持有该权限。
-    /// - `Ok(false)`: 当前会话未持有该权限或未登录。
-    ///
-    /// # 错误
-    /// - DAO 层错误等非权限性错误：透传 `GarrisonError`。
-    ///
-    /// # 默认实现
-    ///
-    /// 包装 [`check_permission`](Self::check_permission)，将 `NotPermission` / `NotLogin`
-    /// 映射为 `Ok(false)`，其余错误透传。业务方可覆写以直接查询权限列表（避免异常开销）。
+    /// 检查是否持有指定权限：返回布尔不抛错，未登录或未持有均 `Ok(false)`，DAO 等非权限错误透传。
+    /// 默认包装 [`check_permission`](Self::check_permission) 把 `NotPermission` / `NotLogin` 映射为 `Ok(false)`；业务方可覆写直接查权限列表（避免异常开销）。
     async fn has_permission(&self, permission: &str) -> GarrisonResult<bool> {
         match self.check_permission(permission).await {
             Ok(()) => Ok(true),
@@ -93,25 +38,8 @@ pub trait PermissionLogic: SessionLogic {
         }
     }
 
-    /// 检查当前登录主体是否持有指定角色。
-    ///
-    /// 与 [`check_role`](Self::check_role) 的区别：本方法返回布尔值而非抛出异常。
-    /// 未登录或未持有角色均返回 `Ok(false)`，不抛出 `NotLogin` / `NotRole`。
-    ///
-    /// # 参数
-    /// - `role`: 角色标识字符串。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 当前会话持有该角色。
-    /// - `Ok(false)`: 当前会话未持有该角色或未登录。
-    ///
-    /// # 错误
-    /// - DAO 层错误等非角色性错误：透传 `GarrisonError`。
-    ///
-    /// # 默认实现
-    ///
-    /// 包装 [`check_role`](Self::check_role)，将 `NotRole` / `NotLogin`
-    /// 映射为 `Ok(false)`，其余错误透传。业务方可覆写以直接查询角色列表（避免异常开销）。
+    /// 检查是否持有指定角色：返回布尔不抛错，未登录或未持有均 `Ok(false)`，DAO 等非角色错误透传。
+    /// 默认包装 [`check_role`](Self::check_role) 把 `NotRole` / `NotLogin` 映射为 `Ok(false)`；业务方可覆写直接查角色列表（避免异常开销）。
     async fn has_role(&self, role: &str) -> GarrisonResult<bool> {
         match self.check_role(role).await {
             Ok(()) => Ok(true),
@@ -121,40 +49,16 @@ pub trait PermissionLogic: SessionLogic {
         }
     }
 
-    /// 获取当前登录主体的权限列表。
-    ///
-    /// 从当前会话上下文获取 login_id 后委托 `GarrisonPermissionStrategy` 查询权限数据。
-    /// 未登录时返回 `Ok(vec![])`（非抛出异常），适用于 UI 渲染等无需强制登录的场景。
-    ///
-    /// # 返回
-    /// - `Ok(permissions)`: 权限标识字符串列表（如 `["user:read", "user:write"]`），可为空。
-    ///
-    /// # 错误
-    /// - 数据源访问失败：透传 `GarrisonError`。
-    ///
-    /// # 默认实现
-    ///
-    /// 返回 `Err(NotImplemented)`；`GarrisonLogicDefault` 覆写为委托 `firewall.get_permission_list(login_id)`。
+    /// 获取当前登录主体的权限列表：未登录返回 `Ok(vec![])`（不抛错，适用于 UI 渲染等场景）。
+    /// 默认返回 `Err(NotImplemented)`；`GarrisonLogicDefault` 覆写为委托 `firewall.get_permission_list(login_id)`。
     async fn get_permission_list(&self) -> GarrisonResult<Vec<String>> {
         Err(GarrisonError::NotImplemented(
             "stp-not-implemented::get_permission_list".to_string(),
         ))
     }
 
-    /// 获取当前登录主体的角色列表。
-    ///
-    /// 从当前会话上下文获取 login_id 后委托 `GarrisonPermissionStrategy` 查询角色数据。
-    /// 未登录时返回 `Ok(vec![])`。
-    ///
-    /// # 返回
-    /// - `Ok(roles)`: 角色标识字符串列表（如 `["admin", "user"]`），可为空。
-    ///
-    /// # 错误
-    /// - 数据源访问失败：透传 `GarrisonError`。
-    ///
-    /// # 默认实现
-    ///
-    /// 返回 `Err(NotImplemented)`；`GarrisonLogicDefault` 覆写为委托 `firewall.get_role_list(login_id)`。
+    /// 获取当前登录主体的角色列表：未登录返回 `Ok(vec![])`。
+    /// 默认返回 `Err(NotImplemented)`；`GarrisonLogicDefault` 覆写为委托 `firewall.get_role_list(login_id)`。
     async fn get_role_list(&self) -> GarrisonResult<Vec<String>> {
         Err(GarrisonError::NotImplemented(
             "stp-not-implemented::get_role_list".to_string(),
@@ -162,18 +66,14 @@ pub trait PermissionLogic: SessionLogic {
     }
 }
 
-// ============================================================================
 // GarrisonLogicDefault impl
-// ============================================================================
 
 #[async_trait]
 impl PermissionLogic for GarrisonLogicDefault {
     async fn check_permission(&self, permission: &str) -> GarrisonResult<()> {
-        // spec scenario "未登录抛出异常"：未登录时依据 throw_on_not_login 抛错
         let login_id = match self.get_login_id().await? {
             Some(id) => id,
             None => {
-                // emit metrics：未登录视为 deny
                 #[cfg(feature = "metrics-prometheus")]
                 if let Some(m) = &self.metrics {
                     m.record_permission_query(false);
@@ -181,16 +81,12 @@ impl PermissionLogic for GarrisonLogicDefault {
                 return if self.config.throw_on_not_login {
                     Err(GarrisonError::NotLogin("stp-not-login::".to_string()))
                 } else {
-                    // throw_on_not_login=false：未登录视为无权限，抛 NotPermission
                     Err(GarrisonError::NotPermission(permission.to_string()))
                 };
             },
         };
-        // 优先委托 PermissionChecker（若注入），走 authorize + Decision 路径
-        // 并广播 PermissionCheck 事件供 AuditLogListener 记录审计日志
+        // 注入 PermissionChecker 时优先走 authorize + Decision 路径，并广播 PermissionCheck 供审计。
         if let Some(pc) = &self.permission_checker {
-            // tenant-isolation feature 启用时强制 fail-closed
-            // feature 关闭时无租户上下文，TENANT.try_get() 失败视为租户 0（单租户）
             #[cfg(not(feature = "tenant-isolation"))]
             let tenant_id = TENANT.try_get().map(|ctx| ctx.tenant_id).unwrap_or(0);
             #[cfg(feature = "tenant-isolation")]
@@ -204,7 +100,6 @@ impl PermissionLogic for GarrisonLogicDefault {
             };
             let decision = pc.authorize(&request).await?;
 
-            // 广播 PermissionCheck 事件（audit listener 据此写审计日志）
             #[cfg(feature = "listener")]
             if let Some(lm) = &self.listener_manager {
                 lm.broadcast(&GarrisonEvent::PermissionCheck {
@@ -227,12 +122,7 @@ impl PermissionLogic for GarrisonLogicDefault {
             };
         }
 
-        // 回退到 firewall 路径（permission_checker 未注入时）
-        // firewall 路径同样需要租户隔离校验，否则 tenant-isolation 启用 +
-        // permission_checker 未注入时租户隔离被绕过。
-        // tenant_id 计算后不再弃用，经
-        // `check_permission_in_tenant` 传入策略（支持租户的策略可据此隔离判定，
-        // 默认实现将请求级租户纳入权限缓存键）。
+        // 回退 firewall 路径：同样传 tenant_id 做隔离，否则 tenant-isolation 启用且 checker 未注入时隔离被绕过（默认实现把请求级租户纳入权限缓存键）。
         #[cfg(not(feature = "tenant-isolation"))]
         let tenant_id = TENANT.try_get().map(|ctx| ctx.tenant_id).unwrap_or(0);
         #[cfg(feature = "tenant-isolation")]
@@ -241,7 +131,6 @@ impl PermissionLogic for GarrisonLogicDefault {
             .firewall
             .check_permission_in_tenant(tenant_id, &login_id, permission)
             .await?;
-        // emit metrics：权限查询结果
         #[cfg(feature = "metrics-prometheus")]
         if let Some(m) = &self.metrics {
             m.record_permission_query(has_perm);
@@ -254,11 +143,9 @@ impl PermissionLogic for GarrisonLogicDefault {
     }
 
     async fn check_role(&self, role: &str) -> GarrisonResult<()> {
-        // spec scenario "未登录抛出异常"：未登录时依据 throw_on_not_login 抛错
         let login_id = match self.get_login_id().await? {
             Some(id) => id,
             None => {
-                // emit metrics：未登录视为 deny
                 #[cfg(feature = "metrics-prometheus")]
                 if let Some(m) = &self.metrics {
                     m.record_role_query(false);
@@ -266,22 +153,17 @@ impl PermissionLogic for GarrisonLogicDefault {
                 return if self.config.throw_on_not_login {
                     Err(GarrisonError::NotLogin("stp-not-login::".to_string()))
                 } else {
-                    // throw_on_not_login=false：未登录视为无角色，抛 NotRole
                     Err(GarrisonError::NotRole(role.to_string()))
                 };
             },
         };
-        // 优先委托 PermissionChecker（若注入），走 has_role + RoleCheck 事件路径——
-        // 与 check_permission 的 checker 分支对齐
-        // （check_role 此前绕过 permission_checker 直调 firewall）。
-        // 角色判定用 `has_role`（角色语义）而非 `authorize`（action 为权限语义）。
+        // 注入 checker 时走 has_role + RoleCheck 事件（角色语义；与 check_permission 的 checker 分支对齐）。
         if let Some(pc) = &self.permission_checker {
-            // tenant-isolation feature 启用时强制 fail-closed（与 firewall 回退路径对齐）
+            // tenant-isolation 启用时无租户上下文 fail-closed（与 firewall 回退路径对齐）
             #[cfg(feature = "tenant-isolation")]
             current_tenant_id_or_error()?;
             let has_role = pc.has_role(&login_id, role).await?;
 
-            // 广播 RoleCheck 事件（audit listener 据此写审计日志）
             #[cfg(feature = "listener")]
             if let Some(lm) = &self.listener_manager {
                 lm.broadcast(&GarrisonEvent::RoleCheck {
@@ -304,18 +186,15 @@ impl PermissionLogic for GarrisonLogicDefault {
             };
         }
 
-        // 租户隔离：与 check_permission 对齐，防止跨租户角色检查绕过。
-        // tenant_id 不再弃用，经 `check_role_in_tenant` 传入策略。
+        // 租户隔离：经 `check_role_in_tenant` 传 tenant_id，防止跨租户角色检查绕过。
         #[cfg(not(feature = "tenant-isolation"))]
         let tenant_id = TENANT.try_get().map(|ctx| ctx.tenant_id).unwrap_or(0);
         #[cfg(feature = "tenant-isolation")]
         let tenant_id = current_tenant_id_or_error()?;
-        // 委托 GarrisonPermissionStrategy 做角色校验
         let has_role = self
             .firewall
             .check_role_in_tenant(tenant_id, &login_id, role)
             .await?;
-        // emit metrics：角色查询结果
         #[cfg(feature = "metrics-prometheus")]
         if let Some(m) = &self.metrics {
             m.record_role_query(has_role);
@@ -328,7 +207,6 @@ impl PermissionLogic for GarrisonLogicDefault {
     }
 
     async fn get_permission_list(&self) -> GarrisonResult<Vec<String>> {
-        // 未登录返回空列表（非抛出异常，适用于 UI 渲染等无需强制登录的场景）
         let login_id = match self.get_login_id().await? {
             Some(id) => id,
             None => return Ok(vec![]),
@@ -485,13 +363,9 @@ mod tests {
         let _ = mock.check_role("admin").await;
     }
 
-    // ========================================================================
     // has_permission / has_role 默认实现测试
-    // ========================================================================
 
-    /// 可配置 check_permission/check_role 返回值的 mock，用于测试 has_permission/has_role 默认实现。
-    ///
-    /// `perm_result` / `role_result` 为预设返回值，覆盖 Ok / NotPermission / NotLogin / Dao 四类分支。
+    /// 可配置 check_permission/check_role 返回值的 mock：`perm_result` / `role_result` 覆盖 Ok / NotPermission / NotLogin / Dao 分支。
     struct MockPermissionHas {
         config: Arc<GarrisonConfig>,
         perm_result: GarrisonResult<()>,
@@ -674,9 +548,7 @@ mod tests {
         assert!(!mock.has_permission("user:read").await.unwrap());
     }
 
-    // ========================================================================
     // get_permission_list / get_role_list 默认实现测试
-    // ========================================================================
 
     /// get_permission_list 默认实现返回 NotImplemented（未覆写时）。
     #[tokio::test]
@@ -702,10 +574,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // GarrisonLogicDefault impl 覆盖测试
-    // 覆盖 check_permission/check_role 的 firewall 路径 + get_permission_list/get_role_list
-    // ========================================================================
+    // GarrisonLogicDefault impl 覆盖测试：firewall 路径 + get_permission_list/get_role_list
 
     mod default_impl_coverage {
         use super::*;
@@ -967,10 +836,7 @@ mod tests {
             assert!(!result.unwrap(), "has_role=false 应返回 false");
         }
 
-        /// 无租户上下文时 check_role 应 fail-closed 返回 Err(Config)。
-        ///
-        /// 验证 `tenant-isolation` feature 启用后，`check_role` 与 `check_permission` 一致，
-        /// 在无 `TENANT.scope` 时拒绝执行（防止跨租户角色检查绕过）。
+        /// 无租户上下文时 check_role fail-closed 返回 Err(Config)：tenant-isolation 启用后与 check_permission 一致，防跨租户角色检查绕过。
         #[tokio::test]
         #[cfg(feature = "tenant-isolation")]
         async fn check_role_without_tenant_context_returns_error() {
@@ -989,10 +855,7 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // permission_checker 注入路径测试
-    // 覆盖 check_permission 的 permission_checker 分支（lines 188-219）
-    // ========================================================================
+    // permission_checker 注入路径测试：覆盖 check_permission 的 permission_checker 分支
 
     mod permission_checker_coverage {
         use super::*;
@@ -1072,9 +935,7 @@ mod tests {
             .with_permission_checker(pc)
         }
 
-        /// 已登录 + permission_checker.authorize 返回 allowed=true → Ok(())。
-        ///
-        /// 覆盖 permission.rs 第 188-219 行 permission_checker 注入路径的 allowed=true 分支。
+        /// 已登录 + permission_checker.authorize 返回 allowed=true → Ok(())（覆盖 checker 注入路径 allowed=true 分支）。
         #[tokio::test]
         async fn check_permission_with_checker_allowed_returns_ok() {
             let logic = make_logic_with_checker(true, false);
@@ -1093,9 +954,7 @@ mod tests {
             );
         }
 
-        /// 已登录 + permission_checker.authorize 返回 allowed=false → Err(NotPermission)。
-        ///
-        /// 覆盖 permission.rs 第 214-218 行 `decision.allowed=false → Err(NotPermission)` 分支。
+        /// 已登录 + permission_checker.authorize 返回 allowed=false → Err(NotPermission)（覆盖 decision.allowed=false 分支）。
         #[tokio::test]
         async fn check_permission_with_checker_denied_returns_not_permission() {
             let logic = make_logic_with_checker(false, false);
@@ -1114,9 +973,7 @@ mod tests {
             );
         }
 
-        /// 已登录 + permission_checker.authorize 返回 Err → 透传错误。
-        ///
-        /// 覆盖 permission.rs 第 196 行 `pc.authorize(&request).await?` 错误传播路径。
+        /// 已登录 + permission_checker.authorize 返回 Err → 透传错误（覆盖 `pc.authorize(...)?` 错误传播路径）。
         #[tokio::test]
         async fn check_permission_with_checker_error_propagates() {
             let logic = make_logic_with_checker(false, true);
@@ -1135,9 +992,7 @@ mod tests {
             );
         }
 
-        /// permission_checker 注入时，has_permission 通过 check_permission 委托返回 true。
-        ///
-        /// 覆盖 permission.rs 第 188-219 行 permission_checker 路径 + has_permission 默认实现。
+        /// permission_checker 注入时，has_permission 通过 check_permission 委托返回 true（覆盖 checker 路径 + has_permission 默认实现）。
         #[tokio::test]
         async fn has_permission_with_checker_allowed_returns_true() {
             let logic = make_logic_with_checker(true, false);

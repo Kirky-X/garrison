@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! 常量模块，提供框架共享的枚举与常量定义。
-/// DAO key 前缀枚举模块。
+/// DAO key 前缀枚举。
 pub mod dao_keys;
 
-/// 事件 reason 枚举模块。
+/// 事件 reason 枚举。
 pub mod events;
 
-/// Token 类型枚举模块。
+/// Token 类型枚举。
 pub mod token;
 
 pub use dao_keys::DaoKeyPrefix;

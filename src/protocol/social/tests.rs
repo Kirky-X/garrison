@@ -5,10 +5,6 @@
 
 use super::*;
 
-/// 验证 `SocialLoginProvider` trait 可被 mock 实现并调用三个方法
-///
-/// Red 阶段：`SocialLoginProvider` / `SocialUserInfo` 类型不存在 → 编译失败。
-/// 定义完整类型后测试通过。
 #[tokio::test]
 async fn social_login_provider_trait_defines_three_methods() {
     use super::mock::MockSocialProvider;
@@ -40,7 +36,6 @@ async fn social_login_provider_trait_defines_three_methods() {
     );
 }
 
-/// 验证 `provider_names` 常量与字符串值一一对应
 #[test]
 fn provider_names_constants_match_expected_strings() {
     assert_eq!(provider_names::WECHAT, "wechat");
@@ -52,21 +47,12 @@ fn provider_names_constants_match_expected_strings() {
     assert_ne!(provider_names::ALIPAY, provider_names::WECHAT_MINI_APP);
 }
 
-// ========================================================================
 // SQLite 迁移加载验证（feature = "db-sqlite"）
-// ========================================================================
 
-/// 验证 `migrations/sqlite/core/005_social_bindings.sql`
-/// 被 `GarrisonMigration::migrate_core()` 加载后 `social_bindings` 表存在
+/// 验证 `migrations/sqlite/core/005_social_bindings.sql` 经 `migrate_core()` 加载后 `social_bindings` 表存在。
 ///
-/// 测试模式与 `role_hierarchy_table_exists_after_migration` 一致：
-/// 1. `DbPool::with_config` 创建**单连接**内存 SQLite（修复：原
-/// `init_dbnexus("sqlite::memory:")` 默认 `min_connections=5`，而
-/// `:memory:` 每连接独立数据库——迁移只落在其中一条连接上，
-/// `get_session` 拿到其他预建连接时表不存在，测试 flaky）
-/// 2. `GarrisonMigration::with_base_dir` 指向项目根目录 `migrations/sqlite/`
-/// 3. `migrate_core()` 执行 `core/*.sql`（含 005_social_bindings.sql）
-/// 4. 查询 `sqlite_master` 验证 `social_bindings` 表存在
+/// 用 `DbPool::with_config` 强制单连接内存 SQLite：`:memory:` 每连接独立数据库，`init_dbnexus` 默认
+/// `min_connections=5` 会让部分连接无表（flaky）。
 #[cfg(feature = "db-sqlite")]
 #[tokio::test(flavor = "multi_thread")]
 async fn social_bindings_table_exists_after_migration() {
@@ -93,8 +79,7 @@ async fn social_bindings_table_exists_after_migration() {
     let base_dir = PathBuf::from(manifest_dir).join("migrations/sqlite");
     let migration = GarrisonMigration::with_base_dir(pool, base_dir);
     let applied = migration.migrate_core().await.expect("migrate_core 应成功");
-    // 至少 5 个迁移文件（001_init + 002_role_hierarchy + 003_refresh_tokens
-    // + 004_audit_logs + 005_social_bindings）
+    // 至少 5 个迁移文件（001-005）
     assert!(
         applied >= 5,
         "migrate_core 应至少执行 5 个文件（含 005_social_bindings），实际: {}",
@@ -117,30 +102,8 @@ async fn social_bindings_table_exists_after_migration() {
     );
 }
 
-// ========================================================================
-// - Green（feature = "db-sqlite"）
-// ========================================================================
-
-/// `SocialBindingService::find_or_create` 创建新绑定
-///
-/// Red 阶段：`SocialBindingService` 类型不存在 → 编译失败。
-/// 定义 `SocialBindingService { dao }` + `find_or_create` 后测试通过。
-///
-/// # 测试流程
-///
-/// 1. 创建 SQLite in-memory DB + 迁移（含 005_social_bindings.sql）
-/// 2. 构造 `SocialBindingService::new(dao)`（dao 为 `GarrisonDaoDbnexus`）
-/// 3. 构造 `SocialUserInfo { provider: Wechat, provider_user_id: "openid1", ... }`
-/// 4. 调用 `find_or_create(&user, tenant_id=0).await?`
-/// 5. 断言返回 `login_id` 为新生成的 String（UUID，非空）
-/// 6. 查询 `social_bindings` 表，断言有 1 行记录且 `provider_user_id == "openid1"`
-///
-/// # SQLite 单连接内存数据库
-///
-/// 用 `DbPool::with_config` 设置 `max_connections=1, min_connections=1`：
-/// - `sqlite::memory:` 每个 connection 独立内存数据库
-/// - dbnexus 默认 `min_connections=5` 会预创建多连接，导致第二次 `get_session` 拿到没迁移的新连接
-/// - 单连接池强制所有 `get_session` 复用同一个 connection，`:memory:` 即可工作
+/// `find_or_create` 创建新绑定；用 `DbPool::with_config` 强制 `max/min_connections=1`——`:memory:` 每连接独立数据库，
+/// 多连接会让第二次 `get_session` 拿到未迁移的新连接（dbnexus 默认 `min_connections=5`）。
 #[cfg(feature = "db-sqlite")]
 #[tokio::test(flavor = "multi_thread")]
 async fn social_binding_service_find_or_create_creates_new_binding() {
@@ -151,9 +114,7 @@ async fn social_binding_service_find_or_create_creates_new_binding() {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    // 1. 初始化 SQLite 单连接内存数据库 + 迁移
-    // 用 DbPool::with_config 而非 init_dbnexus，强制 max/min_connections=1
-    // 避免 :memory: 的 per-connection 独立内存数据库问题
+    // 单连接池：:memory: 每连接独立库，必须复用同一 connection（与模块测试同配置）
     let config = DbConfig {
         url: "sqlite::memory:".to_string(),
         pool_config: PoolConfig {
@@ -172,12 +133,10 @@ async fn social_binding_service_find_or_create_creates_new_binding() {
     migration.migrate_core().await.expect("migrate_core 应成功");
     let pool = migration.pool().clone();
 
-    // 2. 构造 SocialBindingService（dao 为 GarrisonDaoDbnexus）
     let kv: Arc<dyn crate::dao::GarrisonDao> = Arc::new(MockDao::new());
     let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(GarrisonDaoDbnexus::new(pool.clone(), kv));
     let svc = SocialBindingService::new(dao);
 
-    // 3. 构造 SocialUserInfo（模拟微信登录返回）
     let user = SocialUserInfo {
         provider: provider_names::WECHAT.to_string(),
         provider_user_id: "openid1".into(),
@@ -187,21 +146,18 @@ async fn social_binding_service_find_or_create_creates_new_binding() {
         raw: serde_json::json!({}),
     };
 
-    // 4. 调用 find_or_create
     let login_id = svc
         .find_or_create(&user, 0)
         .await
         .expect("find_or_create 应返回 Ok");
 
-    // 5. 断言返回新生成的 login_id（非空 UUID）
     assert!(
         !login_id.is_empty(),
         "find_or_create 应返回新生成的 login_id（非空 UUID），实际: {}",
         login_id
     );
 
-    // 6. 查询 social_bindings 表，验证有 1 行记录
-    // 用 {} 作用域限制 session 生命周期，确保 connection 在第二次 find_or_create 前归还
+    // {} 作用域限制 session 生命周期：connection 在第二次 find_or_create 前归还单连接池
     {
         let session = pool.get_session("admin").await.unwrap();
         let conn = session.connection().unwrap();
@@ -235,7 +191,6 @@ async fn social_binding_service_find_or_create_creates_new_binding() {
         );
     } // session 在此 drop，connection 归还连接池
 
-    // 7. 再次调用 find_or_create 应返回相同 login_id（幂等性，已有绑定）
     let login_id_again = svc
         .find_or_create(&user, 0)
         .await
@@ -246,14 +201,8 @@ async fn social_binding_service_find_or_create_creates_new_binding() {
     );
 }
 
-// ========================================================================
-// 社交登录异常消息 i18n（feature = "i18n"）
-//
-// 验证 wechat / alipay 的 loc! 宏在中英文 locale 下返回正确翻译。
-// 直接调用 loc! 宏避免依赖 HTTP mock，聚焦 i18n 翻译正确性。
-// ========================================================================
+// 社交登录异常消息 i18n（feature = "i18n"）：wechat / alipay 的 loc! 宏中英文翻译
 
-/// i18n 测试 1：zh locale 下 wechat-token-request-failed 返回中文消息。
 #[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_wechat_token_request_failed_zh() {
@@ -267,7 +216,6 @@ fn loc_i18n_wechat_token_request_failed_zh() {
     assert_eq!(msg, "微信 token 请求失败: conn refused");
 }
 
-/// i18n 测试 2：en locale 下 wechat-token-request-failed 返回英文消息。
 #[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_wechat_token_request_failed_en() {
@@ -281,7 +229,6 @@ fn loc_i18n_wechat_token_request_failed_en() {
     assert_eq!(msg, "WeChat token request failed: conn refused");
 }
 
-/// i18n 测试 3：zh locale 下 wechat-error-response 带 code+message 参数返回中文。
 #[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_wechat_error_response_with_code_message_zh() {
@@ -296,7 +243,6 @@ fn loc_i18n_wechat_error_response_with_code_message_zh() {
     assert_eq!(msg, "微信错误 40029: invalid code");
 }
 
-/// i18n 测试 4：zh locale 下 alipay-rsa-key-parse-failed 返回中文消息。
 #[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_alipay_rsa_key_parse_failed_zh() {
@@ -310,7 +256,6 @@ fn loc_i18n_alipay_rsa_key_parse_failed_zh() {
     assert_eq!(msg, "支付宝 RSA 私钥解析失败: bad pem");
 }
 
-/// i18n 测试 5：en locale 下 alipay-rsa-key-parse-failed 返回英文消息。
 #[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_alipay_rsa_key_parse_failed_en() {
@@ -324,11 +269,8 @@ fn loc_i18n_alipay_rsa_key_parse_failed_en() {
     assert_eq!(msg, "Alipay RSA private key parse failed: bad pem");
 }
 
-// ========================================================================
 // SocialUserInfo trait 行为测试
-// ========================================================================
 
-/// SocialUserInfo Debug trait 输出字段名与值。
 #[test]
 fn social_user_info_debug_trait_outputs_fields() {
     let user = SocialUserInfo {
@@ -347,7 +289,6 @@ fn social_user_info_debug_trait_outputs_fields() {
     assert!(debug_str.contains("union456"));
 }
 
-/// SocialUserInfo Clone trait 深拷贝正确。
 #[test]
 fn social_user_info_clone_creates_independent_copy() {
     let original = SocialUserInfo {
@@ -366,7 +307,6 @@ fn social_user_info_clone_creates_independent_copy() {
     assert_eq!(cloned.union_id, original.union_id);
 }
 
-/// SocialUserInfo 所有 Option 字段为 None 时不 panic。
 #[test]
 fn social_user_info_with_all_none_options() {
     let user = SocialUserInfo {
@@ -382,15 +322,10 @@ fn social_user_info_with_all_none_options() {
     assert!(user.union_id.is_none());
 }
 
-// ========================================================================
-// SocialBindingService::find_or_create 错误路径测试（ScriptedBindingDao）
-//
-// 覆盖：find/insert DAO 错误透传、UNIQUE 约束冲突（SQLite/Postgres/MySQL/
-// SQLSTATE 23505 四种消息特征）回查已有绑定、回查缺失/失败的 fail-closed 分支。
-// ========================================================================
+// find_or_create 错误路径（ScriptedBindingDao）：DAO 错误透传、UNIQUE 冲突回查
+// （SQLite/Postgres/MySQL/23505 四种消息特征）、回查缺失/失败的 fail-closed 分支
 
-/// 脚本化 DAO：`find_social_binding` / `insert_social_binding` 按预设结果队列
-/// 依次返回（队列耗尽后 find 返回 Ok(None)、insert 返回 Ok(())），
+/// 脚本化 DAO：`find_social_binding` / `insert_social_binding` 按预设队列依次返回（耗尽后 find→Ok(None)、insert→Ok(())），
 /// 其余方法委托内存 [`MockDao`](crate::dao::tests::MockDao)。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 struct ScriptedBindingDao {
@@ -519,7 +454,6 @@ fn scripted_wechat_user() -> SocialUserInfo {
     }
 }
 
-/// find_social_binding 失败应透传 Dao 错误（不做 insert）。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 #[tokio::test]
 async fn find_or_create_propagates_find_error() {
@@ -535,7 +469,6 @@ async fn find_or_create_propagates_find_error() {
     );
 }
 
-/// insert 失败且消息不含任何 UNIQUE 冲突特征时应原样透传错误（非并发冲突）。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 #[tokio::test]
 async fn find_or_create_insert_non_unique_error_propagates() {
@@ -553,7 +486,6 @@ async fn find_or_create_insert_non_unique_error_propagates() {
     );
 }
 
-/// SQLite UNIQUE 冲突消息（"UNIQUE constraint failed"）→ 回查返回已有 login_id。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 #[tokio::test]
 async fn find_or_create_sqlite_unique_conflict_returns_existing() {
@@ -572,8 +504,6 @@ async fn find_or_create_sqlite_unique_conflict_returns_existing() {
     assert_eq!(login_id, "login-sqlite-existing", "应返回已有绑定 login_id");
 }
 
-/// PostgreSQL UNIQUE 冲突消息（"duplicate key value violates unique constraint"）
-/// → 回查返回已有 login_id。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 #[tokio::test]
 async fn find_or_create_postgres_unique_conflict_returns_existing() {
@@ -592,7 +522,6 @@ async fn find_or_create_postgres_unique_conflict_returns_existing() {
     assert_eq!(login_id, "login-pg-existing");
 }
 
-/// MySQL UNIQUE 冲突消息（"Duplicate entry"）→ 回查返回已有 login_id。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 #[tokio::test]
 async fn find_or_create_mysql_unique_conflict_returns_existing() {
@@ -609,7 +538,6 @@ async fn find_or_create_mysql_unique_conflict_returns_existing() {
     assert_eq!(login_id, "login-mysql-existing");
 }
 
-/// SQLSTATE 23505 冲突消息 → 回查返回已有 login_id。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 #[tokio::test]
 async fn find_or_create_sqlstate_23505_conflict_returns_existing() {
@@ -626,8 +554,7 @@ async fn find_or_create_sqlstate_23505_conflict_returns_existing() {
     assert_eq!(login_id, "login-23505-existing");
 }
 
-/// UNIQUE 冲突后回查仍无记录（并发事务已回滚）→ fail-closed 返回
-/// `dao-social-binding-insert-select` Dao 错误。
+/// UNIQUE 冲突后回查无记录（并发事务已回滚）→ fail-closed 返回 `dao-social-binding-insert-select`。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 #[tokio::test]
 async fn find_or_create_conflict_requery_missing_returns_dao_error() {
@@ -646,7 +573,6 @@ async fn find_or_create_conflict_requery_missing_returns_dao_error() {
     );
 }
 
-/// UNIQUE 冲突后回查本身失败 → 透传回查错误。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 #[tokio::test]
 async fn find_or_create_conflict_requery_error_propagates() {
@@ -665,13 +591,9 @@ async fn find_or_create_conflict_requery_error_propagates() {
     );
 }
 
-// ========================================================================
 // UNIQUE 冲突特征常量与 Debug 脱敏回归测试
-// ========================================================================
 
-/// `service::unique_conflict_markers` 四个特征常量与 `find_or_create` 的
-/// 冲突分支一一对应：任一常量都能命中对应后端的冲突消息（防常量与
-/// 匹配分支漂移；4 个后端冲突用例再从 service 行为侧覆盖同一组常量）。
+/// 四个特征常量与冲突分支一一对应（防常量与匹配分支漂移；后端冲突用例从行为侧覆盖同一组常量）。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 #[test]
 fn unique_conflict_markers_match_service_constants() {
@@ -718,8 +640,7 @@ fn unique_conflict_markers_match_service_constants() {
     );
 }
 
-/// `SocialUserInfo` 的 Debug 输出脱敏 raw 字段（不泄露第三方原始 JSON），
-/// 其余业务字段正常输出，且派生 Clone 不受手动 Debug 影响。
+/// Debug 脱敏 raw（不泄露第三方原始 JSON），其余字段正常输出，Clone 派生不受手动 Debug 影响。
 #[test]
 fn social_user_info_debug_redacts_raw_field() {
     let user = SocialUserInfo {

@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! scope_handler 示例测试（oauth2-scope-handler feature）。
-//!
-//! 验证 run() 完整执行（内部已包含 registry 校验 + OAuth2Client 集成断言）。
+//! scope_handler 示例测试（oauth2-scope-handler feature）：验证 run() 完整执行（内部已包含 registry 校验 + OAuth2Client 集成断言）。
 
 #![cfg(feature = "oauth2-scope-handler")]
 

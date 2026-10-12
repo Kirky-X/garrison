@@ -1,14 +1,12 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! strategy/alert 模块测试（从 mod.rs 迁移）。
+//! strategy/alert 模块测试。
 
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-// ========================================================================
 // SecurityAlertEvent 枚举构造测试
-// ========================================================================
 
 /// AnomalyLogin 事件能正确构造并携带字段。
 #[test]
@@ -123,9 +121,7 @@ fn sensitive_operation_event_constructs() {
     }
 }
 
-// ========================================================================
 // AnomalyType 枚举相等性比较测试
-// ========================================================================
 
 /// AnomalyType 各变体相等性比较正确。
 #[test]
@@ -141,9 +137,7 @@ fn anomaly_type_equality() {
     assert_ne!(AnomalyType::GeoJump, AnomalyType::RapidSuccessiveLogin);
 }
 
-// ========================================================================
 // AlertListenerManager 测试
-// ========================================================================
 
 /// new() 创建空管理器，count 为 0。
 #[test]
@@ -175,7 +169,6 @@ async fn broadcast_alert_empty_manager_no_error() {
         detail: "test".to_string(),
         trace_id: "t1".to_string(),
     };
-    // 空 manager 广播应正常完成不 panic
     manager.broadcast_alert(&event).await;
 }
 
@@ -256,18 +249,10 @@ async fn broadcast_alert_listener_failure_does_not_interrupt() {
     );
 }
 
-/// listener panic 行为覆盖（补测试断言）。
-///
-/// 当前 `broadcast_alert` 实现（manager_impl.rs）**无 catch_unwind/panic 恢复**：
-/// listener 的 `on_alert` panic 会传播出 `broadcast_alert` 并中止广播循环，
-/// 剩余 listener 不再被通知。本测试经 `tokio::spawn` 任务边界捕获 panic
-/// （JoinError::is_panic），固化该行为：
-/// 1. panic 确实传播出 `broadcast_alert`（会中断调用方）；
-/// 2. 剩余 listener 计数为 0（未被通知）。
-///
-/// 该测试同时是行为哨兵：未来若为 `broadcast_alert` 引入 `catch_unwind`
-/// （`AssertUnwindSafe`）恢复逻辑，应同步将断言改为
-/// "panic 被捕获 + 剩余 listener 仍被通知"。
+/// listener panic 行为哨兵：当前 `broadcast_alert` 无 catch_unwind，listener panic 会传播出
+/// `broadcast_alert` 并中止广播循环（剩余 listener 不被通知）；本测试经 `tokio::spawn` 任务边界
+/// 捕获 panic（JoinError::is_panic）固化该行为，未来若引入 `catch_unwind` 恢复逻辑，
+/// 应同步改断言为 "panic 被捕获 + 剩余 listener 仍被通知"。
 #[tokio::test]
 async fn broadcast_alert_listener_panic_propagates_and_aborts_broadcast() {
     static PANIC_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -303,7 +288,6 @@ async fn broadcast_alert_listener_panic_propagates_and_aborts_broadcast() {
         resource: "user:1002".to_string(),
     };
 
-    // 经 tokio::spawn 运行广播：panic 被任务边界捕获为 JoinError，便于断言
     let handle = tokio::spawn(async move { manager.broadcast_alert(&event).await });
     let joined = handle.await;
     assert!(

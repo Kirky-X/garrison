@@ -3,15 +3,10 @@
 
 //! 通用输入消毒子模块。
 //!
-//! 提供 `sanitize_input` 对用户输入进行通用消毒：
-//! - 移除 null 字节（`\0`）防止 C 字符串截断攻击
-//! - 移除控制字符（保留 `\n` / `\r` / `\t` 以支持多行文本）
-//! - 长度限制（防 DoS）
-//! - 前后空白 trim
+//! `sanitize_input` 通用消毒：移除 null 字节（防 C 字符串截断）与控制字符（保留 `\n`/`\r`/`\t`）、
+//! trim 空白、按 char count 限长（防 DoS）。
 //!
-//! 与 [`XssProtector`](crate::secure::xss::XssProtector) 的区别：
-//! - `XssProtector` 针对 HTML 输入进行转义/白名单过滤（XSS 专用）
-//! - `sanitize_input` 针对任意文本输入进行通用消毒（非 HTML 专用）
+//! 与 [`XssProtector`](crate::secure::xss::XssProtector) 的区别：`XssProtector` 面向 HTML 输入转义/白名单过滤（XSS 专用），本函数面向任意文本通用消毒（非 HTML 专用）。
 //!
 //! # 示例
 //!
@@ -24,16 +19,11 @@
 
 use crate::error::{GarrisonError, GarrisonResult};
 
-/// 检测 Unicode 格式字符（Cf 类）和分隔符字符（Zl/Zp 类）。
+/// 检测 Unicode 格式字符（Cf 类）与行/段分隔符（Zl U+2028 / Zp U+2029）。
 ///
-/// 这些字符在大多数渲染环境中不可见，但会影响字符串比较、数据库查询和日志渲染，
-/// 可被用于钓鱼、显示欺骗和日志注入攻击。
+/// 这些字符在多数渲染环境不可见，却影响字符串比较、数据库查询与日志渲染，可被用于钓鱼、显示欺骗和日志注入。
 ///
-/// 覆盖范围：
-/// - Cf（Format）：U+00AD, U+0600-0605, U+061C, U+06DD, U+070F, U+180E,
-///   U+200B-200F, U+202A-202E, U+2060-206F, U+FEFF, U+FFF9-FFFB
-/// - Zl（Line Separator）：U+2028
-/// - Zp（Paragraph Separator）：U+2029
+/// 覆盖范围：Cf（Format）U+00AD、U+0600-0605、U+061C、U+06DD、U+070F、U+180E、U+200B-200F、U+202A-202E、U+2060-206F、U+FEFF、U+FFF9-FFFB；Zl（Line Separator）U+2028；Zp（Paragraph Separator）U+2029。
 fn is_unicode_format_or_separator(c: char) -> bool {
     let cp = c as u32;
     // Zl: Line Separator
@@ -60,22 +50,8 @@ fn is_unicode_format_or_separator(c: char) -> bool {
     )
 }
 
-/// 通用输入消毒：移除 null 字节、控制字符，trim 前后空白，限制长度。
-///
-/// # 参数
-/// - `input`: 待消毒的用户输入
-/// - `max_len`: 最大允许长度（按 char count，非字节）
-///
-/// # 返回
-/// - `Ok(String)`: 消毒后的字符串
-/// - `Err(GarrisonError::InvalidParam)`: 输入长度超过 `max_len`
-///
-/// # 消毒规则
-/// 1. 移除 null 字节（`\0`）— 防止 C 字符串截断
-/// 2. 移除控制字符（U+0000..=U+001F 除 `\t` `\n` `\r`，及 U+007F DEL）
-/// 3. 移除 Unicode 格式字符（Cf 类）和分隔符字符（Zl/Zp 类）— 防止零宽字符绕过、BOM 绕过、日志注入
-/// 4. trim 前后空白
-/// 5. 长度检查（按 char count）
+/// 通用输入消毒：移除 null 字节、控制字符（U+0000..=U+001F 除 `\t` `\n` `\r`，及 U+007F DEL）、
+/// Unicode Cf/Zl/Zp 字符，trim 前后空白后按 char count 检查长度；超限返回 `Err(GarrisonError::InvalidParam)`。
 ///
 /// # 示例
 ///
@@ -95,30 +71,25 @@ fn is_unicode_format_or_separator(c: char) -> bool {
 /// assert!(sanitize_input("hello world", 5).is_err());
 /// ```
 pub fn sanitize_input(input: &str, max_len: usize) -> GarrisonResult<String> {
-    // 预分配容量（最坏情况：全部保留）
+    // 预分配容量（最坏情况全部保留）
     let mut cleaned = String::with_capacity(input.len());
 
     for c in input.chars() {
-        // 移除 null 字节
         if c == '\0' {
             continue;
         }
-        // 移除控制字符（保留 \t \n \r）
         if c.is_control() && c != '\t' && c != '\n' && c != '\r' {
             continue;
         }
-        // 移除 Unicode 格式字符（Cf）和分隔符字符（Zl/Zp）
-        // 防止零宽字符绕过比较、BOM 绕过前缀检查、行分隔符注入日志
+        // 移除 Cf/Zl/Zp：防零宽字符绕过比较、BOM 绕过前缀检查、行分隔符注入日志
         if is_unicode_format_or_separator(c) {
             continue;
         }
         cleaned.push(c);
     }
 
-    // trim 前后空白
     let trimmed = cleaned.trim();
 
-    // 长度检查（按 char count）
     let char_count = trimmed.chars().count();
     if char_count > max_len {
         return Err(GarrisonError::InvalidParam(format!(
@@ -134,9 +105,7 @@ pub fn sanitize_input(input: &str, max_len: usize) -> GarrisonResult<String> {
 mod tests {
     use super::*;
 
-    // ========================================================================
     // 正常用例
-    // ========================================================================
 
     /// 普通字符串原样返回（trim 后）。
     #[test]
@@ -245,9 +214,7 @@ mod tests {
         assert_eq!(result, "");
     }
 
-    // ========================================================================
     // 长度限制
-    // ========================================================================
 
     /// 长度等于 max_len 通过。
     #[test]
@@ -285,9 +252,7 @@ mod tests {
         assert!(matches!(result, Err(GarrisonError::InvalidParam(_))));
     }
 
-    // ========================================================================
     // 边界用例
-    // ========================================================================
 
     /// 消毒后再检查长度（null 字节移除后不超限）。
     #[test]

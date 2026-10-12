@@ -35,17 +35,12 @@ impl CacheWarmupService {
         Self { dao }
     }
 
-    /// 执行缓存预热。
-    ///
-    /// 扫描 DAO 中所有 `role:*` 和 `tenant:*` 键，逐个 `get()` 触发缓存填充，
-    /// 返回加载统计。空数据库返回零统计，不报错。
+    /// 执行缓存预热：扫描 DAO 中所有 `role:*` 与 `tenant:*` 键并逐个 `get()` 触发填充，返回加载统计；空库返回零统计不报错。
     ///
     /// # 部分失败语义
     ///
-    /// 当 DAO 后端不支持 `keys()`（返回 `NotImplemented`，如生产环境
-    /// `GarrisonDaoOxcache` 的部分部署形态）时，对应部分记 `warn` 日志并按
-    /// 零键处理，**其余部分继续预热**（例如仅 tenant keys 不支持时，role keys
-    /// 已成功获取的结果不会被丢弃），不传播错误。两者都不支持时返回零统计。
+    /// DAO 不支持 `keys()`（返回 `NotImplemented`，如部分 oxcache 部署）时，对应部分记 `warn` 按零键处理，
+    /// **其余部分继续预热**（不丢弃已成功结果），不传播错误；两者都不支持时返回零统计。
     pub async fn warmup(&self) -> GarrisonResult<WarmupStats> {
         let role_pattern = format!("{}*", DaoKeyPrefix::Role.as_str());
         let tenant_pattern = format!("{}*", DaoKeyPrefix::Tenant.as_str());
@@ -96,9 +91,7 @@ impl CacheWarmupService {
 mod tests {
     use super::*;
 
-    /// warmup 从 DAO 加载所有角色的权限列表。
-    ///
-    /// 插入 3 个 role:* key，warmup 后 roles_loaded == 3。
+    /// warmup 从 DAO 加载所有角色权限（3 个 role:* key → roles_loaded == 3）。
     #[tokio::test]
     async fn warmup_loads_role_permissions() {
         let dao = Arc::new(crate::dao::InMemoryDao::new());
@@ -113,9 +106,7 @@ mod tests {
         assert_eq!(stats.tenants_loaded, 0);
     }
 
-    /// warmup 从 DAO 加载所有租户配置。
-    ///
-    /// 插入 2 个 tenant:* key，warmup 后 tenants_loaded == 2。
+    /// warmup 从 DAO 加载所有租户配置（2 个 tenant:* key → tenants_loaded == 2）。
     #[tokio::test]
     async fn warmup_loads_tenant_configs() {
         let dao = Arc::new(crate::dao::InMemoryDao::new());
@@ -148,8 +139,7 @@ mod tests {
 
     /// warmup 跳过已过期的 key（get 返回 None 的 key 不计入统计）。
     ///
-    /// 使用自定义 mock，keys() 返回 key 但 get() 返回 None，
-    /// 模拟 key 在 keys() 与 get() 之间过期的竞态。
+    /// keys() 返回 key 但 get() 返回 None 的 mock，模拟 key 在 keys() 与 get() 之间过期的竞态。
     #[tokio::test]
     async fn warmup_skips_expired_keys() {
         let dao = Arc::new(ExpiredKeyMockDao::new(vec![
@@ -163,10 +153,7 @@ mod tests {
         assert_eq!(stats.roles_loaded, 0, "过期 key 不应计入统计");
     }
 
-    /// 模拟 key 已过期的 mock DAO。
-    ///
-    /// `keys()` 返回构造时传入的 key 列表（按 pattern 前缀过滤），
-    /// `get()` 始终返回 None，模拟 key 在 keys() 扫描后、get() 读取前过期。
+    /// 模拟 key 已过期的 mock DAO：`keys()` 按 pattern 前缀过滤返回构造时 key 列表，`get()` 始终 None。
     struct ExpiredKeyMockDao {
         keys: Vec<String>,
     }
@@ -211,10 +198,7 @@ mod tests {
         crate::atomic_test_fallback!();
     }
 
-    /// 模拟不支持 keys() 的 DAO（如生产环境 GarrisonDaoOxcache）。
-    ///
-    /// `keys()` 返回 `NotImplemented`，模拟 oxcache 后端无法扫描 key 的场景。
-    /// warmup 应捕获此错误并返回零统计，而非传播错误。
+    /// 模拟不支持 keys() 的 DAO（`keys()` 返回 `NotImplemented`，如生产 oxcache 场景；warmup 应捕获并按零统计处理）。
     struct NoKeysDao;
 
     impl NoKeysDao {
@@ -253,10 +237,7 @@ mod tests {
         crate::atomic_test_fallback!();
     }
 
-    /// warmup 在 DAO 不支持 keys() 时应返回零统计而非报错。
-    ///
-    /// 模拟生产环境 GarrisonDaoOxcache（keys 返回 NotImplemented），
-    /// warmup 应 warn 并返回 Ok(WarmupStats { 0, 0 })。
+    /// warmup 在 DAO 不支持 keys() 时返回零统计而非报错（warn 后按零键处理）。
     #[tokio::test]
     async fn warmup_returns_zero_stats_when_keys_not_implemented() {
         let dao = Arc::new(NoKeysDao::new());
@@ -276,13 +257,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // 错误传播与边界测试
-    // ========================================================================
 
-    /// 模拟 keys() 返回非 NotImplemented 错误的 mock DAO。
-    ///
-    /// 用于测试 warmup 在 keys() 返回 Dao 错误时正确传播错误（不吞掉）。
+    /// 模拟 keys() 返回非 NotImplemented 错误的 mock（验证错误传播，不吞掉）。
     struct ErrorKeysDao;
 
     impl ErrorKeysDao {
@@ -321,9 +298,7 @@ mod tests {
         crate::atomic_test_fallback!();
     }
 
-    /// warmup 在 keys() 返回非 NotImplemented 错误时应传播错误。
-    ///
-    /// 验证只有 NotImplemented 被捕获，其他 DAO 错误必须传播给调用方。
+    /// warmup 在 keys() 返回非 NotImplemented 错误时传播（仅 NotImplemented 被捕获）。
     #[tokio::test]
     async fn warmup_propagates_non_not_implemented_keys_error() {
         let dao = Arc::new(ErrorKeysDao::new());
@@ -344,10 +319,7 @@ mod tests {
         }
     }
 
-    /// 模拟 get() 返回错误的 mock DAO。
-    ///
-    /// keys() 正常返回 key 列表，但 get() 返回 Dao 错误，
-    /// 用于测试 warmup 在遍历 key 时 get() 失败的错误传播。
+    /// 模拟 keys() 正常但 get() 返回 Dao 错误的 mock DAO。
     struct ErrorGetDao {
         keys: Vec<String>,
     }
@@ -394,10 +366,7 @@ mod tests {
         crate::atomic_test_fallback!();
     }
 
-    /// warmup 在 get() 返回错误时应传播错误。
-    ///
-    /// keys() 成功返回 role key，但 get() 返回 Dao 错误，
-    /// warmup 应传播该错误而非吞掉。
+    /// warmup 在 get() 返回错误时传播（不吞掉）。
     #[tokio::test]
     async fn warmup_propagates_get_error() {
         let dao = Arc::new(ErrorGetDao::new(vec!["role:admin".to_string()]));
@@ -419,8 +388,6 @@ mod tests {
     }
 
     /// 模拟 role keys() 成功但 tenant keys() 返回 NotImplemented 的 mock DAO。
-    ///
-    /// 用于测试 warmup 中 tenant keys() 的 NotImplemented 分支（role keys 成功后）。
     struct PartialNotImplDao {
         role_keys: Vec<String>,
     }
@@ -476,10 +443,7 @@ mod tests {
         crate::atomic_test_fallback!();
     }
 
-    /// warmup 在 role keys 成功但 tenant keys 返回 NotImplemented 时继续加载 roles。
-    ///
-    /// 部分失败语义：tenant keys() 的 NotImplemented 仅跳过租户预热，
-    /// 已成功获取的 role keys 不被丢弃（修复前整体提前返回零统计）。
+    /// role keys 成功但 tenant keys 返回 NotImplemented 时继续加载 roles（部分失败语义；修复前整体提前返回零统计）。
     #[tokio::test]
     async fn warmup_tenant_keys_not_implemented_still_loads_roles() {
         let dao = Arc::new(PartialNotImplDao::new(vec![
@@ -534,11 +498,9 @@ mod tests {
         assert!(debug_str.contains("3"));
     }
 
-    // ========================================================================
     // Mock DAO 完整方法覆盖测试
-    // ========================================================================
 
-    /// ExpiredKeyMockDao 的 set/update/expire/delete 方法均返回 Ok(())。
+    /// ExpiredKeyMockDao 的写方法均为 no-op 返回 Ok。
     #[tokio::test]
     async fn expired_key_mock_dao_all_methods_return_ok() {
         let dao = ExpiredKeyMockDao::new(vec!["role:test".to_string()]);
@@ -574,7 +536,7 @@ mod tests {
         }
     }
 
-    /// NoKeysDao 的 get/set/update/expire/delete 方法均返回 Ok(()), get 返回 None。
+    /// NoKeysDao 的写方法均为 no-op，get 返回 None。
     #[tokio::test]
     async fn no_keys_dao_all_methods_return_ok() {
         let dao = NoKeysDao::new();
@@ -609,7 +571,7 @@ mod tests {
         }
     }
 
-    /// ErrorKeysDao 的 get/set/update/expire/delete 方法均返回 Ok(()), keys 返回 Dao 错误。
+    /// ErrorKeysDao 的写方法均为 no-op，keys 返回 Dao 错误。
     #[tokio::test]
     async fn error_keys_dao_all_methods_return_ok() {
         let dao = ErrorKeysDao::new();
@@ -644,7 +606,7 @@ mod tests {
         }
     }
 
-    /// ErrorGetDao 的 set/update/expire/delete 方法返回 Ok(()), get 返回 Dao 错误。
+    /// ErrorGetDao 的写方法均为 no-op，get 返回 Dao 错误。
     #[tokio::test]
     async fn error_get_dao_non_get_methods_return_ok() {
         let dao = ErrorGetDao::new(vec!["role:test".to_string()]);
@@ -678,7 +640,7 @@ mod tests {
         }
     }
 
-    /// PartialNotImplDao 的 set/update/expire/delete 方法返回 Ok(())。
+    /// PartialNotImplDao 的写方法均为 no-op。
     #[tokio::test]
     async fn partial_not_impl_dao_non_keys_methods_return_ok() {
         let dao = PartialNotImplDao::new(vec!["role:test".to_string()]);
@@ -719,13 +681,9 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // warmup tenant keys 非 NotImplemented 错误传播测试（覆盖 line 69）
-    // ========================================================================
+    // warmup tenant keys 非 NotImplemented 错误传播测试
 
     /// 模拟 role keys() 成功但 tenant keys() 返回非 NotImplemented 错误的 mock DAO。
-    ///
-    /// 用于测试 warmup 中 tenant keys() 的非 NotImplemented 错误传播（line 69）。
     struct TenantErrorDao {
         role_keys: Vec<String>,
     }
@@ -780,10 +738,7 @@ mod tests {
         crate::atomic_test_fallback!();
     }
 
-    /// warmup 在 role keys 成功但 tenant keys 返回非 NotImplemented 错误时应传播错误。
-    ///
-    /// 覆盖 warmup.rs line 69: `Err(e) => return Err(e)` 分支
-    /// （role keys 成功后的第二个 keys 调用返回非 NotImplemented 错误）。
+    /// role keys 成功但 tenant keys 返回非 NotImplemented 错误时应传播（第二个 keys 调用的 `Err(e) => return Err(e)` 分支）。
     #[tokio::test]
     async fn warmup_propagates_tenant_keys_non_not_implemented_error() {
         let dao = Arc::new(TenantErrorDao::new(vec![

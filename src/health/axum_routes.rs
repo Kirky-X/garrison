@@ -1,10 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! axum 框架的健康检查路由集成。
-//!
-//! 从 `mod.rs` 迁移而出（mod.rs 接口隔离）。
-//! 提供 `/health/live` 与 `/health/ready` 端点。
+//! axum 框架的健康检查路由集成：提供 `/health/live` 与 `/health/ready` 端点。
 
 use super::HealthRegistry;
 use axum::http::StatusCode;
@@ -23,9 +20,9 @@ pub async fn live() -> impl IntoResponse {
 
 /// Readiness 探针 handler——检查依赖项就绪状态。
 ///
-/// 单项检查的超时护栏（默认 5 秒）由 [`HealthRegistry::check_all`]
-/// 内部强制执行（`HealthRegistry::with_check_timeout` 可配置），挂起/panic 的检查按
-/// `Unhealthy` 聚合，不会阻塞 axum worker task。
+/// 单项检查超时护栏（默认 5 秒，[`HealthRegistry::with_check_timeout`] 可配置）由
+/// [`HealthRegistry::check_all`] 内部强制执行：挂起/panic 的检查按 `Unhealthy` 聚合，
+/// 不会阻塞 axum worker task。
 pub async fn ready(
     axum::extract::State(registry): axum::extract::State<Arc<HealthRegistry>>,
 ) -> Response {

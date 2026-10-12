@@ -1,11 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! API 签名协议层测试 mock 实现。
-//!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `MockDao`（基于 `tokio::sync::Mutex<HashMap>` 模拟 DAO），
-//! 供 `protocol::sign::tests` 签名生成/校验测试复用。
+//! API 签名协议层测试 mock 实现（仅 `cfg(test)` 编译）：`MockDao`（`tokio::sync::Mutex<HashMap>`
+//! 模拟 DAO）供 `protocol::sign::tests` 签名生成/校验测试复用。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -14,16 +11,11 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
-/// 测试用 Mock DAO。
+/// 测试用 Mock DAO（TTL 语义真实可验证，非 no-op）。
 ///
-/// TTL 语义（可验证，不再是 no-op）：
-/// - `set` 的 `ttl_seconds > 0` 记录过期时刻，`ttl_seconds == 0` 表示永不过期；
-/// - `expire` 为**已存在**的 key 设置新的过期时刻（与 Redis EXPIRE 对齐，
-///   `seconds == 0` 即立即过期），key 不存在时静默忽略；
-/// - `get` 命中已过期 key 时惰性清除并返回 `None`。
-///
-/// 使 TTL 过期行为（如 sign nonce 跨窗口重放）可经此 mock 真实验证，
-/// 而不是依赖 TTL 的测试全部"假通过"。
+/// `set` 记录过期时刻（`ttl_seconds == 0` 永不过期）；`expire` 仅对已存在 key
+/// 生效（对齐 Redis EXPIRE，`seconds == 0` 立即过期）；`get` 命中过期 key 惰性
+/// 清除并返回 `None`。TTL 过期行为（如 sign nonce 跨窗口重放）可经此真实验证。
 pub struct MockDao {
     data: Mutex<HashMap<String, String>>,
     /// key → 过期时刻；未记录表示永不过期。
@@ -46,7 +38,6 @@ impl GarrisonDao for MockDao {
         // 锁序恒为 data → expiries，避免与 set/delete 交叉死锁
         let mut data = self.data.lock().await;
         let mut expiries = self.expiries.lock().await;
-        // TTL 惰性过期：命中已过期 key 时清除并视为不存在
         if let Some(deadline) = expiries.get(key) {
             if Instant::now() >= *deadline {
                 expiries.remove(key);

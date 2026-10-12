@@ -7,18 +7,14 @@
 
 /// 全局配置结构体（[GarrisonConfig]）。
 pub use crate::config::GarrisonConfig;
-/// 请求标识传播载体与运行时助手（R04 统一错误模型）。
-///
-/// 自定义中间件作者所需的读取入口（`current` / `scope`）、传播助手与
-/// 头名常量；`inject_request_id_into_error_body` 为 warp 内部回填机制，
-/// 不进 prelude（模块内经 `crate::context::request_id` 路径使用）。
+/// 请求标识传播载体与运行时助手（统一错误模型）：中间件读取入口（`current` / `scope`）、传播助手与头名常量（`inject_request_id_into_error_body` 为 warp 内部回填机制，不进 prelude）。
 pub use crate::context::request_id::{
     current, is_valid_inbound_request_id, propagate_or_generate, scope, RequestId, MAX_INBOUND_LEN,
     REQUEST_ID_HEADER, RETRY_AFTER_HEADER,
 };
 /// 上下文类型：请求/响应/存储抽象（[GarrisonContext]、[GarrisonRequest]、[GarrisonResponse]、[GarrisonStorage]）。
 pub use crate::context::{GarrisonContext, GarrisonRequest, GarrisonResponse, GarrisonStorage};
-/// 鉴权决策与请求模型（[Decision]、[DecisionReason]、[AuthRequest]，）。
+/// 鉴权决策与请求模型（[Decision]、[DecisionReason]、[AuthRequest]）。
 pub use crate::core::permission::{AuthRequest, Decision, DecisionReason};
 /// DAO trait，持久化数据访问抽象（[GarrisonDao]）。
 pub use crate::dao::GarrisonDao;
@@ -42,12 +38,12 @@ pub use crate::strategy::{GarrisonPermissionStrategy, GarrisonPermissionStrategy
 
 /// 注解驱动的路由保护声明（[Annotation]，`GarrisonRouter::route_protected` 使用）。
 pub use crate::annotation::Annotation;
-/// 内置缓存 DAO（feature: cache-memory / cache-redis， prelude 增补）。
+/// 内置缓存 DAO（feature: cache-memory / cache-redis）。
 #[cfg(any(feature = "cache-memory", feature = "cache-redis"))]
 pub use crate::dao::GarrisonDaoOxcache;
 /// 登录参数（[LoginParams]，`login` / `login_with_password` 使用）。
 pub use crate::stp::LoginParams;
-/// 请求上下文工具：设置当前 token 作用域 / 读取当前 token（prelude 增补）。
+/// 请求上下文工具：设置当前 token 作用域 / 读取当前 token。
 pub use crate::stp::{current_token, with_current_token};
 
 /// 邀请码定向注册协议类型（feature: protocol-invitation）。

@@ -8,41 +8,18 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 tokio::task_local! {
-    /// 当前请求中续签后的新 Token（若有）。
-///
-    /// 由 Web 框架 middleware 在请求开始时通过 [`with_renewed_token_scope`] 设置初始值 `None`，
-    /// `check_and_renew` 在续签成功时通过 [`set_renewed_token`] 写入 `Some(new_token)`，
-    /// Web 框架在请求结束后通过 [`current_renewed_token`] 读取并写入响应 Header。
-///
-    /// # 生命周期
-///
-    /// ```text
-    /// Request → middleware sets scope(None)
-    /// → handler calls check_login → check_and_renew writes Some(token)
-    /// → middleware reads current_renewed_token() → writes X-Garrison-Renewed-Token
-    /// Response sent
-/// ```
+    /// 当前请求中续签后的新 Token（若有）：middleware 经 [`with_renewed_token_scope`] 置初始 `None`，`check_and_renew` 成功时写 `Some`，请求结束后 middleware 读取并写入响应 Header。
     pub static CURRENT_RENEWED_TOKEN: Arc<Mutex<Option<String>>>;
 }
 
-/// 在 `CURRENT_RENEWED_TOKEN` 作用域内执行 `f`，初始值为 `None`。
-///
-/// Web 框架 middleware 在请求开始时调用：
-/// ```ignore
-/// let result = with_renewed_token_scope(async { handler(req).await }).await;
-/// if let Some(new_token) = current_renewed_token() {
-/// response.headers_mut().insert("X-Garrison-Renewed-Token", new_token.parse().unwrap());
-/// }
-/// ```
+/// 在 `CURRENT_RENEWED_TOKEN` 作用域内执行 `f`（初始 `None`）；Web 框架 middleware 请求开始时调用。
 pub async fn with_renewed_token_scope<R>(f: impl std::future::Future<Output = R>) -> R {
     CURRENT_RENEWED_TOKEN
         .scope(Arc::new(Mutex::new(None)), f)
         .await
 }
 
-/// 获取续签后的新 Token（若有）。
-///
-/// 未在 [`with_renewed_token_scope`] 作用域内调用时返回 `None`。
+/// 获取续签后的新 Token（若有）；未在 [`with_renewed_token_scope`] 作用域内调用时返回 `None`。
 pub fn current_renewed_token() -> Option<String> {
     CURRENT_RENEWED_TOKEN
         .try_get()
@@ -50,57 +27,38 @@ pub fn current_renewed_token() -> Option<String> {
         .and_then(|arc| arc.lock().unwrap_or_else(|p| p.into_inner()).clone())
 }
 
-/// 设置续签后的新 Token（crate 内部 API）。
-///
-/// 供 `check_and_renew` 在续签成功时调用。未在 [`with_renewed_token_scope`]
-/// 作用域内时为 no-op（不影响 `check_login` 返回值）。
+/// 设置续签后的新 Token（crate 内部 API）：供 `check_and_renew` 续签成功时调用；未在作用域内为 no-op。
 pub(crate) fn set_renewed_token(token: String) {
     if let Ok(arc) = CURRENT_RENEWED_TOKEN.try_get() {
         *arc.lock().unwrap_or_else(|p| p.into_inner()) = Some(token);
     }
 }
 
-/// 获取续签后的新 Token（若有）。
-///
-/// 与 [`current_renewed_token`] 等价，供 middleware 在请求结束后读取续签结果。
-/// 未在 [`with_renewed_token_scope`] 作用域内调用时返回 `None`（不 panic）。
+/// 获取续签后的新 Token（若有）：与 [`current_renewed_token`] 等价，供 middleware 在请求结束后读取续签结果。
 pub fn get_renewed_token() -> Option<String> {
     current_renewed_token()
 }
 
-/// 清除续签后的新 Token。
-///
-/// 供 middleware 在将续签 Token 写入响应后调用，避免泄漏到后续请求。
-/// 未在 [`with_renewed_token_scope`] 作用域内调用时为 no-op。
+/// 清除续签后的新 Token：供 middleware 写入响应后调用，避免泄漏到后续请求；未在作用域内为 no-op。
 pub fn clear_renewed_token() {
     if let Ok(arc) = CURRENT_RENEWED_TOKEN.try_get() {
         *arc.lock().unwrap_or_else(|p| p.into_inner()) = None;
     }
 }
 
-// ============================================================================
 // GarrisonContext：task_local CURRENT_TOKEN 跨 spawn 传播
-// ============================================================================
 //
-// `GarrisonContext` 结构体定义位于 `super::mod`，本节仅承载 impl 块。
-// tokio `task_local!` 不会自动传播到 `tokio::spawn` 子任务，
-// `GarrisonContext` 通过 capture/within 模式手动传播 `CURRENT_TOKEN`。
+// 结构体定义在 `super::mod`，本文件只承载 impl；task_local 不自动传播到 `tokio::spawn` 子任务，经 capture/within 手动传播。
 
 impl GarrisonContext {
-    /// 捕获当前 task_local 上下文（`CURRENT_TOKEN`）。
-    ///
-    /// 在父任务中调用，返回的 `GarrisonContext` 可移动到子任务中。
-    /// 未设置 `CURRENT_TOKEN` 时返回 `token: None` 的上下文。
+    /// 捕获当前 task_local 上下文（`CURRENT_TOKEN`）：在父任务中调用，返回的 `GarrisonContext` 可移动到子任务中。
     pub fn capture() -> Self {
         Self {
             token: current_token().ok(),
         }
     }
 
-    /// 在当前 task 恢复上下文，执行 `f` 期间设置 `CURRENT_TOKEN`。
-    ///
-    /// 使用 tokio `task_local::scope` 设置值，`f` 结束后自动清除。
-    /// 若 `capture()` 时未设置 token，直接执行 `f`（不设置 task_local）。
+    /// 在当前 task 恢复上下文执行 `f`：用 task_local::scope 设置 `CURRENT_TOKEN`，结束后自动清除；`capture()` 时无 token 则直接执行 `f`。
     pub async fn within<F, R>(self, f: F) -> R
     where
         F: Future<Output = R>,
@@ -112,26 +70,18 @@ impl GarrisonContext {
     }
 }
 
-// ============================================================================
 // CURRENT_TOKEN task_local 上下文 API（with_current_token / current_token）
-// ============================================================================
 //
-// `CURRENT_TOKEN` task_local 定义于 `super::mod`，本节提供作用域设置与读取 API。
+// `CURRENT_TOKEN` 定义在 `super::mod`，本节提供作用域设置与读取 API。
 
-/// 设置当前请求的 token 作用域。
-///
-/// 在 axum middleware 中调用：
-/// ```ignore
-/// garrison::stp::with_current_token(token, async { handler(req).await }).await
-/// ```
+/// 设置当前请求的 token 作用域：在 axum middleware 中调用。
 pub async fn with_current_token<R>(token: String, f: impl Future<Output = R>) -> R {
     CURRENT_TOKEN.scope(token, f).await
 }
 
 /// 获取当前请求的 token（从 task_local 读取）。
 ///
-/// # 错误
-/// - 若未在 `with_current_token` 作用域内调用，返回 `GarrisonError::Session`。
+/// 未在 `with_current_token` 作用域内调用时返回 `GarrisonError::Session`。
 #[allow(clippy::map_clone)]
 pub fn current_token() -> GarrisonResult<String> {
     CURRENT_TOKEN
@@ -140,36 +90,21 @@ pub fn current_token() -> GarrisonResult<String> {
         .map_err(|_| GarrisonError::Session("stp-context-not-set::".to_string()))
 }
 
-// ============================================================================
 // CURRENT_LOGIN_ID task_local 上下文 API（请求内登录身份复用）
-// ============================================================================
-//
-// 请求级登录身份缓存：`with_login_id_scope` 由 Web middleware 在请求开始时
-// 创建（与 `with_current_token` 同层），`check_login` 校验通过后经
-// [`cache_login_identity`] 写入 `(token, login_id)`，`get_login_id` /
-// `check_permission` 在 token 匹配时直接复用，消除同一请求内对 TokenSession
-// 的第二次读取。`logout` / `kickout` / `revoke_token` 成功后按 token（或
-// login_id）失效，保证登出后同请求内立即回退 DAO 读取路径。
+// 请求级登录身份缓存：`with_login_id_scope` 由 Web middleware 在请求开始时创建，`check_login` 校验通过后经 [`cache_login_identity`] 写入 `(token, login_id)`；
+// `get_login_id` / `check_permission` 在 token 匹配时复用，消除同请求内对 TokenSession 的第二次读取；`logout` / `kickout` / `revoke_token` 成功后按 token 或 login_id 失效，登出后立即回退 DAO 读取。
 
 tokio::task_local! {
     /// 请求级登录身份缓存（`(token, login_id)`）。
     static CURRENT_LOGIN_ID: std::sync::Arc<std::sync::Mutex<Option<(String, String)>>>;
 }
 
-/// 在 `CURRENT_LOGIN_ID` 缓存作用域内执行 `f`（初始值为 `None`）。
-///
-/// Web 框架 middleware 在请求开始时调用（与 [`with_current_token`] 同层）：
-/// ```ignore
-/// with_login_id_scope(async { with_current_token(t, handler(req)).await }).await
-/// ```
+/// 在 `CURRENT_LOGIN_ID` 缓存作用域内执行 `f`（初始 `None`）；Web 框架 middleware 请求开始时调用（与 [`with_current_token`] 同层）。
 pub async fn with_login_id_scope<R>(f: impl Future<Output = R>) -> R {
     CURRENT_LOGIN_ID.scope(Arc::new(Mutex::new(None)), f).await
 }
 
-/// 缓存校验通过的登录身份（crate 内部 API）。
-///
-/// 供 `check_login` 在校验成功后调用。未在 [`with_login_id_scope`] 作用域内
-/// 时为 no-op（不影响 check_login 返回值）。
+/// 缓存校验通过的登录身份（crate 内部 API）：供 `check_login` 校验成功后调用，未在作用域内为 no-op。
 pub(crate) fn cache_login_identity(token: &str, login_id: &str) {
     if let Ok(arc) = CURRENT_LOGIN_ID.try_get() {
         *arc.lock().unwrap_or_else(|p| p.into_inner()) =
@@ -179,8 +114,7 @@ pub(crate) fn cache_login_identity(token: &str, login_id: &str) {
 
 /// 读取与 `token` 匹配的缓存登录身份。
 ///
-/// token 不匹配（请求内换绑 token，如 login/refresh 写入新值）时返回 `None`，
-/// 调用方应回退 DAO 读取。未在作用域内时返回 `None`。
+/// token 不匹配（请求内换绑 token，如 login/refresh 写入新值）时返回 `None`，调用方应回退 DAO 读取；未在作用域内返回 `None`。
 pub(crate) fn cached_login_id_for(token: &str) -> Option<String> {
     let arc = CURRENT_LOGIN_ID.try_get().ok()?;
     let guard = arc.lock().unwrap_or_else(|p| p.into_inner());
@@ -188,10 +122,7 @@ pub(crate) fn cached_login_id_for(token: &str) -> Option<String> {
     (cached_token == token).then(|| login_id.clone())
 }
 
-/// 按 token 失效缓存（crate 内部 API）。
-///
-/// 供 `logout` / `kickout_by_token` / `revoke_token` 成功后调用，保证登出后
-/// 同请求内 `get_login_id` 立即回退 DAO 读取（返回未登录）。
+/// 按 token 失效缓存（crate 内部 API）：供 `logout` / `kickout_by_token` / `revoke_token` 成功后调用，保证登出后同请求内 `get_login_id` 立即回退 DAO 读取。
 pub(crate) fn invalidate_login_identity_by_token(token: &str) {
     if let Ok(arc) = CURRENT_LOGIN_ID.try_get() {
         let mut guard = arc.lock().unwrap_or_else(|p| p.into_inner());
@@ -201,10 +132,7 @@ pub(crate) fn invalidate_login_identity_by_token(token: &str) {
     }
 }
 
-/// 按 login_id 失效缓存（crate 内部 API）。
-///
-/// 供 `kickout(login_id)` / `logout_by_login_id` 成功后调用（被踢主体可能
-/// 持有多个 token，按 login_id 匹配清除）。
+/// 按 login_id 失效缓存（crate 内部 API）：供 `kickout(login_id)` / `logout_by_login_id` 成功后调用（被踢主体可能持有多个 token，按 login_id 匹配清除）。
 pub(crate) fn invalidate_login_identity_by_login_id(login_id: &str) {
     if let Ok(arc) = CURRENT_LOGIN_ID.try_get() {
         let mut guard = arc.lock().unwrap_or_else(|p| p.into_inner());
@@ -218,26 +146,14 @@ pub(crate) fn invalidate_login_identity_by_login_id(login_id: &str) {
     }
 }
 
-// ============================================================================
 // CURRENT_IP task_local 上下文 API（IP 级失败限速，CWE-307）
-// ============================================================================
 
 tokio::task_local! {
-    /// 当前请求的客户端 IP，由 Web 框架 middleware 通过 [`with_current_ip`] 设置。
-///
-    /// 供 `check_api_key` 等认证路径在校验失败时按 IP 计入暴力破解防护
-    /// （[`crate::strategy::firewall::BruteForceStrategy`]）。middleware 应使用
-    /// `extract_client_ip`（含 trusted_proxies 防 X-Forwarded-For 伪造）提取。
+    /// 当前请求的客户端 IP，由 Web middleware 经 [`with_current_ip`] 设置（应使用 `extract_client_ip`，含 trusted_proxies 防 X-Forwarded-For 伪造）；供 `check_api_key` 等按 IP 计入暴力破解防护。
     pub static CURRENT_IP: String;
 }
 
-/// 设置当前请求的客户端 IP 作用域。
-///
-/// 在 Web 框架 middleware 中调用（与 [`with_current_token`] 同处注入）：
-/// ```ignore
-/// let ip = extract_client_ip(&req, &trusted_proxies);
-/// garrison::stp::with_current_ip(ip, async { handler(req).await }).await
-/// ```
+/// 设置当前请求的客户端 IP 作用域：在 Web 框架 middleware 中调用（与 [`with_current_token`] 同处注入）。
 pub async fn with_current_ip<R>(ip: String, f: impl Future<Output = R>) -> R {
     CURRENT_IP.scope(ip, f).await
 }
@@ -291,7 +207,6 @@ mod tests {
     /// 在 task_local 作用域外调用 → 返回 None（不 panic）。
     #[test]
     fn get_renewed_token_returns_none_outside_scope() {
-        // 在 task_local 作用域外调用，不应 panic
         let result = std::panic::catch_unwind(get_renewed_token);
         assert!(result.is_ok(), "作用域外调用不应 panic");
         assert_eq!(result.unwrap(), None, "作用域外应返回 None");
@@ -324,7 +239,6 @@ mod tests {
             panic!("inject poison");
         });
         let _ = handle.join();
-        // 将中毒的 Arc<Mutex> 注入 task_local 作用域
         let got = CURRENT_RENEWED_TOKEN
             .scope(poisoned.clone(), async { current_renewed_token() })
             .await;
@@ -387,13 +301,7 @@ mod tests {
         })
         .await;
 
-        // within 应恢复 token
-        let recovered = ctx
-            .within(async {
-                // 在 within 作用域内应能读到 token
-                current_token().ok()
-            })
-            .await;
+        let recovered = ctx.within(async { current_token().ok() }).await;
         assert_eq!(recovered.as_deref(), Some("captured-tok"));
     }
 

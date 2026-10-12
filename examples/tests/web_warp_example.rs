@@ -1,17 +1,10 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! web_warp_example 示例测试（web-warp feature）。
-//!
-//! 验证 GarrisonRouter + into_filter 守卫行为 + check_login 函数式 Filter：
-//! - 公开路径无需 token → 200
-//! - 受保护路径无 token → 401（GarrisonRejection）
-//! - 受保护路径有 token → 200
-//! - CheckRole 路径有匹配角色 → 200
-//! - CheckPermission 路径有匹配权限 → 200
-//! - 直接测试 `check_login` Filter 函数
-//!
-//! 使用 `#[serial_test::serial]` 串行化，因为 `setup()` 修改全局 `GarrisonManager` 单例。
+//! web_warp_example 示例测试（web-warp feature）：验证 GarrisonRouter + into_filter 守卫行为与
+//! check_login 函数式 Filter——公开路径无需 token → 200、受保护路径无 token → 401（GarrisonRejection）、
+//! 有 token → 200、CheckRole / CheckPermission 路径有匹配角色/权限 → 200；用 `#[serial_test::serial]`
+//! 串行化，因为 `setup()` 修改全局 `GarrisonManager` 单例。
 
 #![cfg(feature = "web-warp")]
 
@@ -21,8 +14,8 @@ use serial_test::serial;
 use warp::http::StatusCode;
 use warp::Filter;
 
-// tenant-isolation 启用时 check_permission 强制要求租户上下文（fail-closed）。
-// 真实场景中由 `tenant_context` filter 从 X-Tenant-Id 解析；此处测试固定 tenant_id=42。
+// tenant-isolation 启用时 check_permission 强制要求租户上下文（fail-closed）；真实场景中由
+// `tenant_context` filter 从 X-Tenant-Id 解析，此处测试固定 tenant_id=42。
 fn with_tenant<F, R>(f: F) -> impl std::future::Future<Output = R>
 where
     F: std::future::Future<Output = R>,

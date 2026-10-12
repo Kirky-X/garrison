@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! AlertListenerManager 实现块（从 mod.rs 迁移）。
+//! AlertListenerManager 实现。
 
 use super::*;
 
@@ -23,10 +23,7 @@ impl AlertListenerManager {
         self.listeners.read().len()
     }
 
-    /// 广播告警事件到所有已注册监听器。
-    ///
-    /// 异步遍历所有监听器的 `on_alert` 方法，单个监听器失败仅记录 `tracing::warn!`，
-    /// 不中断广播。
+    /// 广播告警事件；单个监听器失败仅记录 `tracing::warn!`，不中断广播。
     pub async fn broadcast_alert(&self, event: &SecurityAlertEvent) {
         let listeners = self.listeners.read().clone();
         for listener in &listeners {

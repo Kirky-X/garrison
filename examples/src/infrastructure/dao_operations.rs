@@ -3,15 +3,7 @@
 
 //! DAO 操作示例：演示 GarrisonDaoOxcache CRUD 与 GarrisonMigration 数据库迁移。
 //!
-//! 流程：
-//! 1. 创建 oxcache DAO 实例（内存缓存后端）
-//! 2. set + get 配对写入与读取
-//! 3. TTL 过期自动删除
-//! 4. update 更新值（保留 TTL）
-//! 5. expire 重置过期时间
-//! 6. delete 显式删除
-//! 7. zero TTL 永久驻留
-//! 8. GarrisonMigration 数据库迁移（feature = "db-sqlite"）
+//! 流程：创建 oxcache DAO → set/get、TTL 过期、update（保留 TTL）、expire、delete、zero TTL 永久驻留 → GarrisonMigration 迁移（db-sqlite）。
 //!
 //! 运行方式：
 //! ```sh
@@ -27,10 +19,7 @@ use garrison::dao::{init_dbnexus, GarrisonMigration};
 #[cfg(feature = "db-sqlite")]
 use std::path::PathBuf;
 
-/// 运行 DAO 操作示例。
-///
-/// 演示 GarrisonDaoOxcache 的 set / get / update / expire / delete / TTL 过期，
-/// 以及 db-sqlite feature 下的 GarrisonMigration 数据库迁移。
+/// 运行 DAO 操作示例：GarrisonDaoOxcache 的 set / get / update / expire / delete / TTL 过期，及 db-sqlite feature 下的 GarrisonMigration 迁移。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison DAO 操作示例 ===\n");
 

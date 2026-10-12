@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! sign_protocol 示例测试（protocol-sign feature）。
-//!
-//! 验证 run() 完整执行（内部已包含签名校验与 nonce replay 拒绝断言）。
+//! sign_protocol 示例测试（protocol-sign feature）：验证 run() 完整执行（内部已包含签名校验与 nonce replay 拒绝断言）。
 
 #![cfg(feature = "protocol-sign")]
 

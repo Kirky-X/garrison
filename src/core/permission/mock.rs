@@ -1,11 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 权限校验层测试 mock 实现。
-//!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `MockInterface`（基于 `HashMap` 模拟 `GarrisonInterface`），
-//! 供 `core::permission::tests` 权限/角色校验测试复用。
+//! 权限校验层测试 mock 实现（`#[cfg(test)]` 编译）：提供 `MockInterface`（`HashMap` 模拟
+//! `GarrisonInterface`），供 `core::permission::tests` 权限 / 角色校验测试复用。
 
 use crate::error::GarrisonResult;
 use crate::stp::GarrisonInterface;
@@ -19,7 +16,6 @@ pub struct MockInterface {
 }
 
 impl MockInterface {
-    /// 创建空的 mock 实例（无任何权限/角色）。
     pub fn new() -> Self {
         Self {
             permissions: HashMap::new(),

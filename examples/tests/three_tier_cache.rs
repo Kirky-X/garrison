@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! three_tier_cache 示例测试（three-tier-cache feature）。
-//!
-//! 验证 run() 完整执行（缓存配置/查询流程/构造与集成说明，纯本地逻辑）。
+//! three_tier_cache 示例测试（three-tier-cache feature）：验证 run() 完整执行（缓存配置/查询流程/构造与集成说明，纯本地逻辑）。
 
 #![cfg(feature = "three-tier-cache")]
 

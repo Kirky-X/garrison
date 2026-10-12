@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! GarrisonMetrics 实现块（从 mod.rs 迁移）。
+//! GarrisonMetrics 实现块（`new` / `register_to` / `record_*` / `gather`）。
 
 #[cfg(feature = "metrics-prometheus")]
 use super::GarrisonMetrics;
@@ -12,30 +12,28 @@ use std::time::Duration;
 impl GarrisonMetrics {
     /// 创建新的指标集合，注册到默认 registry（进程级单例，OnceLock 缓存）。
     ///
-    /// # Panics
-    ///
-    /// 本方法**不会 panic**：若默认 registry 已存在同名指标
-    /// （重复调用 `new` / 与 `register_to(default_registry)` 混用），以
-    /// `tracing::warn` 记录后返回一个未注册的本地实例（`record_*` / `gather()`
-    /// 均可用，仅默认 registry 不再新增采集——已注册实例不受影响）。
-    /// 生产环境建议使用 [`Self::register_to`] 注册到自定义 registry。
+    /// 本方法**不会 panic**：默认 registry 已存在同名指标（重复 `new` / 与
+    /// `register_to(default_registry)` 混用）时 warn 后返回未注册的本地实例（record_* /
+    /// gather() 仍可用，仅默认 registry 不再新增采集）；生产环境建议使用
+    /// [`Self::register_to`] 注册到自定义 registry。
     pub fn new() -> Self {
         use std::sync::OnceLock;
         static INSTANCE: OnceLock<GarrisonMetrics> = OnceLock::new();
         INSTANCE.get_or_init(Self::init_default).clone()
     }
 
-    /// `new()` 的单例初始化：注册默认 registry，冲突时 warn + 回退本地实例
-    /// （与 `account::metrics::AccountMetrics::new` / `credit::metrics::CreditMetrics::new`
-    /// 修复方式一致）。
+    /// `new()` 的单例初始化：注册默认 registry，冲突时 warn 并回退到未注册的本地实例。
     fn init_default() -> Self {
         match Self::register_to(prometheus::default_registry()) {
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!(
                     error = %e,
-                    "GarrisonMetrics 已注册到 prometheus 默认 registry（重复 new 或与 \
-                     register_to 混用），返回未注册的本地实例；已注册实例不受影响"
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-metrics-already-registered",
+                        &[("arg0", "GarrisonMetrics")]
+                    )
                 );
                 // build() 仅在指标名/帮助文本非法时失败——静态字面量下不可达
                 Self::build().expect("GarrisonMetrics: static metric opts are valid (unreachable)")
@@ -43,10 +41,7 @@ impl GarrisonMetrics {
         }
     }
 
-    /// 创建并注册到指定 registry（用于自定义 registry 场景）。
-    ///
-    /// # 错误
-    /// - 指标已注册：返回 `Err(prometheus::Error::AlreadyReg)`。
+    /// 创建并注册到指定 registry（用于自定义 registry 场景）；指标已注册返回 `AlreadyReg`。
     pub fn register_to(registry: &prometheus::Registry) -> Result<Self, prometheus::Error> {
         let metrics = Self::build()?;
         registry.register(Box::new(metrics.login_total.clone()))?;
@@ -96,27 +91,18 @@ impl GarrisonMetrics {
     }
 
     /// 记录一次登录尝试。
-    ///
-    /// # 参数
-    /// - `success`: `true` 成功，`false` 失败。
     pub fn record_login(&self, success: bool) {
         let label = if success { "success" } else { "failure" };
         self.login_total.with_label_values(&[label]).inc();
     }
 
     /// 观测一次 Token 验证的耗时。
-    ///
-    /// # 参数
-    /// - `duration`: 验证耗时。
     pub fn observe_token_validation(&self, duration: Duration) {
         self.token_validation_duration
             .observe(duration.as_secs_f64());
     }
 
     /// 记录一次权限查询。
-    ///
-    /// # 参数
-    /// - `allowed`: `true` 允许，`false` 拒绝。
     pub fn record_permission_query(&self, allowed: bool) {
         let label = if allowed { "allow" } else { "deny" };
         self.permission_query_total
@@ -125,9 +111,6 @@ impl GarrisonMetrics {
     }
 
     /// 记录一次角色查询。
-    ///
-    /// # 参数
-    /// - `allowed`: `true` 允许，`false` 拒绝。
     pub fn record_role_query(&self, allowed: bool) {
         let label = if allowed { "allow" } else { "deny" };
         self.role_query_total.with_label_values(&[label]).inc();

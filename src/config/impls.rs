@@ -1,10 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! `GarrisonConfig` 与 `TenantIsolationConfig` 的实现块。
-//!
-//! 本文件从 `mod.rs` 迁移而来（mod/crate 接口隔离）：
-//! `mod.rs` 仅保留 trait 定义、pub struct/enum、pub type alias、pub use、mod 声明。
+//! `GarrisonConfig` 与 `TenantIsolationConfig` 实现块（`mod.rs` 只留定义）。
 
 use super::*;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -37,12 +34,7 @@ impl Default for PasswordHasherConfig {
 impl PasswordHasherConfig {
     /// 按本配置段构造密码哈希器（`account-credential` feature）。
     ///
-    /// 返回 `Arc<dyn PasswordHasher>`，可直接传入 `with_password_hasher`。
-    /// 校验规则与 `validate_core` 一致（algorithm 白名单 + 参数区间），非法配置
-    /// 返回 `Err(GarrisonError::Config)`（fail-fast，与 `validate()` 同语义）。
-    ///
-    /// 仅影响**新哈希**参数；verify 路径由 `PasswordVerifier` 按哈希前缀自动识别，
-    /// 与本配置无关。
+    /// 校验规则与 `validate_core` 一致（algorithm 白名单 + 参数区间），非法配置返回 `Err(GarrisonError::Config)`（fail-fast）；仅影响**新哈希**参数，verify 由 `PasswordVerifier` 按哈希前缀自动识别。
     #[cfg(feature = "account-credential")]
     pub fn build_hasher(
         &self,
@@ -114,10 +106,7 @@ impl PasswordHasherConfig {
     }
 }
 
-// 手动 Debug 实现（非 derive）：
-// GarrisonConfig 含 `jwt_secret`（`Zeroizing<String>` 的 Debug 是透明的），
-// derive(Debug) 会把密钥明文打印进日志。此处借 derived Serialize 输出完整字段映射
-// （新增字段自动纳入，不会漏），并将 `jwt_secret` 覆写为 `"<redacted>"`。
+// 手动 Debug（非 derive）：derive 会明文打印 jwt_secret（Zeroizing 的 Debug 透明）；借 Serialize 输出完整字段映射（新字段自动纳入）并将密钥字段覆写为 "<redacted>"
 impl std::fmt::Debug for GarrisonConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut value = match serde_json::to_value(self) {
@@ -159,21 +148,10 @@ where
 }
 
 impl GarrisonConfig {
-    /// 创建符合 spec 的默认配置实例。
+    /// 创建默认配置实例（token_style="uuid"、timeout=30 天、throw_on_not_login=true）。
     ///
-    /// Scenario: 代码默认值生效：
-    /// - token_style = "uuid"
-    /// - timeout = 2592000（30 天）
-    /// - throw_on_not_login = true
-    ///
-    /// # 校验语义（安全默认）
-    ///
-    /// 本方法**不调用 `validate()`**：返回的是未经校验的原始默认值，
-    /// 允许调用方在运行前逐字段改写（如测试把 `timeout` 置为非法值后再断言
-    /// `validate()` 失败）。生产入口 `GarrisonConfig::load()` 与
-    /// `GarrisonManagerBuilder::build()` 均会调用 `validate()`；
-    /// 直接以 `default_config()` 驱动生产时，调用方必须在启动前自行调用
-    /// `config.validate()`（fail-fast，避免非法配置延迟到请求路径才暴露）。
+    /// 本方法**不调用 `validate()`**，返回未经校验的原始默认值，便于调用方逐字段改写后再断言 `validate()` 失败。
+    /// 生产入口（`GarrisonConfig::load()` / `GarrisonManagerBuilder::build()`）均会调用 `validate()`；直接以 `default_config()` 驱动生产时须在启动前自行调用 `config.validate()`（fail-fast）。
     pub fn default_config() -> Self {
         let config = Self {
             token_name: DEFAULT_TOKEN_NAME.to_string(),
@@ -282,30 +260,11 @@ impl GarrisonConfig {
         config.with_watcher()
     }
 
-    /// 使用 confers 加载配置，优先级：环境变量 > toml 文件 > 代码默认值。
-    ///
-    /// # 参数
-    /// - `toml_path`: toml 配置文件路径。`None` 时仅使用默认值 + 环境变量。
-    ///
-    /// # 返回
-    /// 合并后的 `GarrisonConfig`（已附加 watcher 并通过 `validate()`）。
-    ///
-    /// # 错误
-    /// - `GarrisonError::Config`：文件解析失败、环境变量非法或配置校验未通过。
+    /// 使用 confers 加载配置（环境变量 > toml 文件 > 代码默认值；`None` 时仅默认值 + 环境变量）；文件解析失败、环境变量非法或校验未通过返回 `Config`。
     ///
     /// # Security
     ///
-    /// `toml_path` 必须来自可信源（命令行参数 / 硬编码 / 受控环境变量），
-    /// 不可直接传入用户输入。本函数已实现以下 7 项防护：
-    /// 1. 空路径拒绝（`is_empty()` 检查）
-    /// 2. 路径遍历检测（拒绝 `..` / `Component::ParentDir`）
-    /// 3. `File::open + file.metadata()` 复用 fd，消除 TOCTOU 和符号链接攻击窗口
-    /// 4. 特殊文件拒绝（字符设备/FIFO/目录，通过 `is_file()`）
-    /// 5. 文件大小限制（10MB 上限，防 DoS）
-    /// 6. `take(MAX+1)` I/O 层强制限制读取字节数（防 TOCTOU）
-    /// 7. 错误消息仅含 `file_name()`，不泄露完整路径
-    ///
-    /// 但不对绝对路径做白名单限制，调用方需自行确保路径可信。
+    /// `toml_path` 必须来自可信源（命令行参数 / 硬编码 / 受控环境变量），不可直接传入用户输入；路径加固覆盖空路径拒绝、`..` 遍历检测、fd 复用消除 TOCTOU、特殊文件拒绝、10MB 上限 + `take(MAX+1)` 双保险、错误不泄露完整路径，但不对绝对路径做白名单，调用方需自行确保路径可信。
     pub fn load(toml_path: Option<&str>) -> GarrisonResult<Self> {
         Self::load_with_deprecations(
             toml_path,
@@ -323,14 +282,8 @@ impl GarrisonConfig {
         registry: &[deprecation::Deprecation],
         current_version: &'static str,
     ) -> GarrisonResult<Self> {
-        // 环境变量注入（自研库吸收）：confers EnvSource 替代手写
-        // collect_env_vars / infer_config_value。
-        // separator("__") 与原手写映射一致——仅双下划线折叠为嵌套路径，
-        // 单下划线保留，兼容 ConfigBuilder 的扁平 key 模型。
-        //
-        // excluded_keys：raw 字符串无法反序列化为目标字段的变量（CORS 逗号
-        // 列表 → Vec<String>、Redis 后端 → 枚举变体），由 build() 之后的显式
-        // 覆盖逻辑处理（优先级最高）。exclude_keys 为追加语义，可多次调用。
+        // 环境变量注入：separator("__") 仅双下划线折叠为嵌套路径（单下划线保留，兼容扁平 key 模型）；
+        // excluded_keys 留给 build 后的显式覆盖逻辑（CORS 逗号列表、Redis 枚举无法直接反序列化），优先级最高
         let env_source = {
             let s = confers::config::EnvSource::with_prefix(ENV_PREFIX).separator("__");
             #[cfg(feature = "rate-limit-redis")]
@@ -459,15 +412,7 @@ impl GarrisonConfig {
         }
 
         if let Some(path) = toml_path {
-            // 文件加载改用 confers FileSource（自研库吸收，删除手写安全加载与
-            // Windows 路径 workaround `TomlContentSource`——confers 0.6.0-rc.4 已
-            // 放行 Windows 盘符前缀，workaround 的前置条件消失）。安全防护由
-            // LoaderConfig 承载：
-            // - 路径遍历拒绝（`..`）+ canonicalize/symlink 解析
-            // - is_file 特殊文件拒绝（/dev/zero、FIFO → read_to_string DoS）
-            // - max_size 10MB + take(max+1) I/O 层双保险（TOCTOU 超大文件）
-            // - redact_error_paths：错误只含 file_name，不泄露服务端文件系统结构
-            // 空路径仍在此前置拒绝（避免下游 canonicalize 的含糊错误）。
+            // 文件加载经 confers FileSource（路径/symlink/特殊文件/大小防护见 confers_file_source）；空路径前置拒绝，避免下游 canonicalize 的含糊错误
             const MAX_CONFIG_FILE_SIZE: usize = 10 * 1024 * 1024; // 10MB
             if path.is_empty() {
                 return Err(GarrisonError::Config(loc!("config-path-empty", "")));
@@ -478,10 +423,8 @@ impl GarrisonConfig {
 
         builder = builder.source(Box::new(env_source));
 
-        // 弃用键迁移挂在合并树反序列化前（env/toml 解析后、validate 前），
-        // 保证迁移后的值进入反序列化并通过校验。闭包无法向上传播错误：
-        // 硬错误（≥1.0.0 / map_fn 失败 / 版本不可解析）收集到槽位，build 后
-        // 统一转为 GarrisonError::Config。
+        // 弃用键迁移挂在合并树反序列化前（env/toml 解析后、validate 前），保证迁移值进入反序列化并通过校验；
+        // 闭包无法向上传播错误：硬错误（≥1.0.0 / map_fn 失败 / 版本不可解析）收集到槽位，build 后统一转为 GarrisonError::Config
         let deprecation_failures: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
             std::sync::Arc::default();
         let failure_slot = std::sync::Arc::clone(&deprecation_failures);
@@ -508,10 +451,8 @@ impl GarrisonConfig {
             return Err(GarrisonError::Config(failures.join("; ")));
         }
 
-        // 显式环境变量覆盖必须在 `with_watcher()` 之前完成——watch channel
-        // 的初值取自 `with_watcher()` 时的配置快照；若先建 watcher 再覆盖字段，
-        // `watch()` 订阅者会先收到覆盖前的旧配置，`update()` 亦从旧值起步。
-        // 覆盖完成后再统一 `with_watcher()` + `validate()`。
+        // 显式环境变量覆盖必须在 with_watcher() 前完成：watch channel 初值取自 with_watcher() 时的快照，
+        // 先建 watcher 再覆盖会让订阅者先收到旧配置、update() 从旧值起步
         #[cfg_attr(
             not(any(
                 feature = "web-cors",
@@ -522,9 +463,7 @@ impl GarrisonConfig {
         )]
         let mut config = config;
 
-        // 环境变量覆盖。
-        // confers 通用收集无法处理枚举结构变体，故 CORS/CSRF/RateLimit 的环境变量
-        // 由显式逻辑覆盖，优先级最高。
+        // confers 通用收集无法处理枚举结构变体，CORS/CSRF/RateLimit 的环境变量由显式逻辑覆盖，优先级最高。
         #[cfg(feature = "web-cors")]
         apply_web_cors_env_override(&mut config);
         #[cfg(feature = "web-csrf")]
@@ -532,8 +471,7 @@ impl GarrisonConfig {
         #[cfg(feature = "rate-limit-redis")]
         apply_rate_limit_env_override(&mut config)?;
 
-        // watcher 在全部环境变量覆盖完成后附加，保证 watch channel 初值
-        // 即最终生效配置（订阅者首次 `borrow_and_update()` 拿到的不是覆盖前的旧值）。
+        // watcher 在覆盖完成后附加，保证 watch channel 初值即最终生效配置
         let config = config.with_watcher();
 
         config.validate()?;
@@ -558,21 +496,7 @@ impl GarrisonConfig {
         c
     }
 
-    /// 校验配置字段合法性。
-    ///
-    /// 配置校验分组：
-    ///
-    /// - `validate_core`：`token_style` / `timeout` / `cookie_same_site` / `password_hasher`
-    /// - `validate_jwt_secret`：JWT 密钥强度与算法白名单
-    /// - `validate_session_config`：`remember_me` / `auto_renewal` / `is_share`
-    /// - `validate_device_binding`：`device_binding_mode`
-    /// - feature-gated 校验：`anonymous-session` / `three-tier-cache` / `rate-limit-redis` 等
-    ///
-    /// # 返回
-    /// 校验通过返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - `GarrisonError::Config`：各字段校验失败时返回对应错误消息。
+    /// 校验配置字段合法性：依次执行 core（token_style/timeout/cookie_same_site/password_hasher）、mfa、jwt_secret、session_config、device_binding、refresh_grace、feature_gated、security_rules 分组校验；失败返回 `GarrisonError::Config`。
     pub fn validate(&self) -> GarrisonResult<()> {
         self.validate_core()?;
         self.validate_mfa()?;
@@ -583,20 +507,13 @@ impl GarrisonConfig {
         self.validate_feature_gated()?;
         // 两个 cfg 互斥定义（rate-limit-redis 启用/未启用）恰存其一，无条件调用
         self.warn_memory_rate_limit_backend();
-        // config-security-rules 安全规则集：JWT 强度/CORS 组合的显式汇总校验点
-        // （feature 关闭时零行为变化）
+        // 安全规则集汇总校验点（feature 关闭时零行为变化）
         #[cfg(feature = "config-security-rules")]
         self.validate_security_rules()?;
         Ok(())
     }
 
-    /// Memory 限流后端部署警示（T021）。
-    ///
-    /// Memory 后端为进程内计数：多实例部署时各实例独立计数，实际限额 = 配置值
-    /// × 实例数，限流/爆破防护形同虚设。此处仅 warn（单实例/本地开发是合法
-    /// 场景，不强制失败），提示多实例部署切换 Redis 后端。
-    /// 默认构建（未启用 rate-limit-redis）下恒为进程内计数：同样输出警示。
-    /// （复查修复 F3：原实现随字段一并 cfg 掉，默认部署多实例风险无告警）
+    /// Memory 限流后端部署警示：进程内计数使多实例实际限额 = 配置值 × 实例数，仅 warn 提示切换 Redis（单实例/本地开发合法，不强制失败）；未启用 rate-limit-redis 的默认构建同样输出。
     #[cfg(not(feature = "rate-limit-redis"))]
     fn warn_memory_rate_limit_backend(&self) {
         tracing::warn!(
@@ -618,11 +535,7 @@ impl GarrisonConfig {
         }
     }
 
-    /// Refresh token 宽限窗口参数校验（fail-closed）。
-    ///
-    /// - `refresh_grace_period_secs < 0`：负值无语义，拒绝误配
-    /// - `refresh_grace_max_uses = 0`：0 次兑现使窗口形同虚设且与「窗口内返回
-    ///   既有 token」语义矛盾，要求 ≥ 1（关闭窗口应置 `period_secs = 0`）
+    /// Refresh token 宽限窗口参数校验（fail-closed）：`refresh_grace_period_secs < 0` 无语义拒绝误配；`refresh_grace_max_uses < 1` 使窗口形同虚设且与窗口内返回既有 token 语义矛盾，要求 ≥ 1（关闭窗口应置 `period_secs = 0`）。
     fn validate_refresh_grace(&self) -> GarrisonResult<()> {
         if self.refresh_grace_period_secs < 0 {
             return Err(GarrisonError::Config(format!(
@@ -658,20 +571,15 @@ impl GarrisonConfig {
                 self.cookie_same_site
             )));
         }
-        // jwt_algorithm 白名单校验移入核心校验，不再仅在 token_style=jwt
-        // 时（经 validate_jwt_secret）检查——非 JWT 模式下非法算法（如 "RS256"）此前
-        // 会静默通过，待切换 token_style 后才暴露。
+        // jwt_algorithm 白名单统一校验（不限 token_style=jwt），防非法算法在非 JWT 模式静默通过
         if !JWT_ALGORITHMS.contains(&self.jwt_algorithm.as_str()) {
-            // 复用既有 locale 键 `config-jwt-algorithm-unsupported`（en/zh 均有翻译，
-            // 且与 validate_jwt_secret 的同场景错误保持一致），不新造未翻译键
+            // 复用既有 locale 键 config-jwt-algorithm-unsupported（en/zh 均有翻译），不新造未翻译键
             return Err(GarrisonError::Config(format!(
                 "config-jwt-algorithm-unsupported::{}",
                 self.jwt_algorithm
             )));
         }
-        // 非对称算法-密钥类型匹配校验（fail-closed）：
-        // - 禁止同时配置两类及以上私钥 PEM（防配置歧义）
-        // - 非对称算法必须配套同类型私钥 PEM；HS 系算法禁止配置任何非对称私钥
+        // 非对称算法-密钥类型匹配（fail-closed）：禁止同时配置多类私钥 PEM（防配置歧义）；非对称算法必须配套同类型私钥；HS 系禁止配置非对称私钥
         let rsa_set = self.jwt_rsa_private_key_pem.is_some();
         let ec_set = self.jwt_ec_private_key_pem.is_some();
         let ed_set = self.jwt_ed_private_key_pem.is_some();
@@ -681,7 +589,6 @@ impl GarrisonConfig {
                 "config-jwt-key-multiple-types::".to_string(),
             ));
         }
-        // 非对称算法要求配套同类私钥；HS 系无私钥要求
         let is_asymmetric = matches!(self.jwt_algorithm.as_str(), "RS256" | "ES256" | "EdDSA");
         let required_key_present = match self.jwt_algorithm.as_str() {
             "RS256" => rsa_set,
@@ -695,20 +602,15 @@ impl GarrisonConfig {
                 self.jwt_algorithm
             )));
         }
-        // HS 系算法不得配置任何非对称私钥（原 else-if 分支语义保持）
         if !is_asymmetric && configured_keys > 0 {
             return Err(GarrisonError::Config(format!(
                 "config-jwt-key-unexpected-for-hs::{}",
                 self.jwt_algorithm
             )));
         }
-        // 密码哈希参数校验（fail-closed）：默认即 OWASP 建议档，仅防配置弱化。
-        // Argon2id m_cost < 19456 须显式 allow_weak_argon2_params（内存受限部署的
-        // 风险接受位，放行时 warn 不静默）；bcrypt cost 限 [10, 15]（OWASP ≥10；
-        // >15 单次哈希秒级耗多为误配）。
+        // 密码哈希参数校验（fail-closed）：默认即 OWASP 建议档，仅防配置弱化（Argon2id m_cost 低于下限须显式风险接受，bcrypt cost ∈ [10, 15]）
         self.validate_password_hasher()?;
-        // JWKS 退役保留时长必须为正：0 等价于轮换瞬间退役旧钥（存量 token 验证
-        // 立即中断，违背 Passive 保留语义），属误配 fail-fast。
+        // JWKS 保留时长 0 = 轮换瞬间退役旧钥（存量 token 验证立即中断，违背 Passive 保留语义），误配 fail-fast
         if self.jwks_retention_secs == 0 {
             return Err(GarrisonError::Config(
                 "config-jwks-retention-must-positive::".to_string(),
@@ -738,27 +640,13 @@ impl GarrisonConfig {
         }
     }
 
-    /// JWT 密钥强度校验。
+    /// JWT 密钥强度校验（jwt/simple 两种消费密钥的风格均做弱密钥黑名单校验，见 [`Self::reject_weak_jwt_secret`]）。
     ///
-    /// - `token_style=jwt`：非对称算法（RS256/ES256/EdDSA）强度由 PEM 决定
-    ///   （JwtHandler 构造期校验），jwt_secret 可留空占位；HS 系按 RFC 7518
-    ///   最小长度硬校验
-    /// - `token_style=simple`：jwt_secret 直接作为 HMAC-SHA256 签名密钥
-    ///   （`SimpleTokenStyle`），可离线爆破，短于 32B 硬错误（配置层对齐
-    ///   运行时 `core-simple-secret-too-short` 的 fail-closed）
-    /// - `uuid` / `random_64` 等不透明风格：token 由 CSPRNG 生成，签名路径
-    ///   不消费 jwt_secret，无离线爆破面，不要求配置（维持宽松默认，不迫使
-    ///   非 JWT 部署配置无意义密钥）
-    ///
-    /// jwt/simple 两种消费密钥的风格均做弱密钥黑名单校验
-    /// （[`Self::reject_weak_jwt_secret`]）。
-    ///
-    /// `pub(super)`：`config-security-rules` 规则集模块复用同一规则
-    /// （见 `security_rules::validate_security_rules`）。
+    /// `jwt`：非对称算法（RS256/ES256/EdDSA）强度由 PEM 决定（jwt_secret 可留空占位），HS 系按 RFC 7518 最小长度硬校验；`simple`：jwt_secret 即 HMAC-SHA256 密钥可离线爆破，短于 32B 硬错误；`uuid`/`random_64` 等不透明风格不消费 jwt_secret，不要求配置。
+    /// `pub(super)`：`config-security-rules` 规则集模块复用同一规则。
     pub(super) fn validate_jwt_secret(&self) -> GarrisonResult<()> {
         if self.token_style == "jwt" {
-            // 非对称算法：密钥强度由 PEM 决定（JwtHandler 构造期校验），
-            // jwt_secret 可留空作占位，跳过对称密钥长度校验
+            // 非对称算法强度由 PEM 决定（JwtHandler 构造期校验），jwt_secret 可留空占位，跳过对称密钥长度校验
             if matches!(self.jwt_algorithm.as_str(), "RS256" | "ES256" | "EdDSA") {
                 return Ok(());
             }
@@ -769,7 +657,7 @@ impl GarrisonConfig {
             let secret_len = self.jwt_secret.as_str().len();
             if secret_len < 32 {
                 return Err(GarrisonError::Config(format!(
-                    "config-jwt-secret-too-short::simple (min 32 bytes)::{} — simple 风格 jwt_secret 即 HMAC-SHA256 签名密钥，可用 `openssl rand -base64 48` 生成",
+                    "config-jwt-secret-too-short::simple (min 32 bytes)::{}",
                     secret_len
                 )));
             }
@@ -778,8 +666,7 @@ impl GarrisonConfig {
         Ok(())
     }
 
-    /// 常见弱密钥黑名单（吸收 confers `security-rules` WEAK_SECRETS 16 条——
-    /// 原 feature 仅透传 confers 依赖，校验器从未接线，此处落地为自有规则）。
+    /// 常见弱密钥黑名单（吸收 confers `security-rules` WEAK_SECRETS 16 条，落地为自有规则）。
     const WEAK_JWT_SECRETS: &[&str] = &[
         "secret",
         "changeme",
@@ -799,12 +686,7 @@ impl GarrisonConfig {
         "1234567890",
     ];
 
-    /// jwt/simple 风格的弱密钥黑名单校验（fail-closed）。
-    ///
-    /// 匹配语义：剥除首尾填充字符（`_`/`-`/`.` 等占位符）后整串比对、忽略
-    /// 大小写——"changeme"+下划线填充至 32 字节这类可预测变体同样命中；
-    /// 刻意不做子串匹配，高熵密钥尾部含弱串（如 "correct horse battery
-    /// staple 123456"）不误伤。
+    /// 弱密钥黑名单校验（fail-closed）：剥除首尾填充字符（`_`/`-`/`.` 等）后整串比对、忽略大小写（"changeme"+填充变体同样命中）；不做子串匹配（高熵密钥尾部含弱串不误伤）。
     fn reject_weak_jwt_secret(&self) -> GarrisonResult<()> {
         const PADDING_CHARS: &[char] = &[' ', '\t', '_', '-', '.', '=', '*', '~'];
         let normalized = self
@@ -814,7 +696,7 @@ impl GarrisonConfig {
             .to_lowercase();
         if Self::WEAK_JWT_SECRETS.contains(&normalized.as_str()) {
             return Err(GarrisonError::Config(
-                "config-jwt-secret-weak::blacklist hit (padded/case variants included) — 可预测密钥可被字典爆破，用 `openssl rand -base64 48` 生成高熵密钥".to_string(),
+                "config-jwt-secret-weak::blacklist hit (padded/case variants included)".to_string(),
             ));
         }
         Ok(())
@@ -832,8 +714,7 @@ impl GarrisonConfig {
             "HS256" => 32,
             "HS384" => 48,
             "HS512" => 64,
-            // 非对称算法：密钥强度由 PEM 私钥位长/曲线阶决定（RS256 ≥2048 位
-            // 在 JwtHandler 构造期用 pkcs1 精确校验），不做 HMAC 对称长度校验
+            // 非对称算法强度由 PEM 私钥位长/曲线阶决定（RS256 ≥2048 位在 JwtHandler 构造期精确校验），不做 HMAC 长度校验
             "RS256" | "ES256" | "EdDSA" => 0,
             other => return Err(unsupported_jwt_algorithm(other)),
         };
@@ -876,8 +757,7 @@ impl GarrisonConfig {
                 "config-is-share-requires-concurrent::".to_string(),
             ));
         }
-        // session_hover_timeout 上界：10 年（315_360_000 秒），防止 saturating_mul 之外的
-        // 配置层误用超大值。合法值为 -1（禁用）或 (0, 上界]。
+        // session_hover_timeout 上界 10 年（315_360_000 秒，防配置层超大值误用）；合法值 -1（禁用）或 (0, 上界]
         const MAX_SESSION_HOVER_TIMEOUT_SECS: i64 = 315_360_000;
         if self.session_hover_timeout > MAX_SESSION_HOVER_TIMEOUT_SECS {
             return Err(GarrisonError::Config(format!(
@@ -915,8 +795,7 @@ impl GarrisonConfig {
         self.validate_email_verification()?;
         #[cfg(feature = "anomalous-detector-dual")]
         self.validate_anomalous_detector()?;
-        // CORS 配置合法性：credentials 与 wildcard origin 冲突校验
-        // （此前 CorsConfig::validate 仅测试调用，生产路径从不校验）
+        // CORS credentials 与 wildcard origin 冲突校验（生产路径）
         #[cfg(feature = "web-cors")]
         crate::web::cors::CorsConfig::validate(&self.cors_config)?;
         Ok(())
@@ -1120,41 +999,18 @@ impl GarrisonConfig {
         Ok(())
     }
 
-    /// 订阅配置变更。
-    ///
-    /// 返回 `watch::Receiver<GarrisonConfig>`，调用 `rx.borrow_and_update()` 获取最新配置。
-    /// 若实例未调用 `with_watcher()`，返回 `None`。
-    ///
-    /// # 返回
-    /// - `Some(receiver)`：成功订阅配置变更通道，后续可通过 receiver 接收 `update()` 广播的新配置。
-    /// - `None`：实例未通过 `with_watcher()` 启用 watcher。
+    /// 订阅配置变更：返回 `watch::Receiver<GarrisonConfig>`（`borrow_and_update()` 取最新配置）；实例未调用 `with_watcher()` 时返回 `None`。
     pub fn watch(&self) -> Option<watch::Receiver<GarrisonConfig>> {
         self.watcher.as_ref().map(|tx| tx.subscribe())
     }
 
-    /// 闭包式更新配置并广播变更。
+    /// 闭包式更新配置并广播变更；未启用 watcher 时 no-op 返回 `Ok(())`。
     ///
     /// ```ignore
     /// config.update(|c| c.timeout = 3600)?;
     /// ```
     ///
-    /// # 参数
-    /// - `f`: 接收 `&mut GarrisonConfig` 的闭包，在闭包内修改字段值。
-    ///
-    /// # 返回
-    /// 更新并广播成功返回 `Ok(())`；若实例未启用 watcher，亦返回 `Ok(())`（no-op）。
-    ///
-    /// # 错误
-    /// - `GarrisonError::Config`：闭包修改后的配置未通过 `validate()`（如非法 `token_style` 或非正 `timeout`）。
-    /// - `GarrisonError::Config`：watcher 已关闭（消息 "config watcher closed"）。
-    ///
-    /// # 行为
-    /// 1. 从 watcher 读取当前配置
-    /// 2. 应用闭包修改
-    /// 3. 校验新配置
-    /// 4. 广播新配置给所有订阅者
-    ///
-    /// 若实例未调用 `with_watcher()`，此方法为 no-op。
+    /// 流程：读取当前配置 → 应用闭包 → `validate()`（失败返回 `Config`）→ 广播给订阅者；watcher 已关闭时返回 `Config("config watcher closed")`。
     pub fn update<F: FnOnce(&mut GarrisonConfig)>(&self, f: F) -> GarrisonResult<()> {
         let Some(sender) = &self.watcher else {
             return Ok(());
@@ -1188,11 +1044,7 @@ fn apply_web_cors_env_override(config: &mut GarrisonConfig) {
         .collect();
 }
 
-/// `web-csrf` 显式环境变量覆盖：`GARRISON_CSRF_ENABLED`。
-///
-/// 仅接受 "true"/"false"（大小写不敏感），其余值返回配置错误（fail-closed）：
-/// 安全控制不允许歧义取值——"1"/"yes"/"on" 等 truthy 习惯值此前会静默禁用
-/// CSRF 防护，对齐 [`apply_rate_limit_env_override`] 的硬错误语义。
+/// `web-csrf` 显式环境变量覆盖：`GARRISON_CSRF_ENABLED` 仅接受 "true"/"false"（大小写不敏感），其余值返回配置错误（fail-closed：安全控制不允许歧义取值，"1"/"yes"/"on" 等 truthy 习惯值不得静默禁用 CSRF 防护）。
 #[cfg(feature = "web-csrf")]
 fn apply_web_csrf_env_override(config: &mut GarrisonConfig) -> GarrisonResult<()> {
     let Ok(val) = std::env::var("GARRISON_CSRF_ENABLED") else {
@@ -1212,8 +1064,7 @@ fn apply_web_csrf_env_override(config: &mut GarrisonConfig) -> GarrisonResult<()
     Ok(())
 }
 
-/// `rate-limit-redis` 显式环境变量覆盖：`GARRISON_RATE_LIMIT_BACKEND` +
-/// `GARRISON_REDIS_URL`。未知 backend 值返回配置错误（fail-closed）。
+/// `rate-limit-redis` 显式环境变量覆盖：`GARRISON_RATE_LIMIT_BACKEND` + `GARRISON_REDIS_URL`；未知 backend 值返回配置错误（fail-closed）。
 #[cfg(feature = "rate-limit-redis")]
 fn apply_rate_limit_env_override(config: &mut GarrisonConfig) -> GarrisonResult<()> {
     let Ok(val) = std::env::var("GARRISON_RATE_LIMIT_BACKEND") else {
@@ -1226,7 +1077,6 @@ fn apply_rate_limit_env_override(config: &mut GarrisonConfig) -> GarrisonResult<
             RateLimitBackend::Redis { redis_url }
         },
     };
-    // 错误消息保留用户原始输入大小写
     if !matches!(val.to_lowercase().as_str(), "memory" | "redis") {
         return Err(GarrisonError::Config(format!(
             "config-rate-limit-backend-unsupported::{}",
@@ -1241,19 +1091,10 @@ fn apply_rate_limit_env_override(config: &mut GarrisonConfig) -> GarrisonResult<
     Ok(())
 }
 
-/// 构造 confers FileSource（TOML 文件安全加载配置单点维护）：
-/// 路径遍历/symlink 防护、特殊文件拒绝、10MB 上限 + take 双保险、错误路径脱敏。
+/// 构造 confers FileSource（TOML 文件安全加载配置单点维护）：路径遍历/symlink 防护、特殊文件拒绝、10MB 上限 + take 双保险、错误路径脱敏。
 ///
-/// 显式钉 `Format::Toml`（confers 0.6.0-rc.6 起扩展名白名单门在路径校验之前
-/// 执行，无扩展名/未知扩展名的文件源会被先行拒绝；显式 format 覆盖是其文档化
-/// 豁免通道）。钉死格式后 garrison 自身的安全检查次序恢复 rc.5 原貌
-/// （路径遍历/目录/特殊文件校验先于格式解析）；代价是 `.yaml`/`.json`/`.ini`
-/// 等扩展名不再按各自格式解析（一律按 TOML，fail-closed）——garrison 文件
-/// 配置承诺格式即 TOML（见 CONFIGURATION.md），收窄符合承诺。
-///
-/// format 钉定内嵌在 `LoaderConfig` 链上而非 `FileSource::with_format`：
-/// 后者与 `with_loader_config` 存在整体替换的顺序耦合（先设会被抹掉），
-/// 内嵌可从根上消除该陷阱。
+/// 显式钉 `Format::Toml`：confers 0.6.0-rc.6 起扩展名白名单门先于路径校验执行，显式 format 是其文档化豁免通道——钉死后安全校验次序恢复（校验先于解析），代价是其他扩展名一律按 TOML 解析（fail-closed，文件配置承诺格式即 TOML）。
+/// 钉定内嵌在 `LoaderConfig` 链上而非 `FileSource::with_format`（后者与 `with_loader_config` 存在整体替换的顺序耦合，先设会被抹掉）。
 fn confers_file_source(path: &str, max_size: usize) -> confers::config::FileSource {
     confers::config::FileSource::new(path)
         .with_priority(10)
@@ -1266,14 +1107,7 @@ fn confers_file_source(path: &str, max_size: usize) -> confers::config::FileSour
         )
 }
 
-/// 将 confers `ConfigError` 映射为 i18n 化的 `GarrisonError::Config`。
-///
-/// 配置文件加载迁入 confers `FileSource` 后，文件 IO/大小/缺失错误从
-/// `ConfigBuilder::build()` 冒出；此映射保持原有 FTL 文案出口：
-/// - `FileNotFound` → `config-open-failed`
-/// - `SizeLimitExceeded` → `config-too-large`
-/// - 其余（解析失败、路径遍历拒绝等）→ 泛化 `config-confers-build-failed`
-///   （confers 已启用 `redact_error_paths`，错误不含服务端文件系统结构）
+/// 将 confers `ConfigError` 映射为 i18n 化的 `GarrisonError::Config`：`FileNotFound` → `config-open-failed`，`SizeLimitExceeded` → `config-too-large`，其余（解析失败、路径遍历拒绝等）→ 泛化 `config-confers-build-failed`（confers 已启用 `redact_error_paths`，错误不含服务端文件系统结构）。
 fn map_confers_build_error(e: confers::ConfigError) -> GarrisonError {
     use confers::ConfigError as CE;
     match e {

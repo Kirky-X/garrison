@@ -3,15 +3,13 @@
 
 //! 熔断器适配器。
 //!
-//! 包装 limiteron `CircuitBreaker`，为 Garrison `BackendRemote` 提供
-//! 远程调用熔断保护。当远程 Auth Server 连续失败达到阈值时，
-//! 熔断器打开并快速拒绝后续请求（不再发起 HTTP 调用），
-//! 超时后自动进入半开状态探测恢复。
+//! 包装 limiteron `CircuitBreaker`，为 Garrison `BackendRemote` 提供远程调用熔断保护。
+//! 当远程 Auth Server 连续失败达到阈值时，熔断器打开并快速拒绝后续请求（不再发起 HTTP
+//! 调用），超时后自动进入半开状态探测恢复。
 //!
 //! # 设计
 //!
-//! `CircuitBreakerWrapper` 提供 `execute` 方法，将 Garrison 的异步操作
-//! 包裹在熔断器逻辑中：
+//! `CircuitBreakerWrapper` 提供 `execute` 方法，将 Garrison 的异步操作包裹在熔断器逻辑中：
 //! - 操作成功 → `on_success`（重置/递增成功计数）
 //! - 操作失败 → `on_failure`（通过 `GarrisonErrorClassifier` 判断是否计入失败）
 //! - 熔断器打开 → 立即返回 `GarrisonError::Network`（消息带 `circuit-open::` 前缀）
@@ -25,8 +23,7 @@
 //! - 无前缀的 `Network` 错误才是真正的网络层失败，可按常规退避重试。
 
 use crate::error::{GarrisonError, GarrisonResult};
-// limiteron 0.3.0-rc.6：ErrorClassifier 更名为泛型 FailureClassifier<E>；
-// Garrison 分类器仍以 LimiteronError 为错误域（execute 前经 to_limiteron_error 映射）。
+// limiteron 0.3.0-rc.6：ErrorClassifier 更名为泛型 FailureClassifier<E>；Garrison 分类器仍以 LimiteronError 为错误域（execute 前经 to_limiteron_error 映射）。
 use limiteron::circuit::{
     CircuitBreaker, CircuitBreakerConfig, CircuitCallError, FailureClassifier,
 };
@@ -35,16 +32,8 @@ use std::sync::Arc;
 
 /// Garrison 错误分类器，决定哪些错误应计入熔断器的失败计数。
 ///
-/// # 分类规则
-///
-/// - `Network` 错误 → 失败（远程服务不可达，熔断器的核心场景）
-/// - `Dao` 错误 → 失败（底层存储异常）
-/// - `InvalidParam` / `NotFound` → 不计入（客户端错误，不应触发熔断）
-/// - 其他 → 计入（保守策略）
-///
-/// 判定体当前与 limiteron `DefaultFailureClassifier` 等价（rc.5 时代即如此），
-/// 刻意保留自定义实现：隔离上游默认语义漂移（分类口径变化不影响 garrison
-/// 的熔断行为契约），演进需显式过本文件 diff。
+/// 判定体当前与 limiteron `DefaultFailureClassifier` 等价（rc.5 时代即如此），刻意保留自定义
+/// 实现：隔离上游默认语义漂移（分类口径变化不影响 garrison 的熔断行为契约），演进需显式过本文件 diff。
 #[derive(Debug)]
 struct GarrisonErrorClassifier;
 
@@ -87,11 +76,11 @@ fn to_limiteron_error(e: GarrisonError) -> LimiteronError {
 
 /// 将 `LimiteronError` 映射回 `GarrisonError`。
 ///
-/// 仅消费 `CircuitCallError::Inner` 携带的原始错误（`to_limiteron_error` 的
-/// 产物：StorageError/ValidationError/Other）；`CircuitBreakerError`/
-/// `LimitError` 两臂在 rc.6 execute 流中不可达（打开拒绝已独立为
-/// `CircuitCallError::Open`，见 [`CircuitBreakerWrapper::execute`]），
-/// 保留以维持对 `LimiteronError` 的全量映射（防御上游语义变化）。
+/// 仅消费 `CircuitCallError::Inner` 携带的原始错误（`to_limiteron_error` 的产物：
+/// StorageError/ValidationError/Other）；`CircuitBreakerError` / `LimitError` 两臂在
+/// rc.6 execute 流中不可达（打开拒绝已独立为 `CircuitCallError::Open`，见
+/// [`CircuitBreakerWrapper::execute`]），保留以维持对 `LimiteronError` 的全量映射
+/// （防御上游语义变化）。
 fn to_garrison_error(e: LimiteronError) -> GarrisonError {
     match &e {
         // 熔断器打开 → 远程服务不可达语义
@@ -110,19 +99,13 @@ fn to_garrison_error(e: LimiteronError) -> GarrisonError {
 
 /// 熔断器包装器，为 Garrison 远程调用提供熔断保护。
 ///
-/// # 线程安全
-///
-/// 内部 `CircuitBreaker` 使用 `Arc<RwLock>` + `AtomicU64`，可安全跨线程共享。
-/// `CircuitBreakerWrapper` 可直接放入 `Arc` 在多个 `BackendRemote` 实例间共享。
+/// 内部 `CircuitBreaker` 使用 `Arc<RwLock>` + `AtomicU64`，可安全跨线程共享；`CircuitBreakerWrapper` 可直接放入 `Arc` 在多个 `BackendRemote` 实例间共享。
 pub struct CircuitBreakerWrapper {
     inner: CircuitBreaker,
 }
 
 impl CircuitBreakerWrapper {
     /// 创建熔断器包装器。
-    ///
-    /// # 参数
-    /// - `config`: 熔断器配置（failure_threshold、success_threshold、timeout 等）。
     pub fn new(config: CircuitBreakerConfig) -> Self {
         let config = config.error_classifier(Arc::new(GarrisonErrorClassifier));
         Self {
@@ -132,12 +115,9 @@ impl CircuitBreakerWrapper {
 
     /// 在熔断器保护下执行异步操作。
     ///
-    /// - 熔断器关闭/半开 → 执行 `operation`，根据结果更新状态
-    /// - 熔断器打开 → 立即返回 `GarrisonError::Network`（消息带 `circuit-open::`
-    ///   前缀，见模块文档「错误语义」；`GarrisonError` 无专用 `CircuitOpen` 变体）
-    ///
-    /// # 参数
-    /// - `operation`: 要保护的异步操作
+    /// 熔断器关闭/半开 → 执行 `operation`，根据结果更新状态；熔断器打开 → 立即返回
+    /// `GarrisonError::Network`（消息带 `circuit-open::` 前缀，见模块文档「错误语义」；
+    /// `GarrisonError` 无专用 `CircuitOpen` 变体）。
     pub async fn execute<F, Fut, T>(&self, operation: F) -> GarrisonResult<T>
     where
         F: FnOnce() -> Fut,

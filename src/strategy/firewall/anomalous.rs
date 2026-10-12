@@ -1,25 +1,12 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 异地登录检测策略。
+//! 异地登录检测策略：`AnomalousLoginStrategy` 实现 `GarrisonFirewallStrategy`，用 oxcache key
+//! `anom:user:{login_id}` 存储用户历史登录 IP 的地理坐标，新登录 geo 与历史 geo 的 haversine 距离
+//! 超阈值（`known_geo_threshold` km）则拦截（`FirewallBlocked`）。
 //!
-//! `AnomalousLoginStrategy` 实现 [`GarrisonFirewallStrategy`] trait，
-//! 用 oxcache key `anom:user:{login_id}` 存储用户历史登录 IP 的地理坐标，
-//! 新登录 geo 与历史 geo 的 haversine 距离超阈值则拦截。
-//!
-//! # 算法
-//!
-//! 1. `lookup(ip)` 获取当前 IP 坐标 → None 则放行（无法定位不拦截）
-//! 2. 读取 `anom:user:{login_id}` → 历史 geo
-//! 3. 无历史 → 写入当前 geo（`set_permanent`），返回 Ok
-//! 4. 有历史 → haversine(历史, 当前) > threshold → FirewallBlocked
-//! 5. 否则 → 更新历史 geo 为当前 geo，返回 Ok
-//!
-//! # 依赖
-//!
-//! - [`GeoLookup`](crate::strategy::firewall::geo::GeoLookup) trait 抽象 IP → geo 查询
-//! - 生产实现用 `GeoMatcherLookup`（limiteron GeoMatcher，`firewall-maxminddb` feature）
-//! - 测试用 `MockGeoLookup`（硬编码 IP → 坐标映射）
+//! 无法定位当前 IP 时放行（不因数据缺失拦截）；无历史 geo 则写入当前 geo 并放行，有历史且未超阈值则更新为当前 geo。
+//! 依赖 `GeoLookup` 抽象（生产实现 `GeoMatcherLookup`，测试用 `MockGeoLookup`）。
 
 use super::geo::{GeoCoord, GeoLookup};
 use crate::dao::GarrisonDao;
@@ -28,9 +15,7 @@ use crate::strategy::firewall::{FirewallContext, GarrisonFirewallStrategy};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-/// 异地登录检测配置。
-///
-/// `known_geo_threshold` 显式配置（确定性逻辑），不交给模型判断"是否异常"。
+/// 异地登录检测配置：`known_geo_threshold`（km）显式配置（确定性逻辑），不交给模型判断"是否异常"。
 #[derive(Debug, Clone)]
 pub struct AnomalousConfig {
     /// 已知地理位置阈值（km），新登录地与历史地距离超此值则拦截。
@@ -69,12 +54,7 @@ pub struct AnomalousLoginStrategy {
 }
 
 impl AnomalousLoginStrategy {
-    /// 创建异地登录检测策略实例。
-    ///
-    /// # 参数
-    /// - `config`: 配置（距离阈值 km）。
-    /// - `dao`: DAO（oxcache 抽象，用于历史 geo 存储）。
-    /// - `geo_lookup`: IP → geo 查询后端。
+    /// 创建异地登录检测策略实例（`config` 为距离阈值 km，`dao` 用于历史 geo 存储，`geo_lookup` 为 IP → geo 查询后端）。
     pub fn new(
         config: AnomalousConfig,
         dao: Arc<dyn GarrisonDao>,
@@ -87,9 +67,7 @@ impl AnomalousLoginStrategy {
         }
     }
 
-    /// 更新历史坐标到当前位置（统一 None/Some 分支的 `set_permanent` 调用）。
-    ///
-    /// 提取此 helper 消除 `check` 中 None 分支与 Some 分支 else 子句的重复 `set_permanent` 调用。
+    /// 更新历史坐标到当前位置（`set_permanent`），统一 `check` 中 None 分支与 Some 分支 else 子句的写调用。
     async fn update_historic_coord(
         &self,
         key: &str,
@@ -99,12 +77,7 @@ impl AnomalousLoginStrategy {
     }
 }
 
-/// 用 haversine 公式计算两个地理坐标间的球面距离（公里）。
-///
-/// 地球半径取 6371 km（平均半径）。公式：
-/// `a = sin²(Δlat/2) + cos(lat1)·cos(lat2)·sin²(Δlon/2)`
-/// `c = 2·asin(√a)`
-/// `d = R·c`
+/// 用 haversine 公式计算两个地理坐标间的球面距离（公里），地球半径取 6371 km（平均半径）。
 fn haversine_km(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     const R_KM: f64 = 6371.0;
     let lat1_rad = lat1.to_radians();
@@ -124,7 +97,7 @@ impl GarrisonFirewallStrategy for AnomalousLoginStrategy {
             GarrisonError::InvalidParam("firewall-anomalous-need-login-id::".to_string())
         })?;
 
-        // 1. 查询当前 IP 坐标 → 无法定位则放行（不因数据缺失拦截）
+        // 无法定位当前 IP 则放行（不因数据缺失拦截）
         let current_coord = match self.geo_lookup.lookup(&ctx.ip).await? {
             Some(c) => c,
             None => return Ok(()),
@@ -132,7 +105,7 @@ impl GarrisonFirewallStrategy for AnomalousLoginStrategy {
 
         let key = format!("anom:user:{}", login_id);
 
-        // 2. 读取历史 geo → 无历史则写入当前 geo 并放行
+        // 无历史 geo 则写入当前 geo 并放行
         match self.dao.get(&key).await? {
             None => {
                 self.update_historic_coord(&key, current_coord).await?;
@@ -322,10 +295,7 @@ mod tests {
         );
     }
 
-    /// 验证首次登录（无历史坐标）时 `check` 调用 `set_permanent` 精确写入当前坐标。
-    ///
-    /// 这是 保护网测试： 将提取 `update_historic_coord` helper 统一 None/Some
-    /// 分支的 `set_permanent` 调用，本测试确保重构后 None 分支仍精确写入当前坐标 csv。
+    /// 保护网测试：确保首次登录（无历史坐标）经 `update_historic_coord` 精确写入当前坐标 csv。
     #[tokio::test]
     async fn check_updates_historic_coord_on_first_login() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());

@@ -1,16 +1,14 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! listener 模块测试（从 mod.rs 迁移）。
+//! listener 模块测试。
 
 use super::mock::{reset_counters, EVENT_CALLS};
 use super::*;
 use serial_test::serial;
 use std::sync::atomic::Ordering;
 
-// ========================================================================
 // GarrisonEvent 枚举测试
-// ========================================================================
 
 /// Login 事件携带 login_id、token 与 device。
 #[test]
@@ -158,22 +156,12 @@ fn event_derives_debug_and_clone() {
     assert!(debug_str.contains("Login"));
 }
 
-// ========================================================================
 // 14 变体
-// ========================================================================
 
-/// 验证 `GarrisonEvent` 含全部 14 个变体。
-///
-/// spec 要求变体：`Login`/`Logout`/`Kickout`/`LoginFailure`/`RevokeToken`/
-/// `PermissionCheck`/`RoleCheck`/`TokenRefresh`/`TokenRotate`/`SocialLogin`/
-/// `TenantSwitch`/`DeviceBlock`/`DeviceUnblock`/`ConfigReload`。
-///
-/// 设计取舍：
-/// - 现有 `TokenRevoke`/`PermissionDenied`/`RoleDenied`/`ApiKeyRotate` 语义与 spec 重复
-/// 但名称不同 → 重命名对齐 spec
-/// - 现有独有变体（`TokenExpired`/`SessionTimeout`/`AccountLocked`/`FirewallBlock`/`TempCredentialConsumed`）保留
-/// （功能完整：暴力破解检测/会话超时/防火墙阻断等关键安全事件不能丢失）
-/// - 最终变体数 19（spec 14 + 现有独有 5）
+/// 验证 `GarrisonEvent` 含全部变体：spec 14 个变体 + 既有独有安全变体
+///（`TokenExpired`/`SessionTimeout`/`AccountLocked`/`FirewallBlock`/
+/// `TempCredentialConsumed`——暴力破解检测 / 会话超时 / 防火墙阻断等关键
+/// 安全事件不能丢失），共 19 个。
 #[test]
 #[serial]
 fn garrison_event_includes_14_variants() {
@@ -284,9 +272,7 @@ fn garrison_event_includes_14_variants() {
     assert!(matches!(e, GarrisonEvent::ConfigReload { .. }));
 }
 
-// ========================================================================
 // GarrisonListener trait 测试
-// ========================================================================
 
 /// 默认 on_event 返回 Ok(())。
 #[tokio::test(flavor = "multi_thread")]
@@ -305,9 +291,7 @@ async fn default_on_event_returns_ok() {
     assert!(listener.on_event(&event).await.is_ok());
 }
 
-// ========================================================================
 // GarrisonListenerManager 测试
-// ========================================================================
 
 /// manager 收集所有已注册监听器。
 #[test]
@@ -360,15 +344,9 @@ fn default_equals_new() {
     assert_eq!(m1.count(), m2.count());
 }
 
-/// 验证 new() 在 tracing subscriber 已初始化时正确求值 info! 宏参数。
-///
-/// 覆盖 GarrisonListenerManager::new() 中 `tracing::info!` 宏的参数求值路径
-/// （line 117: `std::any::type_name::<Arc<dyn GarrisonListener>>()`）。
-/// tracing::info! 在无 subscriber 时短路不求值参数，需确保 subscriber 已设置。
-///
-/// 使用 `with_default` 作用域 subscriber 而非 `try_init()` 全局注册：
-/// 全局 subscriber 会存活整个测试进程，导致其他模块（如 secure::masking
-/// 非法正则 fail-closed 路径）的 `tracing::error!` 输出噪音到 stderr。
+/// 覆盖 `GarrisonListenerManager::new()` 中 `tracing::info!` 宏的参数求值
+/// 路径：无 subscriber 时宏短路不求值参数，故用 `with_default` 作用域
+/// subscriber（避免全局 `try_init()` 让其他模块 error! 输出噪音到 stderr）。
 #[test]
 #[serial]
 fn manager_new_with_tracing_subscriber() {
@@ -447,9 +425,7 @@ async fn broadcast_kickout_event() {
     assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
 }
 
-// ========================================================================
 // 9 个新事件变体测试
-// ========================================================================
 
 /// LoginFailure 事件携带 login_id 与 reason，派生 Debug/Clone/PartialEq
 #[test]
@@ -642,9 +618,7 @@ fn temp_credential_consumed_event_carries_key_and_value() {
     assert!(debug_str.contains("TempCredentialConsumed"));
 }
 
-// ========================================================================
 // Credit 计量事件变体测试（credit-metering feature）
-// ========================================================================
 
 /// CreditConsumed 事件携带 tenant_id/resource/cost/credits/total_consumed，
 /// 派生 Debug/Clone/PartialEq。
@@ -722,9 +696,7 @@ fn test_credit_alert_event_construct_and_match() {
     assert!(debug_str.contains("CreditAlert"));
 }
 
-// ========================================================================
 // mask_token_for_event 单测（CWE-532）
-// ========================================================================
 
 /// 长 token：前 8 字符 + `***`，不含完整 token。
 #[test]
@@ -761,9 +733,7 @@ fn mask_token_for_event_multibyte_safe() {
     assert_ne!(masked, token);
 }
 
-// ============================================================================
 // 扫码登录事件（QrLogin*）广播分发
-// ============================================================================
 
 /// 验证 broadcast 对 QrLoginCreated 事件正确分发。
 #[tokio::test(flavor = "multi_thread")]
@@ -824,9 +794,7 @@ async fn broadcast_qrlogin_cancelled_event() {
     assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
 }
 
-// ============================================================================
 // 两档派发语义测试（Immediately / OnCommit 事件派发事务绑定）
-// ========================================================================
 
 mod dispatch_tiers {
     use super::*;
@@ -884,11 +852,10 @@ mod dispatch_tiers {
         }
     }
 
-    /// Scenario: OnCommit 档失败计数显性化 + 隔离不中断。
-    /// WHEN manager 注册恒 Err listener（后续还有 Recording listener），
-    /// broadcast_after_commit([e1, e2])
-    /// THEN DispatchOutcome { dispatched: 0, failed: 2 }，且 Recording listener
-    /// 仍收到两个事件（单个 listener Err 不中断同事件后续 listener 与后续事件）。
+    /// Scenario: OnCommit 档失败计数显性化 + 隔离不中断：注册恒 Err listener
+    /// 后 `broadcast_after_commit([e1, e2])` 应得
+    /// `DispatchOutcome { dispatched: 0, failed: 2 }`，且后续 Recording listener
+    /// 仍收到两个事件（listener Err 不中断同事件后续 listener 与后续事件）。
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn broadcast_after_commit_listener_failure_reported() {
@@ -915,10 +882,9 @@ mod dispatch_tiers {
         );
     }
 
-    /// Scenario: Immediately 档语义不变（dispatch_one 提取的回归检查）。
-    /// WHEN 直接 broadcast（无事务 guard）
-    /// THEN inventory listener（EVENT_CALLS）与运行时 Recording listener 均收到
-    /// 事件，与提取前行为一致。
+    /// Scenario: Immediately 档语义不变（dispatch_one 提取的回归检查）：直接
+    /// broadcast 后，inventory listener（EVENT_CALLS）与运行时 Recording
+    /// listener 均收到事件。
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn broadcast_immediately_path_unchanged() {
@@ -942,9 +908,7 @@ mod dispatch_tiers {
     }
 }
 
-// ========================================================================
 // GarrisonEvent 手动 Debug 脱敏（CWE-532 双保险）逐变体测试
-// ========================================================================
 //
 // `GarrisonEvent` 的 `Debug` 为手动实现：token 类字段经
 // `redact_secret_for_debug` 脱敏（>8 字节留前 8 字节 + `***`，其余整体
@@ -1206,9 +1170,7 @@ fn debug_qrlogin_cancelled_masks_qr_id() {
     assert!(s.contains("u-canceller"), "app_login_id 应保留: {s}");
 }
 
-// ========================================================================
 // redact_secret_for_debug 边界（Debug 脱敏共用原语）
-// ========================================================================
 
 /// Debug 脱敏原语与 mask_token_for_event 语义一致：9 字节截前 8 字节。
 #[test]
@@ -1245,9 +1207,7 @@ fn debug_short_token_fully_masked_without_prefix() {
     assert!(!s.contains("abc"), "短 token 不得出现任何明文: {s}");
 }
 
-// ========================================================================
 // listener panic 隔离（catch_unwind 降级）
-// ========================================================================
 
 mod panic_isolation {
     use super::*;
@@ -1301,11 +1261,8 @@ mod panic_isolation {
         }
     }
 
-    /// Scenario: OnCommit 档 listener panic。
-    /// WHEN manager 注册恒 panic listener（其后还有 Recording listener），
-    /// broadcast_after_commit([e])
-    /// THEN panic 被 catch_unwind 降级为 warn：该事件计入 failed，
-    /// 且后续 Recording listener 仍收到事件（panic 不中断派发链）。
+    /// Scenario: OnCommit 档 listener panic 被 catch_unwind 降级为 warn：该事件
+    /// 计入 failed，且后续 Recording listener 仍收到事件（panic 不中断派发链）。
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn broadcast_after_commit_listener_panic_reported_and_isolated() {

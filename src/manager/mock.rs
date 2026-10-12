@@ -1,11 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 管理器层测试 mock 实现。
-//!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `MockInterface`（基于 `HashMap` 模拟权限/角色数据回调），
-//! 供 `manager::tests` 初始化与鉴权测试复用。
+//! 管理器层测试 mock 实现（`cfg(test)`）：`MockInterface` 基于 `HashMap` 模拟权限/角色
+//! 数据回调，供 `manager::tests` 初始化与鉴权测试复用。
 
 use crate::error::GarrisonResult;
 use crate::stp::GarrisonInterface;

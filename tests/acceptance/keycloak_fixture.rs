@@ -3,18 +3,17 @@
 
 //! 真实 Keycloak 测试夹具（OAuth2/OIDC 协议验收共享）。
 //!
-//! 2026-09 起协议层验收禁止 wiremock 模拟授权服务器（用户裁定：仅单元测试
-//! 可 mock），一律打 docker/docker-compose.e2e.yml 拉起的真实 Keycloak 26。realm
-//! 数据由 `scripts/keycloak_provision.py` 幂等供给（realm=garrison，客户端
-//! `garrison-cli`，用户 `alice`）。
+//! 协议层验收禁止 wiremock 模拟授权服务器（仅单元测试可 mock），一律打 docker/
+//! docker-compose.e2e.yml 拉起的真实 Keycloak 26；realm 数据由
+//! `scripts/keycloak_provision.py` 幂等供给（realm=garrison，客户端 `garrison-cli`，
+//! 用户 `alice`）。
 //!
-//! 授权码获取：garrison 无浏览器，此处以 reqwest（禁自动重定向 + cookie
-//! jar）驱动 Keycloak 真实登录表单流——GET auth → 200 登录页 → 解析
-//! `<form action>` → POST 凭证 → 302 回调 Location 提取 `code` + `state`。
-//! 这是真实用户登录路径（同一套表单/cookie/action 语义），非协议模拟。
+//! 授权码获取：garrison 无浏览器，此处以 reqwest（禁自动重定向 + cookie jar）驱动
+//! Keycloak 真实登录表单流——GET auth → 200 登录页 → 解析 `<form action>` → POST
+//! 凭证 → 302 回调 Location 提取 `code` + `state`，与真实用户登录同一路径。
 //!
-//! 门控约定：Keycloak 不可达时 `eprintln!("[SKIP] …")` 并 `return`——与
-//! tests/acceptance/environment.rs 的外部服务门控语义一致。
+//! 门控约定：Keycloak 不可达时 `eprintln!("[SKIP] …")` 并 `return`，与其他外部服务
+//! 验收域门控语义一致。
 
 #![cfg(feature = "protocol-oauth2")]
 

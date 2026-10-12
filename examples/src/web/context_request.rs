@@ -26,10 +26,7 @@ use garrison::context::{
 };
 use garrison::error::GarrisonResult;
 
-/// 运行上下文与请求示例。
-///
-/// 演示 AxumContext 的 request 解析、token 提取（header / cookie）、
-/// 响应状态码 / header / Cookie 设置，以及 Bearer 大小写不敏感特性。
+/// 运行上下文与请求示例：AxumContext 请求解析、token 提取（header / cookie）、响应状态码 / header / Cookie 设置。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 上下文与请求示例 ===\n");
 

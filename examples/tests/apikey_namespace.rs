@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! apikey_namespace 示例测试（protocol-apikey + cache-memory feature）。
-//!
-//! 验证 run() 完整执行：多租户 namespace + 跨 namespace 隔离。
+//! apikey_namespace 示例测试（protocol-apikey + cache-memory feature）：验证 run() 完整执行（多租户 namespace + 跨 namespace 隔离）。
 
 #![cfg(all(feature = "protocol-apikey", feature = "cache-memory"))]
 

@@ -1,15 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! cache_redis 示例测试（cache-redis feature）。
-//!
-//! 验证 GarrisonDaoOxcache L1 DAO 操作 + Redis L2 配置：
-//! - `GarrisonDaoOxcache::new()` 创建 L1 DAO
-//! - get/set/update/expire/delete CRUD 操作
-//! - `RedisBackend::builder()` 配置构造
-//!
-//! 注：实际 Redis 连接测试标记为 `#[ignore]`（需要 Redis 实例运行）。
-//! L1 DAO 测试可独立运行（无需 Redis）。
+//! cache_redis 示例测试（cache-redis feature）：验证 GarrisonDaoOxcache L1 DAO 操作（`new()` +
+//! get/set/update/expire/delete CRUD）与 Redis L2 配置构造；实际 Redis 连接测试标 `#[ignore]`
+//!（需 Redis 实例运行），L1 DAO 测试无需 Redis 可独立运行。
 
 #![cfg(feature = "cache-redis")]
 
@@ -21,7 +15,6 @@ use serial_test::serial;
 #[serial]
 async fn test_create_l1_dao() {
     let dao = garrison_examples::infrastructure::cache_redis::create_l1_dao().await;
-    // 不 panic 即通过
     drop(dao);
 }
 
@@ -64,7 +57,6 @@ async fn test_dao_expire() {
     let dao = garrison_examples::infrastructure::cache_redis::create_l1_dao().await;
     dao.set("test:expire", "value", 3600).await.unwrap();
     dao.expire("test:expire", 60).await.unwrap();
-    // 验证键仍存在（expire 不删除值）
     let value = dao.get("test:expire").await.unwrap();
     assert_eq!(value.as_deref(), Some("value"));
     dao.delete("test:expire").await.unwrap();
@@ -95,7 +87,6 @@ async fn test_dao_delete() {
 #[serial]
 async fn test_dao_delete_missing_key_idempotent() {
     let dao = garrison_examples::infrastructure::cache_redis::create_l1_dao().await;
-    // delete 不存在的键应返回 Ok（幂等）
     let result = dao.delete("nonexistent:delete").await;
     assert!(result.is_ok(), "delete 不存在的键应幂等返回 Ok");
 }
@@ -123,7 +114,6 @@ async fn test_demo_dao_operations() {
 #[test]
 fn test_build_redis_l2_config() {
     let builder = garrison_examples::infrastructure::cache_redis::build_redis_l2_config();
-    // builder 构造成功即可（不调用 build 避免实际连接）
     drop(builder);
 }
 

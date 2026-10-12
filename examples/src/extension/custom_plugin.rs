@@ -107,10 +107,7 @@ inventory::submit! {
     GarrisonPluginEntry { factory: failing_plugin_factory }
 }
 
-/// 运行自定义插件示例。
-///
-/// 演示 GarrisonPlugin trait 实现、inventory 编译期注册、
-/// GarrisonPluginManager 收集与调用钩子、单个插件失败不中断主流程。
+/// 运行自定义插件示例：GarrisonPlugin trait、inventory 编译期注册、PluginManager 收集调用钩子、单插件失败不中断主流程。
 pub fn run() -> GarrisonResult<()> {
     println!("=== Garrison 自定义插件示例 ===\n");
 

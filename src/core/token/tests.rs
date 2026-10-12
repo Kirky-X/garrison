@@ -1,16 +1,12 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Token 模块单元测试（从 mod.rs 迁移，遵守 mod.rs 接口隔离约定）。
-//!
-//! 覆盖 `TokenClaims` 序列化、四种 Token 风格（uuid / random_64 / simple / jwt）
-//! 的 generate / verify / parse 行为，以及 `TokenStyleFactory` 的风格路由。
+//! Token 模块单元测试：覆盖 `TokenClaims` 序列化、四种风格（uuid / random_64 / simple / jwt）
+//! 的 generate / verify / parse 行为与 `TokenStyleFactory` 风格路由。
 
 use super::*;
 
-// ========================================================================
 // TokenClaims 测试
-// ========================================================================
 
 /// TokenClaims 可序列化/反序列化。
 #[test]
@@ -38,9 +34,7 @@ fn token_claims_device_optional() {
     assert!(claims.device.is_none());
 }
 
-// ========================================================================
 // UuidTokenStyle 测试
-// ========================================================================
 
 /// UuidTokenStyle 生成 UUID v4 格式 token。
 #[test]
@@ -73,9 +67,7 @@ fn uuid_style_parse_errors() {
     assert!(style.parse("some-token").is_err());
 }
 
-// ========================================================================
 // Random64TokenStyle 测试
-// ========================================================================
 
 /// Random64TokenStyle 生成 64 字符随机 hex。
 #[test]
@@ -102,12 +94,8 @@ fn random64_style_verify_returns_none() {
     assert_eq!(style.verify("abc123").unwrap(), None);
 }
 
-// ========================================================================
-// SimpleTokenStyle 测试（HMAC-SHA256 签名版）
-// ========================================================================
-//
-// 测试需 `secure-simple-token` feature（已包含在 `auth-server` 中）。
-// 未启用 feature 时，SimpleTokenStyle::generate 返回 Err（fail-closed）。
+// SimpleTokenStyle 测试（HMAC-SHA256 签名版；需 `secure-simple-token` feature，未启用时
+// generate 返回 Err（fail-closed））。
 
 /// 测试用 HMAC 密钥（生产环境应从配置注入）。
 #[cfg(feature = "secure-simple-token")]
@@ -119,8 +107,7 @@ fn make_simple_style() -> SimpleTokenStyle {
     SimpleTokenStyle::new(TEST_SECRET.to_string())
 }
 
-/// secret 短于 32 字节时 generate/verify 失败，
-/// 对齐 JWT 双向强校验；32 字节边界成功。
+/// secret 短于 32 字节时 generate/verify/parse 失败（对齐 JWT 双向强校验），32 字节边界成功。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn simple_style_secret_31_bytes_fails_32_bytes_succeeds() {
@@ -141,14 +128,13 @@ fn simple_style_secret_31_bytes_fails_32_bytes_succeeds() {
         style_ok.generate("u1", 3600).is_ok(),
         "32 字节 secret 应成功生成 token"
     );
-    // parse 同样应被 31 字节 secret 拒绝
     assert!(
         style_short.parse("u1\x1fx.y").is_err(),
         "31 字节 secret parse 应拒绝"
     );
 }
 
-/// SimpleTokenStyle 生成 `<login_id>\x1f<uuid>.<hmac>` 格式。
+/// 生成的 token 以 `<login_id>\x1f` 开头并含 UUID 段与 HMAC 段。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn simple_style_generates_login_id_prefix() {
@@ -159,13 +145,11 @@ fn simple_style_generates_login_id_prefix() {
         "token 应以 login_id + \\x1f 开头，实际: {}",
         token
     );
-    // token 应含 '.' 分隔 HMAC 部分
     assert!(
         token.contains('.'),
         "token 应含 '.' 分隔 HMAC，实际: {}",
         token
     );
-    // 验证 UUID 部分（\x1f 之后、'.' 之前）为合法 UUID
     let after_login = &token["1001\x1f".len()..];
     let uuid_part = after_login.split('.').next().expect("应有 '.' 分隔");
     assert!(
@@ -246,46 +230,33 @@ fn simple_style_parse_rejects_invalid_uuid_suffix() {
     assert!(result.is_err(), "UUID 部分无效的 token parse 应返回 Err");
 }
 
-/// verify 拒绝无 HMAC 的降级 token（防降级攻击）。
-///
-/// 攻击场景：攻击者构造无 HMAC 的 `<login_id>-<uuid>` token，
-/// 试图绕过 HMAC 校验。应返回 None。
+/// verify 拒绝无 HMAC 的降级 token（攻击者构造 `<login_id>-<uuid>` 绕过 HMAC 校验）。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn a11_simple_style_verify_rejects_unsigned_token_without_hmac() {
     let style = make_simple_style();
-    // 无 HMAC 后缀的降级 token
     let unsigned_token = "root-550e8400-e29b-41d4-a716-446655440000";
     let result = style.verify(unsigned_token).unwrap();
     assert_eq!(result, None, "A11: 无 HMAC 的 token 应被拒绝，防止降级攻击");
 }
 
-/// verify 拒绝 HMAC 不匹配的伪造 token。
-///
-/// 攻击场景：攻击者知道 token 格式但不知道 secret，
-/// 构造 `<login_id>\x1f<valid_uuid>.<fake_hmac>` 试图冒充。
-/// HMAC 校验失败应返回 None。
+/// verify 拒绝 HMAC 不匹配的伪造 token（知道格式但不知 secret，构造 fake_hmac 冒充）。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn a11_simple_style_verify_rejects_forged_hmac() {
     let style = make_simple_style();
-    // 用合法 UUID + 伪造 HMAC
     let forged = "admin\x1f550e8400-e29b-41d4-a716-446655440000.fake-hmac-value";
     let result = style.verify(forged).unwrap();
     assert_eq!(result, None, "A11: HMAC 不匹配的伪造 token 应被拒绝");
 }
 
-/// 不同 secret 生成的 token 互不兼容。
-///
-/// 攻击场景：攻击者用自己的 secret 生成合法格式 token，
-/// 试图在受害者的服务端通过验证。应返回 None。
+/// 不同 secret 生成的 token 互不兼容（攻击者用自己的 secret 签发无法通过验证）。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn a11_simple_style_verify_rejects_token_from_different_secret() {
     let style_a = SimpleTokenStyle::new("secret-A-0123456789abcdefghijklmnop".to_string());
     let style_b = SimpleTokenStyle::new("secret-B-0123456789abcdefghijklmnop".to_string());
     let token = style_a.generate("victim", 3600).unwrap();
-    // 用 secret-B 验证 → 应失败
     let result = style_b.verify(&token).unwrap();
     assert_eq!(result, None, "A11: 不同 secret 生成的 token 不应通过验证");
 }
@@ -315,17 +286,13 @@ fn a11_simple_style_empty_secret_verify_returns_none() {
     );
 }
 
-/// generate + verify + parse 往返一致性。
-///
-/// token 格式为 `<login_id>\x1f<uuid>.<exp>.<hmac>`，login_id 可含任意字符
-/// （除 `\x1f` 和 `.`，边界用例见下方专用测试）。
-/// Simple token 现携带 exp，`expire_at` 应为正数（不再是 0）。
+/// generate + verify + parse 往返一致：login_id 可含任意字符（除 `\x1f`，边界用例见下方），
+/// `expire_at` 为正数（Simple token 现携带 exp）。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn a11_simple_style_roundtrip() {
     let style = make_simple_style();
     let token = style.generate("roundtrip_user", 3600).unwrap();
-    // verify 返回正确 login_id
     assert_eq!(
         style.verify(&token).unwrap(),
         Some("roundtrip_user".to_string())
@@ -345,8 +312,7 @@ fn a11_simple_style_roundtrip() {
 #[test]
 fn a11_simple_style_parse_rejects_forged_hmac() {
     let style = make_simple_style();
-    // 伪造 token：合法 UUID + 合法形态的 exp 段 + 伪造 HMAC
-    //（格式含 exp 段，伪造样本同步更新以命中 HMAC 校验路径）
+    // 合法 UUID + 合法形态 exp 段 + 伪造 HMAC（命中 HMAC 校验路径）。
     let forged = "admin\x1f550e8400-e29b-41d4-a716-446655440000.9999999999.fake-hmac";
     let result = style.parse(forged);
     assert!(
@@ -356,23 +322,16 @@ fn a11_simple_style_parse_rejects_forged_hmac() {
     );
 }
 
-// ========================================================================
-// SimpleTokenStyle 支持含 `-` 的 login_id
-//（原格式用 `-` 分割 login_id 与 uuid，login_id 含 `-` 时 verify 返回 None）
-// ========================================================================
+// SimpleTokenStyle 支持含 `-` 的 login_id（原格式按 `-` 分割会误吞 UUID 段，已改 `\x1f` 分隔）。
 
-/// login_id 含 `-`（email 形式）时 generate + verify + parse 往返一致。
-///
-/// 复现：login_id = "user-1@example.com"，原实现 verify 用 `split_once('-')`
-/// 会得到 login_id="user"、uuid_part="1@example.com-<uuid>"，UUID 解析失败 → 返回 None。
-/// 修复后用 `\x1f` Unit Separator 分割，login_id 可含任意 `-`。
+/// email 形式 login_id（含 `-`）往返一致：原按 `split_once('-')` 分割会误吞 UUID 段，
+/// 改用 `\x1f` 分隔后可含任意 `-`。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn h2_simple_style_supports_dashed_login_id_email() {
     let style = make_simple_style();
     let login_id = "user-1@example.com";
     let token = style.generate(login_id, 3600).unwrap();
-    // token 应以 "user-1@example.com\x1f" 开头（login_id 完整保留）
     assert!(
         token.starts_with(&format!("{}\x1f", login_id)),
         "token 应以 login_id + \\x1f 开头，实际: {}",
@@ -392,11 +351,7 @@ fn h2_simple_style_supports_dashed_login_id_email() {
     );
 }
 
-/// login_id 为 UUID 格式（含 4 个 `-`）时 generate + verify + parse 往返一致。
-///
-/// 复现：login_id = "550e8400-e29b-41d4-a716-446655440000"（UUID 形式），
-/// 原实现 verify 用 `split_once('-')` 会得到 login_id="550e8400"、
-/// uuid_part="e29b-41d4-a716-446655440000-<uuid>"，UUID 解析失败 → 返回 None。
+/// login_id 为 UUID 形式（含 4 个 `-`）往返一致（原 `-` 分割会截断 login_id）。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn h2_simple_style_supports_uuid_login_id() {
@@ -445,15 +400,10 @@ fn a11_simple_style_without_feature_generate_errors() {
     );
 }
 
-// ========================================================================
 // 边界用例：\x1f 分隔符、空 login_id、过期语义
-// ========================================================================
 
-/// login_id 含 `\x1f`（与分隔符同字节）必须被拒绝，不得产生可解析歧义 token。
-///
-/// 攻击场景：login_id = "user\x1fadmin" 生成的 token 会被 verify 按**第一个** `\x1f`
-/// 切分出错误身份（"user" + 非法 uuid 段）。修复：generate 直接拒绝含 `\x1f` 的
-/// login_id（fail-closed）；即便手工拼出内嵌 `\x1f` 的 token，verify 也返回 None。
+/// login_id 含 `\x1f`（与分隔符同字节）必须拒绝：否则 verify 会切出错误身份；generate
+/// fail-closed 拒绝，手工拼接的内嵌 `\x1f` token 也 verify 失败。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn boundary_login_id_containing_unit_separator_rejected() {
@@ -521,9 +471,7 @@ fn boundary_simple_token_rejects_non_positive_timeout() {
     );
 }
 
-// ========================================================================
 // TokenStyleFactory 测试
-// ========================================================================
 
 /// Factory 返回 UuidTokenStyle。
 #[test]
@@ -563,7 +511,7 @@ fn factory_creates_simple_style() {
     );
 }
 
-/// Factory 未知风格返回 Config 错误（spec Scenario）。
+/// Factory 未知风格返回 Config 错误。
 #[test]
 fn factory_rejects_unknown_style() {
     let result = TokenStyleFactory::new("unknown", "secret");
@@ -590,9 +538,7 @@ fn factory_creates_jwt_style() {
     assert!(token.is_ok());
 }
 
-// ========================================================================
 // 覆盖率补充测试（Random64TokenStyle::parse / SimpleTokenStyle::verify 边界）
-// ========================================================================
 
 /// Random64TokenStyle::parse 返回 Err（无 payload）。
 #[test]
@@ -628,9 +574,7 @@ fn simple_style_verify_non_numeric_returns_ok() {
     assert_eq!(result.unwrap(), Some("abc".to_string()));
 }
 
-// ========================================================================
 // JwtTokenStyle 覆盖率补充测试（feature-gated）
-// ========================================================================
 
 /// JwtTokenStyle generate + verify 往返测试。
 #[cfg(feature = "protocol-jwt")]

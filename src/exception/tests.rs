@@ -5,7 +5,6 @@
 
 use super::*;
 
-/// 验证 `NotLoginException::new` 创建实例并设置默认 login_type 为空字符串。
 #[test]
 fn new_creates_exception_with_empty_login_type() {
     let ex = NotLoginException::new("请先登录");
@@ -13,7 +12,6 @@ fn new_creates_exception_with_empty_login_type() {
     assert_eq!(ex.login_type, "");
 }
 
-/// 验证 `NotLoginException::new` 接受 String 与 &str 等可转换类型。
 #[test]
 fn new_accepts_string() {
     let msg = String::from("会话已过期");
@@ -21,7 +19,6 @@ fn new_accepts_string() {
     assert_eq!(ex.message, "会话已过期");
 }
 
-/// 验证 `with_login_type` 设置 login_type 并返回 self（builder 模式）。
 #[test]
 fn with_login_type_sets_login_type() {
     let ex = NotLoginException::new("未登录").with_login_type("account");
@@ -29,7 +26,6 @@ fn with_login_type_sets_login_type() {
     assert_eq!(ex.message, "未登录");
 }
 
-/// 验证 `with_login_type` 接受 String 类型。
 #[test]
 fn with_login_type_accepts_string() {
     let lt = String::from("wechat");
@@ -37,16 +33,13 @@ fn with_login_type_accepts_string() {
     assert_eq!(ex.login_type, "wechat");
 }
 
-/// 验证 `Display` 实现输出 "Not logged in: {message}" 格式。
 #[test]
 fn display_formats_correctly() {
     let ex = NotLoginException::new("token 已过期");
     assert_eq!(format!("{}", ex), "Not logged in: token 已过期");
 }
 
-/// `with_login_type` 后 Display 输出必须跟随 login_type 变化。
-///
-/// 若 Display 硬编码"未登录"前缀而忽略 login_type 字段，此测试将失败。
+/// login_type 变化必须反映在 Display 输出（防硬编码前缀忽略字段）。
 #[test]
 fn display_includes_custom_login_type() {
     let ex = NotLoginException::new("请先登录").with_login_type("wechat");
@@ -68,7 +61,6 @@ fn display_includes_custom_login_type() {
     );
 }
 
-/// 验证 `NotLoginException` 实现 `std::error::Error` trait。
 #[test]
 fn implements_std_error() {
     fn assert_error<T: std::error::Error>(_: &T) {}
@@ -76,7 +68,6 @@ fn implements_std_error() {
     assert_error(&ex);
 }
 
-/// 验证 builder 链式调用：new + with_login_type。
 #[test]
 fn builder_chain_works() {
     let ex = NotLoginException::new("未登录").with_login_type("oauth2");
@@ -84,11 +75,8 @@ fn builder_chain_works() {
     assert_eq!(ex.login_type, "oauth2");
 }
 
-// ========================================================================
 // GarrisonException 测试
-// ========================================================================
 
-/// 验证 `GarrisonException::new` 创建实例并设置可选字段为默认值。
 #[test]
 fn garrison_exception_new_creates_with_defaults() {
     let ex = GarrisonException::new(-1, "请先登录");
@@ -100,7 +88,6 @@ fn garrison_exception_new_creates_with_defaults() {
     assert!(ex.extras.is_empty());
 }
 
-/// 验证 `GarrisonException::new` 接受 String 类型消息。
 #[test]
 fn garrison_exception_new_accepts_string() {
     let msg = String::from("会话已过期");
@@ -108,7 +95,6 @@ fn garrison_exception_new_accepts_string() {
     assert_eq!(ex.message, "会话已过期");
 }
 
-/// 验证 `GarrisonException` 派生 `Clone`。
 #[test]
 fn garrison_exception_clone_preserves_fields() {
     let mut ex = GarrisonException::new(-1, "请先登录");
@@ -121,7 +107,6 @@ fn garrison_exception_clone_preserves_fields() {
     assert_eq!(cloned.login_id, Some("1001".to_string()));
 }
 
-/// 验证 `GarrisonException` 派生 `Debug`。
 #[test]
 fn garrison_exception_debug_format_works() {
     let ex = GarrisonException::new(-1, "请先登录");
@@ -131,7 +116,6 @@ fn garrison_exception_debug_format_works() {
     assert!(debug.contains("请先登录"));
 }
 
-/// 验证 `Debug` 对 `login_id`（String 化后可能含 PII）与 `token_value` 同样脱敏。
 #[test]
 fn garrison_exception_debug_masks_login_id() {
     let ex = GarrisonException::new(-1, "请先登录")
@@ -152,7 +136,6 @@ fn garrison_exception_debug_masks_login_id() {
     );
 }
 
-/// 短 token / 短 login_id 不得全量明文输出（统一整体掩码）。
 #[test]
 fn garrison_exception_debug_masks_short_values() {
     let ex = GarrisonException::new(-1, "请先登录")
@@ -170,8 +153,6 @@ fn garrison_exception_debug_masks_short_values() {
     assert!(debug.contains("***"), "掩码占位符应出现，实际: {debug}");
 }
 
-/// Debug 与响应体中 extras 的敏感 key 值必须掩码、
-/// 超长值截断（web-axum 未启用时仅验证 Debug 路径）。
 #[test]
 fn garrison_exception_debug_sanitizes_extras() {
     let ex = GarrisonException::new(-1, "请先登录")
@@ -188,14 +169,12 @@ fn garrison_exception_debug_sanitizes_extras() {
     );
 }
 
-/// 验证 `GarrisonException` 的 `Display` 输出格式。
 #[test]
 fn garrison_exception_display_format() {
     let ex = GarrisonException::new(-1, "请先登录");
     assert_eq!(format!("{}", ex), "Business exception[-1]: 请先登录");
 }
 
-/// 验证 `GarrisonException` 通过 `From` 转换为 `GarrisonError::Exception`。
 #[test]
 fn garrison_exception_into_garrison_error() {
     let ex = GarrisonException::new(-1, "请先登录");
@@ -207,12 +186,10 @@ fn garrison_exception_into_garrison_error() {
     }
 }
 
-/// 验证既有 `GarrisonError` 变体不受 `Exception` 新增影响。
 #[test]
 fn existing_garrison_error_variants_unaffected() {
     let err = GarrisonError::NotLogin("请先登录".to_string());
     assert_eq!(err.to_string(), "Not logged in: 请先登录");
-    // 确保新增 Exception 变体不破坏既有 match
     let errors: [GarrisonError; 2] = [
         GarrisonError::NotLogin("a".into()),
         GarrisonError::Exception(Box::new(GarrisonException::new(-1, "b"))),
@@ -220,11 +197,8 @@ fn existing_garrison_error_variants_unaffected() {
     assert_eq!(errors.len(), 2);
 }
 
-// ========================================================================
 // Builder 链式调用测试
-// ========================================================================
 
-/// 验证 Builder 链式构造带上下文的异常。
 #[test]
 fn builder_chain_with_all_setters() {
     let ex = GarrisonException::new(-1, "请先登录")
@@ -241,8 +215,6 @@ fn builder_chain_with_all_setters() {
     assert_eq!(ex.extras.get("device"), Some(&"web".to_string()));
 }
 
-/// 验证 `login_id` 为 `Option<String>`（与全局 login_id 的 String 迁移一致，
-/// `with_login_id` 同时接受 `&str` 与 `String`）。
 #[test]
 fn login_id_is_string_typed() {
     let ex = GarrisonException::new(-1, "msg")
@@ -256,7 +228,6 @@ fn login_id_is_string_typed() {
     assert_eq!(ex2.login_id, Some("2002".to_string()));
 }
 
-/// 验证 Builder 接受 String 类型参数。
 #[test]
 fn builder_accepts_string_args() {
     let token = String::from("T2");
@@ -270,11 +241,8 @@ fn builder_accepts_string_args() {
     assert_eq!(ex.extras.get("ip"), Some(&"127.0.0.1".to_string()));
 }
 
-// ========================================================================
 // From<GarrisonError> for GarrisonException 测试
-// ========================================================================
 
-/// 验证 `From<GarrisonError>` 对 Exception 变体直接返回原始 GarrisonException。
 #[test]
 fn from_garrison_error_exception_variant() {
     let original = GarrisonException::new(-1, "请先登录")
@@ -289,7 +257,6 @@ fn from_garrison_error_exception_variant() {
     assert_eq!(converted.login_id, Some("1001".to_string()));
 }
 
-/// 验证 `From<GarrisonError>` 对非 Exception 变体根据语义映射 code。
 #[test]
 fn from_garrison_error_other_variants_map_code() {
     let ex: GarrisonException = GarrisonError::NotLogin("请先登录".to_string()).into();
@@ -307,11 +274,8 @@ fn from_garrison_error_other_variants_map_code() {
     assert_eq!(ex.code, 500);
 }
 
-// ========================================================================
 // IntoResponse for GarrisonException 测试
-// ========================================================================
 
-/// 验证 code=-1 的 GarrisonException 映射为 401 Unauthorized（独立 IntoResponse 实现）。
 #[cfg(feature = "web-axum")]
 #[test]
 fn garrison_exception_into_response_401() {
@@ -322,7 +286,6 @@ fn garrison_exception_into_response_401() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
-/// 验证 code=-2 的 GarrisonException 映射为 403 Forbidden（独立 IntoResponse 实现）。
 #[cfg(feature = "web-axum")]
 #[test]
 fn garrison_exception_into_response_403() {
@@ -333,7 +296,6 @@ fn garrison_exception_into_response_403() {
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
-/// 验证其他 code 的 GarrisonException 映射为 500 Internal Server Error（独立 IntoResponse 实现）。
 #[cfg(feature = "web-axum")]
 #[test]
 fn garrison_exception_into_response_500() {
@@ -344,8 +306,6 @@ fn garrison_exception_into_response_500() {
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
-/// into_response 响应体中 extras 的敏感 key 值必须掩码，
-/// 不得原样序列化给客户端。
 #[cfg(feature = "web-axum")]
 #[tokio::test]
 async fn garrison_exception_into_response_masks_extras() {

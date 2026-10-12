@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! auth_server 示例测试。
-//!
-//! 验证服务器配置完成（不调用 listen，仅验证 setup 不报错）。
+//! auth_server 示例测试：验证服务器配置完成（不调用 listen，仅验证 setup 不报错）。
 
 #![cfg(feature = "auth-server")]
 

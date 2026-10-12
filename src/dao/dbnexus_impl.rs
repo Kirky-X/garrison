@@ -1,37 +1,21 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! dbnexus 集成模块。
+//! dbnexus 集成模块（对应二级持久化层）：经 dbnexus 提供 SQLite/PostgreSQL/MySQL 连接池、Session、迁移能力。
 //!
-//! 对应 二级持久化层（DB），
-//! 通过 dbnexus 提供 SQLite/PostgreSQL/MySQL 连接池、Session、迁移能力。
-//!
-//! Garrison 不定义 `GarrisonDb` trait，直接复用 `dbnexus::DbPool`：
-//! - dbnexus 本身就是 DB 适配库，通过特性切换后端
-//! - `init_dbnexus(url)` 返回 `dbnexus::DbPool`，业务代码直接调用其方法
-//! - `GarrisonMigration` 包装 `DbPool::run_migrations`，按 spec 分层管理迁移脚本
+//! 不定义自有 DB trait，直接复用 `dbnexus::DbPool`：`init_dbnexus(url)` 返回 `DbPool`；
+//! `GarrisonMigration` 包装 `DbPool::run_migrations`，按 spec 分层管理迁移脚本。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use dbnexus::DbPool;
 use std::path::{Path, PathBuf};
 
-/// 编译时嵌入的 postgres 迁移文件目录。
-///
-/// 用 `include_dir::include_dir!` 宏在编译期将 `migrations/postgres/` 目录树
-/// 完整嵌入二进制产物。启用 `embedded-migrations` feature 时可用，
-/// 配合 [`GarrisonMigration::run_embedded_postgres`] 供 crates.io 消费者
-/// 在运行时无需访问 garrison 源码目录即可执行 postgres schema 迁移。
+/// 编译时嵌入的 postgres 迁移目录（`include_dir!` 嵌入二进制，`embedded-migrations` feature 可用）。
+/// 配合 [`GarrisonMigration::run_embedded_postgres`]，crates.io 消费者无需访问 garrison 源码目录即可执行 postgres schema 迁移。
 #[cfg(feature = "embedded-migrations")]
 static POSTGRES_MIGRATIONS: include_dir::Dir<'_> = include_dir::include_dir!("migrations/postgres");
 
-/// 初始化 dbnexus 连接池（最常用入口）。
-///
-/// 对应 封装 dbnexus 初始化逻辑。
-///
-/// # 参数
-/// - `url`: 数据库连接 URL。
-/// - SQLite 内存：`sqlite::memory:`
-/// - SQLite 文件：`sqlite:///path/to/db.sqlite`
+/// 初始化 dbnexus 连接池（最常用入口）。`url` 示例：`sqlite::memory:`（内存）/ `sqlite:///path/to/db.sqlite`（文件）。
 ///
 /// # 示例
 /// ```ignore
@@ -43,12 +27,8 @@ pub async fn init_dbnexus(url: &str) -> GarrisonResult<DbPool> {
         .await
         .map_err(|e| GarrisonError::Dao(format!("dao-dbnexus-init::{}", e)))
 }
-/// 初始化 dbnexus 连接池（显式连接池参数）。
-///
-/// 走 dbnexus `DbPoolBuilder` 通路，透传 `PoolConfig`（最大/最小连接数、
-/// 空闲超时、获取超时），替代 `DbPool::new` 的库默认值（max=20/min=5）。
-/// 需要 failover/副本等完整配置的部署可直接使用 dbnexus `DbPool::builder`
-/// + `FailoverConfig`；本函数覆盖最常见的池参数调优场景。
+/// 初始化 dbnexus 连接池（显式 `PoolConfig`：最大/最小连接数、空闲超时、获取超时），
+/// 替代 `DbPool::new` 的库默认值（max=20/min=5）；需 failover/副本等完整配置可直接用 dbnexus `DbPool::builder` + `FailoverConfig`。
 ///
 /// # 示例
 /// ```ignore
@@ -76,24 +56,15 @@ pub async fn init_dbnexus_with_pool_config(
         .map_err(|e| GarrisonError::Dao(format!("dao-dbnexus-init-pool::{}", e)))
 }
 
-/// Garrison schema 迁移管理器。
+/// Garrison schema 迁移管理器：包装 `DbPool::run_migrations`，按 extensible-schema spec 分层
+///（`migrate_core` = `core/*.sql`（8 张核心表 + app_user_ext）、`migrate_extensions` = `extensions/*.sql`、
+/// `migrate_tenant` = `tenant/*.sql`；`run_all()` 按 core→extensions→tenant 顺序执行）。
 ///
-/// 包装 `dbnexus::DbPool::run_migrations`，按 extensible-schema spec 分层管理：
-/// - `migrate_core`: 执行 `migrations/sqlite/core/*.sql`（8 张核心表 + app_user_ext）
-/// - `migrate_extensions`: 执行 `migrations/sqlite/extensions/*.sql`（用户自定义扩展表）
-/// - `migrate_tenant`: 执行 `migrations/sqlite/tenant/*.sql`（多租户特定表）
-///
-/// 调用 `run_all()` 一次性按 core→extensions→tenant 顺序执行。
-///
-/// 迁移文件命名约定：`{version}_{description}.sql`（如 `001_init.sql`）
-/// 内容格式：用 `-- UP:` 与 `-- DOWN:` 分隔（参见 dbnexus MigrationExecutor::extract_up_sql）
+/// 迁移文件命名 `{version}_{description}.sql`（如 `001_init.sql`），内容用 `-- UP:` / `-- DOWN:` 分隔。
 ///
 /// # 版本号全局唯一约束
-/// dbnexus 的 `dbnexus_migrations` 历史表按 version 全局去重（不区分目录）。
-/// 因此跨目录的版本号必须互不冲突，建议约定：
-/// - `core/`: 1–999（核心表迁移，随版本发布）
-/// - `extensions/`: 1000+（用户自定义扩展，从 1000 开始避免冲突）
-/// - `tenant/`: 2000+（多租户特定表，从 2000 开始）
+/// dbnexus 历史表按 version 全局去重（不区分目录），跨目录版本号必须互不冲突：
+/// `core/` 1–999（随版本发布）／`extensions/` 1000+／`tenant/` 2000+。
 pub struct GarrisonMigration {
     pool: DbPool,
     base_dir: PathBuf,
@@ -136,9 +107,7 @@ impl GarrisonMigration {
         self.run_dir(&self.base_dir.join("tenant")).await
     }
 
-    /// 一次性按 core→extensions→tenant 顺序执行所有迁移。
-    ///
-    /// 任一阶段失败立即返回错误（不继续后续阶段）。
+    /// 一次性按 core→extensions→tenant 顺序执行所有迁移（任一阶段失败立即返回错误，不继续后续阶段）。
     pub async fn run_all(&self) -> GarrisonResult<u32> {
         let mut total = 0;
         total += self.migrate_core().await?;
@@ -147,33 +116,17 @@ impl GarrisonMigration {
         Ok(total)
     }
 
-    /// 执行嵌入的 postgres 迁移文件（不需文件系统访问）。
-    ///
-    /// 将编译时 `include_dir!` 嵌入的 `migrations/postgres/` 目录内容
-    /// 写到 `tempfile::tempdir()` 临时目录，再调用 `DbPool::run_migrations`
-    /// 执行迁移。完全复用 dbnexus 的迁移历史记录、版本过滤、事务逻辑。
-    ///
-    /// 适用于 crates.io 消费者：运行时无需访问 garrison crate 源码目录
-    /// （如 sinnan 作为 crates.io 依赖消费 garrison 时，工作目录没有
-    /// `migrations/postgres/` 子目录）。
+    /// 执行嵌入的 postgres 迁移（不需文件系统访问）：把 `include_dir!` 嵌入内容写到临时目录后调 `DbPool::run_migrations`，
+    /// 完全复用 dbnexus 的迁移历史记录、版本过滤与事务逻辑；适用于 crates.io 消费者（运行时工作目录无 `migrations/postgres/`）。
     ///
     /// # 子目录遍历
     ///
-    /// dbnexus `scan_migrations` 只扫描指定目录顶层的 `.sql` 文件，**不递归子目录**。
-    /// garrison postgres 迁移按 `core/`/`extensions/`/`tenant/` 分层组织
-    /// （版本号全局唯一，参见 [`GarrisonMigration`] 文档），`copy_embedded_dir`
-    /// 会保留子目录结构（如 `temp_dir/core/001_init.sql`）。
-    /// 因此本方法遍历 `temp_dir` 的所有子目录，对每个子目录独立调用
-    /// [`GarrisonMigration::run_dir`]，累积应用迁移数。未来新增 `extensions/`
-    /// 或 `tenant/` 子目录时无需修改本方法。
+    /// dbnexus `scan_migrations` 只扫指定目录顶层 `.sql`、**不递归子目录**；本方法遍历 `temp_dir` 的每个子目录
+    /// 独立调 [`GarrisonMigration::run_dir`]（`copy_embedded_dir` 保留 `core/` 等结构），未来新增子目录无需改动。
     ///
     /// # Errors
     ///
-    /// 返回 [`GarrisonError::Dao`] 的场景：
-    /// - 临时目录创建失败
-    /// - 嵌入文件写入失败
-    /// - 临时目录读取失败（权限不足、路径无效等）
-    /// - dbnexus 迁移执行失败（SQL 语法错误、版本冲突等）
+    /// 临时目录创建 / 嵌入文件写入 / 目录读取 / dbnexus 迁移执行（SQL 语法、版本冲突等）失败均返回 [`GarrisonError::Dao`]。
     #[cfg(feature = "embedded-migrations")]
     pub async fn run_embedded_postgres(&self) -> GarrisonResult<u32> {
         let temp_dir = tempfile::tempdir()
@@ -200,9 +153,7 @@ impl GarrisonMigration {
         Ok(total)
     }
 
-    /// 执行指定目录的迁移文件。
-    ///
-    /// 不存在的目录返回 0（不报错，符合 dbnexus scan_migrations 行为）。
+    /// 执行指定目录的迁移文件；不存在的目录返回 0（符合 dbnexus scan_migrations 行为）。
     async fn run_dir(&self, dir: &Path) -> GarrisonResult<u32> {
         self.pool.run_migrations(dir).await.map_err(|e| {
             GarrisonError::Dao(format!("dao-dbnexus-migrate::{}::{}", dir.display(), e))
@@ -210,15 +161,10 @@ impl GarrisonMigration {
     }
 }
 
-/// 递归复制 `include_dir::Dir` 到文件系统目标目录。
+/// 递归复制 `include_dir::Dir` 到文件系统目标目录（供 [`GarrisonMigration::run_embedded_postgres`] 展开嵌入迁移树，含 `core/` 子目录）。
 ///
-/// 供 [`GarrisonMigration::run_embedded_postgres`] 使用：将编译时嵌入的
-/// `migrations/postgres/` 目录树（含 `core/` 等子目录）展开到临时目录，
-/// 以便复用 `DbPool::run_migrations` 从文件系统读取迁移文件。
-///
-/// 注意：`include_dir::DirEntry::File::path()` 返回相对于**根嵌入目录**的路径
-/// （如 `core/001_init.sql`），递归处理子目录时必须只取 `file_name()`，
-/// 否则会重复创建 `core/core/` 嵌套目录。
+/// `include_dir::DirEntry::File::path()` 返回相对**根嵌入目录**的路径（如 `core/001_init.sql`），
+/// 递归处理子目录时必须只取 `file_name()`，否则会重复创建 `core/core/` 嵌套目录。
 ///
 /// # Errors
 ///
@@ -256,9 +202,7 @@ mod tests {
     use super::*;
     use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement};
 
-    // ========================================================================
     // init_dbnexus 辅助函数测试
-    // ========================================================================
 
     /// 验证 init_dbnexus 用 sqlite::memory: 创建池成功。
     #[tokio::test]
@@ -312,9 +256,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // GarrisonMigration 测试（使用临时目录 + sqlite::memory:）
-    // ========================================================================
 
     /// 验证 migrate_core 在空目录上返回 0。
     #[tokio::test]
@@ -352,10 +294,7 @@ mod tests {
 
     /// 验证 run_all 按顺序执行 core/extensions/tenant。
     ///
-    /// 注意：dbnexus 版本号全局唯一（不区分目录），三个目录用不同版本号避免冲突：
-    /// - core/001_init.sql → version=1
-    /// - extensions/1000_ext.sql → version=1000
-    /// - tenant/2000_tenant.sql → version=2000
+    /// 注意：dbnexus 版本号全局唯一（不区分目录）——core/001_init.sql=1、extensions/1000_ext.sql=1000、tenant/2000_tenant.sql=2000。
     #[tokio::test]
     async fn run_all_executes_in_order() {
         let pool = init_dbnexus("sqlite::memory:").await.unwrap();
@@ -402,9 +341,7 @@ mod tests {
         assert_eq!(migration.base_dir, PathBuf::from("migrations/sqlite"));
     }
 
-    // ========================================================================
     // CRUD 测试：验证 Session execute_raw_ddl / execute_raw / query
-    // ========================================================================
 
     /// 辅助函数：查询单行单列字符串值。
     async fn query_one_string(session: &dbnexus::Session, sql: &str) -> String {
@@ -436,9 +373,7 @@ mod tests {
             .expect("column 'cnt' should be present")
     }
 
-    /// Scenario: CRUD 完整流程。
-    /// WHEN CREATE TABLE → INSERT → SELECT → UPDATE → SELECT → DELETE → SELECT
-    /// THEN 各步骤的 rows_affected 与查询结果符合预期
+    /// CRUD 完整流程：CREATE TABLE → INSERT → SELECT → UPDATE → SELECT → DELETE → SELECT，各步 rows_affected 与结果符合预期。
     #[tokio::test]
     async fn dbnexus_crud_full_cycle() {
         let pool = init_dbnexus("sqlite::memory:").await.unwrap();
@@ -480,13 +415,9 @@ mod tests {
         assert_eq!(count, 0, "DELETE 后表应为空");
     }
 
-    // ========================================================================
     // 事务测试：验证 begin/commit/rollback
-    // ========================================================================
 
-    /// Scenario: 事务回滚后未提交的数据不可见。
-    /// WHEN begin → INSERT → rollback → SELECT count(*)
-    /// THEN count == 0（回滚清除未提交的 INSERT）
+    /// 事务回滚后未提交的数据不可见（count == 0）。
     #[tokio::test]
     async fn dbnexus_transaction_rollback() {
         let pool = init_dbnexus("sqlite::memory:").await.unwrap();
@@ -511,9 +442,7 @@ mod tests {
         assert_eq!(count, 0, "回滚后表应为空");
     }
 
-    /// Scenario: 事务提交后数据持久化。
-    /// WHEN begin → INSERT → commit → SELECT count(*)
-    /// THEN count == 1（提交后数据可见）
+    /// 事务提交后数据持久化（count == 1）。
     #[tokio::test]
     async fn dbnexus_transaction_commit() {
         let pool = init_dbnexus("sqlite::memory:").await.unwrap();
@@ -535,15 +464,10 @@ mod tests {
         assert_eq!(count, 1, "提交后应有 1 条记录");
     }
 
-    // ========================================================================
     // 8 表验证测试：用项目根目录的 migrations/sqlite/core/001_init.sql
-    // ========================================================================
 
-    /// Scenario: migrate_core 创建 8 张核心表 + app_user_ext。
-    /// WHEN GarrisonMigration::migrate_core() 执行 001_init.sql
-    /// THEN sqlite_master 中应包含 10 张表：
-    /// app_user / app_role / app_permission / app_user_role / app_role_permission
-    /// / app_auth_method / app_session / app_login_log / app_user_ext / app_user_device
+    /// migrate_core 创建 8 张核心表 + app_user_ext：sqlite_master 应含 10 张表——
+    /// app_user / app_role / app_permission / app_user_role / app_role_permission / app_auth_method / app_session / app_login_log / app_user_ext / app_user_device。
     #[tokio::test]
     async fn migrate_core_creates_all_core_tables() {
         let pool = init_dbnexus("sqlite::memory:").await.unwrap();
@@ -605,9 +529,7 @@ mod tests {
         );
     }
 
-    /// Scenario: 迁移幂等性——重复执行 migrate_core 不重复建表。
-    /// WHEN migrate_core() → migrate_core() 再次执行
-    /// THEN 第二次返回 0（无新增迁移），10 张表仍存在
+    /// 迁移幂等性：重复 migrate_core 第二次返回 0（无新增迁移），10 张表仍存在。
     #[tokio::test]
     async fn migrate_core_idempotent() {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -648,9 +570,7 @@ mod tests {
         );
     }
 
-    /// Scenario: 迁移后 app_user 表可正常 CRUD（端到端验证）。
-    /// WHEN migrate_core() → INSERT INTO app_user → SELECT
-    /// THEN 数据可正常写入与读取
+    /// 迁移后 app_user 表可正常 CRUD（端到端验证）。
     #[tokio::test]
     async fn app_user_table_crud_after_migration() {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -687,26 +607,15 @@ mod tests {
     }
 }
 
-/// 嵌入式 postgres 迁移测试模块。
-///
-/// 独立于 `tests` 模块（`#[cfg(all(test, feature = "db-sqlite"))]`），
-/// 因为 embedded-migrations 由 `db-postgres` 透传启用，
-/// 验证标准 `cargo test --features db-postgres` 不一定启用 `db-sqlite`。
-/// 两个模块各自独立门控，避免 feature cfg 冲突（不混合两种模式）。
+/// 嵌入式 postgres 迁移测试模块：独立门控于 `db-postgres`（embedded-migrations 由其透传启用），
+/// 不与 `#[cfg(all(test, feature = "db-sqlite"))]` 的 tests 模块混合，避免 feature cfg 冲突。
 #[cfg(all(test, feature = "embedded-migrations"))]
 mod embedded_migrations_tests {
     use super::*;
 
-    // ========================================================================
     // 单元测试（不需数据库，验证 include_dir! 嵌入与文件写入逻辑）
-    // ========================================================================
 
-    /// 验证 POSTGRES_MIGRATIONS 嵌入了 16 个 postgres core SQL 文件。
-    ///
-    /// Scenario: 编译时 include_dir!("migrations/postgres") 嵌入成功。
-    /// WHEN POSTGRES_MIGRATIONS.get_dir("core")
-    /// THEN core 目录存在且包含 16 个 .sql 文件（001_init ~ 017_oauth2_backchannel_queue，
-    ///      含 013_refresh_tokens_rotated_at 与 016_password_history；015 为并行段预留编号）
+    /// 验证 POSTGRES_MIGRATIONS 嵌入了 core 目录且含 16 个 .sql（001_init ~ 017_oauth2_backchannel_queue，含 013_refresh_tokens_rotated_at 与 016_password_history；015 为并行段预留编号）。
     #[test]
     fn embedded_postgres_migrations_contain_15_core_files() {
         let core_dir = POSTGRES_MIGRATIONS
@@ -763,11 +672,7 @@ mod embedded_migrations_tests {
         );
     }
 
-    /// 验证 copy_embedded_dir 将嵌入目录正确写入临时目录。
-    ///
-    /// Scenario: 递归复制 include_dir::Dir 到文件系统。
-    /// WHEN copy_embedded_dir(&POSTGRES_MIGRATIONS, tempdir)
-    /// THEN tempdir/core/ 包含 16 个 .sql 文件，内容与嵌入文件一致
+    /// 验证 copy_embedded_dir 递归写入临时目录：tempdir/core/ 含 16 个 .sql 且内容与嵌入文件一致。
     #[test]
     fn copy_embedded_dir_writes_files_to_tempdir() {
         let temp_dir = tempfile::tempdir().expect("创建临时目录应成功");
@@ -793,11 +698,7 @@ mod embedded_migrations_tests {
         }
     }
 
-    /// 验证 copy_embedded_dir 是幂等的——重复写入同一目录不报错且文件数不变。
-    ///
-    /// Scenario: 多次复制同一嵌入目录到同一目标。
-    /// WHEN copy_embedded_dir → copy_embedded_dir（再次）
-    /// THEN 第二次成功，core 目录仍为 16 个文件（覆盖写入）
+    /// copy_embedded_dir 幂等：重复写入同一目录成功且 core 仍为 16 个文件（覆盖写入）。
     #[test]
     fn copy_embedded_dir_is_idempotent() {
         let temp_dir = tempfile::tempdir().expect("创建临时目录应成功");
@@ -811,13 +712,12 @@ mod embedded_migrations_tests {
         assert_eq!(count, 16, "重复写入后仍应为 16 个文件");
     }
 
-    // ========================================================================
     // 集成测试（需要 postgres DATABASE_URL，用 #[ignore] 标记）
-    // ========================================================================
 
     /// Scenario: run_embedded_postgres 在真实 postgres 上执行迁移。
     /// WHEN GarrisonMigration::run_embedded_postgres()（无论库此前是否已迁移）
-    /// THEN dbnexus_migrations 恰好记录全部 16 个迁移（终态不变式），    ///      且本次调用无错误返回    #[tokio::test]
+    /// THEN dbnexus_migrations 恰好记录全部 16 个迁移（终态不变式），且本次调用无错误返回。
+    #[tokio::test]
     #[serial_test::serial]
     #[ignore = "requires postgres DATABASE_URL (set SINNAN_TEST_DATABASE_URL to run)"]
     async fn run_embedded_postgres_creates_tables() {

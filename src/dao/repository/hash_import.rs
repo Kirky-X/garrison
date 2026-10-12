@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 导入哈希校验门（自 `repository/mod.rs` 迁出）。
+//! 导入哈希校验门。
 //!
 //! mod 接口隔离收口：常量、参数解析与校验门实现于此，
 //! 公共路径经 `repository::{validate_imported_hash, ARGON2_IMPORT_*}`
@@ -9,17 +9,14 @@
 
 use crate::error::{GarrisonError, GarrisonResult};
 
-// ============================================================================
 // 导入哈希参数防御上限（防单次登录 OOM / CPU DoS）
-// ============================================================================
 
 /// 导入密码哈希的 Argon2 内存成本上限（KiB，1 GiB）。
 ///
 /// 防御出处（对齐 zitadel passwap `ValidateEncodedHash` 的防御意图）：导入的
-/// 哈希是**不可信输入**，PHC 参数自描述——无上限的恶意串（如 `m=17179869176`）
-/// 会让单次登录 verify 申请巨量内存（OOM）或巨量迭代（CPU 耗尽）。上限取
-/// 常规登录档位（默认 m=19456 KiB）之上的宽裕值：覆盖合法迁移来源，拒绝
-/// 资源攻击载荷。
+/// 哈希是不可信输入且 PHC 参数自描述，无上限的恶意串（如 `m=17179869176`）
+/// 会让单次登录 verify 申请巨量内存或巨量迭代；上限取常规登录档位
+/// （默认 m=19456 KiB）之上的宽裕值，覆盖合法迁移来源、拒绝资源攻击载荷。
 pub const ARGON2_IMPORT_MAX_M_COST: u32 = 1_048_576;
 
 /// 导入密码哈希的 Argon2 迭代次数上限（防御出处同 [`ARGON2_IMPORT_MAX_M_COST`]）。
@@ -33,8 +30,8 @@ pub const BCRYPT_IMPORT_MAX_COST: u32 = 15;
 
 /// 从 PHC 串提取 Argon2 参数段 `(m_cost, t_cost, p_cost)`。
 ///
-/// 遍历 `$` 分段，找到首个同时含 `m=`/`t=`/`p=` 三键的段（跳过版本段、盐段、
-/// hash 段——base64 无 padding，不含 `=`，不会误配）。缺任一键返回 `None`。
+/// 遍历 `$` 分段，取首个同时含 `m=`/`t=`/`p=` 三键的段（跳过版本段、盐段、
+/// hash 段——base64 无 padding 不含 `=`，不会误配）；缺任一键返回 `None`。
 fn parse_argon2_import_params(hash: &str) -> Option<(u32, u32, u32)> {
     for segment in hash.split('$') {
         let mut m = None;
@@ -62,16 +59,9 @@ fn parse_argon2_import_params(hash: &str) -> Option<(u32, u32, u32)> {
 /// 全部凭据导入/写入入口（`UserRepository::create` / `update` 的
 /// `password_hash`、password 类型 credential 的写路径）必须先过本门。
 ///
-/// # 白名单
-///
 /// 仅接受 `$argon2id$` / `$2b$` / `$2a$` / `$2y$` 前缀：argon2i/argon2d 已被
-/// argon2id 取代，scrypt 等其他算法超出本框架 verify 能力——导入即不可验证，
-/// 直接拒绝。
-///
-/// # Errors
-///
-/// 返回 [`GarrisonError::InvalidParam`]：白名单外前缀、Argon2 参数段缺失或
-/// 不全、bcrypt cost 段缺失或非数字、任一参数超上限。整体拒绝，不静默降级。
+/// argon2id 取代，scrypt 等其他算法超出本框架 verify 能力——导入即不可验证；
+/// 参数段缺失/不全、任一参数超上限返回 [`GarrisonError::InvalidParam`]，整体拒绝不静默降级。
 pub fn validate_imported_hash(hash: &str) -> GarrisonResult<()> {
     if hash.starts_with("$argon2id$") {
         let (m_cost, t_cost, p_cost) = parse_argon2_import_params(hash).ok_or_else(|| {
@@ -127,11 +117,9 @@ pub fn validate_imported_hash(hash: &str) -> GarrisonResult<()> {
 mod tests {
     use super::*;
 
-    // ========================================================================
     // 导入哈希校验门
-    // ========================================================================
 
-    /// 上限常量值锁定：Argon2 m ≤ 1 GiB / t ≤ 10 / p ≤ 4，bcrypt cost ≤ 15
+    /// 上限常量值锁定：Argon2 m ≤ 1 GiB / t ≤ 10 / p ≤ 4、bcrypt cost ≤ 15
     /// （防单次登录 OOM / CPU DoS 的防御基线）。
     #[test]
     fn imported_hash_limit_constants_match_defense_baseline() {
@@ -203,8 +191,7 @@ mod tests {
         );
     }
 
-    /// 白名单外前缀：argon2i/argon2d、scrypt、空串、乱串 → Err（仅四个白名单
-    /// 前缀可导入）。
+    /// 白名单外前缀：argon2i/argon2d、scrypt、空串、乱串 → Err（仅四个白名单前缀可导入）。
     #[test]
     fn imported_hash_rejects_non_whitelisted_prefixes() {
         let rejected = [
@@ -245,7 +232,7 @@ mod tests {
         }
     }
 
-    /// 畸形参数段：argon2id 缺参数段 / 参数不全、bcrypt 缺 cost 段 → Err
+    /// 畸形参数段：argon2id 缺参数段/参数不全、bcrypt 缺 cost 段 → Err
     /// （无法确认参数上限即拒绝，fail-closed）。
     #[test]
     fn imported_hash_rejects_unparseable_params() {

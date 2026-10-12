@@ -5,13 +5,6 @@
 //!
 //! 实现 `GarrisonContext` / `GarrisonRequest` / `GarrisonResponse` / `GarrisonStorage` trait，
 //! 将 Garrison 鉴权逻辑与 actix-web 4 Web 框架解耦。
-//!
-//! ## 设计
-//!
-//! - `ActixRequest` 包装 `&actix_web::HttpRequest`（不可变引用）
-//! - `ActixResponse` 持有 `HeaderMap + StatusCode`
-//! - `ActixStorage` 用 `HashMap<String, String>`
-//! - `ActixContext` 组合 `&HttpRequest + ActixResponse + ActixStorage`
 
 use crate::config::GarrisonConfig;
 use crate::context::token_extract::{extract_token_from_request_parts, parse_cookie_value};
@@ -22,29 +15,19 @@ use actix_web::http::StatusCode;
 use actix_web::HttpRequest;
 use std::collections::HashMap;
 
-// ============================================================================
 // ActixRequest：包装 &HttpRequest
-// ============================================================================
 
 /// actix-web 请求适配器，包装 `&HttpRequest`。
 pub struct ActixRequest<'a> {
     request: &'a HttpRequest,
-    /// 预读的 body 字节（用于 `is_read_body=true` 时从 JSON 提取 token）。
+    /// 预读的 body 字节（`is_read_body=true` 时从 JSON 提取 token）；默认空 `Vec`，此时 body 分支跳过。
     ///
-    /// body 读取是 async 操作，但 `get_token` 是 sync 方法，故由调用方在
-    /// async 上下文中预读 body 字节后通过 `with_body` 注入。
-    /// 默认空 `Vec`（`new` 构造时），此时 body 读取分支静默跳过。
+    /// body 读取是 async 操作而 `get_token` 是 sync 方法，故由调用方在 async 上下文中预读后经 `with_body` 注入。
     body_bytes: Vec<u8>,
 }
 
 impl<'a> ActixRequest<'a> {
     /// 创建新的 ActixRequest（body 为空，不读取 body）。
-    ///
-    /// # 参数
-    /// - `request`: actix-web `HttpRequest` 引用，生命周期绑定到返回的 `ActixRequest`。
-    ///
-    /// # 返回
-    /// 包装该请求引用的 `ActixRequest` 实例（`body_bytes` 为空）。
     pub fn new(request: &'a HttpRequest) -> Self {
         Self {
             request,
@@ -52,14 +35,7 @@ impl<'a> ActixRequest<'a> {
         }
     }
 
-    /// 创建带预读 body 的 ActixRequest（用于 `is_read_body=true` 场景）。
-    ///
-    /// # 参数
-    /// - `request`: actix-web `HttpRequest` 引用。
-    /// - `body_bytes`: 预读的 body 字节（调用方在 async 上下文中读取后传入）。
-    ///
-    /// # 返回
-    /// 包装该请求引用与 body 字节的 `ActixRequest` 实例。
+    /// 创建带预读 body 的 ActixRequest（`is_read_body=true` 场景，body 由调用方在 async 上下文读取）。
     pub fn with_body(request: &'a HttpRequest, body_bytes: Vec<u8>) -> Self {
         Self {
             request,
@@ -110,9 +86,7 @@ impl<'a> GarrisonRequest for ActixRequest<'a> {
     }
 }
 
-// ============================================================================
 // ActixResponse：持有 HeaderMap + StatusCode
-// ============================================================================
 
 /// actix-web 响应适配器，持有 HeaderMap 与 StatusCode。
 pub struct ActixResponse {
@@ -156,9 +130,7 @@ impl GarrisonResponse for ActixResponse {
     }
 }
 
-// ============================================================================
 // ActixStorage：HashMap<String, String>
-// ============================================================================
 
 /// actix-web 存储适配器，用 HashMap 实现请求级临时存储。
 pub struct ActixStorage {
@@ -196,38 +168,20 @@ impl GarrisonStorage for ActixStorage {
     }
 }
 
-// ============================================================================
 // ActixContext：组合 Request + Response + Storage
-// ============================================================================
 
-/// actix-web 上下文适配器，组合 Request 引用 + Response + Storage。
-///
-/// # 设计
-///
-/// - 持有 `&HttpRequest` 引用 + `ActixResponse` + `ActixStorage`
-/// - 通过 `raw_response_mut()` 写入 status / headers / cookies
-/// - 通过 `raw_storage_mut()` 写入请求级临时数据
+/// actix-web 上下文适配器，组合 `&HttpRequest` + `ActixResponse` + `ActixStorage`：
+/// 经 `raw_response_mut()` 写入 status / headers / cookies，经 `raw_storage_mut()` 写入请求级临时数据。
 pub struct ActixContext<'a> {
     request: &'a HttpRequest,
     response: ActixResponse,
     storage: ActixStorage,
-    /// 预读的 body 字节（用于 `is_read_body=true` 时从 JSON 提取 token）。
-    ///
-    /// body 读取是 async 操作，但 `get_token` 是 sync 方法，故由调用方在
-    /// async 上下文中预读 body 字节后通过 `with_body` 注入。
-    /// 默认空 `Vec`（`new` 构造时），此时 body 读取分支静默跳过。
+    /// 预读的 body 字节（`is_read_body=true` 时从 JSON 提取 token）；默认空 `Vec`，此时 body 分支跳过。
     body_bytes: Vec<u8>,
 }
 
 impl<'a> ActixContext<'a> {
     /// 创建新的 ActixContext，绑定到指定请求（body 为空，不读取 body）。
-    ///
-    /// # 参数
-    /// - `request`: actix-web `HttpRequest` 引用，生命周期绑定到返回的 `ActixContext`。
-    ///
-    /// # 返回
-    /// 绑定该请求的 `ActixContext` 实例（内部已初始化空的 `ActixResponse` 与 `ActixStorage`，
-    /// `body_bytes` 为空）。
     pub fn new(request: &'a HttpRequest) -> Self {
         Self {
             request,
@@ -237,14 +191,7 @@ impl<'a> ActixContext<'a> {
         }
     }
 
-    /// 创建带预读 body 的 ActixContext（用于 `is_read_body=true` 场景）。
-    ///
-    /// # 参数
-    /// - `request`: actix-web `HttpRequest` 引用。
-    /// - `body_bytes`: 预读的 body 字节（调用方在 async 上下文中读取后传入）。
-    ///
-    /// # 返回
-    /// 绑定该请求与 body 字节的 `ActixContext` 实例。
+    /// 创建带预读 body 的 ActixContext（`is_read_body=true` 场景，body 由调用方在 async 上下文读取）。
     pub fn with_body(request: &'a HttpRequest, body_bytes: Vec<u8>) -> Self {
         Self {
             request,
@@ -254,10 +201,7 @@ impl<'a> ActixContext<'a> {
         }
     }
 
-    /// 获取底层请求引用。
-    ///
-    /// # 返回
-    /// 底层 `&HttpRequest` 引用，用于直接访问 actix-web 原生请求字段。
+    /// 获取底层请求引用，用于直接访问 actix-web 原生请求字段。
     pub fn raw_request(&self) -> &HttpRequest {
         self.request
     }
@@ -285,8 +229,7 @@ impl<'a> ActixContext<'a> {
 
 impl<'a> GarrisonContext for ActixContext<'a> {
     fn request(&self) -> GarrisonResult<Box<dyn GarrisonRequest>> {
-        // 由于 Box<dyn GarrisonRequest> 不能带生命周期参数，
-        // 使用 ActixRequestWrapper 克隆必要数据（path / method / headers / body_bytes）
+        // Box<dyn GarrisonRequest> 不能带生命周期参数，故克隆必要数据
         Ok(Box::new(ActixRequestWrapper::with_body(
             self.request,
             self.body_bytes.clone(),
@@ -294,15 +237,12 @@ impl<'a> GarrisonContext for ActixContext<'a> {
     }
 }
 
-/// ActixRequest 包装器（绕过 Box<dyn> 的生命周期问题）。
-///
-/// 由于 `Box<dyn GarrisonRequest>` 不能带生命周期参数，
-/// 这里克隆必要数据（path / method / headers）以实现 owned 的 `GarrisonRequest`。
+/// ActixRequest 包装器（绕过 `Box<dyn>` 的生命周期问题）：克隆 path / method / headers 等必要数据。
 struct ActixRequestWrapper {
     path: String,
     method: String,
     headers: HeaderMap,
-    /// 预读的 body 字节（用于 `is_read_body=true` 时从 JSON 提取 token）。
+    /// 预读的 body 字节（`is_read_body=true` 时从 JSON 提取 token）。
     body_bytes: Vec<u8>,
 }
 
@@ -373,10 +313,7 @@ mod tests {
         req.to_http_request()
     }
 
-    // ========================================================================
     // ActixRequest 测试
-    // ========================================================================
-
     /// 验证 path() 返回请求路径。
     #[test]
     fn actix_request_path() {
@@ -442,7 +379,7 @@ mod tests {
     /// 验证 header() 在 header name 非法时返回 Context 错误。
     #[test]
     fn actix_request_header_invalid_name_errors() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let req = make_request("/", "GET", &[]);
         let actix_req = ActixRequest::new(&req);
@@ -453,10 +390,7 @@ mod tests {
         assert!(err.to_string().contains("非法 header 名称"));
     }
 
-    // ========================================================================
     // get_token 测试
-    // ========================================================================
-
     /// 验证从 Authorization: Bearer 提取 token。
     #[test]
     fn actix_request_get_token_from_header() {
@@ -544,10 +478,7 @@ mod tests {
         assert_eq!(token, None);
     }
 
-    // ========================================================================
     // ActixResponse 测试
-    // ========================================================================
-
     /// 验证 set_status 设置状态码。
     #[test]
     fn actix_response_set_status() {
@@ -604,8 +535,7 @@ mod tests {
         assert!(set_cookie.contains("SameSite=Strict"));
     }
 
-    /// set_cookie_with_config 在 SameSite=None + 非 Secure 上下文下降级为 Lax
-    /// （None→Lax 不变式：浏览器拒收不带 Secure 的 SameSite=None）。
+    /// set_cookie_with_config 在 SameSite=None + 非 Secure 上下文下降级为 Lax（浏览器拒收不带 Secure 的 None）。
     #[test]
     fn actix_response_set_cookie_none_insecure_downgrades_to_lax() {
         let mut resp = ActixResponse::new();
@@ -634,7 +564,7 @@ mod tests {
     /// 验证 set_status 在状态码非法（> 999）时返回 Context 错误。
     #[test]
     fn actix_response_set_status_invalid_code_errors() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let mut resp = ActixResponse::new();
         let result = resp.set_status(1000);
@@ -647,7 +577,7 @@ mod tests {
     /// 验证 set_header 在 header value 非法时返回 Context 错误。
     #[test]
     fn actix_response_set_header_invalid_value_errors() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let mut resp = ActixResponse::new();
         let result = resp.set_header("X-Test", "bad\0value");
@@ -674,10 +604,7 @@ mod tests {
         assert!(resp.headers.is_empty());
     }
 
-    // ========================================================================
     // ActixStorage 测试
-    // ========================================================================
-
     /// 验证 set/get/delete 存储数据。
     #[test]
     fn actix_storage_set_get_delete() {
@@ -718,10 +645,7 @@ mod tests {
         assert_eq!(storage.get("any").unwrap(), None);
     }
 
-    // ========================================================================
     // ActixContext 测试
-    // ========================================================================
-
     /// 验证 GarrisonContext::request() 返回 Box<dyn GarrisonRequest>。
     #[test]
     fn actix_context_request_returns_box() {
@@ -810,10 +734,7 @@ mod tests {
         assert_eq!(ctx.raw_request().path(), "/api/test");
     }
 
-    // ========================================================================
     // get_token body 读取测试
-    // ========================================================================
-
     /// 验证 is_read_body=true 时从 JSON body 的 token_name 字段提取 token。
     #[test]
     fn extract_token_from_body_when_is_read_body_true() {
@@ -828,15 +749,8 @@ mod tests {
         assert_eq!(token, Some("body_token_123".to_string()));
     }
 
-    // ========================================================================
     // Context 层 body 读取测试
-    // ========================================================================
-
-    /// 验证 `ActixContext::with_body()` 通过 `request()` 传递 `body_bytes`，
-    /// 使 `GarrisonRequest::get_token()` 能从 JSON body 提取 token。
-    ///
-    /// 回归：原 `ActixContext` 缺失 `body_bytes` 字段与 `with_body` 方法，
-    /// `request()` 也不传递 body_bytes，导致 Context 层 body 读取功能不可用。
+    /// 验证 `ActixContext::with_body()` 经 `request()` 传递 `body_bytes`，使 `get_token()` 能从 JSON body 提取 token。
     #[test]
     fn actix_context_with_body_extracts_token_from_body() {
         let req = make_request("/", "POST", &[("Content-Type", "application/json")]);
@@ -854,14 +768,8 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // C7: body token 提取方法限制测试（防 body 注入攻击）
-    // ========================================================================
-
-    /// C7: GET 方法 + body 含 token + is_read_body=true 应跳过 body 提取。
-    ///
-    /// 直接测试 `ActixRequest::get_token`。GET 方法不应从 body 提取 token，
-    /// 否则攻击者可通过 `<img src="...?token=...">` 注入恶意 token。
+    /// C7: GET 方法 + body 含 token 应跳过 body 提取（否则攻击者可经 `<img src="...?token=...">` 注入）。
     #[test]
     fn c7_actix_request_get_method_skips_body_token() {
         let req = make_request("/", "GET", &[("Content-Type", "application/json")]);
@@ -880,9 +788,7 @@ mod tests {
         );
     }
 
-    /// C7: POST 方法 + body 含 token + is_read_body=true 应正常提取。
-    ///
-    /// 直接测试 `ActixRequest::get_token`。POST 方法允许从 body 提取 token。
+    /// C7: POST 方法 + body 含 token 应正常提取。
     #[test]
     fn c7_actix_request_post_method_allows_body_token() {
         let req = make_request("/", "POST", &[("Content-Type", "application/json")]);
@@ -900,10 +806,7 @@ mod tests {
         );
     }
 
-    /// C7: GET 方法 + body 含 token + is_read_body=true 应跳过 body 提取（通过 ActixContext，验证 Wrapper）。
-    ///
-    /// 通过 `ActixContext::with_body` + `request()` 测试 `ActixRequestWrapper::get_token`，
-    /// 确保 Wrapper 路径也正确应用 C7 method 限制。
+    /// C7: GET 方法应跳过 body 提取（经 ActixContext + request() 验证 Wrapper 路径同样受方法限制）。
     #[test]
     fn c7_actix_context_get_method_skips_body_token_via_wrapper() {
         let req = make_request("/", "GET", &[("Content-Type", "application/json")]);
@@ -921,9 +824,7 @@ mod tests {
         );
     }
 
-    /// C7: PUT/PATCH 方法 + body 含 token + is_read_body=true 应正常提取（通过 ActixContext）。
-    ///
-    /// 通过 `ActixContext::with_body` + `request()` 验证 PUT/PATCH 也允许提取 token。
+    /// C7: PUT/PATCH 方法应允许从 body 提取 token（经 ActixContext + request()）。
     #[test]
     fn c7_actix_context_put_patch_methods_allow_body_token_via_wrapper() {
         for method in &["PUT", "PATCH"] {

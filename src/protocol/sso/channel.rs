@@ -1,24 +1,16 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Redis pub/sub SsoChannel 实现。
+//! Redis pub/sub SsoChannel 实现（`cache-redis` + `protocol-sso-server` feature 同时启用时编译）。
 //!
-//! 基于 oxcache `pubsub` 设施（[`oxcache::pubsub::RedisPubSub`]）实现跨实例
-//! SSO 消息推送，替代 `NoopSsoChannel`。
+//! # 能力归属
 //!
-//! 仅在 `cache-redis` + `protocol-sso-server` feature 同时启用时编译。
-//!
-//! # 能力归属（2026-09 自研栈收敛）
-//!
-//! 发布/订阅/断线重连/handler panic 隔离/后台任务回收等 pub/sub 原语已下沉至
-//! oxcache `pubsub` feature（`oxcache::pubsub::RedisPubSub`），本结构体仅做
-//! garrison `SsoChannel` 契约适配与错误映射。行为级测试（消息收发、panic
-//! 隔离、shutdown 停投递等）随实现位于 oxcache。
+//! pub/sub 原语（发布/订阅/断线重连/handler panic 隔离/后台任务回收）由 oxcache `pubsub` feature 提供，
+//! 本结构体仅做 garrison `SsoChannel` 契约适配与错误映射；行为级测试随实现位于 oxcache。
 //!
 //! # 订阅生命周期
 //!
-//! - `subscribe` 经 oneshot 回传首次连接+订阅结果：连接/订阅失败时向调用方
-//!   返回 `Err`（不"假成功"）；
+//! - `subscribe` 经 oneshot 回传首次连接+订阅结果：失败返回 `Err`（不"假成功"）；
 //! - 后台任务由 oxcache `RedisPubSub` 统一登记回收（shutdown/Drop abort）；
 //! - 断线后按可配置次数线性退避重连（[`RedisPubSubSsoChannel::with_reconnect_attempts`]）。
 
@@ -27,11 +19,9 @@ use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-/// 基于 Redis pub/sub 的 SsoChannel 实现。
+/// 基于 Redis pub/sub 的 SsoChannel 实现（底层为 oxcache `RedisPubSub`）。
 ///
-/// 底层为 oxcache `RedisPubSub`：PUBLISH 走多路复用连接（自动重连），
-/// SUBSCRIBE 使用专用订阅连接（订阅模式需要独占连接），断线按可配置
-/// 次数线性退避重连（重连成功计数清零）。
+/// PUBLISH 走多路复用连接（自动重连），SUBSCRIBE 用专用订阅连接（订阅模式需独占连接），断线按可配置次数线性退避重连。
 pub struct RedisPubSubSsoChannel {
     /// oxcache pub/sub 设施（发布 + 订阅 + 重连 + 任务回收）。
     pubsub: oxcache::pubsub::RedisPubSub,
@@ -85,30 +75,23 @@ impl SsoChannel for RedisPubSubSsoChannel {
 mod tests {
     use super::*;
 
-    // ========================================================================
     // 编译时验证（不需要真实 Redis 连接）
-    // ========================================================================
 
-    /// RedisPubSubSsoChannel 实现 SsoChannel trait（验收标准）。
     #[test]
     fn redis_pubsub_sso_channel_implements_sso_channel() {
         fn assert_sso_channel<T: SsoChannel>() {}
         assert_sso_channel::<RedisPubSubSsoChannel>();
     }
 
-    /// RedisPubSubSsoChannel 是 Send + Sync（约束）。
     #[test]
     fn redis_pubsub_sso_channel_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<RedisPubSubSsoChannel>();
     }
 
-    // ========================================================================
     // 构造期 fail-fast（无 Redis 依赖，确定性，任何环境都跑）
-    // ========================================================================
 
-    /// 构造指向不可达端口（127.0.0.1:1）的通道返回 Err
-    /// （oxcache RedisPubSub 构造期预发布连接，URL 不可达显性失败）。
+    /// 构造指向不可达端口（127.0.0.1:1）的通道返回 Err（oxcache 构造期预发布连接，URL 不可达显性失败）。
     #[tokio::test]
     async fn new_with_unreachable_port_returns_err() {
         let result = RedisPubSubSsoChannel::new("redis://127.0.0.1:1").await;
@@ -129,14 +112,10 @@ mod tests {
         assert!(result.is_err(), "非法 URL 应构造失败");
     }
 
-    // ========================================================================
     // 深层分支集成测试（运行时探活门控，约定同 tests/acceptance/environment.rs：
     // Redis 不可达时 eprintln!("[SKIP] …") 并 return——测试通过但不运行）。
-    //
-    // pub/sub 行为级测试（消息收发、非 UTF8 payload、handler panic 隔离、
-    // shutdown 停投递、断线重连）已随实现下沉至 oxcache pubsub 模块；
-    // 此处保留通道契约层面的端到端验证（push/subscribe 走通 SsoChannel trait）。
-    // ========================================================================
+    // pub/sub 行为级测试已随实现下沉 oxcache pubsub 模块，此处保留通道契约层面
+    // 的端到端验证（push/subscribe 走通 SsoChannel trait）。
 
     /// TCP 探活本地 Redis（127.0.0.1:6379）是否可达。
     async fn redis_reachable() -> bool {
@@ -212,8 +191,7 @@ mod tests {
             .await
             .expect("subscribe 应成功");
 
-        // 订阅确认（subscribe oneshot 回传）与首条消息投递之间在 llvm-cov
-        // 全量并发下可能显著慢于常规运行（曾致 CI Coverage 腿偶发超时）：
+        // 订阅确认（subscribe oneshot 回传）与首条消息投递之间在 llvm-cov 全量并发下可能显著慢于常规运行：
         // 带上限的"发布-等待-未达再发布"重试，保证确定性而非放宽断言。
         let mut received: Option<String> = None;
         for _ in 0..3 {

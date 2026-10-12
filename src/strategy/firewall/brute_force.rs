@@ -1,23 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 暴力破解防护策略。
+//! 暴力破解防护策略：`BruteForceStrategy` 实现 `GarrisonFirewallStrategy`，用 limiteron `BanStorage`（封禁记录）+
+//! `DistributedLimiter`（原子计数 `incr_with_ttl`，消除 TOCTOU 竞争窗口）实现。
 //!
-//! `BruteForceStrategy` 实现 [`GarrisonFirewallStrategy`] trait，
-//! 用 limiteron `BanStorage`（封禁记录）+ `DistributedLimiter`（原子计数）实现。
-//!
-//! # 算法
-//!
-//! 1. 检查 `BanStorage::is_banned(ip)` → 已封禁则拦截（锁定期内）
-//! 2. `DistributedLimiter::incr_with_ttl(count_key, 1, window)` → 原子递增计数
-//! 3. count > max_attempts → `BanStorage::save(BanRecord)` → 返回 `FirewallBlocked`
-//! 4. 否则返回 `Ok(())`
-//!
-//! # 特性
-//!
-//! - **原子计数**：`incr_with_ttl` 消除 TOCTOU 竞争窗口
-//! - **统一封禁管理**：`BanStorage` trait 提供封禁记录的统一抽象，支持 is_banned/save/remove_ban
-//! - **count key**：保持 `bf:{ip}:count` 格式（通过 `DistributedLimiter` 原子递增）
+//! 检查顺序：已封禁（`is_banned`）直接拦截；否则递增计数，`count > max_attempts` 时经 `BanStorage::save` 记录封禁并返回 `FirewallBlocked`。
+//! count key 保持 `bf:{ip}:count` 格式；封禁记录经 `BanStorage` trait 统一抽象（is_banned/save/remove_ban）。
 
 use crate::constants::DaoKeyPrefix;
 use crate::dao::GarrisonDao;
@@ -31,9 +19,7 @@ use limiteron::storage::{BanRecord, BanStorage, BanTarget};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// 暴力破解防护配置。
-///
-/// 所有阈值显式配置（确定性逻辑），不交给模型判断。
+/// 暴力破解防护配置：所有阈值显式配置（确定性逻辑），不交给模型判断。
 #[derive(Debug, Clone)]
 pub struct BruteForceConfig {
     /// 最大尝试次数（超阈值后拦截）。
@@ -55,12 +41,8 @@ impl Default for BruteForceConfig {
 }
 
 impl BruteForceConfig {
-    /// 校验配置合法性（对齐 `AnomalousAnalyzerConfig::validate`）。
-    ///
-    /// # 错误
-    /// - `max_attempts` 为 0：计数从 1 开始，`1 > 0` 导致首个请求即被封禁。
-    /// - `window_seconds` 为 0：计数 key TTL=0 立即过期，计数失效。
-    /// - `lock_seconds` 为 0：封禁立即过期，形同虚设。
+    /// 校验配置合法性（对齐 `AnomalousAnalyzerConfig::validate`）：三字段任一为 0 返回 `InvalidParam`——
+    /// max_attempts=0 首个请求即被封禁、window_seconds=0 计数 key 立即过期、lock_seconds=0 封禁形同虚设。
     pub fn validate(&self) -> GarrisonResult<()> {
         if self.max_attempts == 0 {
             return Err(GarrisonError::InvalidParam(
@@ -103,17 +85,9 @@ pub struct BruteForceStrategy {
 }
 
 impl BruteForceStrategy {
-    /// 创建暴力破解防护策略实例。
-    ///
-    /// 内部创建 [`GarrisonDaoBanStorage`] + [`GarrisonDaoDistributedLimiter`] 适配器，
-    /// 将 `dao` 桥接到 limiteron trait。
-    ///
-    /// # 参数
-    /// - `config`: 配置（阈值 + 窗口 + 锁定时长）。
-    /// - `dao`: DAO（oxcache 抽象，用于计数与锁定）。
+    /// 创建暴力破解防护策略实例：内部创建 [`GarrisonDaoBanStorage`] + [`GarrisonDaoDistributedLimiter`] 适配器，将 `dao` 桥接到 limiteron trait。
     pub fn new(config: BruteForceConfig, dao: Arc<dyn GarrisonDao>) -> Self {
-        // 配置校验：new 签名不返回 Result（不破坏调用方），debug 构建下断言非法配置，
-        // release 下由 check/record_failure 的运行时守卫兜底（见 ensure_valid_config）
+        // 配置校验：new 签名不返回 Result（不破坏调用方），debug 构建下断言非法配置，release 下由 check/record_failure 的运行时守卫兜底（见 ensure_valid_config）
         debug_assert!(
             config.validate().is_ok(),
             "invalid BruteForceConfig: {:?} (0 值阈值会导致全拦截/计数失效)",
@@ -133,15 +107,10 @@ impl BruteForceStrategy {
         self.config.validate()
     }
 
-    /// 检查目标 IP 是否已被封禁（只读，不计数）。
+    /// 检查目标 IP 是否已被封禁（只读，不计数；封禁期内返回 `Ok(true)`）。
     ///
-    /// 用于认证路径在校验**前**短路：已封禁的 IP 直接拒绝，避免继续消耗校验资源。
-    /// 与 [`check`](GarrisonFirewallStrategy::check) 不同，本方法**不递增计数**，
-    /// 适合"仅在失败时计数"的场景（如 API Key 校验，成功请求不应计入失败限速）。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 该 IP 处于封禁期内。
-    /// - `Ok(false)`: 未封禁。
+    /// 用于认证路径在校验**前**短路：已封禁的 IP 直接拒绝，避免继续消耗校验资源；与 [`check`](GarrisonFirewallStrategy::check) 不同，
+    /// 本方法**不递增计数**，适合"仅在失败时计数"的场景（如 API Key 校验，成功请求不应计入失败限速）。
     pub async fn is_blocked(&self, ctx: &FirewallContext) -> GarrisonResult<bool> {
         let target = BanTarget::Ip(ctx.ip.clone());
         Ok(self
@@ -152,13 +121,9 @@ impl BruteForceStrategy {
             .is_some())
     }
 
-    /// 记录一次认证失败：原子递增计数，超阈值则封禁该 IP（CWE-307）。
+    /// 记录一次认证失败：原子递增计数，超阈值则封禁该 IP `lock_seconds` 秒（CWE-307）。
     ///
-    /// 用于认证路径在校验**失败**时调用（成功路径不调用，实现"仅失败计数"）。
-    /// 计数窗口过期后自动重置；达到 `max_attempts` 后封禁 `lock_seconds` 秒。
-    ///
-    /// # 返回
-    /// - `Ok(())`: 已记录（未必触发封禁）。
+    /// 用于认证路径在校验**失败**时调用（成功路径不调用，实现"仅失败计数"）；计数窗口过期后自动重置。
     pub async fn record_failure(&self, ctx: &FirewallContext) -> GarrisonResult<()> {
         self.ensure_valid_config()?;
         let target = BanTarget::Ip(ctx.ip.clone());
@@ -201,7 +166,7 @@ impl GarrisonFirewallStrategy for BruteForceStrategy {
         let target = BanTarget::Ip(ctx.ip.clone());
         let count_key = format!("{}{}:count", DaoKeyPrefix::BruteForce, ctx.ip);
 
-        // 1. 检查是否已被封禁（BanStorage 统一封禁管理）
+        // 已封禁则拦截（BanStorage 统一封禁管理）
         if self
             .ban_storage
             .is_banned(&target)
@@ -215,7 +180,7 @@ impl GarrisonFirewallStrategy for BruteForceStrategy {
             )));
         }
 
-        // 2. 原子递增计数（DistributedLimiter.incr_with_ttl 消除 TOCTOU）
+        // 原子递增计数（DistributedLimiter.incr_with_ttl 消除 TOCTOU）
         let new_count = self
             .limiter
             .incr_with_ttl(
@@ -227,7 +192,7 @@ impl GarrisonFirewallStrategy for BruteForceStrategy {
             .map_err(|e| GarrisonError::Dao(format!("strategy-incr-ttl::{}", e)))?;
 
         if new_count > self.config.max_attempts as u64 {
-            // 3. 超阈值：封禁 IP（BanStorage.save）
+            // 超阈值：封禁 IP（BanStorage.save）
             let record = BanRecord {
                 target: target.clone(),
                 ban_times: 1,
@@ -290,10 +255,7 @@ mod tests {
         );
     }
 
-    /// 验证锁定后的 IP 被持续拦截（BanStorage 封禁记录生效）。
-    ///
-    /// 一旦请求触发锁定（BanStorage.save），后续所有请求都应被
-    /// `is_banned` 拦截。
+    /// 验证锁定后的 IP 被持续拦截（BanStorage.save 后所有请求均被 `is_banned` 拦截）。
     #[tokio::test]
     async fn bruteforce_lock_persists_after_trigger() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -345,7 +307,7 @@ mod tests {
         );
     }
 
-    /// #4: is_blocked 不计数——重复调用不会触发封禁（区别于 check）。
+    /// is_blocked 不计数——重复调用不会触发封禁（区别于 check）。
     #[tokio::test]
     async fn is_blocked_does_not_count() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -366,7 +328,7 @@ mod tests {
         }
     }
 
-    /// #4: record_failure 达阈值后 is_blocked 返回 true（仅失败计数模型）。
+    /// record_failure 达阈值后 is_blocked 返回 true（仅失败计数模型）。
     #[tokio::test]
     async fn record_failure_bans_after_threshold_then_is_blocked() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());

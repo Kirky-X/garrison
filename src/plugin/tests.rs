@@ -8,11 +8,8 @@ use super::*;
 use serial_test::serial;
 use std::sync::atomic::Ordering;
 
-// ========================================================================
 // GarrisonPlugin trait 测试
-// ========================================================================
 
-/// 默认实现返回 Ok(())（生命周期钩子有默认空实现）。
 #[test]
 #[serial]
 fn default_hooks_return_ok() {
@@ -28,7 +25,6 @@ fn default_hooks_return_ok() {
     assert!(plugin.on_permission_check("1", "p").is_ok());
 }
 
-/// name 方法必须由实现方提供。
 #[test]
 #[serial]
 fn name_must_be_provided() {
@@ -36,11 +32,8 @@ fn name_must_be_provided() {
     assert_eq!(plugin.name(), "ok-plugin");
 }
 
-// ========================================================================
 // GarrisonPluginManager 测试
-// ========================================================================
 
-/// manager 收集所有已注册插件。
 #[test]
 #[serial]
 fn manager_collects_registered_plugins() {
@@ -49,7 +42,6 @@ fn manager_collects_registered_plugins() {
     assert!(manager.count() >= 2);
 }
 
-/// on_login 调用所有插件钩子。
 #[test]
 #[serial]
 fn on_login_invokes_all_plugins() {
@@ -66,7 +58,6 @@ fn on_login_invokes_all_plugins() {
     assert!(LOGIN_CALLS.load(Ordering::SeqCst) >= 1);
 }
 
-/// on_logout 调用所有插件钩子。
 #[test]
 #[serial]
 fn on_logout_invokes_all_plugins() {
@@ -81,7 +72,6 @@ fn on_logout_invokes_all_plugins() {
     assert!(LOGOUT_CALLS.load(Ordering::SeqCst) >= 1);
 }
 
-/// on_permission_check 调用所有插件钩子。
 #[test]
 #[serial]
 fn on_permission_check_invokes_all_plugins() {
@@ -96,7 +86,6 @@ fn on_permission_check_invokes_all_plugins() {
     assert!(PERM_CHECK_CALLS.load(Ordering::SeqCst) >= 1);
 }
 
-/// reset_counters 自身有效性——污染计数器后 reset 必须归零。
 #[test]
 #[serial]
 fn reset_counters_zeroes_all_counters() {
@@ -109,19 +98,15 @@ fn reset_counters_zeroes_all_counters() {
     assert_eq!(PERM_CHECK_CALLS.load(Ordering::SeqCst), 0);
 }
 
-/// 插件失败不中断主流程。
 #[test]
 #[serial]
 fn plugin_failure_does_not_interrupt() {
     reset_counters();
     let manager = GarrisonPluginManager::new();
-    // ErrPlugin 的 on_login 返回 Err，但 OkPlugin 的 on_login 仍应被调用
     manager.on_login("1001", "T1");
-    // OkPlugin 的计数器应 >= 1（证明 ErrPlugin 的失败没有中断）
     assert!(LOGIN_CALLS.load(Ordering::SeqCst) >= 1);
 }
 
-/// Default trait 实现等价于 new()。
 #[test]
 #[serial]
 fn default_equals_new() {

@@ -1,30 +1,16 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 鉴权决策与请求模型。
+//! 鉴权决策与请求模型：提供决策溯源所需的数据结构——[`Decision`]（结果，含
+//! allowed/reason/errors/trace）、[`DecisionReason`]（原因枚举）、[`AuthRequest`]（请求输入）。
 //!
-//! 提供决策溯源（Decision Provenance）所需的数据结构：
-//! - [`Decision`]：鉴权决策结果，含 allowed/reason/errors/trace 字段
-//! - [`DecisionReason`]：决策原因枚举（显式允许/角色继承/显式拒绝/...）
-//! - [`AuthRequest`]：鉴权请求输入，含 login_id/tenant_id/action/resource/context
-//!
-//! # 设计
-//!
-//! `Decision` 的 `errors` 字段为 `Vec<String>` 而非 `Vec<GarrisonError>`：
-//! - `GarrisonError` / `GarrisonException` 未 derive `Serialize`，给它们加 derive 会触碰大量现有代码（违反外科手术式修改原则）
-//! - 决策溯源场景只需可读错误消息（用于 trace 输出），不需要错误类型枚举
-//! - 存储时调用 `err.to_string()` 转为字符串
+//! `Decision.errors` 用 `Vec<String>` 而非 `Vec<GarrisonError>`：后者未 derive `Serialize`
+//! （加 derive 会触碰大量代码），且溯源只需 `err.to_string()` 的可读消息。
 
 use serde::{Deserialize, Serialize};
 
-/// 鉴权决策原因。
-///
-/// 描述决策的"为什么"，用于 trace 输出和审计日志。
-///
-/// # 序列化
-///
-/// 同时 derive `Serialize` 与 `Deserialize`，使 [`Decision`] 可在
-/// `garrison-testing` feature 下从 JSON 反序列化（声明式测试套件用）。
+/// 鉴权决策原因（决策的"为什么"，用于 trace 与审计）；derive `Deserialize` 使 [`Decision`]
+/// 可在 `garrison-testing` 下从 JSON 反序列化（声明式测试套件用）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionReason {
@@ -46,41 +32,26 @@ pub enum DecisionReason {
     TokenExpired,
     /// 租户不匹配：跨租户访问被拒。
     TenantMismatch,
-    /// 强制拒绝（forbid 优先语义，不可被 Allow 覆盖）。
-    ///
-    /// 仅在 `core-advanced` feature 启用时可用。组合多个决策时优先级最高：
-    /// 任一 Forbid 决策存在则最终结果为 Forbid。
+    /// 强制拒绝（forbid 优先，不可被 Allow 覆盖；`core-advanced` feature）：组合时优先级最高，
+    /// 任一 Forbid 决策存在即最终 Forbid。
     #[cfg(feature = "core-advanced")]
     Forbid(String),
-    /// 策略引擎求值故障（fail-closed 拒绝）。
-    ///
-    /// 表示授权引擎自身在求值过程中出错（如 Cedar 诊断错误：schema 不匹配、
-    /// 类型错误、策略运行时错误）。区别于 [`DecisionReason::ExplicitDeny`]
-    /// （业务规则的显式拒绝）：本变体意味着决策过程不可信，按最小权限原则拒绝。
-    /// 调用方应同时关注日志告警（引擎侧以 `error` 级别记录）。
+    /// 策略引擎求值故障（fail-closed 拒绝）：区别于 [`DecisionReason::ExplicitDeny`]（业务显式
+    /// 拒绝），本变体意味着决策过程不可信（如 Cedar schema / 类型 / 运行时错误），按最小权限
+    /// 原则拒绝；调用方应同时关注引擎侧 `error` 级日志。
     EvaluationError,
 }
 
-/// 鉴权决策结果。
-///
-/// 包含决策本身（allowed/reason）和溯源信息（errors/checked_permissions/matched_roles/trace_id）。
-///
-/// # 序列化
-///
-/// `Decision` 实现 `Serialize`，可序列化为 JSON 用于审计日志和 trace 输出。
-/// `errors` 字段为 `Vec<String>`（错误消息），不是 `Vec<GarrisonError>`（错误类型）。
-///
-/// `garrison-testing` feature 启用时同时实现 `Deserialize`，使声明式测试套件
-/// 可从 JSON 文件反序列化期望决策（`JsonTestCase::expected`）。
+/// 鉴权决策结果：决策本身（allowed/reason）+ 溯源信息（errors/checked_permissions/
+/// matched_roles/trace_id）。`Serialize` 可输出 JSON 审计日志；`garrison-testing` 下同时实现
+/// `Deserialize`，声明式测试套件可从 JSON 反序列化期望决策（`JsonTestCase::expected`）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Decision {
     /// 是否允许。
     pub allowed: bool,
     /// 决策原因。
     pub reason: DecisionReason,
-    /// 校验过程中收集的错误消息（`err.to_string()`），用于 trace。
-    ///
-    /// 反序列化时缺失默认空 vec（声明式测试套件的 `expected` 通常只填 `allowed` + `reason`）。
+    /// 校验过程中收集的错误消息（`err.to_string()`），用于 trace；反序列化缺失时默认空 vec。
     #[serde(default)]
     pub errors: Vec<String>,
     /// 已校验的权限列表（decision-trace feature 启用时填充）。
@@ -89,9 +60,7 @@ pub struct Decision {
     /// 已匹配的角色列表（decision-trace feature 启用时填充）。
     #[serde(default)]
     pub matched_roles: Vec<String>,
-    /// trace ID（decision-trace feature 启用时填充）。
-    ///
-    /// `Option<T>` 字段在 JSON 缺失时 serde 自动处理为 `None`。
+    /// trace ID（decision-trace feature 启用时填充）；JSON 缺失时 serde 处理为 `None`。
     pub trace_id: Option<String>,
 }
 
@@ -120,10 +89,7 @@ impl Decision {
         }
     }
 
-    /// 创建一个强制拒绝决策（Forbid 优先于 Allow）。
-    ///
-    /// 仅在 `core-advanced` feature 启用时可用。Forbid 决策 `allowed: false`，
-    /// `reason: DecisionReason::Forbid(reason)`，组合时优先级最高。
+    /// 创建 Forbid 决策（`allowed: false`，组合时优先级最高；`core-advanced` feature）。
     #[cfg(feature = "core-advanced")]
     pub fn forbid(reason: impl Into<String>) -> Self {
         Self {
@@ -136,23 +102,15 @@ impl Decision {
         }
     }
 
-    /// 判断是否为 Forbid 决策。
-    ///
-    /// 仅在 `core-advanced` feature 启用时可用。
+    /// 判断是否为 Forbid 决策（`core-advanced` feature）。
     #[cfg(feature = "core-advanced")]
     pub fn is_forbid(&self) -> bool {
         matches!(self.reason, DecisionReason::Forbid(_))
     }
 }
 
-/// 鉴权请求输入。
-///
-/// 封装一次鉴权请求的所有上下文，用于 `PermissionChecker::authorize` 方法。
-///
-/// # 序列化
-///
-/// `garrison-testing` feature 启用时同时 derive `Serialize` 与 `Deserialize`，
-/// 使声明式测试套件（`JsonTestCase`）可双向转换。
+/// 鉴权请求输入（`PermissionChecker::authorize` 的入参）；`garrison-testing` 下
+/// `Serialize` / `Deserialize` 双向可用（声明式测试套件 `JsonTestCase`）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthRequest {
     /// 主体 login_id。
@@ -163,13 +121,8 @@ pub struct AuthRequest {
     pub action: String,
     /// 可选的资源标识（如 `"user:123"`），用于资源级权限校验。
     pub resource: Option<String>,
-    /// 请求上下文（任意 JSON，用于扩展校验逻辑）。
-    ///
-    /// # 安全说明
-    ///
-    /// `context` 接受任意 `serde_json::Value`，未设置大小限制或深度约束。
-    /// 若此字段由外部输入填充，攻击者可构造深层嵌套 JSON 导致内存耗尽。
-    /// 调用方应在填充前自行验证 context 大小（建议上限：1MB / 深度 10 层）。
+    /// 请求上下文（任意 JSON，用于扩展校验逻辑）；安全提示：无大小 / 深度约束，若由外部输入
+    /// 填充，调用方须先自行验证（建议上限 1MB / 深度 10 层），深层嵌套 JSON 可致内存耗尽。
     pub context: serde_json::Value,
 }
 
@@ -191,10 +144,7 @@ mod tests {
     use super::*;
     use crate::error::GarrisonResult;
 
-    /// Decision 序列化为 JSON 含所有必需字段。
-    ///
-    /// 验证 `Decision { allowed, reason, errors, checked_permissions, matched_roles, trace_id }`
-    /// 序列化后包含全部 6 个字段。
+    /// Decision 序列化为 JSON 含全部 6 个必需字段。
     #[test]
     fn decision_serializes_to_json_with_required_fields() {
         let decision = Decision {
@@ -217,7 +167,7 @@ mod tests {
         assert_eq!(json["trace_id"], serde_json::json!("t-123"));
     }
 
-    /// 补充：拒绝决策序列化 reason 为 NoMatchingPermission。
+    /// 拒绝决策序列化 reason 为 NoMatchingPermission。
     #[test]
     fn decision_deny_serializes_reason_no_matching_permission() {
         let decision = Decision::deny(DecisionReason::NoMatchingPermission);
@@ -226,7 +176,7 @@ mod tests {
         assert_eq!(json["reason"], serde_json::json!("no_matching_permission"));
     }
 
-    /// 补充：FirewallBlocked 变体序列化为 { FirewallBlocked: "..." }。
+    /// FirewallBlocked 变体序列化为 { FirewallBlocked: "..." }。
     #[test]
     fn decision_reason_firewall_blocked_serializes_with_message() {
         let reason = DecisionReason::FirewallBlocked("ip blocked".to_string());
@@ -237,7 +187,7 @@ mod tests {
         );
     }
 
-    /// 补充：allow() 构造器创建 ExplicitAllow 决策。
+    /// allow() 构造器创建 ExplicitAllow 决策。
     #[test]
     fn decision_allow_constructor_creates_explicit_allow() {
         let decision = Decision::allow();
@@ -246,9 +196,7 @@ mod tests {
         assert!(decision.errors.is_empty());
     }
 
-    /// AuthRequest 构造并字段可读。
-    ///
-    /// 验证 `AuthRequest { login_id, tenant_id, action, resource, context }` 编译通过且字段可读。
+    /// AuthRequest 构造并字段可读（5 字段编译通过）。
     #[test]
     fn auth_request_constructs_with_required_fields() {
         let req = AuthRequest {
@@ -265,7 +213,7 @@ mod tests {
         assert!(req.context.is_null());
     }
 
-    /// 补充：AuthRequest::new 构造器设置默认值。
+    /// AuthRequest::new 构造器设置默认值。
     #[test]
     fn auth_request_new_sets_defaults() {
         let req = AuthRequest::new("1001", "user:write");
@@ -276,7 +224,7 @@ mod tests {
         assert!(req.context.is_null());
     }
 
-    /// 补充：AuthRequest 可构造带 tenant_id 和 resource。
+    /// AuthRequest 可构造带 tenant_id 和 resource。
     #[test]
     fn auth_request_with_tenant_and_resource() {
         let req = AuthRequest {
@@ -291,7 +239,7 @@ mod tests {
         assert_eq!(req.context["ip"], serde_json::json!("10.0.0.1"));
     }
 
-    /// 补充：DecisionReason 全变体可序列化（覆盖枚举完整性）。
+    /// DecisionReason 全变体可序列化（覆盖枚举完整性）。
     #[test]
     fn all_decision_reason_variants_serialize() {
         let variants: &[DecisionReason] = &[
@@ -311,7 +259,7 @@ mod tests {
         }
     }
 
-    /// 补充：GarrisonResult<Decision> 可用于 authorize 返回类型。
+    /// GarrisonResult<Decision> 可用于 authorize 返回类型。
     #[test]
     fn garrison_result_decision_compiles() {
         let ok: GarrisonResult<Decision> = Ok(Decision::allow());
@@ -320,12 +268,7 @@ mod tests {
         assert!(err.is_err());
     }
 
-    // ========================================================================
-    // trace_id 自动生成测试
-    //
-    // 启用 decision-trace feature 时，PermissionChecker::authorize 默认实现
-    // 应自动生成 UUID v7（时间有序）作为 trace_id。
-    // ========================================================================
+    // trace_id 自动生成测试：decision-trace 启用时 authorize 默认实现生成 UUID v7（时间有序）。
     #[cfg(feature = "core-advanced")]
     mod trace_id_tests {
         use super::AuthRequest;
@@ -363,9 +306,7 @@ mod tests {
             PermissionCheckerDefault::new(interface_arc)
         }
 
-        /// 启用 decision-trace 时 authorize 生成的 trace_id 是合法 UUID v7。
-        ///
-        /// 验证 `Decision.trace_id` 为 `Some`，且解析后 version_num == 7（UUID v7，时间有序）。
+        /// decision-trace 启用时 authorize 生成合法 UUID v7 trace_id（version_num == 7，时间有序）。
         #[tokio::test]
         async fn authorize_generates_trace_id_when_decision_trace_enabled() {
             let checker = make_checker();
@@ -385,9 +326,7 @@ mod tests {
             );
         }
 
-        /// 多次调用 authorize 生成不同的 trace_id。
-        ///
-        /// 验证连续 3 次 authorize 调用生成的 trace_id 互不相同（UUID v7 随机部分保证唯一性）。
+        /// 连续 3 次 authorize 的 trace_id 互不相同（UUID v7 随机部分保证唯一性）。
         #[tokio::test]
         async fn authorize_trace_id_is_unique_per_request() {
             let checker = make_checker();
@@ -409,10 +348,8 @@ mod tests {
             assert_ne!(t1, t3, "trace_id 1 与 3 不应相同");
         }
 
-        /// 连续生成的 trace_id 字典序递增（UUID v7 时间有序特性）。
-        ///
-        /// UUID v7 前 48 bits 为 unix_ts_ms（毫秒时间戳），跨毫秒时字典序严格递增。
-        /// 测试中显式 sleep 2ms 保证跨毫秒，避免同毫秒内随机部分导致字典序不稳定。
+        /// 连续 trace_id 字典序递增（UUID v7 前 48 bits 为毫秒时间戳）；sleep 2ms 保证跨毫秒，
+        /// 避免同毫秒随机部分导致字典序不稳。
         #[tokio::test]
         async fn authorize_trace_id_is_time_ordered() {
             let checker = make_checker();
@@ -433,20 +370,12 @@ mod tests {
         }
     }
 
-    // ========================================================================
-    // Forbid 优先语义测试（core-advanced feature）
-    //
-    // 启用 core-advanced feature 时，DecisionReason 新增 Forbid(String) 变体，
-    // Decision 新增 forbid() / is_forbid() 方法。
-    // ========================================================================
+    // Forbid 优先语义测试（core-advanced feature：Forbid 变体 + forbid() / is_forbid()）。
     #[cfg(feature = "core-advanced")]
     mod safe_defaults_tests {
         use super::*;
 
-        /// forbid() 构造器创建 allowed=false + Forbid reason 的决策。
-        ///
-        /// 验证 `Decision::forbid("test")` 的 `allowed == false`，
-        /// `reason == DecisionReason::Forbid("test".to_string())`。
+        /// forbid() 创建 `allowed == false` + `Forbid("test")` reason 的决策。
         #[test]
         fn forbid_constructor_creates_forbid_decision() {
             let decision = Decision::forbid("test");
@@ -459,8 +388,6 @@ mod tests {
         }
 
         /// is_forbid() 对 Forbid 决策返回 true。
-        ///
-        /// 验证 `Decision::forbid("test").is_forbid() == true`。
         #[test]
         fn is_forbid_returns_true_for_forbid() {
             let decision = Decision::forbid("test");
@@ -471,8 +398,6 @@ mod tests {
         }
 
         /// is_forbid() 对 Allow 决策返回 false。
-        ///
-        /// 验证 `Decision::allow().is_forbid() == false`。
         #[test]
         fn is_forbid_returns_false_for_allow() {
             let decision = Decision::allow();
@@ -483,8 +408,6 @@ mod tests {
         }
 
         /// is_forbid() 对 Deny 决策返回 false。
-        ///
-        /// 验证 `Decision::deny(DecisionReason::NoMatchingPermission).is_forbid() == false`。
         #[test]
         fn is_forbid_returns_false_for_deny() {
             let decision = Decision::deny(DecisionReason::NoMatchingPermission);
@@ -494,10 +417,7 @@ mod tests {
             );
         }
 
-        /// Forbid 变体序列化为 { "forbid": "test" }。
-        ///
-        /// 验证 `DecisionReason::Forbid("test".to_string())` 序列化为
-        /// `{ "forbid": "test" }`（serde rename_all = "snake_case"）。
+        /// Forbid 变体序列化为 { "forbid": "test" }（serde rename_all = "snake_case"）。
         #[test]
         fn forbid_serializes_to_json() {
             let reason = DecisionReason::Forbid("test".to_string());
@@ -509,10 +429,7 @@ mod tests {
             );
         }
 
-        /// Forbid 变体可从 { "forbid": "test" } 反序列化。
-        ///
-        /// 验证 `{ "forbid": "test" }` 反序列化为
-        /// `DecisionReason::Forbid("test".to_string())`。
+        /// { "forbid": "test" } 反序列化为 Forbid("test")。
         #[test]
         fn forbid_deserializes_from_json() {
             let json = serde_json::json!({ "forbid": "test" });
@@ -525,8 +442,6 @@ mod tests {
         }
 
         /// Forbid 变体支持 PartialEq 比较。
-        ///
-        /// 验证 `DecisionReason::Forbid("a".to_string()) == DecisionReason::Forbid("a".to_string())`。
         #[test]
         fn forbid_partial_eq() {
             let a = DecisionReason::Forbid("a".to_string());
@@ -534,10 +449,7 @@ mod tests {
             assert_eq!(a, b, "Forbid(\"a\") == Forbid(\"a\") 应为 true");
         }
 
-        /// 现有 allow()/deny() 行为不因 safe-defaults feature 改变。
-        ///
-        /// 验证 `Decision::allow()` 和 `Decision::deny()` 在 safe-defaults feature
-        /// 启用时行为不变。
+        /// allow()/deny() 行为不因 safe-defaults feature 改变。
         #[test]
         fn existing_allow_deny_unchanged() {
             let allow = Decision::allow();

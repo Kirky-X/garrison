@@ -1,16 +1,11 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 签名工具模块，提供 HMAC-SHA256/SHA512、Base64 签名与编码工具。
+//! 签名工具模块：HMAC-SHA256/SHA512、Base64 编码与签名校验原语。
 //!
-//! 对应 `SaSign` 工具类，
-//! 提供微服务网关签名认证所需的加密原语。
-//!
-//! 所有方法均为关联函数（static method），`Signer` struct 不持有任何状态。
+//! 全部为关联函数（static method），`Signer` 不持有状态，无需实例化。
 
-/// 签名工具 struct，纯静态方法封装，不持有任何状态。
-///
-/// 所有方法为关联函数，无需实例化即可调用：
+/// 签名工具（纯静态方法封装，无需实例化）。
 ///
 /// ```
 /// #[cfg(feature = "secure-sign")]

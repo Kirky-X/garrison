@@ -69,10 +69,9 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-/// 内网 API 空权限/空角色 interface——生产 bin 不应依赖 test-only mock。
-/// 行为：所有 login_id 返回空权限列表 + 空角色列表，
-/// 因此 `check_permission` / `check_role` 调用时将拒绝（无任何权限/角色放行）。
-/// 真实生产场景应替换为业务方自己的 RBAC 实现。
+/// 内网 API 空权限/空角色 interface（生产 bin 不应依赖 test-only mock）：
+/// 所有 login_id 返回空列表，`check_permission` / `check_role` 一律拒绝；
+/// 真实生产应替换为业务方 RBAC 实现。
 struct SimpleInterface;
 
 #[async_trait::async_trait]
@@ -88,19 +87,15 @@ impl GarrisonInterface for SimpleInterface {
 /// auth_server 启动引导配置。
 ///
 /// 经 confers 派生宏从 `GARRISON_*` 环境变量加载（env 覆盖 + 默认值），
-/// 替代原先逐项手写的 `std::env::var` 解析。字段名按大写映射环境变量：
-/// `external_port` → `GARRISON_EXTERNAL_PORT`，以此类推。
+/// 字段名按大写映射环境变量（`external_port` → `GARRISON_EXTERNAL_PORT`）。
 ///
-/// fail-closed 语义：
-/// - `internal_api_key` 无默认值——未配置时 `load_sync` 直接报错，拒绝启动；
-/// - `internal_api_key` 长度（GAR-33）、绑定地址与可信代理解析（GAR-30/34）、
-///   外网登录暴露确认（GAR-03）在加载之后统一执行（见
-///   [`resolve_bootstrap_security`]）；`rate_limit=0` 的防御检查见 `async_main`；
-/// - `field-encryption` feature 启用时 `field_encryption_keys` 为空即拒绝启动
-///   （静态加密无钥不运行，见 [`parse_field_encryption_keys`]）。
+/// fail-closed 语义：`internal_api_key` 无默认值（未配置即拒绝启动）；密钥长度、
+/// 绑定地址与可信代理解析、外网登录暴露确认在加载后统一执行（见
+/// [`resolve_bootstrap_security`]），`rate_limit=0` 检查见 `async_main`；
+/// `field-encryption` feature 启用时密钥表为空即拒绝启动。
 ///
-/// 与旧手写解析的行为差异：`GARRISON_EXTERNAL_LOGIN_ENABLED` 仅接受
-/// `true`/`false`（大小写不敏感），不再接受 `1`；非法值将启动失败而非静默忽略。
+/// `GARRISON_EXTERNAL_LOGIN_ENABLED` 仅接受 `true`/`false`（大小写不敏感），
+/// 不再接受 `1`；非法值启动失败而非静默忽略。
 #[derive(Debug, Clone, serde::Deserialize, confers::Config)]
 #[config(env_prefix = "GARRISON_")]
 struct AuthServerBootstrapConfig {
@@ -108,55 +103,54 @@ struct AuthServerBootstrapConfig {
     external_port: u16,
     #[config(default = 8081)]
     internal_port: u16,
-    /// 绑定地址（GAR-30）：缺省 127.0.0.1（secure-by-default，仅本机可达）；
-    /// 容器部署须显式 0.0.0.0 才能被端口映射（镜像已内置 ENV）。
-    /// Option：confers 派生宏不支持字符串字面量 default，
-    /// 缺省语义由 [`resolve_bind_addr`] 按 None 处理。
+    /// 绑定地址：缺省 127.0.0.1（secure-by-default，仅本机可达）；容器部署须
+    /// 显式 0.0.0.0 才能被端口映射（镜像已内置 ENV）。Option 语义：confers 派生宏
+    /// 不支持字符串字面量 default，缺省由 [`resolve_bind_addr`] 按 None 处理。
     external_bind: Option<String>,
     internal_bind: Option<String>,
     #[config(default = 100)]
     rate_limit: u32,
-    /// 内网 API Key——无默认值，未配置即启动失败（fail-closed, M-SAST-1）；
-    /// 长度下限由库层 [garrison::server::MIN_INTERNAL_API_KEY_LEN] 统一强制（GAR-33）
+    /// 内网 API Key——无默认值，未配置即启动失败（fail-closed）；
+    /// 长度下限由库层 `MIN_INTERNAL_API_KEY_LEN`（32 字节）统一强制，
+    /// 建议 `openssl rand -hex 32` 生成。
     internal_api_key: String,
-    /// 可信代理 IP 列表（GAR-34）：逗号分隔，缺省空（不信任任何 XFF）。
-    /// 仅当部署在可信反代之后才配置；配置后 XFF 解析才启用。
-    /// Option 语义同 `external_bind`，解析见 [`parse_trusted_proxies`]。
+    /// 可信代理 IP 列表：逗号分隔，缺省空（不信任任何 XFF）；仅部署在可信反代
+    /// 之后才配置，配置后 XFF 解析（限速键 / 客户端 IP）才启用；仅接受回环/内网
+    /// 地址，非法值拒绝启动；Option 语义同 `external_bind`。
     trusted_proxies: Option<String>,
     #[config(default = false)]
     external_login_enabled: bool,
-    /// 外网登录开启且外网绑定为非回环地址时的显式风险确认（GAR-03），
-    /// 精确匹配 [garrison::server::EXTERNAL_LOGIN_ACK]，否则不得启动。
+    /// 外网登录开启且外网绑定为非回环地址时的显式风险确认：
+    /// 精确匹配 `EXTERNAL_LOGIN_ACK`，否则不得启动。
     external_login_ack: Option<String>,
-    /// 严格安全档（棘轮）：参考部署**缺省 `true`**，保持 rc.3 的 fail-closed 基线
-    /// （短密钥、未 ACK 的外网登录暴露均拒启动）。库层 `AuthServerConfig` 的同名字段
-    /// 缺省为 `false`（默认路径只告警）；`GARRISON_STRICT_SECURITY=false` 仅作
-    /// 一次性逃生阀（密钥尚未轮换时）。本路径经 confers 只接受 `true`/`false`，
-    /// 非法值拒绝启动（与库层 `env_flag` 的「告警后回退」语义不同）。
+    /// 严格安全档（棘轮）：缺省 `true` 保持 fail-closed 基线（短密钥、未 ACK 的
+    /// 外网登录暴露均拒启动）；库层 `AuthServerConfig` 同名字段缺省 `false`
+    /// （默认路径只告警）。`false` 仅作一次性逃生阀（密钥尚未轮换时）；本路径
+    /// 经 confers 只接受 `true`/`false`，非法值拒绝启动（与库层 `env_flag` 的
+    /// 「告警后回退」语义不同）。
     #[config(default = true)]
     strict_security: bool,
-    /// 同账号最大并发会话数（GAR-35）：默认 10（超出踢最早会话），
-    /// 覆盖框架 `default_config()` 的 0（不互踢）；显式传 0 = 不限制。
+    /// 同账号最大并发会话数：默认 10（超出踢最早会话），覆盖框架
+    /// `default_config()` 的 0（不互踢）；显式传 0 = 不限制。
     #[config(default = 10)]
     max_login_count: u32,
-    /// 主认证 amr 播种开关（GAR-10）：默认 true 保持框架现状（会话携带
-    /// `amr=["pwd"]`/`aal:1`/`auth_time`）；安全敏感部署应显式关闭——
-    /// 参考部署 login 不校验凭证，默认播种会把未发生的密码认证写入
-    /// 会话因子账本，误导下游 step-up 判定。
+    /// 主认证 amr 播种开关：默认 true 保持框架现状（会话携带
+    /// `amr=["pwd"]`/`aal:1`/`auth_time`）；安全敏感部署应显式关闭——参考部署
+    /// login 不校验凭证，默认播种会把未发生的密码认证写入会话因子账本，
+    /// 误导下游 step-up 判定。
     #[config(default = true)]
     seed_primary_amr: bool,
-    /// 字段加密密钥表（`field-encryption` feature）：逗号分隔的
-    /// `key_id:hex64` 表目（hex64 = 32 字节 AES-256 钥材 hex 编码），
-    /// 首项为主钥。feature 启用时必填（fail-closed）。
-    /// Option：confers 派生宏对字符串字面量 default 不支持（"Unknown value"），
-    /// 缺省语义由装配代码按 None 处理。
+    /// 字段加密密钥表（`field-encryption` feature）：逗号分隔 `key_id:hex64`
+    /// 表目（hex64 = 32 字节 AES-256 钥材 hex 编码），首项为主钥；feature 启用时
+    /// 必填（fail-closed）。Option 语义：confers 对字符串字面量 default 不支持，
+    /// 缺省由装配代码按 None 处理。
     field_encryption_keys: Option<String>,
     /// 字段加密 AAD 租户段（`field-encryption` feature），缺省 "default"。
     field_encryption_tenant: Option<String>,
 }
 
-/// 解析绑定地址（GAR-30）：缺省 127.0.0.1（secure-by-default）；
-/// 显式配置必须为合法 IPv4/IPv6 字面量，否则拒绝启动（fail-closed）。
+/// 解析绑定地址：缺省 127.0.0.1（secure-by-default）；显式配置必须为合法
+/// IPv4/IPv6 字面量，否则拒绝启动（fail-closed）。
 fn resolve_bind_addr(env_name: &str, raw: Option<&str>) -> GarrisonResult<IpAddr> {
     match raw {
         None => Ok(IpAddr::from([127, 0, 0, 1])),
@@ -169,8 +163,8 @@ fn resolve_bind_addr(env_name: &str, raw: Option<&str>) -> GarrisonResult<IpAddr
     }
 }
 
-/// 解析 `GARRISON_TRUSTED_PROXIES`（GAR-34）：逗号分隔 IP 列表，
-/// 空/未配置 → 空（不信任任何 XFF）；非法或公网地址拒绝启动（fail-closed）。
+/// 解析 `GARRISON_TRUSTED_PROXIES`：逗号分隔 IP 列表，空/未配置 → 空
+/// （不信任任何 XFF）；非法或公网地址拒绝启动（fail-closed）。
 fn parse_trusted_proxies(spec: &str) -> GarrisonResult<Vec<IpAddr>> {
     if spec.trim().is_empty() {
         return Ok(vec![]);
@@ -204,13 +198,12 @@ fn parse_trusted_proxies(spec: &str) -> GarrisonResult<Vec<IpAddr>> {
     Ok(proxies)
 }
 
-/// 启动期安全装配（GAR-30/33/34/03 + 棘轮）：解析绑定地址与可信代理，连同
-/// 密钥 / 外网登录 / ACK / 严格档装配成一个完整 `AuthServerConfig`，并在
-/// 触碰任何外部依赖（DAO / 迁移）之前调用库层 `validate()` 提前 fail-closed。
+/// 启动期安全装配：解析绑定地址与可信代理，连同密钥 / 外网登录 / ACK /
+/// 严格档装配成完整 `AuthServerConfig`，并在触碰任何外部依赖（DAO / 迁移）
+/// 之前调用库层 `validate()` 提前 fail-closed。
 ///
 /// 护栏判定全部在库层（`garrison::server`），bin 不持有阈值常量与判定函数副本；
-/// 严格档由 bootstrap 显式带入（缺省 `true`），覆盖 `..AuthServerConfig::default()`
-/// 的库层缺省 `false`。
+/// 严格档由 bootstrap 显式带入（缺省 `true`），覆盖库层缺省 `false`。
 fn resolve_bootstrap_security(
     bootstrap: &AuthServerBootstrapConfig,
 ) -> GarrisonResult<AuthServerConfig> {
@@ -234,16 +227,15 @@ fn resolve_bootstrap_security(
         ..AuthServerConfig::default()
     };
     // 先校验后启动：失败映射为 Config 错误，调用方保持 eprintln + exit(1)
-    // （acc_srv_030/031 的快速退出不依赖建库与迁移）。
+    // （快速退出不依赖建库与迁移）。
     config.validate().map_err(GarrisonError::Config)?;
     Ok(config)
 }
 
-/// GAR-35：参考部署的会话策略收口——框架 `default_config()` 的
-/// `max_login_count=0`（不互踢）在 bin 层覆盖为 bootstrap 值（默认 10，
-/// 超出踢最早会话）；显式传 0 仍表示不限制（保留运维出口）。
-/// GAR-10：`seed_primary_amr` 从 bootstrap（env `GARRISON_SEED_PRIMARY_AMR`，
-/// 默认 true）接入配置，安全敏感部署可关闭主认证 amr 播种。
+/// 参考部署的会话策略收口：框架 `default_config()` 的 `max_login_count=0`
+/// （不互踢）在 bin 层覆盖为 bootstrap 值（默认 10，超出踢最早会话），显式传 0
+/// 仍表示不限制（保留运维出口）；`seed_primary_amr` 从 bootstrap 接入配置，
+/// 安全敏感部署可关闭主认证 amr 播种。
 fn assemble_garrison_config(max_login_count: u32, seed_primary_amr: bool) -> GarrisonConfig {
     let mut config = GarrisonConfig::default_config();
     config.max_login_count = max_login_count;
@@ -363,8 +355,8 @@ async fn async_main() -> GarrisonResult<()> {
             std::process::exit(1);
         },
     };
-    // 拒绝 0 值——rate_limit=0 会让限速器拒绝所有请求（全部 429）。
-    // 负值在解析阶段即失败并启动失败，无需额外校验。
+    // 拒绝 0 值：rate_limit=0 会让限速器拒绝所有请求（全部 429）；
+    // 负值在解析阶段即失败退出，无需额外校验。
     if bootstrap.rate_limit == 0 {
         eprintln!(
             "FATAL: GARRISON_RATE_LIMIT=0 would reject every request (all 429); \
@@ -372,9 +364,9 @@ async fn async_main() -> GarrisonResult<()> {
         );
         std::process::exit(1);
     }
-    // GAR-30/33/34/03 + 棘轮：绑定地址 / 可信代理 / 密钥强度 / 外网登录暴露确认
-    // 统一交由库层 `validate()` 判定，且保持在 `setup_garrison_manager` 之前——
-    // 任何一项不满足即拒绝启动，不触碰 DAO 与迁移。
+    // 绑定地址 / 可信代理 / 密钥强度 / 外网登录暴露确认统一交由库层
+    // `validate()` 判定，且保持在 `setup_garrison_manager` 之前——任何一项
+    // 不满足即拒绝启动，不触碰 DAO 与迁移。
     let config = match resolve_bootstrap_security(&bootstrap) {
         Ok(c) => c,
         Err(e) => {
@@ -423,10 +415,9 @@ async fn async_main() -> GarrisonResult<()> {
         eprintln!("WARN: no observability feature enabled, tracing logs will be dropped. Enable audit-inklog or metrics-prometheus for structured logging.");
     }
 
-    // 创建 BackendEmbedded 作为后端。
-    // BackendEmbedded 委托全局 GarrisonManager 单例，
-    // 必须先经 GarrisonManager::builder().build().await 初始化，
-    // 否则启动后所有认证操作都会报 manager-not-init 错误。
+    // BackendEmbedded 委托全局 GarrisonManager 单例，必须先经
+    // GarrisonManager::builder().build().await 初始化，否则启动后所有认证
+    // 操作都会报 manager-not-init 错误。
     if let Err(e) = setup_garrison_manager(
         bootstrap.field_encryption_keys.as_deref().unwrap_or(""),
         bootstrap
@@ -443,8 +434,8 @@ async fn async_main() -> GarrisonResult<()> {
     }
     let backend: Arc<dyn AuthBackend> = Arc::new(BackendEmbedded::new());
 
-    // GAR-30 / 棘轮：配置对象整体注入——字段清单只在 `resolve_bootstrap_security`
-    // 一处装配（端口 / 绑定 / 限速 / 代理 / 密钥 / 严格档），不在装配侧逐项重复；
+    // 配置对象整体注入：字段清单只在 `resolve_bootstrap_security` 一处装配
+    // （端口 / 绑定 / 限速 / 代理 / 密钥 / 严格档），装配侧不逐项重复；
     // `listen()` 仍会再调 `validate()`（幂等），启动前的提前校验保证
     // 「未触碰外部依赖即已 fail-closed」。
     GarrisonAuthServer::new(backend)
@@ -504,9 +495,9 @@ mod bootstrap_tests {
         );
     }
 
-    /// 棘轮：参考部署缺省即严格档（保持 rc.3 的 fail-closed 基线），且严格档
-    /// 恒取 bootstrap 值——`..AuthServerConfig::default()` 的库层缺省 `false`
-    /// 必须被显式字段覆盖，否则 bin 退化为只告警。
+    /// 严格档缺省即开启（fail-closed 基线），且恒取 bootstrap 值——
+    /// `..AuthServerConfig::default()` 的库层缺省 `false` 必须被显式字段覆盖，
+    /// 否则 bin 退化为只告警。
     #[test]
     fn strict_security_defaults_on_in_bin() {
         assert!(
@@ -629,7 +620,7 @@ mod bootstrap_tests {
         );
     }
 
-    /// GAR-10：bootstrap 的 amr 播种开关装配进 GarrisonConfig。
+    /// bootstrap 的 amr 播种开关装配进 GarrisonConfig。
     #[test]
     fn seed_primary_amr_assembled_into_config() {
         assert!(

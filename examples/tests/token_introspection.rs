@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! token_introspection 示例测试（protocol-oauth2 feature）。
-//!
-//! 验证 run() 完整执行：RFC 7662 introspection + URL 推导 + 反序列化示例。
+//! token_introspection 示例测试（protocol-oauth2 feature）：验证 run() 完整执行（RFC 7662 introspection + URL 推导 + 反序列化示例）。
 
 #![cfg(feature = "protocol-oauth2")]
 

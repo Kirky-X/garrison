@@ -3,13 +3,12 @@
 
 //! 存储域验收（DAO 原子性并发补盲）。
 //!
-//! 验证 `GarrisonDao` 六个原子必需方法（编译期契约）在真实多线程并发下
-//! 的正确性：`set_if_absent` 仅一次成功、`get_and_delete` 恰一次消费、
-//! `incr` 无丢失更新。覆盖 InMemoryDao（parking_lot 锁）与 GarrisonDaoOxcache
-//! （进程内 oxcache 后端）两种内置实现。
+//! 验证 `GarrisonDao` 六个原子必需方法（编译期契约）在真实多线程并发下的正确性：
+//! `set_if_absent` 仅一次成功、`get_and_delete` 恰一次消费、`incr` 无丢失更新。覆盖
+//! InMemoryDao（parking_lot 锁）与 GarrisonDaoOxcache（进程内 oxcache 后端）两种内置实现。
 //!
-//! 本域不经 `GarrisonManager` 全局单例，无需 `#[serial]`；统一使用
-//! `multi_thread` runtime 以获得真实并行竞争。
+//! 本域不经 `GarrisonManager` 全局单例，无需 `#[serial]`；统一使用 `multi_thread` runtime
+//! 以获得真实并行竞争。
 
 use garrison::dao::{GarrisonDao, GarrisonDaoOxcache, InMemoryDao};
 use std::sync::Arc;
@@ -30,7 +29,7 @@ use garrison::dao::{init_dbnexus, GarrisonDaoDbnexus};
 #[cfg(feature = "tenant-isolation")]
 use crate::common::harness::with_tenant;
 
-/// 并发任务数（任务文本规定 100）。
+/// 并发任务数。
 const CONCURRENCY: usize = 100;
 
 /// 构造被测后端：InMemoryDao / GarrisonDaoOxcache / GarrisonDaoDbnexus（异步构造）。

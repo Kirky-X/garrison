@@ -24,16 +24,12 @@ use tokio::sync::Mutex;
 // 测试用 Mock DAO（模拟 oxcache 的存储行为，无 TTL 过期）
 // ============================================================================
 
-/// 内存 HashMap 实现的 DAO，用于示例演示。
-///
-/// 生产环境应使用 `GarrisonDaoOxcache`（cache-memory feature）或
-/// `GarrisonDaoDbnexus`（db-sqlite feature）。
+/// 内存 HashMap DAO（仅供示例）；生产环境用 `GarrisonDaoOxcache`（cache-memory）或 `GarrisonDaoDbnexus`（db-sqlite）。
 pub struct MockDao {
     data: Mutex<HashMap<String, String>>,
 }
 
 impl MockDao {
-    /// 创建 MockDao 实例。
     pub fn new() -> Self {
         Self {
             data: Mutex::new(HashMap::new()),
@@ -150,18 +146,14 @@ impl GarrisonDao for MockDao {
     }
 }
 
-/// 运行认证逻辑示例。
-///
-/// 演示 AuthLogicDefault 的 login / is_login / get_login_id / verify_token / logout，
-/// 以及 logout 的幂等语义。
+/// 运行认证逻辑示例：AuthLogicDefault 的 login / is_login / get_login_id / verify_token / logout，以及 logout 幂等语义。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 认证逻辑示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. 构建 AuthLogicDefault（注入 Session + Token 处理器）
     // ----------------------------------------------------------------
-    // 注意：AuthLogicDefault 不依赖 task_local 上下文，所有方法以 token 为入参，
-    // 便于 protocol-jwt 等协议层模块干净复用。
+    // AuthLogicDefault 不依赖 task_local 上下文，方法均以 token 为入参，便于 protocol-jwt 等协议层复用。
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 7_776_000));
     let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);

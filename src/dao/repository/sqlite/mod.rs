@@ -10,21 +10,15 @@
 //! ## 设计要点
 //!
 //! - **参数化查询**：所有 WHERE 条件用 `?` 占位符，防 SQL 注入。
-//! - **多租户过滤**：有 tenant_id 的表自动注入 `WHERE tenant_id = ?`；
-//! `app_permission` 表无 tenant_id（全局表）。
-//! - **find_by_\*** 返回 `Option<Row>`，不存在返回 `Ok(None)`。
-//! - **create** 返回 `NewXxx.id`（调用方生成的 UUID），不依赖数据库自增 ID。
-//! - **delete** 幂等，不存在返回 `Ok(())`。
-//! - **bool 字段**：SQLite 用 INTEGER 0/1 存储，Row struct 用 bool，读取时 i64→bool 转换。
-//! - **时间字段**：SQLite 用 CURRENT_TIMESTAMP 默认生成，读取为 String。
+//! - **多租户过滤**：有 tenant_id 的表自动注入 `WHERE tenant_id = ?`；`app_permission` 表无 tenant_id（全局表）。
+//! - **find_by_\*** 不存在返回 `Ok(None)`；**create** 返回调用方生成的 UUID，不依赖自增 ID；**delete** 幂等，不存在返回 `Ok(())`。
+//! - **bool 字段**：SQLite 用 INTEGER 0/1 存储，Row struct 用 bool，读取时 i64→bool 转换；**时间字段**：TEXT 与 `CURRENT_TIMESTAMP` 默认生成同格式，读取为 String。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use dbnexus::sea_orm::{QueryResult, Value};
 use dbnexus::DbPool;
 
-// ============================================================================
 // 子模块声明（impl 块拆分到独立文件，遵循 mod.rs 加固规则）
-// ============================================================================
 
 mod auth_method_repo;
 mod login_log_repo;
@@ -40,11 +34,8 @@ mod user_repo;
 mod user_role_repo;
 mod webauthn_credential_repo;
 
-// ============================================================================
 // 内部辅助函数
-// ============================================================================
 
-/// 构造字符串 Value 参数。
 fn v_str(s: &str) -> Value {
     Value::String(Some(s.to_string()))
 }
@@ -54,12 +45,10 @@ fn v_opt_str(s: &Option<String>) -> Value {
     Value::String(s.clone())
 }
 
-/// 构造 i64 Value 参数（用于 offset/limit 等）。
 fn v_i64(n: i64) -> Value {
     Value::BigInt(Some(n))
 }
 
-/// 构造布尔 Value 参数（SQLite 用 0/1 存储）。
 fn v_bool(b: bool) -> Value {
     Value::BigInt(Some(if b { 1 } else { 0 }))
 }
@@ -67,8 +56,7 @@ fn v_bool(b: bool) -> Value {
 /// 生成与 SQL `CURRENT_TIMESTAMP` 同格式的当前时间串（`YYYY-MM-DD HH:MM:SS`）。
 ///
 /// 供 UPDATE 语句以参数绑定刷新 `updated_at` 列（TEXT/VARCHAR），三方言
-/// （SQLite / PostgreSQL / MySQL）通用，且与 DEFAULT CURRENT_TIMESTAMP 产生
-/// 的既有值格式一致（保持字典序可比）。
+/// （SQLite / PostgreSQL / MySQL）通用，且与 DEFAULT CURRENT_TIMESTAMP 既有值格式一致。
 pub(crate) fn now_timestamp() -> String {
     chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
@@ -84,9 +72,7 @@ fn read_bool(row: &QueryResult, col: &str) -> GarrisonResult<bool> {
         .map_err(|e| GarrisonError::Dao(format!("dao-repo-read-bool::{}::{}", col, e)))
 }
 
-// ============================================================================
 // Repository struct 定义（impl 见各 _repo.rs 子模块）
-// ============================================================================
 
 /// SQLite 用户表 Repository 实现。
 pub struct DbnexusUserRepository {
@@ -140,7 +126,7 @@ pub struct DbnexusUserIdentifierRepository {
 
 /// SQLite 用户设备表 Repository 实现。
 ///
-/// UA 解析当前用简单字符串启发式（提取 Browser/OS 关键字）。
+/// UA 解析当前用简单字符串启发式（提取 Browser/OS 关键字）；
 /// 完整 `ua-parser` regex 集需启用 `ua-parser-precompiled` feature（设计决策延后）。
 pub struct DbnexusUserDeviceRepository {
     pool: DbPool,
@@ -156,9 +142,7 @@ pub struct DbnexusPasswordHistoryRepository {
     pool: DbPool,
 }
 
-// ============================================================================
 // 测试辅助模块（共享给各 _repo.rs 子模块的 mod tests 使用）
-// ============================================================================
 
 /// 共享测试辅助：初始化内存 SQLite + 执行迁移。
 #[cfg(all(test, feature = "db-sqlite"))]
@@ -177,16 +161,13 @@ pub(crate) mod test_support {
 
     /// 创建并初始化 SQLite 数据库（迁移 + 返回 pool）。
     ///
-    /// 默认用唯一临时文件库：内存库在连接池多连接下跨连接不可见
-    /// （迁移建表与业务查询可能落不同连接，偶发 "no such table"），
-    /// 文件库天然共享。设 `GARRISON_TEST_SQLITE_MEMORY=1` 回退内存库——
-    /// CI 的 beta/llvm-cov 面文件库触发 SQLITE_READONLY（机制未明、
-    /// 稳定复现），这两面历史上对内存库无跨连接问题。
+    /// 默认用唯一临时文件库：内存库在连接池多连接下跨连接不可见（迁移建表与业务
+    /// 查询可能落不同连接，偶发 "no such table"）。设 `GARRISON_TEST_SQLITE_MEMORY=1`
+    /// 回退命名内存库 + shared cache——CI 的 beta/llvm-cov 面文件库触发
+    /// SQLITE_READONLY（机制未明、稳定复现），这两面历史上对内存库无跨连接问题。
     pub async fn setup_db() -> DbPool {
         if std::env::var("GARRISON_TEST_SQLITE_MEMORY").as_deref() == Ok("1") {
-            // 命名内存库 + shared cache：池内全部连接共享同一库。`sqlite::memory:`
-            // 每连接一个独立库，迁移建表与业务查询落不同连接时偶发
-            // "no such table"（app_user_identifier 测试在 CI 内存面稳定复现）。
+            // 命名内存库 + shared cache：池内全部连接共享同一库。
             // UUID 命名隔离并发的不同测试二进制（lib / integration）。
             let url = format!(
                 "sqlite:file:garrison_test_mem_{}?mode=memory&cache=shared",
@@ -233,8 +214,8 @@ mod tests {
     }
 
     /// 创建并初始化 SQLite 数据库（迁移 + 返回 pool）。
-    /// 唯一临时文件库；`GARRISON_TEST_SQLITE_MEMORY=1` 时回退内存库
-    /// （见上方 `setup_db` 文档）。
+    /// 唯一临时文件库；`GARRISON_TEST_SQLITE_MEMORY=1` 时回退命名内存库
+    /// + shared cache（原因见上方 `setup_db` 文档）。
     async fn setup_db() -> DbPool {
         if std::env::var("GARRISON_TEST_SQLITE_MEMORY").as_deref() == Ok("1") {
             // 命名内存库 + shared cache，原因同上方 `setup_db` 注释
@@ -264,15 +245,9 @@ mod tests {
         pool
     }
 
-    /// Repository SQL 强制 tenant_id 过滤。
+    /// Repository SQL 强制 tenant_id 过滤：跨租户查询返回 None、list 按 tenant 隔离。
     ///
-    /// 验证无条件实现的 `WHERE tenant_id = ?` 过滤行为：
-    /// - 构造 tenant_id=42 与 tenant_id=1 的用户
-    /// - 跨租户查询应返回 None（SQL 含 `WHERE tenant_id = ?` 过滤）
-    /// - list 按 tenant 隔离
-    ///
-    /// 注：SQL 过滤不门控 `tenant-isolation` feature，始终生效——因 tenant_id 已是所有表必需字段，
-    /// 不过滤会导致跨租户数据泄露（安全优先）。
+    /// 过滤不门控 `tenant-isolation` feature，始终生效——不过滤会导致跨租户数据泄露（安全优先）。
     #[tokio::test(flavor = "multi_thread")]
     async fn repository_filters_by_tenant_id_when_tenant_isolation_enabled() {
         let pool = setup_db().await;
@@ -302,7 +277,6 @@ mod tests {
             .await
             .expect("create tenant 1 用户应成功");
 
-        // 跨租户 find_by_id：tenant 42 查不到 tenant 1 的用户（SQL 含 WHERE tenant_id = ?）
         let cross = repo.find_by_id(42, &user_1).await.unwrap();
         assert!(
             cross.is_none(),
@@ -339,11 +313,7 @@ mod tests {
         assert_eq!(row_42.tenant_id, 42, "返回行 tenant_id 应为 42");
     }
 
-    /// create 内部生成合法 UUID v4。
-    ///
-    /// 验证 Repository 内部生成 UUID v4 的行为：
-    /// - 调用 create 不传 id
-    /// - 返回值应为合法 UUID v4（parse_str 成功 + version == Random）
+    /// create 内部生成合法 UUID v4（parse_str 成功 + version == Random）。
     #[tokio::test(flavor = "multi_thread")]
     async fn create_generates_valid_uuid_v4() {
         let pool = setup_db().await;
@@ -370,8 +340,7 @@ mod tests {
         );
     }
 
-    /// T023：同手机号二次注册 → Taken{by_user_id}；数据库唯一约束兜底并发。
-    /// （012_user_identifier 迁移由 setup_db 自动执行）
+    /// 同手机号二次注册 → Taken{by_user_id}；数据库唯一约束兜底并发。
     #[tokio::test]
     async fn user_identifier_register_conflict_returns_taken() {
         let pool = setup_db().await;

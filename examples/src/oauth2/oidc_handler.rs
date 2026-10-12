@@ -3,12 +3,7 @@
 
 //! OIDC（OpenID Connect）处理器示例。
 //!
-//! 演示 `OidcHandler` 完整流程：
-//! 1. 创建 OidcHandler（issuer / audience / secret）
-//! 2. `sign_id_token` 签发 id_token（JWT 格式，含 iss/sub/aud/exp/iat/nonce claims）
-//! 3. `verify_id_token` 校验 id_token 并提取 claims
-//! 4. `discovery_metadata` 生成 OIDC discovery endpoint JSON
-//! 5. nonce 不匹配时校验失败
+//! 演示 `OidcHandler` 完整流程：创建、`sign_id_token` 签发（含 iss/sub/aud/exp/iat/nonce claims）、`verify_id_token` 校验提取 claims、`discovery_metadata` 生成 discovery JSON、nonce 不匹配拒绝。
 //!
 //! 运行方式：
 //! ```sh
@@ -18,16 +13,12 @@
 use garrison::error::GarrisonError;
 use garrison::protocol::oauth2::oidc::{OidcAudience, OidcHandler};
 
-/// 运行 OIDC 处理器示例。
-///
-/// 演示 OidcHandler 的 sign_id_token / verify_id_token / discovery_metadata 完整流程，
-/// 包括 nonce 不匹配时返回 OAuth2 错误的场景。
+/// 运行 OIDC 处理器示例：sign_id_token / verify_id_token / discovery_metadata，以及 nonce 不匹配返回 OAuth2 错误。
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison OIDC 处理器示例 ===\n");
 
     // 1. 创建 OidcHandler（issuer / audience / secret）
-    // 注意：此处 secret 为示例硬编码值，仅用于演示。
-    // 生产环境必须从安全配置源（env / secret manager）读取，不可硬编码。
+    // 注意：secret 为示例硬编码值，仅用于演示；生产环境必须从安全配置源（env / secret manager）读取，不可硬编码。
     let handler = OidcHandler::new(
         "https://auth.example.com",
         "my-client-id",

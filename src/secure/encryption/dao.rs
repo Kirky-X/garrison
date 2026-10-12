@@ -1,50 +1,33 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! `GarrisonDao` 透明加解密装饰器。
+//! `GarrisonDao` 透明加解密装饰器：包装任意 DAO，对敏感命名空间（key 前缀）实施静态加密。
 //!
-//! 包装任意 `GarrisonDao`，对敏感命名空间（key 前缀）实施静态加密：
-//! - **key 名摘要化**：token 类命名空间（`oauth2:atoken:` / `oauth2:rtoken:` /
-//!   `oauth2:codeused:`）的 key 名本身承载 bearer 凭据（裸 token / 授权码），
-//!   落库前将 key 余段摘要为 SHA-256 hex——DB 泄露无法从 key 名回收凭据重放。
-//!   读写两侧经同一装饰器派生，调用方继续用原 key（透传语义不变）。
-//! - **写路径全加密**（`set` / `set_permanent` / `update` / `set_if_absent`）：
-//!   敏感命名空间落库值恒为 `enc:v1:<key_id>:<base64(nonce|ciphertext)>`
-//! - **读路径迁移期双读**：值有 `enc:v1:` 前缀则解密、无前缀（明文遗留行）
-//!   原样返回；key 名有摘要化前历史的行（遗留 raw key）读取/消费时回退可达
-//!   （见 [`FieldEncryptionDao::get`] 文档）
-//! - **AAD 绑定** `garrison:{tenant}:{table}:{key}`（key 段 = 落库 key 余段，
-//!   摘要化后即摘要值）：密文挪到其他行解密即失败
+//! - key 名摘要化：token 类命名空间（`oauth2:atoken:` / `oauth2:rtoken:` / `oauth2:codeused:`）的 key 余段承载
+//!   bearer 凭据，落库前摘要为 SHA-256 hex，DB 泄露无法从 key 名回收凭据；读写两侧经同一装饰器派生，调用方仍用原 key。
+//! - 写路径全加密（`set` / `set_permanent` / `update` / `set_if_absent`）：敏感命名空间落库值恒为 `enc:v1:<key_id>:<base64(nonce|ciphertext)>`。
+//! - 读路径迁移期双读：有 `enc:v1:` 前缀则解密，无前缀（明文遗留行）原样返回；摘要化前落库的 raw key 行读取/消费仍回退可达（见 [`FieldEncryptionDao::get`]）。
+//! - AAD 绑定 `garrison:{tenant}:{table}:{key}`（key 段 = 落库 key 余段）：密文挪到其他行解密即失败。
 //!
-//! # 命名空间与敏感列对应（规格选定列）
+//! # 命名空间与敏感列（规格选定列）
 //!
-//! - `oauth2:atoken:` / `oauth2:rtoken:`：OAuth2 access/refresh token 记录
-//!   （`src/oauth2_server/token.rs` 签发与 DAO fallback 路径；key 余段 = token）
-//! - `oauth2:codeused:`：授权码已签发 token 的吊销追踪记录
-//!   （`src/oauth2_server/authorize.rs`；key 余段 = 授权码，值含原始 token）
-//! - `totp:seed:`：TOTP 种子（预留——当前代码库种子仅内存持有，无落库写入点；
-//!   接入持久化时自动纳入加密；key 余段 = 用户标识，非凭据，不摘要化）
+//! `oauth2:atoken:` / `oauth2:rtoken:`（OAuth2 access/refresh token 记录）、`oauth2:codeused:`（授权码已签发 token 的吊销追踪）、
+//! `totp:seed:`（TOTP 种子，预留——当前种子仅内存持有无落库写入点，接入持久化即自动纳入加密；key 余段为用户标识，非凭据不摘要化）。
 //!
 //! # 偏差说明：`oauth2:client:` 不纳入
 //!
-//! 规格 IdP client secret 落库列在本代码库不存在：`DaoOAuth2ClientStore`
-//! 持久的 `client_secret_hash` 是 Argon2id 单向哈希（`oauth2_server/client.rs`，
-//! 不可逆、非可复用凭据），整值加密无机密性增益；且该 store 的 update 路径是
-//! `compare_and_swap`，随机 nonce 加密下 expected（读回的明文）与底层密文
-//! 逐字节恒不等，CAS 原理性不可用。恢复 secret 必须先引入 secret 恢复语义
-//! （如版本键乐观并发或字段级加密），届时单独接线。
+//! 本库无 IdP client secret 落库列：`DaoOAuth2ClientStore` 的 `client_secret_hash` 是 Argon2id 单向哈希（不可逆、非可复用凭据），
+//! 整值加密无机密性增益；且该 store 的 update 走 `compare_and_swap`，随机 nonce 加密下 expected（读回明文）与底层密文逐字节恒不等，CAS 原理性不可用。
 //!
 //! # 原子操作限制
 //!
-//! 计数/比较类原子操作（`incr` / `decr` / `compare_and_swap` /
-//! `compare_and_update_if_greater`）依赖明文数值语义，敏感命名空间内无意义且
-//! 无法在保持原子性的前提下加解密——显性拒绝（fail-closed），非敏感命名空间透传。
+//! 计数/比较类原子操作（`incr` / `decr` / `compare_and_swap` / `compare_and_update_if_greater`）依赖明文数值语义，
+//! 敏感命名空间内无法在保持原子性的前提下加解密——显性拒绝（fail-closed），非敏感命名空间透传。
 //!
 //! # `keys()` 语义
 //!
-//! `keys(pattern)` 透传内部 DAO：摘要化命名空间返回的是落库 key（摘要形式），
-//! **不可回喂 `get()`**（摘要单向，二次摘要错位）。扫描仅供运维工具
-//! （change-key / check-key 经内部 DAO 直接操作落库 key）使用。
+//! `keys(pattern)` 透传内部 DAO：摘要化命名空间返回落库 key（摘要形式），**不可回喂 `get()`**（摘要单向，二次摘要错位）；
+//! 扫描仅供运维工具（change-key / check-key 经内部 DAO 直接操作落库 key）使用。
 
 use std::sync::Arc;
 
@@ -70,11 +53,9 @@ pub const SENSITIVE_TABLES: &[&str] = &[
 /// 落库前摘要为 SHA-256 hex。均为 [`SENSITIVE_TABLES`] 子集。
 pub const DIGEST_TABLES: &[&str] = &["oauth2:atoken:", "oauth2:rtoken:", "oauth2:codeused:"];
 
-/// 摘要化后 key 余段的形态：SHA-256 hex 小写（64 字符十六进制）。
+/// 摘要化后 key 余段的形态：SHA-256 小写 hex（64 字符），用于区分「落库 key」与「升级前遗留 raw key」。
 ///
-/// 用于区分「落库 key（已摘要）」与「升级前遗留 raw key」。现实凭据格式
-/// （base64url 43 字符，见 `oauth2_server::token::generate_token`）与 64 hex
-/// 无交集；误判方向良性——遗留行被当作已摘要时原地保留，读路径回退仍可达。
+/// 真实凭据为 base64url 43 字符（见 `oauth2_server::token::generate_token`），与 64 hex 无交集；误判方向良性——遗留行被当作已摘要时原地保留，读路径回退仍可达。
 pub fn is_digest_form(remainder: &str) -> bool {
     remainder.len() == 64
         && remainder
@@ -103,9 +84,7 @@ impl std::fmt::Debug for FieldEncryptionDao {
 impl FieldEncryptionDao {
     /// 装配：包装内部 DAO 与字段加解密门面。
     ///
-    /// `inner` 必须是未经本装饰器包装的底层存储 DAO（运维接口经
-    /// `Self::inner_dao` 直接操作落库层，不存在「误传装饰器实例」的入参位；
-    /// inner_dao 为 pub(crate)，不渲染进公开文档，故此处不作 intra-doc 链接）。
+    /// `inner` 须是未经本装饰器包装的底层存储 DAO（运维接口经 `Self::inner_dao` 直连落库层，不存在误传装饰器的入参位）。
     pub fn new(
         inner: Arc<dyn GarrisonDao>,
         cipher: Arc<FieldCipher>,
@@ -227,16 +206,14 @@ impl GarrisonDao for FieldEncryptionDao {
         self.sensitive_get(key).await
     }
 
-    /// 写入恒落库到摘要化 key（遗留 raw key 行不经写路径复活，按 TTL 消亡
-    /// 或由 change-key 收敛）。
+    /// 写入恒落库到摘要化 key（遗留 raw key 行不经写路径复活，按 TTL 消亡或由 change-key 收敛）。
     async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
         let stored = Self::storage_key(key);
         let encrypted = self.encrypt_for_write(&stored, value).await?;
         self.inner.set(&stored, &encrypted, ttl_seconds).await
     }
 
-    /// 更新恒作用于摘要化 key（遗留 raw key 行不迁移——update 须保留原 TTL，
-    /// 跨 key 搬迁做不到，交由 change-key 收敛）。
+    /// 更新恒作用于摘要化 key（遗留 raw key 行不迁移——update 须保留原 TTL，跨 key 搬迁做不到，交由 change-key 收敛）。
     async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let stored = Self::storage_key(key);
         let encrypted = self.encrypt_for_write(&stored, value).await?;
@@ -264,9 +241,8 @@ impl GarrisonDao for FieldEncryptionDao {
         self.inner.set_permanent(&stored, &encrypted).await
     }
 
-    /// SETNX 恒作用于摘要化 key（跨双 key 的原子 absent 判定不可得，
-    /// 遗留 raw key 行不计入存在性——仅影响升级窗口内同 token 重签发的
-    /// 去重语义，token 签发路径不依赖 SETNX，无实际调用方）。
+    /// SETNX 恒作用于摘要化 key（跨双 key 的原子 absent 判定不可得，遗留 raw key 行不计入存在性——
+    /// 仅影响升级窗口内同 token 重签发的去重语义，token 签发路径不依赖 SETNX，无实际调用方）。
     async fn set_if_absent(
         &self,
         key: &str,
@@ -317,10 +293,8 @@ impl GarrisonDao for FieldEncryptionDao {
         self.inner.keys(pattern).await
     }
 
-    /// 重命名：值随 key 迁移后 AAD 不再匹配，敏感命名空间先解密、
-    /// 原子重命名、再按新落库 key 重加密回写（非原子的崩溃窗口：
-    /// 窗口内留下绑定旧 key 的密文，读路径显性报错而非静默错值；
-    /// 重加密失败则回滚重命名）。
+    /// 重命名：值随 key 迁移后 AAD 不再匹配，敏感命名空间先解密、原子重命名、再按新落库 key 重加密回写；
+    /// 非原子崩溃窗口内留下绑定旧 key 的密文（读路径显性报错而非静默错值），重加密失败则回滚重命名。
     async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
         if !Self::is_sensitive(old_key) && !Self::is_sensitive(new_key) {
             return self.inner.rename(old_key, new_key).await;
@@ -396,10 +370,8 @@ impl GarrisonDao for FieldEncryptionDao {
             .await
     }
 
-    /// CAS 在敏感命名空间显性拒绝：expected 是读回的解密明文，底层落的是
-    /// 本次随机 nonce 的密文，逐字节比较恒不等——CAS 与随机 nonce 加密
-    /// 原理性不兼容（依赖 CAS 更新的 store 需改造为版本键乐观并发或
-    /// 字段级加密后再接入，见模块文档 `oauth2:client:` 偏差说明）。
+    /// CAS 在敏感命名空间显性拒绝：expected 是读回的解密明文，底层落的是本次随机 nonce 的密文，逐字节比较恒不等——
+    /// CAS 与随机 nonce 加密原理性不兼容（依赖 CAS 的 store 须改造为版本键乐观并发或字段级加密，见模块文档 `oauth2:client:` 偏差说明）。
     async fn compare_and_swap(
         &self,
         key: &str,
@@ -434,8 +406,7 @@ mod tests {
         (dao, inner)
     }
 
-    /// 新写入均为密文 + key 名摘要化：裸 token 不得出现在落库 key 名或值中；
-    /// 非敏感命名空间字节级透传。
+    /// 新写入均为密文 + key 名摘要化：裸 token 不得出现在落库 key 名或值中；非敏感命名空间字节级透传。
     #[tokio::test]
     async fn write_path_encrypts_value_and_digests_key() {
         let (dao, inner) = fixture();
@@ -467,8 +438,7 @@ mod tests {
         assert_eq!(raw_session, "raw-session", "非敏感命名空间透传");
     }
 
-    /// 摘要化 key 名下按原 key（裸 token）读回明文——调用方透传语义不变；
-    /// 同一 token 派生的落库 key 确定性一致。
+    /// 摘要化 key 名下按原 key（裸 token）读回明文（调用方透传语义不变）；同一 token 派生的落库 key 确定性一致。
     #[tokio::test]
     async fn digest_key_lookup_transparent() {
         let (dao, inner) = fixture();
@@ -493,8 +463,7 @@ mod tests {
         );
     }
 
-    /// roundtrip：经装饰器写入后读回明文（set / update / set_permanent /
-    /// set_if_absent 四条写路径全覆盖）。
+    /// roundtrip：经装饰器写入后读回明文（覆盖 set / update / set_permanent / set_if_absent 四条写路径）。
     #[tokio::test]
     async fn read_roundtrip_across_write_paths() {
         let (dao, inner) = fixture();
@@ -557,8 +526,7 @@ mod tests {
         );
     }
 
-    /// 迁移期双读（key 维度）：升级前以裸 token key 名落库的遗留行，
-    /// 按原 key 读取/消费仍可达（读路径回退）。
+    /// 迁移期双读（key 维度）：升级前以裸 token key 名落库的遗留行，按原 key 读取/消费仍可达（读路径回退）。
     #[tokio::test]
     async fn legacy_raw_key_row_readable_and_consumable() {
         let (dao, inner) = fixture();
@@ -627,8 +595,7 @@ mod tests {
         assert!(dao.get("totp:seed:user-1").await.unwrap().is_none());
     }
 
-    /// rename：敏感命名空间重命名后新落库 key 下仍可解（按新 key AAD 重加密），
-    /// 旧 key 不存在。
+    /// rename：敏感命名空间重命名后新落库 key 下仍可解（按新 key AAD 重加密），旧 key 不存在。
     #[tokio::test]
     async fn rename_reencrypts_under_new_key() {
         let (dao, inner) = fixture();
@@ -649,8 +616,7 @@ mod tests {
         );
     }
 
-    /// 计数/CAS 原子操作在敏感命名空间显性拒绝（明文数值语义与加密不兼容，
-    /// fail-closed）；非敏感命名空间（含 `oauth2:client:`）正常透传。
+    /// 计数/CAS 原子操作在敏感命名空间显性拒绝（明文数值语义与加密不兼容，fail-closed）；非敏感命名空间（含 `oauth2:client:`）正常透传。
     #[tokio::test]
     async fn counter_ops_rejected_on_sensitive_namespace() {
         let (dao, _inner) = fixture();
@@ -665,8 +631,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, GarrisonError::Internal(_)));
 
-        // 非敏感命名空间透传正常（oauth2:client: 已移出敏感命名空间，
-        // DaoOAuth2ClientStore 的 CAS 更新路径不受影响）
+        // 非敏感命名空间透传正常（oauth2:client: 已移出敏感命名空间，DaoOAuth2ClientStore 的 CAS 路径不受影响）
         assert_eq!(dao.incr("session:counter", 60).await.unwrap(), 1);
         let swapped = dao
             .compare_and_swap("oauth2:client:cid", None, r#"{"v":1}"#, 60)

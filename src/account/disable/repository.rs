@@ -1,9 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 封禁库 trait 与持久化数据模型定义。
-//! 本模块定义接口契约（`DisableEntry` struct + `DisableRepository` trait）
-//! 与默认实现 `DefaultDisableRepository`（持有 `Arc<dyn GarrisonDao>` 委托持久化）。
+//! 封禁库 trait 与持久化数据模型：接口契约（`DisableEntry` + `DisableRepository`）与默认实现
+//! `DefaultDisableRepository`（持 `Arc<dyn GarrisonDao>` 委托持久化）。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -29,29 +28,18 @@ pub struct DisableEntry {
     pub created_at: DateTime<Utc>,
 }
 
-/// 封禁库 trait，提供账号封禁/解封/查询能力。
-///
-/// 独立于 [`GarrisonDao`] trait，通过持有 `Arc<dyn GarrisonDao>` 委托实现。
-/// key 格式：`disable:{service}:{login_id}`，value 为 [`DisableEntry`] 的 JSON 序列化。
+/// 封禁库 trait（账号封禁/解封/查询）：独立于 [`GarrisonDao`]，由持 `Arc<dyn GarrisonDao>` 的实现委托；
+/// key 格式 `disable:{service}:{login_id}`，value 为 [`DisableEntry`] 的 JSON 序列化。
 #[async_trait]
 pub trait DisableRepository: Send + Sync {
-    /// 封禁指定 login_id 的指定 service。
-    ///
-    /// # 参数
-    /// - `login_id`: 被封禁的登录主体标识。
-    /// - `service`: 封禁服务名称。
-    /// - `until`: 封禁到期时间；`None` 表示永久封禁。
-    /// - `level`: 封禁级别（0=普通，1+=阶梯）。
-    /// - `duration_secs`: DAO 存储 TTL（秒）；0 表示永久驻留（不自动过期）。
+    /// 封禁指定 login_id 的指定 service（`until=None` 永久封禁；`level` 0=普通 1+=阶梯；
+    /// `duration_secs` 为 DAO key 存储 TTL，0 表示永久驻留）。
     ///
     /// # TTL 与 until 双语义
     ///
-    /// `duration_secs` 控制 DAO key 的存储 TTL，`until` 控制业务层封禁到期。
-    /// 两者可能分歧（如 `duration_secs` 小于 `until - now()` 时 key 会被提前
-    /// 淘汰，封禁意外提前解除）。默认实现写入时统一取**更晚过期者**：
-    /// `until` 为 `Some` 时实际 TTL = `max(duration_secs, until 剩余秒数)`；
-    /// 过期条目的语义过滤由查询方法（`is_disable` / `get_disable_time` /
-    /// `get_disable_level`）的活跃性检查兜底。
+    /// `duration_secs` 控制 DAO 存储 TTL，`until` 控制业务层到期，两者可能分歧（TTL 更短会使 key
+    /// 提前淘汰、封禁意外提前解除）。默认实现写入时取更晚过期者：`until` 为 `Some` 时实际 TTL =
+    /// `max(duration_secs, until 剩余秒数)`；过期条目的语义过滤由查询方法的活跃性检查兜底。
     async fn disable(
         &self,
         login_id: &str,
@@ -61,88 +49,43 @@ pub trait DisableRepository: Send + Sync {
         duration_secs: u64,
     ) -> GarrisonResult<()>;
 
-    /// 解封指定 login_id 的指定 service。
-    ///
-    /// # 参数
-    /// - `login_id`: 被解封的登录主体标识。
-    /// - `service`: 封禁服务名称。
+    /// 解封指定 login_id 的指定 service（key 不存在时幂等成功）。
     async fn untie_disable(&self, login_id: &str, service: &str) -> GarrisonResult<()>;
 
-    /// 查询指定 login_id 的指定 service 是否被封禁。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `service`: 封禁服务名称。
-    ///
-    /// # 返回
-    /// - `Ok(true)`: 已封禁。
-    /// - `Ok(false)`: 未封禁。
+    /// 查询 login_id 在 service 上是否被封禁（逻辑已过期视为未封禁）。
     async fn is_disable(&self, login_id: &str, service: &str) -> GarrisonResult<bool>;
 
-    /// 获取封禁到期时间。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `service`: 封禁服务名称。
-    ///
-    /// # 返回
-    /// - `Ok(Some(time))`: 处于活跃封禁中，`time` 为定时解封时间。
-    /// - `Ok(None)`: 未封禁、永久封禁（无到期时间）或封禁**已过期**
-    /// （与 [`is_disable`](Self::is_disable) 的过期判定一致）。
+    /// 获取封禁到期时间：活跃封禁返回 `Some(time)`；未封禁、永久封禁或已过期返回 `None`
+    /// （过期判定与 [`is_disable`](Self::is_disable) 一致）。
     async fn get_disable_time(
         &self,
         login_id: &str,
         service: &str,
     ) -> GarrisonResult<Option<DateTime<Utc>>>;
 
-    /// 获取封禁级别。
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    /// - `service`: 封禁服务名称。
-    ///
-    /// # 返回
-    /// - `Ok(Some(level))`: 处于活跃封禁中，level 为封禁级别（0=普通，1+=阶梯）。
-    /// - `Ok(None)`: 未封禁或封禁**已过期**
-    /// （与 [`is_disable`](Self::is_disable) 的过期判定一致）。
+    /// 获取封禁级别（0=普通，1+=阶梯）：活跃封禁返回 `Some(level)`；未封禁或已过期返回 `None`
+    /// （过期判定与 [`is_disable`](Self::is_disable) 一致）。
     async fn get_disable_level(&self, login_id: &str, service: &str)
         -> GarrisonResult<Option<u32>>;
 }
 
-// ============================================================================
-// DefaultDisableRepository：基于 GarrisonDao 的默认实现
-// ============================================================================
-
-/// 默认封禁库实现，持有 `Arc<dyn GarrisonDao>` 委托持久化。
+/// 默认封禁库实现：持 `Arc<dyn GarrisonDao>` 委托持久化，key `disable:{service}:{login_id}`
+/// （service 在前便于按前缀扫描），value 为 [`DisableEntry`] JSON。
 ///
-/// key 格式：`disable:{service}:{login_id}`（service 在前，便于按 service 前缀扫描）。
-/// value 为 [`DisableEntry`] 的 JSON 序列化。
-///
-/// # 错误处理
-///
-/// - 序列化 `DisableEntry` 失败 → `GarrisonError::Internal`
-/// - 反序列化 `DisableEntry` 失败 → `GarrisonError::Dao`
-/// - DAO 读写失败 → 透传底层 `GarrisonError::Dao`
+/// 序列化失败返回 `Internal`；反序列化失败返回 `Dao`（数据损坏不视为未封禁）；DAO 读写错误透传。
 pub struct DefaultDisableRepository {
     /// DAO 实例，委托持久化封禁条目。
     dao: Arc<dyn GarrisonDao>,
 }
 
 impl DefaultDisableRepository {
-    /// 创建新的 `DefaultDisableRepository` 实例。
-    ///
-    /// # 参数
-    /// - `dao`: DAO 实例（`Arc<dyn GarrisonDao>`），用于读写封禁条目。
+    /// 创建实例（`dao` 用于读写封禁条目）。
     pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
         Self { dao }
     }
 
-    /// 构造封禁 key：`disable:{service}:{login_id}`。
-    ///
-    /// service 在前以便按 service 前缀扫描（如 `keys("disable:default:*")`）。
-    ///
-    /// # 错误
-    /// - `service` 或 `login_id` 含 `:` 时返回 `GarrisonError::Config`，避免 key 解析歧义。
+    /// 构造封禁 key `disable:{service}:{login_id}`（service 在前以便按 service 前缀扫描）；
+    /// `service` 或 `login_id` 含 `:` 返回 `Config`，避免 key 解析歧义。
     fn disable_key(service: &str, login_id: &str) -> GarrisonResult<String> {
         if service.contains(':') {
             return Err(GarrisonError::Config(format!(
@@ -159,16 +102,8 @@ impl DefaultDisableRepository {
         Ok(format!("disable:{}:{}", service, login_id))
     }
 
-    /// 读取「当前仍生效」的封禁条目（统一过期语义）。
-    ///
-    /// # 返回 `Ok(None)` 的情况（视为未封禁）
-    ///
-    /// - DAO 中无 key（未封禁或 DAO TTL 已淘汰）
-    /// - 条目 `until` 已过期（`is_disable` 同样判定为未封禁，
-    ///   `get_disable_time` / `get_disable_level` 与之保持一致）
-    ///
-    /// # 错误
-    /// - 反序列化失败：`GarrisonError::Dao`（数据损坏，不视为未封禁）
+    /// 读取「当前仍生效」的封禁条目（统一过期语义）：DAO 无 key（未封禁或 TTL 已淘汰）或
+    /// `until` 已过期均返回 `Ok(None)`；反序列化失败返回 `Dao`（数据损坏，不视为未封禁）。
     async fn get_active_entry(
         &self,
         login_id: &str,
@@ -211,9 +146,8 @@ impl DisableRepository for DefaultDisableRepository {
         let json = serde_json::to_string(&entry)
             .map_err(|e| GarrisonError::Internal(format!("account-disable-serialize::{}", e)))?;
         let key = Self::disable_key(service, login_id)?;
-        // TTL 取更晚过期者（max(duration_secs, until 剩余秒数)），
-        // 防止 DAO key 在业务封禁到期前被 TTL 淘汰导致封禁提前解除；
-        // until=None（永久封禁）或 duration_secs=0（永久驻留）语义不变。
+        // TTL 取更晚过期者（max(duration_secs, until 剩余秒数)），防 DAO key 在业务封禁到期前被淘汰；
+        // until=None（永久封禁）或 duration_secs=0（永久驻留）语义不变
         let effective_ttl = match until {
             Some(until) => {
                 let remaining = (until - Utc::now()).num_seconds();
@@ -244,8 +178,7 @@ impl DisableRepository for DefaultDisableRepository {
         login_id: &str,
         service: &str,
     ) -> GarrisonResult<Option<DateTime<Utc>>> {
-        // 与 is_disable 一致——条目过期时返回 Ok(None)，
-        // 不再返回已失效的到期时间误导调用方
+        // 与 is_disable 一致：条目过期返回 Ok(None)，不返回已失效的到期时间误导调用方
         let entry = self.get_active_entry(login_id, service).await?;
         Ok(entry.and_then(|e| e.until))
     }
@@ -255,8 +188,7 @@ impl DisableRepository for DefaultDisableRepository {
         login_id: &str,
         service: &str,
     ) -> GarrisonResult<Option<u32>> {
-        // 与 is_disable 一致——条目过期时返回 Ok(None)，
-        // 不再返回已失效的封禁级别误导调用方
+        // 与 is_disable 一致：条目过期返回 Ok(None)，不返回已失效的级别误导调用方
         let entry = self.get_active_entry(login_id, service).await?;
         Ok(entry.map(|e| e.level))
     }
@@ -266,10 +198,6 @@ impl DisableRepository for DefaultDisableRepository {
 mod tests {
     use super::*;
     use crate::dao::InMemoryDao;
-
-    // ========================================================================
-    // disable / untie_disable 方法测试
-    // ========================================================================
 
     /// disable 写入：调用 disable 后 DAO 中存在对应 key，value 为合法 DisableEntry JSON。
     #[tokio::test]
@@ -316,7 +244,6 @@ mod tests {
         repo.disable("user-1003", "payment", None, 0, 0)
             .await
             .unwrap();
-        // 验证 key 顺序：service 在前，login_id 在后
         let expected_key = "disable:payment:user-1003";
         assert!(
             dao.get(expected_key).await.unwrap().is_some(),
@@ -385,7 +312,6 @@ mod tests {
     async fn t016_disable_then_is_disable_returns_true() {
         let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
-        // 未封禁时 is_disable 返回 false
         assert!(
             !repo.is_disable("user-1007", "default").await.unwrap(),
             "未封禁时 is_disable 应返回 false"
@@ -412,10 +338,6 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // 查询方法 is_disable / get_disable_time / get_disable_level 测试
-    // ========================================================================
-
     /// 未封禁 is_disable=false（service 隔离）：同一 login_id 在 "default" service 被封禁，
     /// 但在 "payment" service 上 is_disable 应返回 false（多 service 独立封禁）。
     #[tokio::test]
@@ -425,7 +347,6 @@ mod tests {
         repo.disable("user-2001", "default", None, 0, 0)
             .await
             .unwrap();
-        // 同一 login_id 在 "payment" service 上应未封禁
         assert!(
             !repo.is_disable("user-2001", "payment").await.unwrap(),
             "同一 login_id 在未封禁的 service 上 is_disable 应返回 false"
@@ -563,13 +484,9 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // 阶梯封禁 level 支持测试
-    // ========================================================================
 
     /// level=0 普通封禁：disable(level=0) 后 get_disable_level 返回 Ok(Some(0))。
-    ///
-    /// 验证默认封禁级别 0（普通封禁）可正确存储与读取。
     #[tokio::test]
     async fn t018_level_zero_normal_ban() {
         let dao = Arc::new(InMemoryDao::new());
@@ -587,8 +504,6 @@ mod tests {
     }
 
     /// level=1 一级封禁：disable(level=1) 后 get_disable_level 返回 Ok(Some(1))。
-    ///
-    /// 验证一级阶梯封禁（如限制部分功能）可正确存储与读取。
     #[tokio::test]
     async fn t018_level_one_first_escalation() {
         let dao = Arc::new(InMemoryDao::new());
@@ -606,8 +521,6 @@ mod tests {
     }
 
     /// level=3 三级封禁：disable(level=3) 后 get_disable_level 返回 Ok(Some(3))。
-    ///
-    /// 验证三级阶梯封禁（如完全封禁）可正确存储与读取。
     #[tokio::test]
     async fn t018_level_three_full_ban() {
         let dao = Arc::new(InMemoryDao::new());
@@ -624,11 +537,8 @@ mod tests {
         );
     }
 
-    /// get_disable_level 返回正确值（高 level + JSON 持久化验证）：
-    /// disable(level=10) 后 get_disable_level 返回 Ok(Some(10))，
-    /// 且 DAO 中的 JSON 反序列化后 level 字段也为 10。
-    ///
-    /// 验证高 level 值无截断/溢出，且 level 字段在 JSON 持久化层正确传递。
+    /// get_disable_level 返回正确值（高 level + JSON 持久化）：disable(level=10) 后返回
+    /// `Ok(Some(10))`，且 DAO 中 JSON 反序列化后 level 也为 10（无截断/溢出）。
     #[tokio::test]
     async fn t018_get_disable_level_returns_correct_high_value() {
         let dao = Arc::new(InMemoryDao::new());
@@ -643,7 +553,6 @@ mod tests {
             Some(10),
             "level=10 高级封禁，get_disable_level 应返回 Ok(Some(10)) 无截断"
         );
-        // 通过直接反序列化 DAO 中的 JSON 验证持久化层正确传递 level 字段
         let key = "disable:default:user-3004";
         let stored = dao.get(key).await.unwrap().unwrap();
         let entry: DisableEntry = serde_json::from_str(&stored).unwrap();
@@ -653,9 +562,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // key 注入防护测试
-    // ========================================================================
 
     /// service 含 `:` 时 disable 返回 Err，阻止 key 注入。
     #[tokio::test]
@@ -675,9 +582,7 @@ mod tests {
         assert!(result.is_err(), "login_id 含冒号应被拒绝（避免 key 注入）");
     }
 
-    // ========================================================================
     // 过期条目三方法语义统一
-    // ========================================================================
 
     /// 过期封禁（key 仍存在）：is_disable=false 且 get_disable_time /
     /// get_disable_level 均返回 None（三方法对过期条目行为一致）。
@@ -718,9 +623,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // duration_secs TTL 与 until 双语义统一（取更晚过期者）
-    // ========================================================================
 
     /// duration_secs 小于 until 剩余时长时，实际写入的 TTL 应取更晚过期者
     /// （= until 剩余秒数），封禁期内 DAO key 不被提前淘汰。

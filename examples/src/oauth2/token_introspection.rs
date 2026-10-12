@@ -3,10 +3,7 @@
 
 //! Token Introspection (RFC 7662) 示例。
 //!
-//! 演示 `OAuth2Client::introspect_token` 查询 token 状态：
-//! - `with_introspect_url`：显式设置 introspection 端点
-//! - `introspect_token`：远程查询 token 状态
-//! - URL 推导规则：未设置时从 token_url 推导
+//! 演示 `OAuth2Client::introspect_token` 查询 token 状态：`with_introspect_url` 显式设置端点，未设置时从 token_url 推导。
 //!
 //! 运行方式：
 //! ```sh

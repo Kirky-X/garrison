@@ -3,15 +3,13 @@
 
 //! Credit KV 热数据存储层。
 //!
-//! `CreditMeterStorage` 通过 `GarrisonDao` KV 接口管理当前周期的 credit 计数与元数据。
-//! 热数据路径：消费、查询、重置均走 KV 缓存，保证性能。
+//! `CreditMeterStorage` 通过 `GarrisonDao` KV 接口管理当前周期的 credit 计数与元数据，
+//! 消费/查询/重置均走 KV 缓存保证性能。
 //!
-//! # 非原子性与性能声明
-//!
-//! `GarrisonDao::incr` 每次仅递增 1 且无 `INCRBY` 语义：[`CreditMeterStorage::incr_consumed`]
-//! 在 `credits > 1` 时循环调用 N 次 DAO——单次调用原子，但**整体递增非原子**（并发
-//! 交错可使返回计数偏离单次 `INCRBY` 语义），且产生 N 次串行网络往返（大额消费
-//! 延迟线性增长）。精确/高效批量递增需后端提供批量接口。
+//! 非原子性与性能声明：`GarrisonDao::incr` 每次仅递增 1 且无 `INCRBY` 语义，
+//! [`CreditMeterStorage::incr_consumed`] 在 `credits > 1` 时循环调用 N 次 DAO——单次
+//! 调用原子，但整体递增非原子（并发交错可使返回计数偏离单次 `INCRBY` 语义），且产生
+//! N 次串行网络往返（大额消费延迟线性增长）。精确/高效批量递增需后端提供批量接口。
 
 use crate::credit::cycle::CreditCycle;
 use crate::credit::error::{CreditError, CreditResult};
@@ -92,12 +90,9 @@ impl CreditMeterStorage {
 
     /// 递增已消费 credit 计数。
     ///
-    /// # 非原子性与性能声明
-    ///
-    /// 循环 `dao.incr` credits 次（cost=1 时单次，进程内原子；cost>1 时非原子，
-    /// 与 `QuotaStorage::consume` 一致），且每个 credit 一次 DAO 往返——N 个
-    /// credit 即 N 次串行网络调用（批量递增需 DAO 提供 `INCRBY` 类接口）。
-    /// 返回递增后的新计数。
+    /// 循环 `dao.incr` credits 次（cost=1 时单次，进程内原子；cost>1 时整体非原子），
+    /// 每个 credit 一次 DAO 往返——N 个 credit 即 N 次串行网络调用（批量递增需 DAO
+    /// 提供 `INCRBY` 类接口）；返回递增后的新计数。
     pub async fn incr_consumed(&self, tenant_id: i64, credits: u64, ttl: u64) -> CreditResult<u64> {
         let key = credit_consumed_key(tenant_id);
         let mut new_count = 0u64;
@@ -113,9 +108,9 @@ impl CreditMeterStorage {
 
     /// 递减已消费 credit 计数（拒绝路径回滚已扣减量专用，best-effort）。
     ///
-    /// 循环 `dao.decr` times 次，与 [`Self::incr_consumed`] 相同的非原子性。
-    /// 单次 `decr` 失败**不中断回滚**：以 `tracing::warn` 记录后继续（best-effort，
-    /// 不掩盖消费结果中的拒绝语义），返回最后一次成功的计数值。
+    /// 循环 `dao.decr` times 次，与 [`Self::incr_consumed`] 相同的非原子性；单次 `decr`
+    /// 失败**不中断回滚**：以 `tracing::warn` 记录后继续（best-effort，不掩盖消费结果
+    /// 中的拒绝语义），返回最后一次成功的计数值。
     pub async fn decr_consumed(&self, tenant_id: i64, times: u64) -> u64 {
         let key = credit_consumed_key(tenant_id);
         let mut count = 0u64;
@@ -126,7 +121,8 @@ impl CreditMeterStorage {
                     tracing::warn!(
                         tenant_id,
                         error = %e,
-                        "credit: 回滚 decr 失败（best-effort，拒绝语义不受影响）"
+                        "{}",
+                        crate::i18n::translate_detail("logs-credit-decr-rollback-failed", &[])
                     );
                 },
             }
@@ -134,10 +130,8 @@ impl CreditMeterStorage {
         count
     }
 
-    /// 获取当前周期元数据。
-    ///
-    /// 返回 `None` 表示 meta key 不存在（尚未消费或已重置）。
-    /// 脏数据（parse 失败）返回 `Err`（fail-fast，与 limiteron quota 同类修复一致）。
+    /// 获取当前周期元数据；`None` 表示 meta key 不存在（尚未消费或已重置），脏数据
+    /// （parse 失败）返回 `Err`（fail-fast）。
     pub async fn get_meta(&self, tenant_id: i64) -> CreditResult<Option<CreditMeta>> {
         let key = credit_meta_key(tenant_id);
         let val = self
@@ -225,12 +219,9 @@ impl CreditMeterStorage {
 
     /// 重置 credit 计数（删除 consumed + meta + window_start 三个 key）。
     ///
-    /// # 一致性语义（无事务）
-    ///
-    /// 三个删除**无事务保证**：中途失败时已删除的 key 不恢复（部分重置语义），
-    /// 返回的错误标识首个失败的 key；并发消费/查询在重置期间可能观察到中间态
-    /// （如 meta 已删而 consumed 未删）。TTL 兜底：三个 key 均带周期 TTL，残留
-    /// 键会随周期到期自动清理。
+    /// 三个删除**无事务保证**：中途失败时已删除的 key 不恢复（部分重置语义），返回的
+    /// 错误标识首个失败的 key；并发消费/查询在重置期间可能观察到中间态。TTL 兜底：
+    /// 三个 key 均带周期 TTL，残留键会随周期到期自动清理。
     pub async fn reset(&self, tenant_id: i64) -> CreditResult<()> {
         let consumed_key = credit_consumed_key(tenant_id);
         let meta_key = credit_meta_key(tenant_id);
@@ -239,7 +230,8 @@ impl CreditMeterStorage {
             tracing::warn!(
                 tenant_id,
                 error = %e,
-                "credit: reset 删除 consumed key 失败（部分重置语义，剩余 key 不再删除）"
+                "{}",
+                crate::i18n::translate_detail("logs-credit-reset-consumed-delete-failed", &[])
             );
             return Err(CreditError::Dao(format!("credit-reset-consumed::{}", e)));
         }
@@ -247,7 +239,8 @@ impl CreditMeterStorage {
             tracing::warn!(
                 tenant_id,
                 error = %e,
-                "credit: reset 删除 meta key 失败（部分重置语义，window_start 不再删除）"
+                "{}",
+                crate::i18n::translate_detail("logs-credit-reset-meta-delete-failed", &[])
             );
             return Err(CreditError::Dao(format!("credit-reset-meta::{}", e)));
         }
@@ -577,11 +570,8 @@ mod tests {
         assert!(storage.get_consumed(42).await.unwrap().is_none());
     }
 
-    /// incr_consumed 多次调用累计计数正确。
-    ///
-    /// 注：u32::MAX 量级边界不可行——incr_consumed 按 credits 次数循环递增，
-    /// 40+ 亿次循环运行时长会超过 TTL，键过期导致计数重置（非实现 bug，
-    /// 是测试规模与 TTL 语义的冲突），故以千级累计验证循环与计数正确性。
+    /// incr_consumed 多次调用累计计数正确（u32::MAX 量级不可行：循环次数超过 TTL 会使
+    /// 键过期计数重置，属测试规模与 TTL 语义冲突，故以千级累计验证循环与计数正确性）。
     #[tokio::test]
     async fn test_incr_consumed_accumulates() {
         let storage = CreditMeterStorage::new(make_dao());

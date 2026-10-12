@@ -10,9 +10,7 @@ use crate::error::GarrisonError;
 /// RFC 6238 测试密钥（20 字节 ASCII）。
 const TEST_SECRET: &[u8] = b"12345678901234567890";
 
-// ========================================================================
 // 构造测试
-// ========================================================================
 
 /// 使用默认参数构造 TotpHandler。
 #[test]
@@ -37,9 +35,7 @@ fn new_with_short_secret_errors() {
     assert!(result.is_err());
 }
 
-// ========================================================================
 // generate 测试
-// ========================================================================
 
 /// 生成 6 位验证码。
 #[test]
@@ -121,9 +117,7 @@ async fn validate_and_consume_negative_now_returns_invalid_param() {
     assert!(stored.is_none(), "负 now 拒绝时不应写入 replay_key");
 }
 
-// ========================================================================
 // validate 测试
-// ========================================================================
 
 /// 当前窗口验证码校验通过。
 #[test]
@@ -164,9 +158,7 @@ fn validate_wrong_code_fails() {
     assert!(!handler.validate("000000", 1700000000).unwrap());
 }
 
-// ========================================================================
 // secret_from_base32 测试
-// ========================================================================
 
 /// 解码合法 Base32 密钥。
 #[test]
@@ -196,9 +188,7 @@ fn base32_secret_matches_raw_bytes() {
     );
 }
 
-// ========================================================================
-// validate_and_consume 测试（C-5 重放防护）
-// ========================================================================
+// validate_and_consume 测试（重放防护）
 
 /// 首次校验正确验证码返回 Ok(true)。
 #[tokio::test]
@@ -213,7 +203,7 @@ async fn validate_and_consume_first_use_succeeds() {
     assert!(result.unwrap(), "首次使用正确验证码应返回 true");
 }
 
-/// 同一验证码第二次校验返回 Ok(false)（重放拒绝，C-5 核心修复）。
+/// 同一验证码第二次校验返回 Ok(false)（重放拒绝）。
 #[tokio::test]
 async fn validate_and_consume_rejects_replay() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
@@ -298,14 +288,9 @@ async fn validate_and_consume_different_codes_both_succeed() {
     assert!(second, "code2（不同窗口）应通过");
 }
 
-// ========================================================================
 // TOCTOU 竞态防护
-// ========================================================================
 
-/// 验证 `validate_and_consume` 在并发调用下不会让同一 code 通过两次。
-///
-/// 10 个并发任务对同一 login_id + code 调用 `validate_and_consume`，
-/// 应只有 1 个返回 `Ok(true)`，其余 9 个返回 `Ok(false)`（重放拒绝）。
+/// 10 个并发任务对同一 login_id + code 调用：应只有 1 个返回 `Ok(true)`，其余 9 个 `Ok(false)`（重放拒绝）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn validate_and_consume_concurrent_no_double_accept() {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -345,17 +330,10 @@ async fn validate_and_consume_concurrent_no_double_accept() {
     );
 }
 
-// ========================================================================
-// E3 修复验证：DashMap → GarrisonDao::incr 原子操作
-// ========================================================================
+// DashMap → GarrisonDao::incr 原子性验证
 
-/// 验证 handler.rs 源码不再使用 DashMap / once_cell / TOTP_LOCKS 无界 static。
-///
-/// 通过 `include_str!` 读取源文件并检查关键代码模式的缺失/存在，作为编译期的
-/// 源码级守护测试，防止后续回归引入无界内存增长。
-///
-/// 仅检查真实的代码模式（import / 实例化 / static 声明），文档注释中允许
-/// 引用历史类型签名（用于解释修复原因）。
+/// 源码级守护测试：`include_str!` 读 handler.rs 并断言不再出现 DashMap / once_cell / TOTP_LOCKS 无界 static，
+/// 防回归引入无界内存增长；只检查真实代码模式（import / 实例化 / static 声明），注释内容不计。
 #[test]
 fn e3_source_has_no_dashmap_or_unbounded_static() {
     let source = include_str!("handler.rs");
@@ -403,9 +381,7 @@ fn e3_source_has_no_dashmap_or_unbounded_static() {
     );
 }
 
-/// 验证 `dao.incr` 在首次调用时返回 1。
-///
-/// 直接调用 InMemoryDao::incr 验证契约：key 不存在时初始化为 "1" 并返回 1。
+/// 直接调 InMemoryDao::incr 验证契约：key 不存在时初始化为 "1" 并返回 1。
 #[tokio::test]
 async fn e3_incr_returns_1_on_first_call() {
     let dao = crate::dao::InMemoryDao::new();
@@ -427,9 +403,7 @@ async fn e3_incr_returns_2_on_replay() {
     );
 }
 
-/// 验证 replay_key 格式为 `totp:used:<login_id>:<code>`。
-///
-/// 通过 `dao.get_timeout` 间接验证 key 存在（首次 validate_and_consume 后写入）。
+/// 首次 validate_and_consume 后经 `dao.get_timeout` 验证 replay_key 形如 `totp:used:<login_id>:<code>`。
 #[tokio::test]
 async fn e3_replay_key_format_is_correct() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
@@ -448,9 +422,7 @@ async fn e3_replay_key_format_is_correct() {
     );
 }
 
-/// 验证 replay_key 的 TTL = step * 3（覆盖 skew=1 的 3 个时间窗口）。
-///
-/// step=30 → TTL=90 秒。
+/// replay_key 的 TTL = step * 3（step=30 → 90 秒，覆盖 skew=1 的三个时间窗口）。
 #[tokio::test]
 async fn e3_replay_key_ttl_is_step_times_3() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
@@ -477,7 +449,7 @@ async fn e3_replay_key_ttl_is_step_times_3() {
     );
 }
 
-/// E3: 验证不同 step 产生不同的 TTL（step=60 → TTL=180s）。
+/// 不同 step 产生不同 TTL（step=60 → 180s）。
 #[tokio::test]
 async fn e3_step_60_produces_ttl_180() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 60, 6).unwrap();
@@ -535,9 +507,7 @@ async fn e3_previous_window_code_rejected_on_replay() {
     assert!(!second, "E3: 前一窗口验证码重放应被拒绝（incr 返回 2 > 1）");
 }
 
-/// E3: 验证不同 login_id 的并发调用不互相干扰（跨 login_id 隔离）。
-///
-/// 10 个并发任务，每个用不同的 login_id 但同一 code，应全部通过。
+/// 10 个并发任务各用不同 login_id 但同一 code：应全部通过（跨 login_id 隔离）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn e3_concurrent_different_login_ids_no_interference() {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -662,13 +632,9 @@ async fn e3_incr_count_increments_with_replays() {
     );
 }
 
-// ========================================================================
 // RFC 6238 Appendix B 官方向量（行为锁定）
-// ========================================================================
 
-/// RFC 6238 Appendix B SHA1 官方向量（8 位数字模式）。
-///
-/// 密钥 `12345678901234567890`（20 字节 ASCII），step=30。
+/// RFC 6238 Appendix B SHA1 官方向量（密钥 `12345678901234567890`，20 字节 ASCII，step=30，8 位模式）；
 /// 任一向量不符即为实现缺陷，须修复实现而非放宽断言。
 #[test]
 fn rfc6238_appendix_b_sha1_official_vectors() {
@@ -693,9 +659,7 @@ fn rfc6238_appendix_b_sha1_official_vectors() {
     }
 }
 
-/// RFC 6238 Appendix B SHA256 官方向量（8 位数字模式）。
-///
-/// 密钥 `12345678901234567890123456789012`（32 字节 ASCII），step=30。
+/// RFC 6238 Appendix B SHA256 官方向量（密钥 `12345678901234567890123456789012`，32 字节 ASCII，step=30，8 位模式）。
 #[test]
 fn rfc6238_appendix_b_sha256_official_vectors() {
     use totp_rs::Algorithm;
@@ -723,9 +687,7 @@ fn rfc6238_appendix_b_sha256_official_vectors() {
     }
 }
 
-/// RFC 6238 Appendix B SHA512 官方向量（8 位数字模式）。
-///
-/// 密钥 `1234567890...1234`（64 字节 ASCII），step=30。
+/// RFC 6238 Appendix B SHA512 官方向量（密钥 `1234567890...1234`，64 字节 ASCII，step=30，8 位模式）。
 #[test]
 fn rfc6238_appendix_b_sha512_official_vectors() {
     use totp_rs::Algorithm;

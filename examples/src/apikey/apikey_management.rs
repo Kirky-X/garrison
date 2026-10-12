@@ -138,18 +138,15 @@ impl GarrisonDao for MockDao {
 }
 
 /// 运行 API Key 管理示例。
-///
-/// 演示 ApiKeyHandler 的 generate / verify / revoke / rotate 全生命周期。
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison API Key 管理示例 ===\n");
 
     // ----------------------------------------------------------------
     // 1. 构建 ApiKeyHandler
     // ----------------------------------------------------------------
-    // Key 存储命名空间：garrison:apikey:<key>
-    // 本示例演示默认命名空间下的 generate/verify 全流程，显式放开全局 verify
-    // （安全默认为禁用：verify() 可跨命名空间校验任意 key，生产应优先
-    //  verify_with_namespace —— 见 docs/CHANGELOG Breaking 说明）。
+    // Key 存储命名空间 garrison:apikey:<key>；示例显式放开全局 verify（安全默认为
+    // 禁用：verify() 可跨 namespace 校验任意 key，生产应优先 verify_with_namespace ——
+    // 见 docs/CHANGELOG Breaking 说明）。
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let handler = ApiKeyHandler::new(dao).with_allow_global_verify(true);
     println!("[1] ApiKeyHandler 构建完成（allow_global_verify=true，示例语义）\n");
@@ -169,7 +166,6 @@ pub async fn run() -> GarrisonResult<()> {
         "    长度      = {} 字符（key_id.key_secret 双段，各 32 hex）\n",
         key.len()
     );
-    // 双段格式：key_id.key_secret（各 32 hex，`.` 分隔）
     let (key_id, key_secret) = key.split_once('.').expect("应为双段格式");
     assert_eq!(key_id.len(), 32);
     assert_eq!(key_secret.len(), 32);
@@ -205,14 +201,12 @@ pub async fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     // 5. rotate 轮换 Key（保留 login_id/scopes/剩余 TTL）
     // ----------------------------------------------------------------
-    // 先生成一个新的有效 key
     let key2 = handler
         .generate("2002", vec!["admin".to_string()], 7200)
         .await?;
     println!("[5] rotate:");
     println!("    原 key = {}...", &key2[..16]);
 
-    // 轮换：吊销旧 key + 生成新 key（保留 login_id/scopes/剩余 TTL）
     let new_key = handler.rotate(&key2).await?;
     println!("    新 key = {}...", &new_key[..16]);
     assert_ne!(key2, new_key);
@@ -221,12 +215,10 @@ pub async fn run() -> GarrisonResult<()> {
         "新 key 应为 key_id.key_secret 双段格式"
     );
 
-    // 旧 key 已被吊销
     let old_result = handler.verify(&key2).await;
     assert!(old_result.is_err());
     println!("    原 key verify → Err（已吊销）✓");
 
-    // 新 key 有效，保留 login_id 和 scopes
     let new_info = handler.verify(&new_key).await?;
     assert_eq!(new_info.login_id, "2002");
     assert_eq!(new_info.scopes, vec!["admin".to_string()]);

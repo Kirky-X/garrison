@@ -3,10 +3,6 @@
 
 //! 国际化模块，提供异常消息多语言切换（中英文）。
 //!
-//! 异常消息国际化改进。
-//!
-//! ## 设计
-//!
 //! - `GarrisonLocale`：支持的语言枚举（默认 `Zh`，中文）
 //! - thread_local 栈式 scope：`set_locale()` 返回 RAII guard，drop 时自动 pop
 //! - `OnceLock` 缓存 `FluentBundle`：首次访问时加载 .ftl 资源，后续零开销
@@ -35,18 +31,9 @@ use std::cell::RefCell;
 use std::sync::OnceLock;
 use unic_langid::LanguageIdentifier;
 
-/// 构造本地化错误文案：优先按 `key` 查 FTL 翻译；key 缺失或格式化失败时
-/// 回退到 `$fallback` 字符串；`$fallback` 为空串时维持旧行为返回 `key` 本身。
+/// 构造本地化错误文案：按 `key` 查 FTL 翻译，缺 key 或格式化失败回退 `$fallback`，`$fallback` 为空串时返回 `key` 本身（既有调用点传 `""` 时输出与旧行为一致）。
 ///
-/// i18n 基础层已无条件编译，本宏始终委托 [`translate_detail`]，无需 feature 门控。
-///
-/// # 回退语义
-///
-/// 历史实现丢弃了 `$fallback` 参数（缺 key 时直接返回 key）。现行为：
-/// 1. `translate_detail` 命中 key → 返回翻译；
-/// 2. 未命中且 `$fallback` 非空 → 返回 `$fallback`；
-/// 3. 未命中且 `$fallback` 为空（大量既有调用点传 `""`）→ 返回 `key`
-///    （与旧行为逐字节一致，不破坏既有断言）。
+/// i18n 基础层无条件编译，本宏始终委托 [`translate_detail`]，无需 feature 门控。
 ///
 /// # 示例
 ///
@@ -61,8 +48,7 @@ macro_rules! loc {
     ($key:expr, $fallback:expr $(, ($arg_k:expr, $arg_v:expr))*) => {{
         let translated = $crate::i18n::translate_detail($key, &[$(($arg_k, $arg_v)),*]);
         if translated == $key {
-            // 缺 key（translate_detail 回退为 key 本身）：应用调用方 fallback；
-            // fallback 为空串时保持返回 key（视为未提供 fallback）
+            // 缺 key：应用调用方 fallback；空串保持返回 key（视为未提供）
             let fallback = $fallback.to_string();
             if fallback.is_empty() {
                 translated
@@ -75,10 +61,7 @@ macro_rules! loc {
     }};
 }
 
-/// 支持的语言枚举。
-///
-/// 仅支持中文与英文；`#[default] En` 充当系统语言探测失败时的回退值。
-/// 未显式 [`set_locale`] 时，[`current_locale()`] 首次调用会探测系统语言并缓存。
+/// 支持的语言枚举（仅中文与英文）：`#[default] En` 为系统语言探测失败的回退值；未显式 [`set_locale`] 时 [`current_locale()`] 首次调用探测系统语言并缓存。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GarrisonLocale {
     /// 中文。
@@ -102,27 +85,14 @@ impl GarrisonLocale {
     }
 }
 
-// ============================================================================
 // 系统语言自动检测（GARRISON_LANG → LC_ALL → LC_MESSAGES → LANG → sys-locale）
-// ============================================================================
 
-/// 系统语言检测结果缓存（进程级）。
-///
-/// locale 栈为空时由 [`current_locale()`] 首次调用填充，之后所有线程的
-/// "无显式 locale" 状态共用同一检测值；[`set_locale`] 显式覆盖栈内值，
-/// guard 全部 pop 后回到该缓存值。
+/// 系统语言检测结果缓存（进程级）：locale 栈为空时由 [`current_locale()`] 首次调用填充，所有线程"无显式 locale"状态共用；[`set_locale`] 覆盖栈内值，guard 全 pop 后回到该缓存值。
 static DETECTED_LOCALE: OnceLock<GarrisonLocale> = OnceLock::new();
 
-/// 探测系统语言（检测链，命中即返回）：
+/// 探测系统语言（检测链命中即返回）：`GARRISON_LANG` → `LC_ALL`/`LC_MESSAGES`/`LANG`（显式读取保证 Windows/边缘环境确定性）→ `sys_locale::get_locale()` → 回退 [`GarrisonLocale::En`]。
 ///
-/// 1. `GARRISON_LANG`（项目覆盖变量）
-/// 2. `LC_ALL` → `LC_MESSAGES` → `LANG`（POSIX 环境链；Unix 上 sys-locale 内部
-///    也读这些，显式读取是为 Windows/边缘环境确定性）
-/// 3. `sys_locale::get_locale()`（系统探测，覆盖 Windows/macOS 等无 env 场景）
-/// 4. 终极回退 [`GarrisonLocale::En`]
-///
-/// 仅支持 `zh*` → [`GarrisonLocale::Zh`] 与 `en*` → [`GarrisonLocale::En`]；
-/// `C`/`POSIX` 与不支持的第三语言跳过并继续走链，链尾必为 `En`（无第三语言）。
+/// 仅映射 `zh*`/`en*`；`C`/`POSIX` 与第三语言跳过并继续走链，链尾必为 `En`。
 pub fn detect_locale() -> GarrisonLocale {
     detect_from(
         &|key| std::env::var(key).ok(),
@@ -150,9 +120,7 @@ fn detect_from_env(getenv: &dyn Fn(&str) -> Option<String>) -> Option<GarrisonLo
     })
 }
 
-/// 归一化单个语言标签：去 `@modifier` 与 `.codeset`（`zh_CN.UTF-8` → `zh-CN`），
-/// `zh*` → [`GarrisonLocale::Zh`]、`en*` → [`GarrisonLocale::En`]；
-/// `C`/`POSIX` 与其余语言返回 `None`（禁止第三语言，交由检测链继续回退）。
+/// 归一化语言标签：去 `@modifier`/`.codeset`（`zh_CN.UTF-8` → `zh-CN`），`zh*`/`en*` 映射两枚举；`C`/`POSIX` 与第三语言返回 `None`，交由检测链继续回退。
 fn normalize_lang(raw: &str) -> Option<GarrisonLocale> {
     let tag = raw
         .split('@')
@@ -177,19 +145,13 @@ fn normalize_lang(raw: &str) -> Option<GarrisonLocale> {
     }
 }
 
-// ============================================================================
 // thread_local 栈式 scope（支持嵌套 set_locale 调用）
-// ============================================================================
 
 thread_local! {
     static CURRENT_LOCALE_STACK: RefCell<Vec<GarrisonLocale>> = const { RefCell::new(Vec::new()) };
 }
 
-/// 获取当前 locale（线程本地）。
-///
-/// 处于任何 [`set_locale`] RAII scope 内时返回栈顶显式值；否则返回系统语言
-/// 检测值——首次调用经 [`detect_locale`] 探测并缓存，之后复用缓存，
-/// 探测失败回退 `En`。
+/// 获取当前 locale（线程本地）：[`set_locale`] scope 内返回栈顶显式值，否则返回缓存的系统检测值（首次经 [`detect_locale`] 探测，失败回退 `En`）。
 pub fn current_locale() -> GarrisonLocale {
     CURRENT_LOCALE_STACK.with(|stack| match stack.borrow().last() {
         Some(locale) => *locale,
@@ -197,10 +159,7 @@ pub fn current_locale() -> GarrisonLocale {
     })
 }
 
-/// 设置当前线程的 locale，返回 RAII guard。
-///
-/// guard drop 时自动 pop，恢复上一个 locale。支持嵌套调用。
-/// 显式设置优先于 [`detect_locale`] 检测值：栈 pop 回空后回到缓存的检测值。
+/// 设置当前线程 locale 并返回 RAII guard（drop 自动 pop，支持嵌套）；显式值优先于 [`detect_locale`] 检测值，栈 pop 回空后回到缓存的检测值。
 ///
 /// # 示例
 ///
@@ -213,9 +172,7 @@ pub fn set_locale(locale: GarrisonLocale) -> LocaleGuard {
     LocaleGuard { _priv: () }
 }
 
-/// RAII guard，drop 时 pop locale 栈恢复上一个 locale。
-///
-/// 由 [`set_locale`] 返回，不应手动构造。
+/// RAII guard（由 [`set_locale`] 返回，不应手动构造）：drop 时 pop locale 栈恢复上一个 locale。
 pub struct LocaleGuard {
     _priv: (),
 }
@@ -228,9 +185,7 @@ impl Drop for LocaleGuard {
     }
 }
 
-// ============================================================================
 // FluentBundle 单例缓存（OnceLock，首次访问加载 .ftl 资源）
-// ============================================================================
 
 static ZH_BUNDLE: OnceLock<FluentBundle<FluentResource>> = OnceLock::new();
 static EN_BUNDLE: OnceLock<FluentBundle<FluentResource>> = OnceLock::new();
@@ -261,14 +216,9 @@ fn build_bundle(locale: GarrisonLocale) -> FluentBundle<FluentResource> {
     bundle
 }
 
-// ============================================================================
 // 错误翻译：依据当前 locale 查询 fluent bundle
-// ============================================================================
 
-/// 将 `GarrisonError` 翻译为当前 locale 的本地化字符串。
-///
-/// 依据 `current_locale()` 选取 bundle，查询错误对应的 message key 与 args。
-/// 缺失 key 时回退到硬编码英文（与 locales/en.ftl 模板一致）。
+/// 将 `GarrisonError` 翻译为当前 locale 的本地化字符串：按 `current_locale()` 选 bundle 查 message key 与 args；缺失 key 时回退硬编码英文（与 `locales/en.ftl` 模板一致）。
 pub fn translate_error(err: &GarrisonError) -> String {
     let locale = current_locale();
     let bundle = get_bundle(locale);
@@ -295,21 +245,8 @@ pub fn translate_error(err: &GarrisonError) -> String {
     }
 }
 
-/// 按 key + args 翻译为当前 locale 的本地化字符串。
-///
-/// 与 [`translate_error`] 不同，本函数不依赖 `GarrisonError`，直接接收 message key 与
-/// 参数列表，供 `loc!` 宏在社交登录 / Keycloak 等模块中按需翻译异常 detail。
-///
-/// # 参数
-///
-/// - `key`: FTL message key（如 `"wechat-token-request-failed"`）
-/// - `args`: 参数列表（如 `[("detail", "connection reset")]`），可为空 slice
-///
-/// # 返回
-///
-/// - 找到 key 且格式化成功：返回格式化后的本地化字符串
-/// - 未找到 key 或格式化出错：返回 `key` 本身（[`loc!`] 宏在此基础上
-///   应用调用方提供的 fallback；fallback 为空时保持返回 key）
+/// 按 key + args 翻译为当前 locale 的本地化字符串；不依赖 `GarrisonError`，供 `loc!` 宏与社交登录 / Keycloak 等模块按需翻译异常 detail。
+/// 未找到 key 或格式化出错返回 `key` 本身（[`loc!`] 在此基础上应用调用方 fallback，空时保持 key）。
 pub fn translate_detail(key: &str, args: &[(&str, &str)]) -> String {
     let locale = current_locale();
     let bundle = get_bundle(locale);
@@ -339,14 +276,7 @@ pub fn translate_detail(key: &str, args: &[(&str, &str)]) -> String {
     }
 }
 
-/// 解析结构化错误 detail：`key::arg0::arg1`。
-///
-/// 调用方在去语言化后，将 `GarrisonError` 的 `String` 字段写为
-/// `format!("some-key::{}", arg0)` 或 `format!("some-key::{}::{}", arg0, arg1)`，
-/// 本函数拆出 FTL message key 与位置化参数（键 `"arg0"`/`"arg1"` 对应 FTL 模板的 `{$arg0}`/`{$arg1}`，
-/// 因 Fluent 变量标识符必须以字母开头，`0`/`1` 数字前缀非法，故统一加 `arg` 前缀）。
-///
-/// 非结构化（旧式中文或普通串）返回 `None`，交由调用方回退到 variant 默认 key。
+/// 解析结构化错误 detail `key::arg0::arg1`：拆出 FTL message key 与位置参数（键 `arg0`/`arg1`，因 Fluent 变量标识符不能以数字开头）；非结构化串返回 `None`，交由调用方回退 variant 默认 key。
 fn parse_keyed_detail(s: &str) -> Option<(&'static str, Vec<(&'static str, String)>)> {
     // 仅当包含 `::` 分隔符才视为结构化 key，避免把普通中文/英文串误判为 key
     if !s.contains("::") {
@@ -361,7 +291,6 @@ fn parse_keyed_detail(s: &str) -> Option<(&'static str, Vec<(&'static str, Strin
     if key.chars().any(|c| !c.is_ascii_lowercase() && c != '-') {
         return None;
     }
-    // 使用全局缓存避免重复 Box::leak 内存泄漏
     let static_key = intern_string(key);
     let a0 = parts.next();
     let a1 = parts.next();
@@ -375,8 +304,7 @@ fn parse_keyed_detail(s: &str) -> Option<(&'static str, Vec<(&'static str, Strin
     }
 }
 
-/// 全局字符串缓存，避免 parse_keyed_detail 每次调用都 Box::leak。
-/// 相同 key 只泄漏一次，后续复用已缓存的 &'static str。
+/// 全局字符串缓存：相同 key 只 `Box::leak` 一次，后续复用已缓存的 `&'static str`。
 fn intern_string(s: &str) -> &'static str {
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -391,10 +319,7 @@ fn intern_string(s: &str) -> &'static str {
     leaked
 }
 
-/// 将单个 `String` 错误字段映射为 (key, args)。
-///
-/// 优先尝试结构化 `key::arg` 形式；否则回退到 variant 默认 key + `detail` 参数
-/// （兼容未迁移的硬编码中文串，保证向后可读）。
+/// 单个 `String` 错误字段 → (key, args)：优先结构化 `key::arg`，否则 variant 默认 key + `detail` 参数（兼容未迁移的硬编码中文串）。
 fn string_detail(
     variant_key: &'static str,
     s: &str,
@@ -543,13 +468,9 @@ fn fallback_display(err: &GarrisonError) -> String {
     }
 }
 
-// ============================================================================
 // ICU4X 增强层（feature = "i18n-icu"）
-// ============================================================================
 
-/// ICU4X 增强模块，提供复数规则、日期/数字本地化。
-///
-/// 仅在 `i18n-icu` feature 启用时编译，不影响现有翻译逻辑。
+/// ICU4X 增强模块（仅 `i18n-icu` feature 编译）：复数规则、日期/数字本地化，不影响现有翻译逻辑。
 #[cfg(feature = "i18n-icu")]
 pub mod icu_enhanced {
     use crate::i18n::{current_locale, GarrisonLocale};
@@ -569,9 +490,7 @@ pub mod icu_enhanced {
         }
     }
 
-    /// 返回当前 locale 下 `count` 的复数类别（Cardinal）。
-    ///
-    /// 用于选择正确的复数形式（如 "1 item" vs "2 items"）。
+    /// 当前 locale 下 `count` 的复数类别（Cardinal），用于选择正确复数形式。
     pub fn plural_category(count: usize) -> PluralCategory {
         let rules =
             PluralRules::try_new(to_icu_locale(current_locale()).into(), Default::default())
@@ -579,18 +498,14 @@ pub mod icu_enhanced {
         rules.category_for(count)
     }
 
-    /// 格式化 `chrono::DateTime` 为当前 locale 的本地化字符串。
-    ///
-    /// 替代 `format!("{:?}", dt)` 的 Debug 格式，输出如 "2026年1月1日" / "Jan 1, 2026"。
+    /// 格式化 `chrono::DateTime` 为当前 locale 的本地化字符串（替代 `{:?}` Debug 格式，如 "2026年1月1日" / "Jan 1, 2026"）。
     pub fn format_datetime_locale(dt: &chrono::DateTime<chrono::Utc>) -> String {
         let icu_locale = to_icu_locale(current_locale());
         // YMDT fieldset：年月日+时间，medium 长度（如 "Jan 1, 2026, 12:00:00 AM"）
         let formatter = DateTimeFormatter::try_new(icu_locale.into(), fieldsets::YMDT::medium())
             .expect("ICU DateTimeFormatter compiled_data 已编译，不应失败");
-        // 从 chrono 日期构造 ICU ISO Date
         let date = icu_calendar::Date::try_new_iso(dt.year(), dt.month() as u8, dt.day() as u8)
             .expect("chrono 日期转 ICU Date 不应失败");
-        // 从 chrono 时间构造 ICU Time
         let time =
             icu_time::Time::try_new(dt.hour() as u8, dt.minute() as u8, dt.second() as u8, 0)
                 .expect("chrono 时间转 ICU Time 不应失败");
@@ -599,9 +514,7 @@ pub mod icu_enhanced {
         formatter.format(&datetime).to_string()
     }
 
-    /// 格式化整数为当前 locale 的本地化字符串（千分位/数字系统）。
-    ///
-    /// 如 en: "1,000,000" / zh: "1,000,000" / ar: "١٬٠٠٠٬٠٠٠"。
+    /// 格式化整数为当前 locale 的本地化字符串（千分位/数字系统，如 en "1,000,000" / ar "١٬٠٠٠٬٠٠٠"）。
     pub fn format_number_locale(n: i64) -> String {
         let decimal = Decimal::from(n);
         let formatter =
@@ -617,9 +530,7 @@ mod tests {
     use crate::error::GarrisonError;
     use crate::exception::GarrisonException;
 
-    // ========================================================================
     // GarrisonLocale 枚举测试
-    // ========================================================================
 
     /// 枚举默认值应为英文；`En` 同时是系统语言探测失败的最终回退。
     #[test]
@@ -628,28 +539,20 @@ mod tests {
         assert_eq!(locale, GarrisonLocale::En);
     }
 
-    /// as_lang_id 返回正确的 LanguageIdentifier。
     #[test]
     fn as_lang_id_returns_correct_identifier() {
         assert_eq!(GarrisonLocale::Zh.as_lang_id().to_string(), "zh");
         assert_eq!(GarrisonLocale::En.as_lang_id().to_string(), "en");
     }
 
-    // ========================================================================
     // current_locale / set_locale 测试
-    // ========================================================================
 
-    /// 未显式 set_locale 时，current_locale() 返回系统检测结果（探测失败回退 En）。
-    ///
-    /// 进程环境因机器而异（如 LANG=zh_CN 的开发机会得到 Zh），故此处仅断言
-    /// current_locale() 与 detect_locale() 同源；env→locale 的映射细节由
-    /// detect_from / detect_from_env 纯函数测试覆盖，不依赖进程 env。
+    /// 仅断言 current_locale() 与 detect_locale() 同源（进程 env 因机器而异，映射细节由纯函数测试覆盖）。
     #[test]
     fn current_locale_defaults_to_detected_locale_when_not_set() {
         assert_eq!(current_locale(), detect_locale());
     }
 
-    /// set_locale 后 current_locale 返回新值，drop 后恢复。
     #[test]
     fn set_locale_changes_current_and_restores_on_drop() {
         let original = current_locale();
@@ -660,7 +563,6 @@ mod tests {
         assert_eq!(current_locale(), original);
     }
 
-    /// set_locale 支持嵌套调用。
     #[test]
     fn set_locale_supports_nesting() {
         let original = current_locale();
@@ -676,7 +578,6 @@ mod tests {
         assert_eq!(current_locale(), original);
     }
 
-    /// set_locale 显式覆盖检测值；guard drop 后回到缓存的检测值。
     #[test]
     fn set_locale_overrides_detection_and_pop_restores_detected() {
         let detected = current_locale(); // 首次调用触发探测并缓存
@@ -692,9 +593,7 @@ mod tests {
         assert_eq!(current_locale(), detected);
     }
 
-    // ========================================================================
     // 系统语言检测链测试（env 注入纯函数，不依赖进程环境）
-    // ========================================================================
 
     /// 构造注入式 env 查找闭包（按值持有，无生命周期绑定）。
     fn env_of<const N: usize>(
@@ -707,21 +606,18 @@ mod tests {
         }
     }
 
-    /// LANG=zh_CN.UTF-8（去 codeset + 归一化）→ Zh。
     #[test]
     fn detect_chain_zh_cn_utf8_yields_zh() {
         let getenv = env_of([("LANG", "zh_CN.UTF-8")]);
         assert_eq!(detect_from(&getenv, None), GarrisonLocale::Zh);
     }
 
-    /// fr_FR 不在支持范围（仅 en/zh），链尾回退 En。
     #[test]
     fn detect_chain_fr_fr_falls_back_to_en() {
         let getenv = env_of([("LANG", "fr_FR.UTF-8")]);
         assert_eq!(detect_from(&getenv, None), GarrisonLocale::En);
     }
 
-    /// C / POSIX / C.UTF-8 跳过，链尾回退 En。
     #[test]
     fn detect_chain_c_and_posix_fall_back_to_en() {
         let c = env_of([("LANG", "C")]);
@@ -732,7 +628,6 @@ mod tests {
         assert_eq!(detect_from(&c_utf8, None), GarrisonLocale::En);
     }
 
-    /// GARRISON_LANG 优先于 LC_ALL（双向验证）。
     #[test]
     fn detect_chain_garrison_lang_takes_precedence() {
         let en_overrides_zh = env_of([("GARRISON_LANG", "en_US"), ("LC_ALL", "zh_CN.UTF-8")]);
@@ -741,28 +636,24 @@ mod tests {
         assert_eq!(detect_from(&zh_overrides_en, None), GarrisonLocale::Zh);
     }
 
-    /// LC_ALL 优先于 LANG。
     #[test]
     fn detect_chain_lc_all_precedes_lang() {
         let getenv = env_of([("LC_ALL", "zh_CN.UTF-8"), ("LANG", "en_US.UTF-8")]);
         assert_eq!(detect_from(&getenv, None), GarrisonLocale::Zh);
     }
 
-    /// 空值/空白值跳过，继续走链。
     #[test]
     fn detect_chain_empty_value_skipped() {
         let getenv = env_of([("GARRISON_LANG", "  "), ("LANG", "zh_CN")]);
         assert_eq!(detect_from(&getenv, None), GarrisonLocale::Zh);
     }
 
-    /// 全链未命中（无 env、sys-locale 无值）→ En。
     #[test]
     fn detect_chain_empty_falls_back_to_en() {
         let none: fn(&str) -> Option<String> = |_key| None;
         assert_eq!(detect_from(&none, None), GarrisonLocale::En);
     }
 
-    /// sys-locale 探测值仅在 env 链未命中时生效，且仅映射 zh/en。
     #[test]
     fn detect_chain_sys_locale_fallback() {
         let none: fn(&str) -> Option<String> = |_key| None;
@@ -774,7 +665,6 @@ mod tests {
         assert_eq!(detect_from(&getenv, Some("zh-CN")), GarrisonLocale::En);
     }
 
-    /// zh/en 常见变体全部归一化到两个枚举值（无第三语言）。
     #[test]
     fn detect_chain_normalizes_variants() {
         let none: fn(&str) -> Option<String> = |_key| None;
@@ -794,11 +684,8 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // translate_error 测试
-    // ========================================================================
 
-    /// 中文 locale（显式 set_locale(Zh)）：NotLogin 翻译为中文消息。
     #[test]
     fn translate_error_zh_returns_chinese_message() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -807,7 +694,6 @@ mod tests {
         assert_eq!(translated, "未登录: 请先登录");
     }
 
-    /// 英文 locale：NotLogin 翻译为英文消息。
     #[test]
     fn translate_error_en_returns_english_message() {
         let _guard = set_locale(GarrisonLocale::En);
@@ -816,7 +702,6 @@ mod tests {
         assert_eq!(translated, "Not logged in: please login first");
     }
 
-    /// 所有错误变体在中文 locale 下输出与硬编码一致。
     #[test]
     fn translate_error_zh_all_variants_match_hardcoded() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -842,7 +727,6 @@ mod tests {
         }
     }
 
-    /// 所有错误变体在英文 locale 下输出英文消息。
     #[test]
     fn translate_error_en_all_variants_english() {
         let _guard = set_locale(GarrisonLocale::En);
@@ -877,7 +761,6 @@ mod tests {
         }
     }
 
-    /// Exception 变体在中文 locale 下输出"业务异常[code]: message"。
     #[test]
     fn translate_error_zh_exception_variant() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -885,7 +768,6 @@ mod tests {
         assert_eq!(translate_error(&err), "业务异常[-1]: 请先登录");
     }
 
-    /// Exception 变体在英文 locale 下输出"Business exception[code]: message"。
     #[test]
     fn translate_error_en_exception_variant() {
         let _guard = set_locale(GarrisonLocale::En);
@@ -896,7 +778,6 @@ mod tests {
         );
     }
 
-    /// 运行时切换 locale 不影响其他范围。
     #[test]
     fn locale_switch_is_isolated_per_scope() {
         let original = current_locale();
@@ -914,14 +795,12 @@ mod tests {
         }
     }
 
-    /// fallback_display 与硬编码英文回退（en.ftl 模板）一致。
     #[test]
     fn fallback_display_matches_hardcoded_english() {
         let err = GarrisonError::NotLogin("test".to_string());
         assert_eq!(fallback_display(&err), "Not logged in: test");
     }
 
-    /// fallback_display 覆盖所有错误变体（确保每个 match arm 都有测试）。
     #[test]
     fn fallback_display_all_variants() {
         let cases: Vec<(GarrisonError, &str)> = vec![
@@ -959,7 +838,6 @@ mod tests {
         }
     }
 
-    /// get_bundle 返回的 bundle 可重复获取（OnceLock 缓存）。
     #[test]
     fn get_bundle_returns_cached_instance() {
         let b1 = get_bundle(GarrisonLocale::Zh);
@@ -968,11 +846,8 @@ mod tests {
         assert!(std::ptr::eq(b1, b2));
     }
 
-    // ========================================================================
     // translate_detail 测试（loc! 宏底层调用）
-    // ========================================================================
 
-    /// translate_detail 找到 key 时返回中文翻译。
     #[test]
     fn translate_detail_zh_returns_translated_message() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -980,7 +855,6 @@ mod tests {
         assert_eq!(msg, "未登录: 请先登录");
     }
 
-    /// translate_detail 找到 key 时返回英文翻译。
     #[test]
     fn translate_detail_en_returns_translated_message() {
         let _guard = set_locale(GarrisonLocale::En);
@@ -988,7 +862,6 @@ mod tests {
         assert_eq!(msg, "Not logged in: please login");
     }
 
-    /// translate_detail 未找到 key 时返回 key 本身。
     #[test]
     fn translate_detail_missing_key_returns_key() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -996,11 +869,8 @@ mod tests {
         assert_eq!(msg, "nonexistent-key-xyz");
     }
 
-    // ========================================================================
     // loc! 宏 fallback 语义测试
-    // ========================================================================
 
-    /// loc! 缺 key 且 fallback 非空时使用 fallback（而非丢弃参数返回 key）。
     #[test]
     fn loc_macro_uses_fallback_when_key_missing() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -1008,7 +878,6 @@ mod tests {
         assert_eq!(msg, "human readable fallback");
     }
 
-    /// loc! 缺 key 且 fallback 为 String 时同样使用 fallback。
     #[test]
     fn loc_macro_uses_string_fallback_when_key_missing() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -1016,7 +885,6 @@ mod tests {
         assert_eq!(msg, "owned fallback");
     }
 
-    /// loc! 缺 key 且 fallback 为空串时返回 key 本身。
     #[test]
     fn loc_macro_empty_fallback_keeps_key() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -1024,7 +892,6 @@ mod tests {
         assert_eq!(msg, "nonexistent-key-xyz");
     }
 
-    /// loc! 命中 key 时返回翻译，fallback 不参与。
     #[test]
     fn loc_macro_translated_key_ignores_fallback() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -1032,7 +899,6 @@ mod tests {
         assert_eq!(msg, "SMS 验证码尝试次数超限");
     }
 
-    /// translate_detail 无参数时正常翻译。
     #[test]
     fn translate_detail_no_args_translates_successfully() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -1040,7 +906,6 @@ mod tests {
         assert_eq!(msg, "SMS 验证码尝试次数超限");
     }
 
-    /// translate_detail 多参数翻译（disable-service 含 service + until）。
     #[test]
     fn translate_detail_multiple_args_zh() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -1055,7 +920,6 @@ mod tests {
         assert!(msg.contains("账号已被封禁"));
     }
 
-    /// translate_detail 多参数翻译（英文）。
     #[test]
     fn translate_detail_multiple_args_en() {
         let _guard = set_locale(GarrisonLocale::En);
@@ -1066,51 +930,40 @@ mod tests {
         assert_eq!(msg, "Invalid state transition: Active -> Closed");
     }
 
-    // ========================================================================
     // translate_error 测试
-    // ========================================================================
 
-    /// TokenRevoked 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_token_revoked() {
         let _guard = set_locale(GarrisonLocale::Zh);
         let err = GarrisonError::TokenRevoked("reuse detected".to_string());
         let translated = translate_error(&err);
-        // token-revoked key 已补全，zh FTL 翻译与 fallback 一致
         assert_eq!(translated, "Token 已吊销: reuse detected");
     }
 
-    /// TokenRevoked 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_token_revoked() {
         let _guard = set_locale(GarrisonLocale::En);
         let err = GarrisonError::TokenRevoked("reuse detected".to_string());
         let translated = translate_error(&err);
-        // token-revoked key 已补全，en FTL 返回英文翻译
         assert_eq!(translated, "Token revoked: reuse detected");
     }
 
-    /// FirewallBlocked 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_firewall_blocked() {
         let _guard = set_locale(GarrisonLocale::Zh);
         let err = GarrisonError::FirewallBlocked("black_path: /admin".to_string());
         let translated = translate_error(&err);
-        // firewall-blocked key 已补全，zh FTL 翻译与 fallback 一致
         assert_eq!(translated, "防火墙拦截: black_path: /admin");
     }
 
-    /// FirewallBlocked 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_firewall_blocked() {
         let _guard = set_locale(GarrisonLocale::En);
         let err = GarrisonError::FirewallBlocked("black_path: /admin".to_string());
         let translated = translate_error(&err);
-        // firewall-blocked key 已补全，en FTL 返回英文翻译
         assert_eq!(translated, "Firewall blocked: black_path: /admin");
     }
 
-    /// DisableService 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_disable_service() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -1126,7 +979,6 @@ mod tests {
         assert!(translated.contains("账号已被封禁"));
     }
 
-    /// DisableService 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_disable_service() {
         let _guard = set_locale(GarrisonLocale::En);
@@ -1139,7 +991,6 @@ mod tests {
         assert!(translated.contains("Account disabled"));
     }
 
-    /// NotSafe 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_not_safe() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -1149,7 +1000,6 @@ mod tests {
         assert_eq!(translate_error(&err), "未完成二次认证：MFA_TOTP_REQUIRED");
     }
 
-    /// NotSafe 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_not_safe() {
         let _guard = set_locale(GarrisonLocale::En);
@@ -1162,7 +1012,6 @@ mod tests {
         );
     }
 
-    /// InvalidStateTransition 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_invalid_state_transition() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -1173,7 +1022,6 @@ mod tests {
         assert_eq!(translate_error(&err), "非法状态转换：Active -> Closed");
     }
 
-    /// InvalidStateTransition 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_invalid_state_transition() {
         let _guard = set_locale(GarrisonLocale::En);
@@ -1187,7 +1035,6 @@ mod tests {
         );
     }
 
-    /// SmsRateLimitExceeded 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_sms_rate_limit_exceeded() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -1197,7 +1044,6 @@ mod tests {
         assert_eq!(translate_error(&err), "SMS 限速超出: hourly 窗口");
     }
 
-    /// SmsRateLimitExceeded 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_sms_rate_limit_exceeded() {
         let _guard = set_locale(GarrisonLocale::En);
@@ -1210,7 +1056,6 @@ mod tests {
         );
     }
 
-    /// SmsVerifyMaxAttempts 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_sms_verify_max_attempts() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -1218,7 +1063,6 @@ mod tests {
         assert_eq!(translate_error(&err), "SMS 验证码尝试次数超限");
     }
 
-    /// SmsVerifyMaxAttempts 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_sms_verify_max_attempts() {
         let _guard = set_locale(GarrisonLocale::En);
@@ -1229,7 +1073,6 @@ mod tests {
         );
     }
 
-    /// SmsCodeNotFound 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_sms_code_not_found() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -1237,7 +1080,6 @@ mod tests {
         assert_eq!(translate_error(&err), "SMS 验证码不存在");
     }
 
-    /// SmsCodeNotFound 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_sms_code_not_found() {
         let _guard = set_locale(GarrisonLocale::En);
@@ -1245,7 +1087,6 @@ mod tests {
         assert_eq!(translate_error(&err), "SMS verification code not found");
     }
 
-    /// SmsChannelRecycled 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_sms_channel_recycled() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -1253,7 +1094,6 @@ mod tests {
         assert_eq!(translate_error(&err), "SMS 通道已回收");
     }
 
-    /// SmsChannelRecycled 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_sms_channel_recycled() {
         let _guard = set_locale(GarrisonLocale::En);
@@ -1261,11 +1101,8 @@ mod tests {
         assert_eq!(translate_error(&err), "SMS channel recycled");
     }
 
-    // ========================================================================
     // fallback_display 补充测试
-    // ========================================================================
 
-    /// fallback_display 覆盖 translate_error 变体。
     #[test]
     fn fallback_display_new_variants() {
         let until = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
@@ -1327,7 +1164,6 @@ mod tests {
         }
     }
 
-    /// error_to_key_args 覆盖所有变体（确保每个 match arm 都被执行）。
     #[test]
     fn error_to_key_args_all_variants() {
         let until = chrono::Utc::now();
@@ -1372,11 +1208,8 @@ mod tests {
         }
     }
 
-    // ========================================================================
     // InvalidResponse 变体 i18n 测试（上游响应解析失败专用错误类型）
-    // ========================================================================
 
-    /// InvalidResponse 在中文 locale 下输出翻译消息。
     #[test]
     fn translate_error_zh_invalid_response() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -1384,7 +1217,6 @@ mod tests {
         assert_eq!(translate_error(&err), "上游响应无效: JSON 解析失败");
     }
 
-    /// InvalidResponse 在英文 locale 下输出翻译消息。
     #[test]
     fn translate_error_en_invalid_response() {
         let _guard = set_locale(GarrisonLocale::En);
@@ -1395,7 +1227,6 @@ mod tests {
         );
     }
 
-    /// InvalidResponse 在 fallback_display 下输出硬编码英文。
     #[test]
     fn fallback_display_invalid_response() {
         let err = GarrisonError::InvalidResponse("parse error".into());
@@ -1405,7 +1236,6 @@ mod tests {
         );
     }
 
-    /// get_bundle 对英文 locale 也返回缓存实例。
     #[test]
     fn get_bundle_en_returns_cached_instance() {
         let b1 = get_bundle(GarrisonLocale::En);
@@ -1413,11 +1243,8 @@ mod tests {
         assert!(std::ptr::eq(b1, b2), "英文 bundle 应为同一缓存实例");
     }
 
-    // ========================================================================
     // translate_detail 测试
-    // ========================================================================
 
-    /// translate_detail 对已知 key 返回翻译后的字符串。
     #[test]
     fn translate_detail_known_key_returns_translation() {
         let _guard = set_locale(GarrisonLocale::En);
@@ -1425,7 +1252,6 @@ mod tests {
         assert!(result.contains("test"), "应包含参数值: {}", result);
     }
 
-    /// translate_detail 对未知 key 返回 key 本身。
     #[test]
     fn translate_detail_unknown_key_returns_key() {
         let _guard = set_locale(GarrisonLocale::En);
@@ -1433,7 +1259,6 @@ mod tests {
         assert_eq!(result, "nonexistent-key-xyz");
     }
 
-    /// translate_detail 对已知 key 但无参数也能正常翻译。
     #[test]
     fn translate_detail_known_key_no_args() {
         let _guard = set_locale(GarrisonLocale::Zh);
@@ -1442,9 +1267,7 @@ mod tests {
         assert_ne!(result, "sms-verify-max-attempts", "应返回翻译而非 key 本身");
     }
 
-    // ========================================================================
     // ICU4X 增强层测试（feature = "i18n-icu"）
-    // ========================================================================
 
     #[cfg(feature = "i18n-icu")]
     #[test]

@@ -8,22 +8,12 @@
 //! cargo run -p garrison-examples --bin oauth2_flow --features protocol-oauth2
 //! ```
 //!
-//! 本示例演示：
-//! 1. 构造 `OAuth2Client`
-//! 2. 生成授权 URL（引导用户跳转到授权服务器）
-//! 3. 使用授权码换取令牌（`exchange_code_with_pkce`，需要真实授权服务器，此处仅展示调用方式）
-//! 4. `refresh_access_token` 刷新令牌（仅展示调用方式，不实际发起 HTTP 请求）
-//!
-//! `exchange_code_with_pkce` / `get_client_credentials_token` / `get_password_token` /
-//! `refresh_access_token` 会发起真实 HTTP 请求，本示例不实际调用以避免依赖外部服务；
-//! 如需端到端测试参见 `tests/protocol_oauth2_integration.rs`（使用 wiremock mock server）。
+//! 本示例演示构造 `OAuth2Client`、生成授权 URL，并展示 exchange_code_with_pkce / refresh_access_token 的调用方式。
+//! 这些方法会发起真实 HTTP 请求，本示例不实际调用以避免依赖外部授权服务器；端到端测试见 `tests/protocol_oauth2_integration.rs`（wiremock mock server）。
 
 use garrison::protocol::oauth2::OAuth2Client;
 
-/// 运行 OAuth2 流程示例。
-///
-/// 构造 OAuth2Client、生成授权 URL，并展示 exchange_code_with_pkce 的调用方式。
-/// 不实际发起 HTTP 请求（避免依赖外部授权服务器）。
+/// 运行 OAuth2 流程示例：构造 OAuth2Client、生成授权 URL，展示 exchange_code_with_pkce 调用方式（不实际发起 HTTP 请求）。
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison OAuth2 Authorization Code 流程示例 ===\n");
 
@@ -57,10 +47,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n[说明] exchange_code_with_pkce 需真实授权服务器，本示例不实际调用。");
     println!("       端到端测试见 tests/protocol_oauth2_integration.rs。");
 
-    // 3. 演示 refresh_access_token 的调用方式（access_token 过期后用 refresh_token 刷新）
-    //
-    // 与 exchange_code_with_pkce 一样，refresh_access_token 会发起真实 HTTP 请求，
-    // 本示例不实际调用，仅展示调用方式与返回值结构。
+    // 3. 演示 refresh_access_token 的调用方式（会发起真实 HTTP 请求，本示例仅展示）
     println!("\n[刷新令牌] refresh_access_token 调用方式:");
     println!("    // access_token 过期后，使用 refresh_token 换取新的 access_token");
     println!("    // 参数：refresh_token（必填，非空）、scope（可选，仅能缩小原 scope）");

@@ -1,17 +1,13 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 社交登录协议层测试 mock 实现。
-//!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `MockSocialProvider`（实现 `SocialLoginProvider` trait 的单元结构体），
-//! 供 `protocol::social::tests` 验证 trait 契约测试复用。
+//! 社交登录协议层测试 mock（仅 `cfg(test)` 编译）：`MockSocialProvider` 供 `tests` 做 trait 契约验证。
 
 use crate::error::GarrisonResult;
 use crate::protocol::social::{provider_names, SocialLoginProvider, SocialUserInfo};
 use async_trait::async_trait;
 
-/// 测试用 Mock 社交登录 Provider，实现 `SocialLoginProvider` trait 的三个方法。
+/// 测试用 Mock 社交登录 Provider。
 pub struct MockSocialProvider;
 
 #[async_trait]

@@ -1,24 +1,18 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 单点登录 (SSO) 协议模块，提供 ticket 签发/校验/销毁能力。
+//! 单点登录 (SSO) 协议模块（`protocol-sso` feature），提供 ticket 签发/校验/销毁。
 //!
-//! 对应 SSO 单点登录支持，
-//! 通过 `GarrisonDao` 存储 ticket（TTL 60 秒，一次性使用）。
-//!
-//! 仅在启用 `protocol-sso` 特性时编译。
+//! ticket 经 `GarrisonDao` 存储，TTL 60 秒、一次性使用。
 //!
 //! ## Key 命名空间
 //!
-//! 所有 SSO 票据存储在 `garrison:sso:ticket:<ticket>` 命名空间下，
-//! 与 session/sign/apikey/temp 模块隔离。
+//! 票据存于 `garrison:sso:ticket:<ticket>`，与 session/sign/apikey/temp 隔离。
 
-// SSO Server 独立抽象模块。
-// 仅在启用 `protocol-sso-server` 特性时编译，依赖 `protocol-sso`。
+// SSO Server 独立抽象模块（`protocol-sso-server` feature，依赖 `protocol-sso`）。
 #[cfg(feature = "protocol-sso-server")]
 pub mod server;
 
-// 模块重导出：通过 mod 路径访问子模块类型（避免外部代码引用具体文件路径）
 #[cfg(feature = "protocol-sso-server")]
 pub use server::SsoServer;
 
@@ -28,14 +22,10 @@ pub mod saml;
 // OIDC RP 协议支持。
 pub mod oidc;
 
-/// Re-export OIDC 核心类型（mod.rs 暴露接口）。
-///
-/// 通过 `garrison::protocol::sso::OidcProvider` / `DefaultOidcProvider`
-/// / `OidcDiscoveryConfig` / `OidcUserInfo` 直接访问，无需 `oidc::` 前缀。
+/// Re-export OIDC 核心类型：经 `garrison::protocol::sso::*` 直接访问，无需 `oidc::` 前缀。
 pub use oidc::{DefaultOidcProvider, OidcDiscoveryConfig, OidcProvider, OidcUserInfo};
 
-// Redis pub/sub SsoChannel 实现。
-// 仅在 cache-redis + protocol-sso-server feature 同时启用时编译。
+// Redis pub/sub SsoChannel 实现（`cache-redis` + `protocol-sso-server` feature 同时启用时编译）。
 #[cfg(all(feature = "cache-redis", feature = "protocol-sso-server"))]
 pub mod channel;
 
@@ -43,15 +33,10 @@ use crate::dao::GarrisonDao;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// `SsoClient` 实现模块。
-///
-/// mod.rs 接口隔离：impl 块与顶层 `fn sign_ticket` / `fn verify_ticket_signature` 不允许留在 `mod.rs`。
-/// `server.rs` 通过 `use super::client::{sign_ticket, verify_ticket_signature}` 直接引用。
+/// `SsoClient` 实现（接口隔离：impl 块与顶层签名函数不放 `mod.rs`）。
 pub(crate) mod client;
 
-/// SSO ticket 存储的 JSON 数据。
-///
-/// `pub(crate)` 暴露以供 `server` 模块复用，避免跨模块重复定义导致格式漂移。
+/// SSO ticket 存储的 JSON 数据，`pub(crate)` 供 `server` 复用，避免格式漂移。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SsoTicketData {
     /// 登录主体标识。
@@ -60,16 +45,11 @@ pub(crate) struct SsoTicketData {
     pub(crate) client_id: i64,
 }
 
-/// SSO 客户端，提供 ticket 签发/校验/销毁。
-///
-/// 持有 `Arc<dyn GarrisonDao>` 用于票据存储，TTL 默认 60 秒。
-/// 实现 `Send + Sync`，可在多线程环境共享。
+/// SSO 客户端，经 `Arc<dyn GarrisonDao>` 存储 ticket（TTL 默认 60 秒），可多线程共享。
 ///
 /// # Ticket 签名
 ///
-/// 所有 ticket 使用 HMAC-SHA256 签名，格式为 `{64_hex_random}.{hmac_b64}`。
-/// 即使 DAO 层被攻破或存在 key 碰撞，攻击者也无法伪造有效签名。
-/// secret 由 `new(dao, secret)` 必传，禁止空 secret。
+/// 格式 `{64_hex_random}.{hmac_b64}`，用 HMAC-SHA256 签名防伪造；secret 必传且不可为空。
 pub struct SsoClient {
     /// DAO 抽象层，用于票据存储。
     dao: Arc<dyn GarrisonDao>,

@@ -1,11 +1,9 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! `GarrisonDaoDbnexus` — 统一 KV + SQL 的 `GarrisonDao` 实现。
-//!
-//! 包装 `DbPool`（SQL 操作）+ `Arc<dyn GarrisonDao>`（KV 委托），
-//! 将 `role_hierarchy` / `social_bindings` 等 SQL 表操作统一在 `GarrisonDao` trait 下，
-//! 消除业务层直接持有 `DbPool` 的需要。
+//! `GarrisonDaoDbnexus` — 统一 KV + SQL 的 `GarrisonDao` 实现：包装 `DbPool`（SQL）+ `Arc<dyn GarrisonDao>`（KV 委托），
+//! 把 `role_hierarchy` / `social_bindings` 等表操作统一在 trait 下，业务层无需直接持有 `DbPool`；
+//! `#[cfg(any(db-sqlite, db-postgres, db-mysql))]` 门控。
 //!
 //! # 架构
 //!
@@ -14,10 +12,6 @@
 //! ├── kv: Arc<dyn GarrisonDao> → 委托所有 KV 方法（get/set/incr/...）
 //! └── pool: DbPool → 实现 SQL 方法（role_hierarchy/social_bindings）
 //! ```
-//!
-//! # Feature gate
-//!
-//! `#[cfg(any(db-sqlite, db-postgres, db-mysql))]`：仅在启用数据库后端时编译。
 
 use super::GarrisonDao;
 use crate::dao::repository::make_statement;
@@ -28,10 +22,7 @@ use dbnexus::DbPool;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// 统一 KV + SQL 的 `GarrisonDao` 实现。
-///
-/// KV 方法委托内部 `kv` 实现（通常为 `GarrisonDaoOxcache`），
-/// SQL 方法通过 `pool` 直接查询数据库。
+/// 统一 KV + SQL 的 `GarrisonDao` 实现：KV 方法委托 `kv`（通常 `GarrisonDaoOxcache`），SQL 方法经 `pool` 直查数据库。
 pub struct GarrisonDaoDbnexus {
     /// KV 缓存委托（get/set/incr 等方法转发）。
     kv: Arc<dyn GarrisonDao>,
@@ -40,11 +31,7 @@ pub struct GarrisonDaoDbnexus {
 }
 
 impl GarrisonDaoDbnexus {
-    /// 创建 `GarrisonDaoDbnexus` 实例。
-    ///
-    /// # 参数
-    /// - `pool`: 数据库连接池。
-    /// - `kv`: KV 缓存层委托（通常为 `GarrisonDaoOxcache`）。
+    /// 创建实例：`pool` 数据库连接池，`kv` KV 缓存层委托（通常 `GarrisonDaoOxcache`）。
     pub fn new(pool: DbPool, kv: Arc<dyn GarrisonDao>) -> Self {
         Self { kv, pool }
     }
@@ -60,9 +47,7 @@ impl GarrisonDaoDbnexus {
     }
 }
 
-// ============================================================================
 // GarrisonDao trait 实现
-// ============================================================================
 
 #[async_trait]
 impl GarrisonDao for GarrisonDaoDbnexus {
@@ -168,9 +153,7 @@ impl GarrisonDao for GarrisonDaoDbnexus {
     // SQL 方法：通过 self.pool 实现
     // ------------------------------------------------------------------------
 
-    /// 查询指定租户的所有角色层级边。
-    ///
-    /// 从 `role_hierarchy` 表查询 `tenant_id` 匹配的所有 `(child_role, parent_role)` 记录。
+    /// 查询指定租户的全部角色层级边（`tenant_id` 匹配的 `(child_role, parent_role)` 记录）。
     async fn query_role_hierarchy_edges(
         &self,
         tenant_id: i64,
@@ -205,9 +188,7 @@ impl GarrisonDao for GarrisonDaoDbnexus {
             .collect()
     }
 
-    /// 插入角色层级边（幂等，后端自适应）。
-    ///
-    /// SQLite: `INSERT OR IGNORE`，PostgreSQL: `ON CONFLICT DO NOTHING`，MySQL: `INSERT IGNORE`。
+    /// 插入角色层级边（幂等：SQLite `INSERT OR IGNORE` / PostgreSQL `ON CONFLICT DO NOTHING` / MySQL `INSERT IGNORE`）。
     async fn insert_role_hierarchy_edge(
         &self,
         tenant_id: i64,
@@ -279,10 +260,7 @@ impl GarrisonDao for GarrisonDaoDbnexus {
         Ok(())
     }
 
-    /// 查询社交账号绑定关系。
-    ///
-    /// 按 `(tenant_id, provider, provider_user_id)` 查询 `social_bindings` 表，
-    /// 返回关联的 `login_id`（String，UUID）。
+    /// 按 `(tenant_id, provider, provider_user_id)` 查 `social_bindings`，返回关联 `login_id`（String，UUID）。
     async fn find_social_binding(
         &self,
         tenant_id: i64,
@@ -322,10 +300,7 @@ impl GarrisonDao for GarrisonDaoDbnexus {
         }
     }
 
-    /// 插入社交账号绑定关系。
-    ///
-    /// 将 `(tenant_id, login_id, provider, provider_user_id, union_id, created_at)`
-    /// 写入 `social_bindings` 表。
+    /// 将 `(tenant_id, login_id, provider, provider_user_id, union_id, created_at)` 写入 `social_bindings` 表。
     async fn insert_social_binding(
         &self,
         tenant_id: i64,
@@ -366,14 +341,8 @@ impl GarrisonDao for GarrisonDaoDbnexus {
     }
 }
 
-// ============================================================================
-// 单元测试（GarrisonDaoDbnexus 生产后端实现层）
-// ============================================================================
-//
-// 覆盖两条主线：
-// 1. KV 方法委托正确性（以 `InMemoryDao` 为委托，断言转发与错误透传）；
-// 2. role_hierarchy / social_bindings 的 SQL 读写（sqlite 内存池 + 项目
-// migrations/sqlite/core 迁移建表，与 tests/common/mod.rs `setup_db` 语义一致）。
+// 单元测试（生产后端实现层）：KV 委托正确性与 role_hierarchy / social_bindings 的 SQL 读写
+//（sqlite 内存池 + 项目 migrations/sqlite/core 迁移建表，与 tests/common/mod.rs `setup_db` 语义一致）。
 
 #[cfg(all(test, feature = "db-sqlite"))]
 mod tests {
@@ -382,11 +351,8 @@ mod tests {
     use dbnexus::sea_orm::Statement;
     use std::path::PathBuf;
 
-    /// 创建已执行 core 迁移的 sqlite 内存 DAO，KV 委托为 `InMemoryDao`。
-    ///
-    /// 返回 `(dbnexus DAO, kv Arc)` 供委托断言（`Arc::ptr_eq` 等）。
-    /// 迁移目录用 `CARGO_MANIFEST_DIR` 定位项目根 `migrations/sqlite`，
-    /// 与 `tests/common/mod.rs::setup_db` 装配语义一致。
+    /// 创建已执行 core 迁移的 sqlite 内存 DAO（KV 委托 `InMemoryDao`），返回 `(dbnexus DAO, kv Arc)` 供委托断言（`Arc::ptr_eq` 等）；
+    /// 迁移目录经 `CARGO_MANIFEST_DIR` 定位，与 `tests/common/mod.rs::setup_db` 装配语义一致。
     async fn setup_dao() -> (GarrisonDaoDbnexus, Arc<InMemoryDao>) {
         let pool = init_dbnexus("sqlite::memory:")
             .await
@@ -802,7 +768,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 覆盖率补充：KV 委托方法 + 默认 trait 方法
+    // KV 委托方法 + 默认 trait 方法
     // ------------------------------------------------------------------------
 
     /// `set_permanent` 委托到 kv 层。

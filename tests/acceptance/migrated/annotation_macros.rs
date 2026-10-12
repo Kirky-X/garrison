@@ -3,18 +3,10 @@
 
 //! 过程宏注解集成测试：`#[check_login]` / `#[check_permission]` / `#[check_role]`。
 //!
-//! 验证：
-//! - 宏标注的 async fn 编译通过
-//! - 已登录/已授权请求正常执行 fn body
-//! - 未登录请求返回 401（不执行 fn body）
-//! - 无权限/无角色请求返回 403
-//! - 多参数 AND 语义
-//!
-//! 测试策略：
-//! 1. InMemoryDao + MockInterface + GarrisonManager::builder 初始化全局单例
-//! 2. `GarrisonUtil::login_simple(id)` 生成 token
-//! 3. `with_current_token(token, async { handler().await })` 设置 task_local 上下文
-//! 4. 直接调用宏标注的 handler，断言 Response 状态码与 body
+//! 验证宏标注的 async fn 编译通过、已登录/已授权请求正常执行（未登录 401、无权限/无
+//! 角色 403）、多参数 AND 语义；测试策略为 `InMemoryDao` + `MockInterface` +
+//! `GarrisonManager::builder` 初始化全局单例、`login_simple` 签发 token 后以
+//! `with_current_token` 设置 task_local 上下文，直接调用宏标注 handler 断言状态码与 body。
 
 #![cfg(feature = "annotation-macros")]
 
@@ -90,9 +82,7 @@ async fn mfa_handler() -> &'static str {
     "mfa_ok"
 }
 
-/// ABAC 策略校验 handler。
-/// 纯 ABAC 校验，不依赖 RBAC 权限表。
-/// resource 显式注入。
+/// ABAC 策略校验 handler（纯 ABAC，不依赖 RBAC 权限表；resource 显式注入）。
 #[check_abac(
     action = "access",
     resource = "Resource::\"default\"",
@@ -431,9 +421,7 @@ async fn check_role_and_all_returns_200() {
 // #[check_access_token] / #[check_client_token] / #[check_temp_token] 测试
 // ============================================================================
 
-/// `#[check_access_token]` 宏展开后调用 `GarrisonUtil::check_access_token`，无 token 时返回 401。
-///
-/// 。验证宏展开为 wrapper 调用 `check_access_token`，
+/// `#[check_access_token]` 宏展开后调用 `GarrisonUtil::check_access_token`，无 token 时
 /// loose 模式下未登录返回 401（NotLogin → 401）。
 #[tokio::test]
 #[serial]
@@ -462,7 +450,6 @@ async fn check_access_token_with_valid_token_returns_200() {
 }
 
 /// `#[check_client_token]` 宏展开后调用 `GarrisonUtil::check_client_token`，无 token 时返回 401。
-///
 #[tokio::test]
 #[serial]
 async fn check_client_token_expands_to_wrapper() {
@@ -489,7 +476,6 @@ async fn check_client_token_with_valid_token_returns_200() {
 }
 
 /// `#[check_temp_token]` 宏展开后调用 `GarrisonUtil::check_temp_token`，无 token 时返回 401。
-///
 #[tokio::test]
 #[serial]
 async fn check_temp_token_expands_to_wrapper() {
@@ -519,8 +505,7 @@ async fn check_temp_token_with_valid_token_returns_200() {
 // 宏展开行为验证（编译期 + 类型层面）
 // ============================================================================
 
-/// 验证宏展开后的函数返回类型为 `axum::response::Response`（非原类型）。
-/// 这是一个编译期类型检查：如果宏展开错误导致返回类型不是 Response，编译会失败。
+/// 验证宏展开后的函数返回类型为 `axum::response::Response`（非原类型；展开错误时编译失败）。
 #[tokio::test]
 #[serial]
 async fn macro_expands_to_response_return_type() {
@@ -532,10 +517,8 @@ async fn macro_expands_to_response_return_type() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-/// 验证 handler 可作为 axum Router 的 handler（IntoResponse 兼容性 + 运行时调用）。
-///
-/// 宏标注的 handler 返回 `axum::response::Response`，可直接作为 axum handler。
-/// 通过 `with_current_token` 包裹 `oneshot` 调用，使 handler 内部能读取 task_local token。
+/// 验证 handler 可作为 axum Router 的 handler（`IntoResponse` 兼容性 + 运行时调用；
+/// 经 `with_current_token` 包裹 `oneshot`，使 handler 内部能读取 task_local token）。
 #[tokio::test]
 #[serial]
 async fn handler_works_with_axum_router() {
@@ -629,10 +612,8 @@ async fn check_abac_no_engine_returns_500() {
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
-/// `#[check_abac]` 未登录 + 无引擎 → fail-closed 返回 500。
-///
-/// 验证 `#[check_abac]` 纯 ABAC 校验语义：无引擎时 `check_abac_with_policy`
-/// 返回 `Err(Config)`（fail-closed），请求被拒绝。即便未登录也优先返回 ABAC 错误。
+/// `#[check_abac]` 未登录 + 无引擎 → fail-closed 返回 500：纯 ABAC 校验语义下无引擎时
+/// `check_abac_with_policy` 返回 `Err(Config)`，请求被拒绝，即便未登录也优先返回 ABAC 错误。
 #[tokio::test]
 #[serial]
 #[cfg(feature = "abac")]

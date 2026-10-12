@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! GarrisonDaoOxcache 实现（从 mod.rs 迁移）。
+//! GarrisonDaoOxcache 实现。
 
 use super::GarrisonDao;
 #[cfg(feature = "cache-redis")]
@@ -13,17 +13,8 @@ use async_trait::async_trait;
 use oxcache::Cache;
 use std::time::Duration;
 
-/// 根据租户上下文返回实际存储 key。
-///
-/// - `tenant-isolation` feature 启用且 `TENANT.try_get()` 返回 `Ok(ctx)`：
-///   返回 `format!("{}{}:{}", DaoKeyPrefix::Tenant, ctx.tenant_id, key)`
-/// - feature 关闭或 `TENANT` 上下文不存在（`try_get` 返回 `Err`）：返回 `key.to_string()`（不变）
-///
-/// # 设计
-///
-/// - `TENANT.try_get()` 返回 `Err` 而非 `None`（tokio task_local 语义），用 `Ok` 模式匹配
-/// - 不 panic：无租户上下文时 key 保持原样（单租户语义，无前缀）
-/// - 同步函数：`try_get` 是同步的，无需 async
+/// 根据租户上下文返回实际存储 key（[`strip_prefix`] 的逆操作）：
+/// `tenant-isolation` 启用且有 `TENANT` 上下文时返回 `tenant:{id}:{key}`，否则原样返回（不 panic）。
 fn prefixed_key(key: &str) -> String {
     #[cfg(feature = "tenant-isolation")]
     {
@@ -31,44 +22,28 @@ fn prefixed_key(key: &str) -> String {
             return format!("{}{}:{}", DaoKeyPrefix::Tenant, ctx.tenant_id, key);
         }
     }
-    // feature 关闭或无 TENANT 上下文时 key 保持原样
     #[allow(unused_variables)]
     let _ = key;
     key.to_string()
 }
 
-/// 通配符匹配（支持 `*` 匹配任意字符序列、`?` 匹配单个字符）。
-///
-/// 用于 `keys()` 方法过滤匹配 pattern 的 key。
-/// pattern 如 `"anomalous:login:*"` 匹配 `"anomalous:login:1001:1234567890"`，
-/// `"user:?"` 匹配 `"user:1"` 但不匹配 `"user:12"`。
-///
-/// 实现委托 [`crate::dao::in_memory::glob_match`]（单一事实来源，O(n+m) 双指针算法）：
-/// 与 `InMemoryDao::keys`、Redis `KEYS` 的 glob 语义保持一致，消除此前
-/// 「`?`/中间 `*` 按字面量处理」的行为分叉（trait 文档承诺支持 `*` 与 `?`）。
+/// 通配符匹配（`*` 任意字符序列 / `?` 单字符），委托 [`crate::dao::in_memory::glob_match`]
+///（单一事实来源，O(n+m) 双指针算法）与 `InMemoryDao::keys`、Redis `KEYS` 语义一致。
 ///
 /// # Feature gate
-/// 使用 `dao-key-index`（由 `protocol-apikey` /
-/// `anomalous-detector-dual` 传递启用），而非更严格的 `anomalous-detector-dual`，
-/// 确保只启用 `protocol-apikey` 的场景 `keys()` 仍可用。
+/// 使用 `dao-key-index`（由 `protocol-apikey` / `anomalous-detector-dual` 传递），
+/// 而非更严格的 `anomalous-detector-dual`，确保只启用 `protocol-apikey` 时 `keys()` 仍可用。
 #[cfg(feature = "dao-key-index")]
 fn matches_pattern(key: &str, pattern: &str) -> bool {
     super::in_memory::glob_match(pattern, key)
 }
 
-/// 去除 DAO 前缀，返回原始 key（`prefixed_key` 的逆操作）。
-///
-/// `prefixed_key` 在 `tenant-isolation` 启用且有 TENANT 上下文时
-/// 返回 `format!("tenant:{id}:{key}")`，否则原样返回。
-/// 本函数逆向该操作：去除 `"tenant:{id}:"` 前缀，或原样返回。
-///
-/// # Feature gate
-/// 与 `matches_pattern` 一致，使用 `dao-key-index`（详见 `matches_pattern` 文档）。
+/// 去除 `tenant:{id}:` 前缀返回原始 key（[`prefixed_key`] 的逆操作，无前缀时原样返回）；同样 `dao-key-index` 门控。
 #[cfg(feature = "dao-key-index")]
 fn strip_prefix(prefixed: &str) -> String {
     #[cfg(feature = "tenant-isolation")]
     {
-        // 格式 "tenant:{id}:{key}"，找到第二个 ':' 之后的内容
+        // 格式 "tenant:{id}:{key}"，取第二个 ':' 之后的内容
         if let Some(rest) = prefixed.strip_prefix("tenant:") {
             if let Some(pos) = rest.find(':') {
                 return rest[pos + 1..].to_string();
@@ -79,76 +54,35 @@ fn strip_prefix(prefixed: &str) -> String {
     prefixed.to_string()
 }
 
-/// oxcache 默认实现，包装 `oxcache::Cache<String, String>`。
+/// oxcache 缓存 DAO：包装 `oxcache::Cache<String, String>`，L1 内存 + L2 Redis 均由 oxcache 管理，无自有缓存逻辑。
 ///
-/// - L1（内存）+ L2（redis）由 oxcache 自动管理（oxcache 支持 per-entry TTL）。
-/// - Garrison 自身不实现任何缓存逻辑，全部委托给 oxcache。
-/// - 启用 `sync_mode(true)` 后使用 `_sync` API，
-///   要求调用方在 multi_thread tokio runtime 中执行。
-///
-/// # TTL 保留
-/// - `update` 通过 `cache.ttl_sync()` 读取剩余 TTL，用 `set_with_ttl_sync` 保留原 TTL（不重置过期时间）
-/// - `expire` 通过 `cache.expire_sync()` 原子更新 TTL（不触碰 value）
-/// - 依赖本地 oxcache 仓库（crates.io 0.3.0 未暴露 `Cache<K,V>::ttl_sync()`，本地仓库已暴露）
-///
-/// # 性能约束
-///
-/// `_sync` API 仅适用于 oxcache in-memory 后端：
-/// - 读操作（`get_sync`/`exists_sync`/`ttl_sync`）：无锁读，<100ns
-/// - 写操作（`set_with_ttl_sync`/`delete_sync`/`expire_sync`）：短临界区，<1μs
-/// - 对比 `tokio::task::spawn_blocking` 开销：~10-50μs（线程池调度）
-///
-/// 结论：对 in-memory backend，`_sync` 调用比 `spawn_blocking` 更快，保留现有实现。
-///
-/// **后续跟进**：若未来引入 Redis/分布式 backend，需改用 async API（`_sync` 在网络 I/O 场景下会阻塞 tokio worker 线程）。
+/// 启用 `sync_mode(true)` 使用 `_sync` API：in-memory 后端读 <100ns、写 <1μs，快于 `spawn_blocking`（~10-50μs）；
+/// 需 multi_thread tokio runtime，且 Redis L2 网络 I/O 会阻塞 worker——`check_redis_compat` 据此拒绝 `_sync` 原子方法。
+/// TTL 保留：`update` 用 `ttl_sync` + `set_with_ttl_sync`，`expire` 用 `expire_sync`；`ttl_sync` 依赖本地 oxcache 仓库（crates.io 0.3.0 未暴露）。
 pub struct GarrisonDaoOxcache {
-    /// 原子操作互斥锁，保证 `set_if_absent` / `get_and_delete` / `incr` 等的串行化。
+    /// 原子操作互斥锁：串行化 `set_if_absent` / `get_and_delete` / `incr` 等（跨**所有 key** 的单把全局锁）。
     ///
-    /// **字段排序依据**（Cache 局部性优化）：按访问频率降序排列，
-    /// 高频字段前置以优先命中 L1 Cache Line（鲲鹏 128B / x86 64B）。
-    ///
-    /// **为何用 `parking_lot::Mutex` 而非 `tokio::sync::Mutex`**：
-    /// 原实现用 `tokio::sync::Mutex` + async cache API（`cache.get().await`），
-    /// 跨 await 持锁序列化所有原子操作。改为 `parking_lot::Mutex` + `_sync` API
-    /// （`cache.get_sync()`），锁内全同步操作（<1μs），不让出 tokio task，
-    /// 与 `get`/`set` 方法的 `_sync` 模式对齐（文件 L118-127 设计结论）。
-    ///
-    /// **扩展上限**（性能审查 P2）：此为跨**所有 key** 的单把全局锁——
-    /// 六个原子方法在不同 key 上也无法并行（实测 100-task 不同 key 与同 key
-    /// 同为全串行）。当前负载（临界区 <1μs、单请求原子操作个位数）不构成
-    /// 瓶颈；目标十万级 QPS 前应引入按 key hash 的分片锁（16-64 shard）。
+    /// 用 `parking_lot::Mutex` + `_sync` API（锁内全同步 <1μs，不让出 tokio task），不用 `tokio::sync::Mutex`（跨 await 持锁）。
+    /// 字段按访问频率降序排列以优先命中 L1 Cache Line；目标十万级 QPS 前应改按 key hash 分片锁（16-64 shard）。
     atomic_mutex: parking_lot::Mutex<()>,
-    /// key 索引，用于实现 `keys()` 方法（oxcache 0.3.3 无原生 keys/iter API）。
-    /// 仅在 `dao-key-index` feature 启用时维护（由 `protocol-apikey` /
-    /// `anomalous-detector-dual` 传递），避免影响其他场景的内存开销。
-    /// TTL 过期的 key 会在 `keys()` 调用时惰性清理。
+    /// key 索引（oxcache 0.3.3 无原生 keys/iter API），仅 `dao-key-index` 启用时维护；
+    /// 过期项在 `keys()` 调用时惰性清理。
     #[cfg(feature = "dao-key-index")]
     key_index: parking_lot::RwLock<std::collections::HashSet<String>>,
     /// 缓存后端（oxcache L1 内存 + L2 Redis）。
     cache: Cache<String, String>,
-    /// Redis 部署模式配置（仅在 `cache-redis` feature 启用时存在）。
-    ///
-    /// 通过 [`with_redis_config`] builder 方法设置。未设置时为 `None`，
-    /// oxcache 使用默认 Redis 配置。
+    /// Redis 部署模式配置（`cache-redis` 门控），经 [`with_redis_config`] 设置；未设置时 `None`（用 oxcache 默认配置）。
     #[cfg(feature = "cache-redis")]
     redis_config: Option<RedisConfig>,
 }
 
 impl GarrisonDaoOxcache {
-    /// 创建默认的 oxcache DAO 实例。
+    /// 创建默认的 oxcache DAO 实例（启用 `sync_mode(true)` 以支持 `_sync` API）。
     ///
-    /// 启用 `sync_mode(true)` 以支持 `_sync` API。
-    ///
-    /// # 返回
-    /// 已初始化的 `GarrisonDaoOxcache` 实例（内部 `oxcache::Cache` 已就绪，sync_mode 启用）。
-    ///
-    /// # 错误
-    /// - `GarrisonError::Dao`：oxcache 初始化失败（消息含 "oxcache 初始化失败"）。
+    /// 错误：oxcache 初始化失败返回 `GarrisonError::Dao`。
     pub async fn new() -> GarrisonResult<Self> {
-        // 钉定 TTL 精确语义（ttl_jitter(0.0)）：oxcache rc.6 起 builder 默认
-        // ±10% 抖动（rc.5 默认为 0.0），而 DAO 层契约要求 TTL 精确——conformance
-        // 套件断言 get_with_ttl ≤ 请求值，且限流窗口 / 锁定窗口等安全敏感 TTL
-        // 提前过期会放宽限制。抖动仅在三层缓存 L1（three_tier）显式启用。
+        // 钉定 TTL 精确语义（ttl_jitter(0.0)）：oxcache rc.6 起 builder 默认 ±10% 抖动，
+        // 而 DAO 层要求 TTL 精确（conformance 断言 get_with_ttl ≤ 请求值；限流/锁定窗口提前过期会放宽限制）。抖动仅三层缓存 L1 显式启用。
         let builder = Cache::builder().sync_mode(true).ttl_jitter(0.0);
         // cache-audit：缓存操作审计事件（hit/miss/set/delete/evict/expired，键名自动脱敏）
         // 经 TracingAuditPublisher 桥接 tracing（→ inklog / metrics-prometheus 采集链）
@@ -170,27 +104,13 @@ impl GarrisonDaoOxcache {
         })
     }
 
-    /// 设置 Redis 部署模式配置。
-    ///
-    /// 仅在 `cache-redis` feature 启用时可用。消费 self 并返回新实例（builder 模式）。
-    /// 调用后 oxcache 的 Redis L2 后端使用指定部署模式。
-    /// 未调用时保持现有行为（oxcache 默认 Redis 配置）。
-    ///
-    /// # 参数
-    /// - `config`: Redis 配置（包含部署模式、连接池参数、认证信息）。
-    ///
-    /// # 返回
-    /// 消费 self 并返回新实例。
+    /// 设置 Redis 部署模式配置（`cache-redis` 门控，builder：消费 self 返回新实例）；未调用时保持 oxcache 默认配置。
     #[cfg(feature = "cache-redis")]
     pub fn with_redis_config(mut self, config: RedisConfig) -> Self {
         // 默认地址（127.0.0.1:6379）仅在缺配时出现——一次性 warn 显性化降级路径
         config.warn_default_once();
-        // M4 防护：_sync API（set_if_absent/incr/decr/get_and_delete）仅适用于
-        // in-memory 后端。oxcache sync_mode(true) + backend_arc() 会返回
-        // Err(NotSupported)（见 oxcache cache_builder.rs L93-101）。
-        // Redis L2 后端的网络 I/O 会阻塞 tokio worker 线程（_sync API 同步阻塞）。
-        // 当前 with_redis_config 仅存储配置,不实际添加 Redis 后端;
-        // 若未来引入 Redis L2 后端,原子操作方法会通过 check_redis_compat 返回 Err。
+        // M4 防护：_sync API 仅兼容 in-memory 后端，Redis L2 网络 I/O 会阻塞 tokio worker；
+        // 当前仅存储配置不实际添加后端，故此处 warn 并在原子方法入口经 check_redis_compat 拒绝。
         tracing::warn!(
             mode = %config.mode,
             db = config.db,
@@ -201,17 +121,8 @@ impl GarrisonDaoOxcache {
         self
     }
 
-    /// 检查 _sync API 与 Redis L2 后端的兼容性（M4 防护）。
-    ///
-    /// `_sync` API（`set_if_absent` / `incr` / `decr` / `get_and_delete`）仅适用于
-    /// in-memory 后端,Redis L2 后端的网络 I/O 会阻塞 tokio worker 线程。
-    ///
-    /// 当 `cache-redis` feature 启用且 `redis_config` 已设置时,返回 `Err(Config)` 提示不兼容,
-    /// 防止用户误用 _sync API 导致 tokio worker 阻塞（失败必须显性化）。
-    ///
-    /// # 返回
-    /// - `Ok(())`: in-memory 后端,`_sync` API 可用
-    /// - `Err(Config)`: Redis L2 后端已配置,`_sync` API 不兼容
+    /// `cache-redis` 且已设置 `redis_config` 时返回 `Err(Config)`：`_sync` 原子方法只兼容
+    /// in-memory 后端（Redis L2 网络 I/O 会阻塞 tokio worker），失败显性化而非静默阻塞。
     #[cfg(feature = "cache-redis")]
     fn check_redis_compat(&self) -> GarrisonResult<()> {
         if self.redis_config.is_some() {
@@ -222,9 +133,7 @@ impl GarrisonDaoOxcache {
         Ok(())
     }
 
-    /// 返回当前 Redis 配置（仅在 `cache-redis` feature 启用时可用）。
-    ///
-    /// 用于测试与诊断：确认 `with_redis_config` 是否已调用。
+    /// 返回当前 Redis 配置（测试与诊断用：确认 `with_redis_config` 是否已调用）。
     #[cfg(feature = "cache-redis")]
     pub fn redis_config(&self) -> Option<&RedisConfig> {
         self.redis_config.as_ref()
@@ -318,9 +227,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
         }
     }
 
-    /// delete 用 `delete_sync` 删除 key。
-    ///
-    /// 跨进程限制：多进程共享 Redis L2 时，仍需确保删除传播一致性。
+    /// 删除 key（`delete_sync`）并同步清理 `key_index` 条目。
     async fn delete(&self, key: &str) -> GarrisonResult<()> {
         let actual_key = prefixed_key(key);
         self.cache
@@ -331,9 +238,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
         Ok(())
     }
 
-    /// set_permanent 用 set_with_ttl_sync(None) 写入永久键。
-    ///
-    /// 重写默认实现以使用 oxcache 原生"无 TTL"API（避免 ttl=0 歧义）。
+    /// 用 `set_with_ttl_sync(None)` 写入永久键（oxcache 原生无 TTL API，避免 ttl=0 歧义）。
     async fn set_permanent(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let actual_key = prefixed_key(key);
         self.cache
@@ -344,11 +249,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
         Ok(())
     }
 
-    /// get_timeout 用 ttl_sync 查询剩余 TTL。
-    ///
-    /// oxcache 的 `ttl_sync(key)` 返回 `Option<Duration>`：
-    /// - `Some(remaining)`: 键存在且设置了 TTL
-    /// - `None`: 键不存在，或键存在但未设置 TTL（永久驻留）
+    /// 用 `ttl_sync` 查询剩余 TTL：`Some(remaining)` 有 TTL，`None` 不存在或为永久键。
     async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<Duration>> {
         let actual_key = prefixed_key(key);
         self.cache
@@ -356,14 +257,9 @@ impl GarrisonDao for GarrisonDaoOxcache {
             .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))
     }
 
-    /// rename 用 get → ttl_sync → set_with_ttl_sync → delete 四步。
-    ///
-    /// 重写默认实现以保留原键 TTL（用 `ttl_sync` 读取剩余 TTL，用 `set_with_ttl_sync` 写入）。
-    /// 进程内原子：整体置于 `atomic_mutex` 临界区。
-    /// `ttl_sync` 返回 None 时追加 `exists_sync` 甄别永久键 / 已消失键，
-    /// 已消失返回 `InvalidParam("dao-key-missing")`（对齐 trait 文档错误契约）而非写入永久值。
-    /// 同步迁移 `key_index`：移除旧键条目、插入新键条目（否则 `keys()` 会
-    /// 漏报新键且残留旧键陈旧条目）。
+    /// get → ttl_sync → set_with_ttl_sync → delete 四步，整体置于 `atomic_mutex` 临界区并保留原键 TTL；
+    /// `ttl_sync` 返回 None 时用 `exists_sync` 甄别永久键 / 已消失键（后者返回 `InvalidParam("dao-key-missing")` 而非写入永久值）；
+    /// 同步迁移 `key_index`（移除旧键、插入新键）。
     async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
         let _guard = self.atomic_mutex.lock();
         let actual_old = prefixed_key(old_key);
@@ -407,15 +303,8 @@ impl GarrisonDao for GarrisonDaoOxcache {
         Ok(())
     }
 
-    /// get_and_delete 用 `parking_lot::Mutex` + `_sync` API 保护 get+delete。
-    ///
-    /// 进程内原子：同一进程内并发调用同一 key 仅一个返回 `Some`。
-    /// `delete_sync` 是同步删除（已由 `oxcache_get_and_delete_concurrent`
-    /// 测试验证），无需额外状态追踪。
-    /// 删除成功时同步清理 `key_index` 条目（与 `delete()` 一致，
-    /// 否则 `keys()` 会持续返回已删除 key 的陈旧条目）。
-    /// 跨进程限制：多进程共享 Redis L2 时，仍存在 TOCTOU 竞态
-    /// （需 Redis Lua 脚本 `redis.call('GET',K[1]);redis.call('DEL',K[1])` 修复，待引入 Redis L2 后端）。
+    /// `parking_lot::Mutex` + `_sync` API 保护 get+delete（进程内原子：并发同 key 仅一个返回 `Some`），
+    /// 删除成功时清理 `key_index`；跨进程共享 Redis L2 仍存在 TOCTOU（待引入后端后用 Lua GET+DEL 修复）。
     async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>> {
         #[cfg(feature = "cache-redis")]
         self.check_redis_compat()?;
@@ -435,17 +324,8 @@ impl GarrisonDao for GarrisonDaoOxcache {
         Ok(value)
     }
 
-    /// set_if_absent 用 `parking_lot::Mutex` + `_sync` API 保护原子性（进程内原子）。
-    ///
-    /// **流程**：Mutex 内通过 `exists_sync` 检查 key 是否存在，不存在则 `set_with_ttl_sync` 写入。
-    /// oxcache `_sync` API 直接操作底层 HashMap（绕过 Moka channel 延迟），
-    /// `exists_sync` + `set_with_ttl_sync` 在 Mutex 串行化下提供原子语义。
-    ///
-    /// **修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
-    /// 改为 `parking_lot::Mutex` + `_sync` API，锁内全同步操作（<1μs）。
-    ///
-    /// 跨进程限制：多进程共享 Redis L2 时仍存在 TOCTOU 竞态
-    /// （需 Redis `SET key value NX EX ttl` 修复，待引入 Redis L2 后端）。
+    /// `parking_lot::Mutex` + `_sync` API 保护（进程内原子）：锁内 `exists_sync` 检查 + `set_with_ttl_sync` 写入；
+    /// `_sync` 直操作底层 HashMap（绕过 Moka channel 延迟）。跨进程共享 Redis L2 仍有 TOCTOU（待 Redis `SET NX EX` 修复）。
     async fn set_if_absent(
         &self,
         key: &str,
@@ -478,16 +358,8 @@ impl GarrisonDao for GarrisonDaoOxcache {
         Ok(true)
     }
 
-    /// incr 用 `parking_lot::Mutex` + `_sync` API 保护原子性（进程内原子）。
-    ///
-    /// **流程**：Mutex 内通过 `get_sync` 读取当前值，递增后用 `set_with_ttl_sync` 写回。
-    /// key 不存在时初始化为 1。key 已存在时通过 `ttl_sync` 读取剩余 TTL 并保留。
-    ///
-    /// **修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
-    /// 改为 `parking_lot::Mutex` + `_sync` API，锁内全同步操作（<1μs）。
-    ///
-    /// 跨进程限制：多进程共享 Redis L2 时仍存在 TOCTOU 竞态
-    /// （需 Redis `INCR` 原子命令修复，待引入 Redis L2 后端）。
+    /// `parking_lot::Mutex` + `_sync` API 保护（进程内原子）：锁内 `get_sync` → 递增 → 写回，新键初始化为 1；
+    /// 已存在键用 `ttl_sync` 保留剩余 TTL。跨进程共享 Redis L2 仍有 TOCTOU（待 Redis `INCR` 修复）。
     async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64> {
         #[cfg(feature = "cache-redis")]
         self.check_redis_compat()?;
@@ -537,19 +409,8 @@ impl GarrisonDao for GarrisonDaoOxcache {
         }
     }
 
-    /// decr 用 `parking_lot::Mutex` + `_sync` API 保护原子性（进程内原子，与 `incr` 对称）。
-    ///
-    /// **语义**（与 trait 默认实现 + `MockDao::decr` 一致）：
-    /// - key 不存在或已过期：返回 0（不创建 key）
-    /// - cur_val == 0：返回 0（不递减为负，不删除 key）
-    /// - cur_val > 0：递减 1；new_val == 0 时 `delete_sync` 删除 key；
-    /// new_val > 0 时用 `ttl_sync` 读取剩余 TTL 并 `set_with_ttl_sync` 保留（不重置窗口）
-    ///
-    /// **修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
-    /// 改为 `parking_lot::Mutex` + `_sync` API，锁内全同步操作（<1μs）。
-    ///
-    /// 跨进程限制：多进程共享 Redis L2 时仍存在 TOCTOU 竞态
-    /// （需 Redis `DECR` 原子命令修复，待引入 Redis L2 后端）。
+    /// `parking_lot::Mutex` + `_sync` API 保护（进程内原子，与 `incr` 对称）：不存在/值为 0 返回 0；
+    /// 递减到 0 删除 key，> 0 用 `ttl_sync` 保留原 TTL。跨进程共享 Redis L2 仍有 TOCTOU（待 Redis `DECR` 修复）。
     async fn decr(&self, key: &str) -> GarrisonResult<u64> {
         #[cfg(feature = "cache-redis")]
         self.check_redis_compat()?;
@@ -593,19 +454,8 @@ impl GarrisonDao for GarrisonDaoOxcache {
         }
     }
 
-    /// compare_and_update_if_greater 用 `parking_lot::Mutex` + `_sync` API 保护原子性（进程内原子）。
-    ///
-    /// **语义**：
-    /// - key 不存在或已过期：current_val = 0，new_value > 0 时初始化并设置 TTL
-    /// - key 已存在且 new_value > current_val：用 `ttl_sync` 读取剩余 TTL 保留（不重置）
-    /// - key 已存在但 new_value <= current_val：不修改，返回 false
-    ///
-    /// **修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
-    /// 改为 `parking_lot::Mutex` + `_sync` API，锁内全同步操作（<1μs）。
-    ///
-    /// 用于 HTTP Digest nc 单调性校验（RFC 7616 §3.4.6），消除 get→compare→set TOCTOU 竞态。
-    /// 跨进程限制：多进程共享 Redis L2 时仍存在 TOCTOU 竞态
-    /// （需 Redis Lua 脚本（GET + COMPARE + SET 原子执行）修复，待引入 Redis L2 后端）。
+    /// `parking_lot::Mutex` + `_sync` API 保护（进程内原子）：不存在视 0，`new_value > current` 时写入
+    ///（已存在保留剩余 TTL）；用于 HTTP Digest nc 单调性校验（RFC 7616 §3.4.6）。跨进程共享 Redis L2 仍有 TOCTOU（待 Lua 修复）。
     async fn compare_and_update_if_greater(
         &self,
         key: &str,
@@ -656,16 +506,8 @@ impl GarrisonDao for GarrisonDaoOxcache {
         }
     }
 
-    /// compare_and_swap 用 `parking_lot::Mutex` + `_sync` API 保护原子性（进程内原子）。
-    ///
-    /// 在单个 `lock()` 作用域内完成 get → compare → set，消除 TOCTOU 竞态。
-    /// 用于备份码消费等需要原子 CAS 语义的场景。
-    ///
-    /// **修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
-    /// 改为 `parking_lot::Mutex` + `_sync` API，锁内全同步操作（<1μs）。
-    ///
-    /// 跨进程限制：多进程共享 Redis L2 时仍存在 TOCTOU 竞态
-    /// （需 Redis Lua 脚本修复，待引入 Redis L2 后端）。
+    /// `parking_lot::Mutex` + `_sync` API 保护（进程内原子）：单锁内 get → compare → set；用于备份码消费等 CAS 场景。
+    /// 跨进程共享 Redis L2 仍有 TOCTOU（待 Lua 修复）。
     async fn compare_and_swap(
         &self,
         key: &str,
@@ -702,17 +544,10 @@ impl GarrisonDao for GarrisonDaoOxcache {
         }
     }
 
-    /// keys 用 key_index 实现（oxcache 0.3.3 无原生 keys/iter API）。
+    /// 遍历 `key_index` 过滤匹配 pattern 的 key 并惰性清理过期项（oxcache 0.3.3 无原生 keys/iter API）。
     ///
-    /// 遍历 key_index，过滤匹配 pattern 的 key，同时惰性清理已过期的 key。
-    /// pattern 支持 `*` 通配符（与 MockDao::keys 一致）。
-    ///
-    /// # 错误语义
-    ///
-    /// `exists_sync` 返回 `Err`（backend 故障 / IO 错误）**不等于键不存在**：
-    /// 此类 key 保留在 `key_index` 中（不参与惰性清理、不计入本次返回结果），
-    /// 并记录 `warn` 日志。绝不将错误静默按 `false` 处理——否则每次 `keys()`
-    /// 都会把有效 key 误判为过期并从索引中永久删除。
+    /// `exists_sync` 返回 `Err`（backend 故障）**不等于键不存在**：保留索引条目、记 warn、不计入结果，
+    /// 绝不静默按不存在处理——否则有效 key 会被误判过期并从索引永久删除。
     #[cfg(feature = "dao-key-index")]
     async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
         let actual_pattern = prefixed_key(pattern);
@@ -760,13 +595,8 @@ impl GarrisonDao for GarrisonDaoOxcache {
         Ok(result)
     }
 
-    /// eval_lua 委托 oxcache 的 `Cache::eval_lua` 执行 Redis Lua 脚本。
-    ///
-    /// 仅在 `cache-redis` feature 启用时可用（启用 `oxcache/lua` → 编译 `Cache::eval_lua`）。
-    /// 将 `oxcache::redis::Value` 递归转换为 `Vec<String>`，与 `GarrisonDao::eval_lua` 签名对齐。
-    ///
-    /// 非 Redis 后端（内存模式）调用时返回 `Operation` 错误（oxcache 语义），
-    /// 调用方应据此降级到非原子路径。
+    /// 委托 oxcache `Cache::eval_lua`（`cache-redis` 门控，启用 `oxcache/lua`），
+    /// 将 `oxcache::redis::Value` 递归转为 `Vec<String>`；非 Redis 后端返回 `Operation` 错误，调用方应降级非原子路径。
     #[cfg(feature = "cache-redis")]
     async fn eval_lua(
         &self,
@@ -785,18 +615,8 @@ impl GarrisonDao for GarrisonDaoOxcache {
     }
 }
 
-/// 将 `oxcache::redis::Value` 递归转换为 `Vec<String>`。
-///
-/// 匹配 redis 1.5 的 `Value` 枚举变体：
-/// - `Nil` → 空
-/// - `Int(i)` → `[i.to_string()]`
-/// - `BulkString(v)` → `[UTF-8 lossy]`
-/// - `SimpleString(s)` → `[s]`
-/// - `Okay` → `["OK"]`
-/// - `Double(d)` → `[d.to_string()]`
-/// - `Array/Set` → 递归展平
-/// - `Map` → 递归展平 key-value 对
-/// - `Attribute` → 递归转换 data 部分
+/// 将 `oxcache::redis::Value` 递归展平为 `Vec<String>`：Nil→空、Int/Double→格式化、
+/// BulkString→UTF-8 lossy、SimpleString→原文、Okay→"OK"、Array/Set/Map/Attribute 递归展平。
 #[cfg(feature = "cache-redis")]
 fn redis_value_to_strings(value: oxcache::redis::Value) -> Vec<String> {
     match value {
@@ -828,14 +648,7 @@ fn redis_value_to_strings(value: oxcache::redis::Value) -> Vec<String> {
     }
 }
 
-// ============================================================================
-// 单元测试（GarrisonDaoOxcache 生产后端实现层）
-// ============================================================================
-//
-// trait 层契约测试见 `mod.rs` 的 `oxcache_tests` / `oxcache_keys_tests`，
-// 本模块聚焦本文件私有 helper（`matches_pattern` / `strip_prefix` / `prefixed_key`）
-// 与 mod.rs 未覆盖的分支（incr 存在路径 / decr 全路径 / CAS 全路径 /
-// check_redis_compat / eval_lua / redis_value_to_strings）。
+// 单元测试（生产后端实现层；trait 契约测试见 mod.rs 的 oxcache_tests / oxcache_keys_tests）
 
 #[cfg(test)]
 mod tests {
@@ -845,9 +658,7 @@ mod tests {
     // 基础 KV：set 覆盖、TTL 过期、边界 key
     // ------------------------------------------------------------------------
 
-    /// Scenario: 重复 set 覆盖值与新 TTL。
-    /// WHEN set("ow","v1",3600) 后再次 set("ow","v2",1)
-    /// THEN get 返回 "v2"，且原 3600s TTL 被覆盖为 1s（2 秒后过期）
+    /// 重复 set 覆盖值与新 TTL。
     #[tokio::test(flavor = "multi_thread")]
     async fn set_overwrites_value_and_ttl() {
         let dao = GarrisonDaoOxcache::new().await.unwrap();
@@ -861,9 +672,7 @@ mod tests {
         );
     }
 
-    /// Scenario: 过期后 get 返回 None 且 get_timeout 返回 None。
-    /// WHEN set(k, v, 1) 并等待 2 秒
-    /// THEN get → None、get_timeout → None（键已消失）
+    /// 过期后 get 与 get_timeout 均返回 None。
     #[tokio::test(flavor = "multi_thread")]
     async fn expired_key_reads_return_none() {
         let dao = GarrisonDaoOxcache::new().await.unwrap();
@@ -898,7 +707,7 @@ mod tests {
     // incr：存在 / 不存在 key、TTL 保留、非数字值
     // ------------------------------------------------------------------------
 
-    /// Scenario: incr 不存在的 key 初始化为 1 并设置 TTL。
+    /// incr 不存在的 key 初始化为 1 并设置 TTL。
     #[tokio::test(flavor = "multi_thread")]
     async fn incr_missing_key_initializes_to_one_with_ttl() {
         let dao = GarrisonDaoOxcache::new().await.unwrap();
@@ -909,9 +718,7 @@ mod tests {
         assert!(ttl.unwrap() <= Duration::from_secs(60));
     }
 
-    /// Scenario: incr 已存在的 key 递增值且保留原 TTL（不重置窗口）。
-    /// WHEN set(k,"5",2) 后 incr(k, 3600)
-    /// THEN 返回 6，且 3 秒后键已过期（TTL 保留为原 2s，未被重置为 3600s）
+    /// incr 已存在的 key 递增值且保留原 TTL：set(k,"5",2) 后 incr(k,3600) 返回 6，原 2s TTL 过期后键消失。
     #[tokio::test(flavor = "multi_thread")]
     async fn incr_existing_key_preserves_ttl() {
         let dao = GarrisonDaoOxcache::new().await.unwrap();
@@ -924,7 +731,7 @@ mod tests {
         );
     }
 
-    /// Scenario: incr 新 key 且 ttl_seconds=0 时永久驻留。
+    /// incr 新 key 且 ttl_seconds=0 时永久驻留。
     #[tokio::test(flavor = "multi_thread")]
     async fn incr_new_key_with_zero_ttl_is_permanent() {
         let dao = GarrisonDaoOxcache::new().await.unwrap();
@@ -1209,10 +1016,7 @@ mod tests {
             assert!(!matches_pattern("short", "exact-key"));
         }
 
-        /// `matches_pattern`：`*` 可出现在 pattern 任意位置（中间通配）。
-        ///
-        /// 与 `InMemoryDao::glob_match` / Redis `KEYS` 语义一致（修复前
-        /// 中间 `*` 按字面量处理，属行为分叉）。
+        /// `matches_pattern`：`*` 可出现在 pattern 任意位置（与 `glob_match` / Redis `KEYS` 语义一致）。
         #[test]
         fn matches_pattern_middle_star_is_wildcard() {
             assert!(matches_pattern("axb", "a*b"), "中间 * 应做通配");
@@ -1228,10 +1032,7 @@ mod tests {
             );
         }
 
-        /// `matches_pattern`：`?` 匹配单个任意字符（恰一个，不匹配多字符）。
-        ///
-        /// 与 `InMemoryDao::glob_match` / Redis `KEYS` 语义一致（修复前
-        /// `?` 按字面量处理，与 trait 文档「支持 `*` 与 `?`」承诺相悖）。
+        /// `matches_pattern`：`?` 恰匹配单个任意字符（与 `glob_match` / Redis `KEYS` 语义一致）。
         #[test]
         fn matches_pattern_question_mark_is_single_char() {
             assert!(matches_pattern("key1", "key?"), "? 应匹配单个字符");
@@ -1323,8 +1124,7 @@ mod tests {
             );
         }
 
-        /// keys() 在 TENANT 上下文内返回去前缀的原始 key 名
-        ///（覆盖 `prefixed_key` 带上下文分支 + `strip_prefix` 的 `tenant:` 分支）。
+        /// keys() 在 TENANT 上下文内返回去前缀的原始 key 名。
         #[cfg(feature = "tenant-isolation")]
         #[tokio::test(flavor = "multi_thread")]
         async fn keys_strip_tenant_prefix_in_tenant_context() {
@@ -1448,7 +1248,6 @@ mod tests {
         /// `redis_value_to_strings`：复合变体递归展平 + 未支持类型占位符。
         #[test]
         fn redis_value_to_strings_composites_and_fallback() {
-            // Array 嵌套展平
             assert_eq!(
                 redis_value_to_strings(oxcache::redis::Value::Array(vec![
                     oxcache::redis::Value::Int(1),
@@ -1456,14 +1255,12 @@ mod tests {
                 ])),
                 vec!["1", "OK"]
             );
-            // Set 展平
             assert_eq!(
                 redis_value_to_strings(oxcache::redis::Value::Set(vec![
                     oxcache::redis::Value::Int(2)
                 ])),
                 vec!["2"]
             );
-            // Map 递归展平 key-value 对
             assert_eq!(
                 redis_value_to_strings(oxcache::redis::Value::Map(vec![(
                     oxcache::redis::Value::BulkString(b"k".to_vec()),
@@ -1471,7 +1268,6 @@ mod tests {
                 )])),
                 vec!["k", "1"]
             );
-            // Attribute → data 部分
             assert_eq!(
                 redis_value_to_strings(oxcache::redis::Value::Attribute {
                     data: Box::new(oxcache::redis::Value::Int(9)),
@@ -1479,16 +1275,14 @@ mod tests {
                 }),
                 vec!["9"]
             );
-            // 未匹配变体（Boolean 无显式分支）→ 占位符
             assert_eq!(
                 redis_value_to_strings(oxcache::redis::Value::Boolean(true)),
                 vec!["[unsupported redis value type]"]
             );
         }
     }
-    /// TTL 精确性回归锁（升级回归修复）：DAO 显式钉定 `ttl_jitter(0.0)`，
-    /// `get_timeout` 不得超过请求 TTL——oxcache rc.6 默认 ±10% 抖动会以约
-    /// 1/2 概率违反单条断言，20 键取样把漏检率压到 ~1e-6。
+    /// TTL 精确性回归锁：DAO 显式钉定 `ttl_jitter(0.0)`，`get_timeout` 不得超过请求 TTL——
+    /// rc.6 默认 ±10% 抖动会以约 1/2 概率违反单条断言，20 键取样把漏检率压到 ~1e-6。
     #[tokio::test(flavor = "multi_thread")]
     async fn ttl_exact_after_jitter_pin() {
         let dao = GarrisonDaoOxcache::new().await.unwrap();

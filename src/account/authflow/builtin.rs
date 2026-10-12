@@ -1,31 +1,18 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 内置 AuthenticationFlow。
-//! 通过 `inventory::submit!` 编译期注册 4 个内置认证流程，
+//! 内置 AuthenticationFlow：经 `inventory::submit!` 编译期注册 4 个流程
+//! （`default-password-flow` / `default-mfa-flow` / `default-social-flow` / `default-sso-flow`），
 //! [`FlowRegistry::from_inventory`](super::registry::FlowRegistry::from_inventory) 自动收集。
 //!
-//! # 内置流程
-//!
-//! | 名称 | 步骤 | 用途 |
-//! |:---|:---|:---|
-//! | `default-password-flow` | Login(password) → Conditional(HasCredential(totp), Mfa(totp), None) | 密码登录 + 可选 MFA |
-//! | `default-mfa-flow` | Login(password) → Mfa(totp) | 密码登录 + 强制 TOTP |
-//! | `default-social-flow` | SocialProvider(wechat) → Conditional(HasCredential(totp), Mfa(totp), None) | 微信社交登录 + 可选 MFA |
-//! | `default-sso-flow` | SsoServer(default) → Conditional(HasCredential(totp), Mfa(totp), None) | SSO 登录 + 可选 MFA |
+//! 密码 / 社交 / SSO 三条均为「登录步骤 + Conditional(HasCredential(totp), Mfa(totp), None)」可选 MFA；
+//! `default-mfa-flow` 为「Login(password) → Mfa(totp)」强制 TOTP。
 
 use super::builder::FlowBuilder;
 use super::registry::FlowRegistration;
 use super::{AuthCondition, AuthStep};
 
-// ============================================================================
-// 内置 flow 构造函数
-// ============================================================================
-
-/// 构造 `default-password-flow`：密码登录 + 可选 TOTP MFA。
-///
-/// 步骤：Login(password) → Conditional(HasCredential(totp), Mfa(totp), None)
-///
+/// 构造 `default-password-flow`：Login(password) → Conditional(HasCredential(totp), Mfa(totp), None)；
 /// 用户已注册 TOTP 凭证时执行 MFA，否则跳过。
 fn default_password_flow() -> super::AuthenticationFlow {
     FlowBuilder::new("default-password-flow")
@@ -40,9 +27,7 @@ fn default_password_flow() -> super::AuthenticationFlow {
         .build()
 }
 
-/// 构造 `default-mfa-flow`：密码登录 + 强制 TOTP MFA。
-///
-/// 步骤：Login(password) → Mfa(totp)
+/// 构造 `default-mfa-flow`：Login(password) → Mfa(totp)。
 fn default_mfa_flow() -> super::AuthenticationFlow {
     FlowBuilder::new("default-mfa-flow")
         .login("password")
@@ -50,9 +35,7 @@ fn default_mfa_flow() -> super::AuthenticationFlow {
         .build()
 }
 
-/// 构造 `default-social-flow`：微信社交登录 + 可选 TOTP MFA。
-///
-/// 步骤：SocialProvider(wechat) → Conditional(HasCredential(totp), Mfa(totp), None)
+/// 构造 `default-social-flow`：SocialProvider(wechat) → Conditional(HasCredential(totp), Mfa(totp), None)。
 fn default_social_flow() -> super::AuthenticationFlow {
     FlowBuilder::new("default-social-flow")
         .social("wechat")
@@ -66,9 +49,7 @@ fn default_social_flow() -> super::AuthenticationFlow {
         .build()
 }
 
-/// 构造 `default-sso-flow`：SSO 登录 + 可选 TOTP MFA。
-///
-/// 步骤：SsoServer(default) → Conditional(HasCredential(totp), Mfa(totp), None)
+/// 构造 `default-sso-flow`：SsoServer(default) → Conditional(HasCredential(totp), Mfa(totp), None)。
 fn default_sso_flow() -> super::AuthenticationFlow {
     FlowBuilder::new("default-sso-flow")
         .sso("default")
@@ -81,10 +62,6 @@ fn default_sso_flow() -> super::AuthenticationFlow {
         )
         .build()
 }
-
-// ============================================================================
-// inventory 编译期注册
-// ============================================================================
 
 inventory::submit! {
     FlowRegistration {
@@ -131,7 +108,6 @@ mod tests {
         assert_eq!(flow.steps.len(), 2);
         assert!(matches!(flow.steps[0], AuthStep::Login { .. }));
         assert!(matches!(flow.steps[1], AuthStep::Conditional { .. }));
-        // Conditional 的 if_step 为 Mfa { Some("totp") }，else_step 为 None
         match &flow.steps[1] {
             AuthStep::Conditional {
                 condition,

@@ -3,10 +3,7 @@
 
 //! OAuth 2.1 PKCE 示例。
 //!
-//! 演示 `OAuth2Client` 的 PKCE 流程：
-//! - `generate_pkce_challenge`：从 code_verifier 计算 code_challenge（S256）
-//! - `get_auth_url_with_pkce`：构造带 PKCE 的授权 URL
-//! - `exchange_code_with_pkce`：用授权码 + code_verifier 换取令牌
+//! 演示 `OAuth2Client` 的 PKCE 流程：`generate_pkce_challenge`（S256）、`get_auth_url_with_pkce` 构造授权 URL、`exchange_code_with_pkce` 用授权码 + verifier 换令牌。
 //!
 //! 运行方式：
 //! ```sh

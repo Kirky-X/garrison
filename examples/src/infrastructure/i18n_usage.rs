@@ -3,12 +3,7 @@
 
 //! i18n_usage 示例（i18n feature）。
 //!
-//! 演示异常消息国际化：
-//! 1. `GarrisonLocale` 枚举（`Zh` 默认 / `En`）
-//! 2. `current_locale()` 读取当前线程 locale
-//! 3. `set_locale(locale)` 返回 RAII `LocaleGuard`，drop 时自动恢复
-//! 4. `translate_error(&GarrisonError)` 依据当前 locale 翻译错误消息
-//! 5. 嵌套 `set_locale` 调用（栈式 scope）
+//! 演示异常消息国际化：GarrisonLocale（Zh 默认 / En）、current_locale 读取、set_locale 返回 RAII guard（drop 自动恢复）、translate_error 依据 locale 翻译、嵌套栈式 scope。
 //!
 //! 运行方式：
 //! ```sh
@@ -18,10 +13,7 @@ use garrison::error::GarrisonError;
 use garrison::exception::GarrisonException;
 use garrison::i18n::{current_locale, detect_locale, set_locale, translate_error, GarrisonLocale};
 
-/// 返回一组覆盖主要变体的错误样本，用于演示翻译。
-///
-/// 包含 `NotLogin` / `NotPermission` / `NotRole` / `InvalidToken` / `ExpiredToken` /
-/// `Dao` / `Internal` / `NotImplemented` / `Exception` 等。
+/// 返回覆盖主要变体的错误样本（NotLogin / NotPermission / NotRole / InvalidToken / ExpiredToken / Dao / Internal / NotImplemented / Exception），用于演示翻译。
 pub fn sample_errors() -> Vec<(&'static str, GarrisonError)> {
     vec![
         ("NotLogin", GarrisonError::NotLogin("请先登录".to_string())),
@@ -51,13 +43,7 @@ pub fn sample_errors() -> Vec<(&'static str, GarrisonError)> {
     ]
 }
 
-/// 运行 i18n_usage 示例。
-///
-/// 演示 locale 切换 + 错误翻译的完整流程：
-/// 1. 系统语言检测（默认跟随系统，检测失败回退 En，显式设置优先于检测值）
-/// 2. 切换英文 locale
-/// 3. 嵌套 locale scope
-/// 4. 所有错误变体的中英文翻译对照
+/// 运行 i18n_usage 示例：系统语言检测、set_locale RAII guard、嵌套 scope、错误变体中英文翻译对照、Display 集成。
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison i18n 国际化示例 ===\n");
 

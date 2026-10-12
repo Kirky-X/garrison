@@ -1,11 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! web_warp 模块测试 mock 实现。
-//!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `MockDao`（HashMap + Instant 模拟 TTL）与 `MockInterface`（权限/角色数据回调），
-//! 供 `web_warp::tests` Filter 集成测试复用。
+//! web_warp 测试 mock（仅 `cfg(test)` 编译）：`MockDao`（HashMap + Instant 模拟 TTL）与
+//! `MockInterface`（权限/角色数据回调），供 tests Filter 集成测试复用。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -15,9 +12,7 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-// ------------------------------------------------------------------------
-// Mock 实现：基于 HashMap + Instant 模拟 TTL，严格按 spec 语义
-// ------------------------------------------------------------------------
+// Mock 实现：基于 HashMap + Instant 模拟 TTL
 
 /// 测试用 mock DAO，支持 TTL 模拟。
 pub struct MockDao {
@@ -96,9 +91,7 @@ impl GarrisonDao for MockDao {
     crate::atomic_test_fallback!();
 }
 
-// ------------------------------------------------------------------------
 // MockInterface（权限/角色数据回调）
-// ------------------------------------------------------------------------
 
 /// 测试用 mock interface，提供权限/角色数据回调。
 pub struct MockInterface {
@@ -149,10 +142,7 @@ impl GarrisonInterface for MockInterface {
 mod mock_dao_coverage_tests {
     use super::*;
 
-    /// MockDao 组合回退方法覆盖测试。
-    ///
-    /// 不再对结果一律 `let _ =`——确定性路径补断言，
-    /// 回归（如 rename 丢值 / incr 不计数）将使测试失败。
+    /// MockDao 组合回退方法覆盖测试：确定性路径补断言，使回归（如 rename 丢值 / incr 不计数）显性失败。
     #[tokio::test]
     async fn mock_dao_atomic_and_default_methods_coverage() {
         let dao = MockDao::new();

@@ -8,9 +8,7 @@
 
 use crate::dao::{RedisConfig, RedisDeploymentMode};
 
-/// Default 实现，返回 Single 模式（`redis://127.0.0.1:6379`）。
-///
-/// 供 `RedisConfig` 的 `#[serde(default)]` 在反序列化时填充缺失的 `mode` 字段。
+/// Default 实现返回 Single 模式（`redis://127.0.0.1:6379`），供 `RedisConfig` 反序列化时填充缺失的 `mode` 字段。
 /// 注意：此为开发便利默认值；生产部署请显式配置 Redis 地址。
 impl Default for RedisDeploymentMode {
     fn default() -> Self {
@@ -34,7 +32,6 @@ impl Default for RedisConfig {
     }
 }
 
-/// Display 实现，输出人类可读的部署模式描述。
 impl std::fmt::Display for RedisDeploymentMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

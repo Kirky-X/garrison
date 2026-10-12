@@ -3,7 +3,7 @@
 
 //! Credit 计量 Prometheus 指标。
 //!
-//! 启用 `metrics-prometheus` feature 时编译，提供 3 个指标覆盖 credit 消费/剩余/告警。
+//! 启用 `metrics-prometheus` feature 时编译，提供 3 个指标覆盖 credit 消费/剩余/告警；
 //! 未启用时 `CreditMetrics` 为 `()` 别名，调用方代码无需条件编译。
 //!
 //! # 指标清单
@@ -16,18 +16,13 @@
 //!
 //! # 集成点
 //!
-//! - `CreditMeter::consume_credit`：消费成功后调用 `record_consumed` + `set_remaining`
-//! - `CreditMeter::consume_credit`：告警阈值触发时调用 `record_alert`
+//! - `CreditMeter::consume_credit`：消费成功后调用 `record_consumed` + `set_remaining`，告警阈值触发时调用 `record_alert`
 //!
 //! # 标签基数（cardinality）
 //!
-//! `tenant_id` / `resource` 等标签值必须来自有限集合（数字 ID、内部资源白名单）；
-//! Prometheus 标签基数无上界，直接拼接用户可控字符串（动态路径、请求参数）会
-//! 导致内存膨胀。本模块不做白名单校验，契约见 `record_consumed` 文档。
+//! `tenant_id` / `resource` 等标签值必须来自有限集合（数字 ID、内部资源白名单）；Prometheus 标签基数无上界，直接拼接用户可控字符串（动态路径、请求参数）会导致内存膨胀。本模块不做白名单校验，契约见 `record_consumed` 文档。
 
-// ============================================================================
 // CreditMetrics：Credit 计量指标集合（feature = "metrics-prometheus"）
-// ============================================================================
 
 /// Credit 计量 Prometheus 指标集合。
 ///
@@ -73,12 +68,9 @@ pub struct CreditMetrics {
 impl CreditMetrics {
     /// 创建新的指标集合，注册到默认 registry（进程级单例，语义见类型文档）。
     ///
-    /// # Panics
-    ///
-    /// 本方法**不会 panic**：若默认 registry 已存在同名指标（重复调用 `new` /
-    /// 与 `register_to(default_registry)` 混用），以 `tracing::warn` 记录后返回
-    /// 一个未注册的本地实例（`record_*` / `gather()` 均可用，仅默认 registry
-    /// 不再新增采集——已注册实例仍正常工作）。
+    /// **不会 panic**：若默认 registry 已存在同名指标（重复调用 `new` / 与
+    /// `register_to(default_registry)` 混用），以 `tracing::warn` 记录后返回一个未注册的
+    /// 本地实例（`record_*` / `gather()` 均可用，仅默认 registry 不再新增采集）。
     pub fn new() -> Self {
         use std::sync::OnceLock;
         static INSTANCE: OnceLock<CreditMetrics> = OnceLock::new();
@@ -92,8 +84,11 @@ impl CreditMetrics {
             Err(e) => {
                 tracing::warn!(
                     error = %e,
-                    "CreditMetrics 已注册到 prometheus 默认 registry（重复 new 或与 \
-                     register_to 混用），返回未注册的本地实例；已注册实例不受影响"
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-metrics-already-registered",
+                        &[("arg0", "CreditMetrics")]
+                    )
                 );
                 // build() 仅在指标名/帮助文本非法时失败——静态字面量下不可达
                 Self::build().expect("CreditMetrics: static metric opts are valid (unreachable)")
@@ -101,10 +96,7 @@ impl CreditMetrics {
         }
     }
 
-    /// 创建并注册到指定 registry（用于自定义 registry 场景，测试隔离）。
-    ///
-    /// # 错误
-    /// - 指标已注册：返回 `Err(prometheus::Error::AlreadyReg)`。
+    /// 创建并注册到指定 registry（用于自定义 registry 场景，测试隔离）；指标已注册返回 `Err(prometheus::Error::AlreadyReg)`。
     pub fn register_to(registry: &prometheus::Registry) -> Result<Self, prometheus::Error> {
         let metrics = Self::build()?;
         registry.register(Box::new(metrics.consumed_total.clone()))?;
@@ -146,17 +138,9 @@ impl CreditMetrics {
 
     /// 记录一次 credit 消费。
     ///
-    /// # 参数
-    /// - `tenant_id`: 租户 ID（字符串化标签）。
-    /// - `resource`: 消费的资源类型（如 `"login"` / `"api_call"`）。
-    /// - `credits`: 本次消耗的 credit 数。
-    ///
-    /// # 标签基数（cardinality）契约
-    ///
-    /// Prometheus 标签值基数无上界会导致内存/存储膨胀：`tenant_id` 与
-    /// `resource` **必须来自有限集合**（数字 ID、内部资源白名单）。本方法不做
-    /// 白名单校验——调用方若将用户可控的任意字符串（动态 API 路径、请求参数等）
-    /// 直接作为标签值传入，会撑爆 Prometheus，责任在调用方。
+    /// 标签基数契约：`tenant_id` 与 `resource` **必须来自有限集合**（数字 ID、内部资源
+    /// 白名单）——Prometheus 标签基数无上界，将用户可控字符串（动态 API 路径、请求参数等）
+    /// 直接作为标签值会撑爆 Prometheus；本方法不做白名单校验，责任在调用方。
     pub fn record_consumed(&self, tenant_id: &str, resource: &str, credits: u64) {
         self.consumed_total
             .with_label_values(&[tenant_id, resource])
@@ -164,10 +148,6 @@ impl CreditMetrics {
     }
 
     /// 设置当前剩余 credit。
-    ///
-    /// # 参数
-    /// - `tenant_id`: 租户 ID（字符串化标签）。
-    /// - `remaining_credits`: 剩余 credit 数。
     pub fn set_remaining(&self, tenant_id: &str, remaining_credits: u64) {
         self.remaining
             .with_label_values(&[tenant_id])
@@ -175,10 +155,6 @@ impl CreditMetrics {
     }
 
     /// 记录一次告警阈值触发。
-    ///
-    /// # 参数
-    /// - `tenant_id`: 租户 ID（字符串化标签）。
-    /// - `threshold`: 触发的告警阈值（百分比，如 `80` / `90` / `100`）。
     pub fn record_alert(&self, tenant_id: &str, threshold: u8) {
         self.alerts_total
             .with_label_values(&[tenant_id, &threshold.to_string()])
@@ -223,9 +199,7 @@ impl std::fmt::Debug for CreditMetrics {
     }
 }
 
-// ============================================================================
 // 公共 API（feature 未启用时提供 no-op 占位）
-// ============================================================================
 
 /// 指标集合的 feature-gated 别名。
 ///
@@ -389,10 +363,7 @@ mod tests {
         assert!(!output.is_empty(), "gather() 应返回非空字符串");
     }
 
-    /// new() / Default 注册到默认 registry（OnceLock 单例）且实例可用；
-    /// Debug 输出包含类型名与字段类型名。
-    ///
-    /// 注意：OnceLock 保证同进程仅注册一次，多次调用 new()/default() 返回同一实例。
+    /// new() / Default 注册到默认 registry（OnceLock 单例，同进程仅注册一次，多次调用返回同一实例）且实例可用；Debug 输出包含类型名与字段类型名。
     #[test]
     #[serial]
     fn new_and_default_register_to_default_registry_once() {
@@ -423,11 +394,11 @@ mod tests {
         assert!(debug.contains("GaugeVec"), "实际: {}", debug);
     }
 
-    /// new() 在默认 registry 已注册同名指标时不再 panic（旧实现 expect panic）：
-    /// warn 后返回可用的本地实例（record/gather 正常）。
+    /// new() 在默认 registry 已注册同名指标时不再 panic（旧实现 expect panic）：warn 后
+    /// 返回可用的本地实例（record/gather 正常）。
     ///
-    /// 注：与本文件其他测试共享进程级默认 registry，执行顺序不定——
-    /// register_to 可能成功（本测试先行）或返回 AlreadyReg（new() 先行），均可。
+    /// 注：与本文件其他测试共享进程级默认 registry，执行顺序不定——register_to 可能成功
+    /// 或返回 AlreadyReg，均可。
     #[test]
     #[serial]
     fn new_does_not_panic_when_already_registered_to_default_registry() {
@@ -442,8 +413,8 @@ mod tests {
 
     /// gather() 输出为合法 Prometheus 文本格式（含 HELP/TYPE 行）。
     ///
-    /// 注：三个指标均需至少记录一次——prometheus 0.14 的 CounterVec/GaugeVec
-    /// 在仅部分指标有观测值时 collect() 可能返回空 family 集。
+    /// 注：三个指标均需至少记录一次——prometheus 0.14 的 CounterVec/GaugeVec 在仅部分
+    /// 指标有观测值时 collect() 可能返回空 family 集。
     #[test]
     #[serial]
     fn gather_contains_help_and_type_lines() {

@@ -3,16 +3,11 @@
 
 //! axum middleware 集成测试：GarrisonRouter + route_protected + middleware 完整流程。
 //!
-//! 验证 `GarrisonRouter` 包装 `axum::Router`、`route_protected` 语法糖注册鉴权规则、
+//! 验证 `GarrisonRouter` 包装 `axum::Router`、`route_protected` 注册鉴权规则、
 //! middleware 自动从 header/cookie 提取 token + 设置 task_local、
 //! `DefaultGarrisonInterceptor` 根据 annotation 调用 `GarrisonUtil` 的完整链路。
-//!
-//! # production-mock-purge
-//!
-//! - `MockDao` 已替换为产品 `InMemoryDao`（src/dao/in_memory.rs）。
-//! - NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化
-//!   （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
-//!   本文件 `MockInterface` 替身保留）。
+//! 库层无产品 `GarrisonInterface` 实现，本文件 `MockInterface` 替身保留；`MockDao`
+//! 已替换为产品 `InMemoryDao`。
 
 use async_trait::async_trait;
 use axum::body::Body;
@@ -109,11 +104,8 @@ async fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]
         .unwrap();
 }
 
-/// 构建 GarrisonRouter app：
-/// - `/api/user` → CheckLogin
-/// - `/api/admin` → CheckRole("admin")
-/// - `/api/users` → CheckPermission("user:read")
-/// - `/api/public` → Ignore
+/// 构建 GarrisonRouter app：`/api/user` → CheckLogin、`/api/admin` → CheckRole("admin")、
+/// `/api/users` → CheckPermission("user:read")、`/api/public` → Ignore。
 fn make_app() -> axum::Router {
     GarrisonRouter::new(Arc::new(make_config()))
         .route_protected("/api/user", || async { "user ok" }, Annotation::CheckLogin)

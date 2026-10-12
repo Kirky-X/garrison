@@ -1,25 +1,21 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! rbac 域验收。
-//! 权限 / 角色 / 层级继承 / 组合语义 / web 注解路由 / 策略热替换 /
+//! rbac 域验收：权限 / 角色 / 层级继承 / 组合语义 / web 注解路由 / 策略热替换 /
 //! 数据源故障，「正常 + 异常」成对覆盖。
 //!
-//! 经 `GarrisonTestHarness` 全局单例的用例标注 `#[serial]`；
-//! 层级与组合用例直构 `GarrisonPermissionStrategyDefault`
-//! （无全局状态，可并行）；008 策略注册表热替换使用 `multi_thread` flavor
-//! （与 tests/integration/strategy_registry.rs 一致）。
+//! 经 `GarrisonTestHarness` 全局单例的用例标注 `#[serial]`；层级与组合用例直构
+//! `GarrisonPermissionStrategyDefault`（无全局状态，可并行）；008 策略注册表热替换使用
+//! `multi_thread` flavor。
 //!
 //! # API 偏差记录
 //!
 //! `Annotation::CheckOr/CheckAnd/CheckNot` 在 `DefaultGarrisonInterceptor::pre_handle`
-//! 中为文档化 no-op（src/router/interceptor.rs:59-67），无法经 router 断言组合短路
-//! 语义；故 Or/And/Not 短路语义在策略层断言（`check_role_any` = Or 命中其一即过、
-//! `check_role_all` = And 全部满足、未持有即拒绝 = Not 反转），web 层仅覆盖
-//! `CheckPermission` / `CheckRole` 注解路由（200/403）。
+//! 中为文档化 no-op，无法经 router 断言组合短路语义；故 Or/And/Not 短路语义在策略层
+//! 断言（`check_role_any` = Or 命中其一即过、`check_role_all` = And 全部满足、未持有
+//! 即拒绝 = Not 反转），web 层仅覆盖 `CheckPermission` / `CheckRole` 注解路由（200/403）。
 //!
-//! `full` 含 `tenant-isolation`：权限 / 角色校验路径 fail-closed，需要
-//! `with_tenant` 作用域（tests/common/harness.rs 的 `with_tenant`）。
+//! `full` 含 `tenant-isolation`：权限 / 角色校验路径 fail-closed，需要 `with_tenant` 作用域。
 
 use crate::common::harness::{with_tenant, GarrisonTestHarness, MockInterface};
 use garrison::config::GarrisonConfig;
@@ -29,8 +25,7 @@ use serial_test::serial;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// 测试统一配置：`throw_on_not_login = false`（与仓库集成测试 `make_config()`
-/// 惯例一致；本域断言均在登录后执行，该开关仅兜底未登录降级路径）。
+/// 测试统一配置：`throw_on_not_login = false`；本域断言均在登录后执行，该开关仅兜底未登录降级路径。
 fn test_config() -> Arc<GarrisonConfig> {
     let mut c = GarrisonConfig::default_config();
     c.throw_on_not_login = false;
@@ -620,10 +615,9 @@ async fn make_strategy_logic() -> Arc<garrison::stp::GarrisonLogicDefault> {
     ))
 }
 
-/// （正常）：6 个策略 trait 可被业务方外部实现并调用——
-/// `LoginHandler` / `LogoutHandler` / `PermissionHandler` / `TokenGenerator` /
-/// `SessionCreator` / `FirewallStrategy`（
-/// 原 login/logout/permission/token/session/firewall handler 六测试合并）。
+/// （正常）：6 个策略 trait 可被业务方外部实现并调用——`LoginHandler` /
+/// `LogoutHandler` / `PermissionHandler` / `TokenGenerator` / `SessionCreator` /
+/// `FirewallStrategy`。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_rbac_010_six_strategy_traits_externally_implementable() {
     use garrison::error::GarrisonResult;
@@ -894,9 +888,8 @@ async fn acc_rbac_014_all_six_strategies_support_register_get_remove() {
     strategy.remove_firewall_strategy();
 }
 
-/// （正常+异常）：替换一个策略不影响其他策略（`Arc::ptr_eq` 原样）
-/// 且旧策略被 drop 无泄漏（weak 引用失效；
-/// 原 replace_one_strategy_does_not_affect_others + replace_drops_old_handler 合并）。
+/// （正常+异常）：替换一个策略不影响其他策略（`Arc::ptr_eq` 原样）且旧策略被 drop
+/// 无泄漏（weak 引用失效）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_rbac_015_replace_isolated_and_old_handler_dropped() {
     use garrison::error::GarrisonResult;
@@ -967,7 +960,6 @@ async fn acc_rbac_015_replace_isolated_and_old_handler_dropped() {
 
 /// （正常）：`GarrisonManager::with_strategy()` 整体替换策略注册表——
 /// 替换后 `strategy()` 返回新注册表且自定义 LoginHandler 生效
-///（原 manager_with_strategy_replaces_registry）。
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn acc_rbac_016_manager_with_strategy_replaces_registry() {
@@ -1018,7 +1010,6 @@ async fn acc_rbac_016_manager_with_strategy_replaces_registry() {
 }
 
 /// （正常）：同时替换多个策略，每个策略独立工作
-///（原 replace_multiple_strategies_independently）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_rbac_017_replace_multiple_strategies_independently() {
     use garrison::error::GarrisonResult;
@@ -1066,7 +1057,6 @@ async fn acc_rbac_017_replace_multiple_strategies_independently() {
 
 /// （正常）：`Strategy` 经 `Arc<RwLock<Strategy>>` 多线程安全共享——
 /// 4 个线程并发 read + 调用计数 handler，恰累计 4 次
-///（原 strategy_thread_safe_via_arc_rwlock）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_rbac_018_strategy_thread_safe_via_arc_rwlock() {
     use std::sync::atomic::{AtomicUsize, Ordering};

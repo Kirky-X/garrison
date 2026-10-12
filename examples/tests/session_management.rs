@@ -1,12 +1,8 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! session_management 示例测试（cache-memory feature）。
-//!
-//! 验证 run() 完整执行（内部已包含 session 注入与校验断言）。
-//!
-//! 注意：session_management 调用 `GarrisonManager::builder()` 注入全局单例，
-//! 多测试并行会竞争全局状态，必须用 #[serial] 串行执行。
+//! session_management 示例测试（cache-memory feature）：验证 run() 完整执行（内部已包含 session 注入与
+//! 校验断言）；调用 `GarrisonManager::builder()` 注入全局单例，多测试并行竞争全局状态，必须 #[serial] 串行执行。
 
 #![cfg(feature = "cache-memory")]
 

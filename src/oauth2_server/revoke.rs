@@ -1,15 +1,12 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! /oauth2/revoke 端点 — RFC 7009 token 撤销。
+//! /oauth2/revoke 端点 — RFC 7009 token 撤销（access_token 或 refresh_token，撤销后立即不可用）。
 //!
-//! 撤销 access_token 或 refresh_token，token 失效后立即不可用。
-//! RFC 7009 §2.2：token 无效 / 已撤销 / 撤销过程出现瞬态错误时，
-//! 仍向客户端返回成功，不暴露 token 状态与服务器内部状态；
-//! 仅客户端认证失败（invalid_client）返回错误——client_id 与 client_secret
-//! 错误使用同一错误串，防止枚举有效 client_id。
-//! 另：客户端只能撤销归属自己的 token（记录 client_id 比对），
-//! 他人 token 一律视为无效 token 处理。
+//! RFC 7009 §2.2：token 无效 / 已撤销 / 撤销过程出现瞬态错误时仍向客户端返回成功，不暴露 token
+//! 状态与服务器内部状态；仅客户端认证失败（invalid_client）返回错误，且 client_id 与 client_secret
+//! 错误复用同一错误串，防枚举有效 client_id。另：客户端只能撤销归属自己的 token（比对记录的
+//! `client_id`），他人 token 一律按无效 token 处理。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::oauth2_server::client::OAuth2ClientStore;
@@ -45,16 +42,11 @@ impl RevokeHandler {
         }
     }
 
-    /// 处理 revoke 请求。
-    ///
-    /// # 返回
-    /// - `Ok(())`：撤销成功；或 token 无效 / 归属其他 client / 撤销过程出现
-    ///   瞬态错误（RFC 7009 §2.2 要求一律返回成功，不暴露内部状态）
-    /// - `Err`：客户端认证失败（统一 invalid_client 错误串，防枚举）
+    /// 处理 revoke 请求：撤销成功、token 无效 / 归属其他 client、撤销过程瞬态错误均返回 `Ok(())`
+    /// （RFC 7009 §2.2 要求一律成功，不暴露内部状态）；仅客户端认证失败返回 `Err`（统一 invalid_client 错误串，防枚举）。
     pub async fn handle(&self, req: &RevokeRequest) -> GarrisonResult<()> {
-        // 1. 客户端认证
-        // invalid-client 与 invalid-client-secret 统一为单一错误串
-        // （RFC 6749 invalid_client），错误码差异会泄露 client_id 是否有效。
+        // invalid-client 与 invalid-client-secret 统一为单一错误串（RFC 6749 invalid_client）：
+        // 错误码差异会泄露 client_id 是否有效。
         let client = match self.store.get(&req.client_id).await? {
             Some(c) => c,
             None => {
@@ -69,8 +61,7 @@ impl RevokeHandler {
             ));
         }
 
-        // 2. 撤销 token —— 认证通过后的任何失败（含 DAO 瞬态错误）均不得作为
-        // 错误返回给客户端（RFC 7009 §2.2），记录告警后返回成功。
+        // 认证通过后的任何失败（含 DAO 瞬态错误）均不得作为错误返回给客户端（RFC 7009 §2.2），记录告警后返回成功
         if let Err(e) = self.revoke_owned_token(req).await {
             tracing::warn!(
                 error = %e,
@@ -80,11 +71,9 @@ impl RevokeHandler {
         Ok(())
     }
 
-    /// 撤销归属于该 client 的 token（RFC 7009 §2.1：客户端只能撤销自己的 token）。
-    ///
-    /// 按提示（或 access 优先）定位 token 记录，比对 `client_id`：
-    /// 记录不存在或归属其他 client 时，一律按无效 token 处理——不撤销、成功返回，
-    /// 防止任意合法客户端探测 / 撤销他人 token。
+    /// 撤销归属于该 client 的 token（RFC 7009 §2.1）：按提示（或 access 优先）定位记录，
+    /// 记录不存在或归属其他 client 时一律按无效 token 处理（不撤销、成功返回），
+    /// 防任意合法客户端探测 / 撤销他人 token。
     async fn revoke_owned_token(&self, req: &RevokeRequest) -> GarrisonResult<()> {
         let record = match req.token_type_hint.as_deref() {
             Some("refresh_token") => {
@@ -256,8 +245,7 @@ mod tests {
             .contains("oauth2-server-revoke-invalid-client"));
     }
 
-    /// 防枚举：client_id 不存在与 client_secret 错误必须返回完全相同的错误串，
-    /// 不得让攻击者通过错误差异探测有效 client_id。
+    /// 防枚举：client_id 不存在与 client_secret 错误必须返回完全相同的错误串，不得让攻击者经错误差异探测有效 client_id。
     #[tokio::test]
     async fn revoke_invalid_client_and_secret_are_indistinguishable() {
         let (handler, _, _) = make_handlers();
@@ -289,8 +277,7 @@ mod tests {
         assert!(!err_id.contains("no-such-client"));
     }
 
-    /// 归属校验：客户端不得撤销归属其他 client 的 token（RFC 7009 §2.1）。
-    /// 他人 token 一律按无效 token 处理：返回成功但不执行撤销。
+    /// 归属校验：客户端不得撤销归属其他 client 的 token（RFC 7009 §2.1），他人 token 按无效处理（成功但不撤销）。
     #[tokio::test]
     async fn revoke_rejects_token_owned_by_other_client() {
         let (handler, _, token_handler) = make_handlers();
@@ -306,14 +293,13 @@ mod tests {
             .unwrap();
         let victim_token = issue_token(&token_handler, "rev-owner-001").await;
 
-        // 攻击者（合法注册客户端）尝试撤销他人 token
+        // 攻击者（合法注册客户端）尝试撤销他人 token（RFC 7009 §2.2：视为无效 token，返回成功）
         let req = RevokeRequest {
             token: victim_token.clone(),
             token_type_hint: Some("access_token".into()),
             client_id: "rev-attacker-001".into(),
             client_secret: "secret-123".into(),
         };
-        // RFC 7009 §2.2：视为无效 token，返回成功
         handler.handle(&req).await.expect("应返回成功");
 
         // 但受害者的 token 仍然有效（未被撤销）

@@ -1,21 +1,18 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! `garrison-cli`——独立运维工具 bin。
-//!
-//! 与 `auth_server` / `garrison-healthcheck` 的零依赖立场不同，本 bin 门控在
-//! `cli-ops` feature 后（clap 派生 API），**不进入默认容器镜像**——两个
-//! Dockerfile 的 build 目标只有 `auth_server` 与 `garrison-healthcheck`，
-//! 主镜像零依赖决策不受影响。
+//! `garrison-cli`——独立运维工具 bin，门控在 `cli-ops` feature 后（clap 派生
+//! API），**不进入默认容器镜像**（两个 Dockerfile 的 build 目标只有
+//! `auth_server` 与 `garrison-healthcheck`）。
 //!
 //! # 子命令
 //!
-//! - `healthcheck`：对 127.0.0.1:{port}/healthz 执行存活探测（与
-//!   `garrison-healthcheck` 探针共用同一纯 std 判定函数，见
-//!   `garrison::health::probe`）
+//! - `healthcheck`：存活探测（/healthz，与 `garrison-healthcheck` 探针共用
+//!   同一判定函数，见 `garrison::health::probe`）
 //! - `key-rotate`：生成新签名密钥并输出可直接粘贴的配置片段
 //! - `user-hash`：生成 Argon2id 密码哈希并输出 env/CLI/YAML 三种配置片段
 //! - `one-time-access-token`：为指定用户签发短时效一次性登录凭据
+//! - `change-key` / `check-key`：字段静态加密的主钥重加密与可解密性校验
 //!
 //! # 用法
 //!
@@ -25,10 +22,16 @@
 //! ```
 use clap::{Parser, Subcommand};
 use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::i18n::translate_detail;
 
 /// garrison-cli 命令行入口。
 #[derive(Parser, Debug)]
-#[command(name = "garrison-cli", version, about = "Garrison 运维工具")]
+#[command(
+    name = "garrison-cli",
+    version,
+    about = translate_detail("cli-about", &[]),
+    long_about = None
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -44,8 +47,7 @@ enum Command {
     },
     /// 生成新签名密钥并输出可直接粘贴的配置片段
     KeyRotate {
-        /// 额外独立生成一把会话密钥（当前版本 garrison 会话令牌与 JWT 共用
-        /// jwt_secret 槽位；独立值供会话层单独密封的拆分部署使用）
+        /// 额外独立生成一把会话密钥（当前版本会话令牌与 JWT 共用 jwt_secret 槽位；独立值供会话层单独密封的拆分部署使用）
         #[arg(long)]
         session_key: bool,
     },
@@ -54,23 +56,19 @@ enum Command {
         /// 用户名（不可为空、不可含 ':'——凭据串以 ':' 分隔用户与哈希）
         #[arg(long)]
         user: String,
-        /// 明文密码（哈希后即丢弃；也可经 GARRISON_CLI_PASSWORD 传入避免进
-        /// shell history）
+        /// 明文密码（哈希后即丢弃；也可经 GARRISON_CLI_PASSWORD 传入避免进 shell history）
         #[arg(long)]
         password: Option<String>,
         /// Argon2 并发令牌池大小（0 由 with_pool 钳制为 1）
         #[arg(long, default_value_t = 1)]
         pool_size: usize,
-        /// env 片段中的 '$' 转义为 '$$'（docker-compose 变量插值场景；
-        /// CLI/YAML 片段不受影响）
+        /// env 片段中的 '$' 转义为 '$$'（docker-compose 变量插值场景；CLI/YAML 片段不受影响）
         #[arg(long)]
         escape_dollar: bool,
     },
     /// 为指定用户签发短时效一次性登录凭据
     OneTimeAccessToken {
-        /// 数据库连接 URL（如 sqlite:///var/lib/garrison/garrison.db 或
-        /// postgres://...；sqlite 文件必须已存在，驱动不为其自动建库；
-        /// 凭据登记与用户查询都在该库）
+        /// 数据库连接 URL（如 sqlite:///var/lib/garrison/garrison.db 或 postgres://...；sqlite 文件必须已存在，驱动不为其自动建库；凭据登记与用户查询都在该库）
         #[arg(long)]
         db_url: String,
         /// 目标用户名（不可为空）
@@ -85,8 +83,7 @@ enum Command {
         /// 签名密钥（缺省读 GARRISON_JWT_SECRET；两处都未设置则显性报错）
         #[arg(long)]
         secret: Option<String>,
-        /// 对目标库执行 core 迁移（默认关闭——对生产库是写副作用，须显式
-        /// 开启；库未初始化时签发显性失败）
+        /// 对目标库执行 core 迁移（默认关闭——对生产库是写副作用，须显式开启；库未初始化时签发显性失败）
         #[arg(long, default_value_t = false)]
         migrate: bool,
         /// 迁移脚本基目录（仅 --migrate 时使用）
@@ -101,8 +98,7 @@ enum Command {
         /// 租户标识（AAD 绑定成分，须与运行时配置一致）
         #[arg(long, default_value = "default")]
         tenant: String,
-        /// 新密钥集，格式 `key_id:hex`（hex 恰 64 字符 = 32 字节），可重复传
-        /// 递多把；第一把为主钥（新写入用它加密）
+        /// 新密钥集，格式 `key_id:hex`（hex 恰 64 字符 = 32 字节），可重复传递多把；第一把为主钥（新写入用它加密）
         #[arg(long = "key")]
         keys: Vec<String>,
         /// 批处理大小（每批扫描的敏感命名空间 key 数，必须 > 0）
@@ -180,8 +176,7 @@ async fn dispatch(command: Command) -> GarrisonResult<()> {
     }
 }
 
-/// 解析 `key_id:hex` 参数表（hex 恰 64 字符 = 32 字节），供
-/// [`garrison::secure::encryption::FieldCipher::from_key_entries`] 装配。
+/// 解析 `key_id:hex` 参数表（hex 恰 64 字符 = 32 字节），供 FieldCipher 装配。
 fn parse_key_entries(specs: &[String]) -> GarrisonResult<Vec<(String, String)>> {
     if specs.is_empty() {
         return Err(GarrisonError::InvalidParam(
@@ -308,9 +303,7 @@ async fn run_check_key(
     Ok(())
 }
 
-/// 密钥来源解析：`--key` 显式传参优先；否则回退 GARRISON_FIELD_ENCRYPTION_KEYS
-/// 环境变量（与服务端同格式：逗号分隔的 `key_id:hex64`）——主钥不应走 argv
-/// （CWE-214：shell history / /proc cmdline 泄露面），argv 仅留低敏场景。
+/// 密钥来源解析：`--key` 显式传参优先；否则回退 GARRISON_FIELD_ENCRYPTION_KEYS 环境变量（与服务端同格式）——主钥不应走 argv（CWE-214：shell history / /proc cmdline 泄露面），argv 仅留低敏场景。
 fn resolve_key_entries(explicit: Vec<String>) -> GarrisonResult<Vec<(String, String)>> {
     if !explicit.is_empty() {
         return parse_key_entries(&explicit);
@@ -324,8 +317,7 @@ fn resolve_key_entries(explicit: Vec<String>) -> GarrisonResult<Vec<(String, Str
     parse_key_entries(&specs)
 }
 
-/// 生成 256-bit 签名密钥：直接读 OS CSPRNG（`getrandom::fill`，无用户态 DRBG
-/// 缓冲），与 csrf/授权码路径同一安全立场；hex 编码为 64 字符。
+/// 生成 256-bit 签名密钥：直接读 OS CSPRNG（`getrandom::fill`，无用户态 DRBG 缓冲），hex 编码为 64 字符。
 fn generate_signing_key() -> GarrisonResult<String> {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes)
@@ -339,17 +331,10 @@ fn generate_signing_key() -> GarrisonResult<String> {
 
 /// key-rotate 报告：新签名密钥 + 可直接粘贴的安装片段。
 ///
-/// 替换语义说明：garrison 的签名密钥来自配置（`jwt_secret`，无独立密钥库），
-/// 轮换即「生成新钥 → 运维将片段安装进配置 → 重启」。重启后旧钥签发的
-/// token 立即验证失败（无并存验签窗口，密钥无版本化存储）。
-///
-/// `with_session_key = true` 时额外独立生成一把会话密钥：当前版本 garrison
-/// 的会话令牌（simple/jwt token_style）与 JWT 共用 `jwt_secret` 槽位
-/// （`src/stp/token.rs`），标准部署安装签名密钥片段即可同时完成两层轮换；
-/// 独立值供会话层单独密封的拆分部署使用。
+/// 轮换无并存验签窗口：签名密钥来自配置（`jwt_secret`，无独立密钥库），轮换即「生成新钥 → 运维安装进配置 → 重启」；重启后旧钥签发的 token 立即验证失败（密钥无版本化存储）。
+/// `with_session_key = true` 时额外生成会话密钥：当前版本会话令牌与 JWT 共用 `jwt_secret` 槽位，标准部署装签名片段即可；独立值供会话层单独密封的拆分部署。
 fn key_rotate_report(with_session_key: bool) -> GarrisonResult<String> {
-    // 生成的密钥经 JwtSecret 持有（protocol-zeroize 下为 Zeroizing<String>，
-    // 离开作用域自动清零缓冲），报告文本是唯一交付面
+    // 生成的密钥经 JwtSecret 持有（protocol-zeroize 下离开作用域自动清零缓冲），报告文本是唯一交付面
     let signing = generate_signing_key()?;
     let signing_secret = garrison::config::JwtSecret::from(signing);
     let mut report = String::new();
@@ -386,8 +371,7 @@ async fn run_key_rotate(with_session_key: bool) -> GarrisonResult<()> {
     Ok(())
 }
 
-/// healthcheck 子命令：与 garrison-healthcheck 探针 bin 共用
-/// `garrison::health::probe` 同一组判定函数，行为一致。
+/// healthcheck 子命令：与 garrison-healthcheck 探针 bin 共用 `garrison::health::probe` 判定函数，行为一致。
 async fn run_healthcheck(port_override: Option<u16>) -> GarrisonResult<()> {
     let port = match port_override {
         Some(p) => p,
@@ -437,8 +421,7 @@ async fn run_user_hash(
     Ok(())
 }
 
-/// 校验用户名：非空且不含 ':'（凭据串以 ':' 分隔用户与哈希，含 ':' 会
-/// 使消费方解析歧义）。
+/// 校验用户名：非空且不含 ':'（凭据串以 ':' 分隔用户与哈希，含 ':' 会使消费方解析歧义）。
 fn validate_username(user: &str) -> GarrisonResult<()> {
     if user.is_empty() {
         return Err(GarrisonError::InvalidParam(
@@ -455,9 +438,7 @@ fn validate_username(user: &str) -> GarrisonResult<()> {
 
 /// user-hash 报告：`username:hash` 凭据串的 env/CLI/YAML 三种安装片段。
 ///
-/// 凭据串格式与 tinyauth 的 `user:hash` 约定对齐；garrison 侧无内建用户列表
-/// 配置槽，片段交由部署方的 bootstrap 装配消费（种子写入 app_user 表的
-/// username/password_hash 列）。
+/// 凭据串格式与 tinyauth 的 `user:hash` 约定对齐；garrison 无内建用户列表配置槽，片段交由部署方 bootstrap 装配消费（种子写入 app_user 表的 username/password_hash 列）。
 fn user_hash_report(
     user: &str,
     password: &str,
@@ -490,13 +471,10 @@ fn user_hash_report(
     ))
 }
 
-/// 签发一次性登录凭据的持久化登记键（app_user_ext.field_key，每用户固定单行：
-/// 值为 `<jti>|<exp RFC3339>`，行存在 = 该用户尚有未消费的一次性凭据）。
+/// 签发一次性登录凭据的持久化登记键（app_user_ext.field_key，每用户固定单行：值为 `<jti>|<exp RFC3339>`，行存在 = 该用户尚有未消费的一次性凭据）。
 const ONE_TIME_LOGIN_REGISTRY_KEY: &str = "one_time_login";
 
-/// 一次性登录凭据签发结果。
-///
-/// `Debug` 手工实现：token 本体脱敏（错误路径日志不得携带可用凭据）。
+/// 一次性登录凭据签发结果；`Debug` 手工实现：token 本体脱敏（错误路径日志不得携带可用凭据）。
 struct IssuedOneTimeToken {
     /// 自包含 JWT（sub/login_id = user_id，exp = iat + ttl，jti 唯一）。
     token: String,
@@ -525,12 +503,9 @@ impl std::fmt::Debug for IssuedOneTimeToken {
     }
 }
 
-/// 签发一次性登录凭据：按用户名查询 → 状态校验 → JWT 签发 → 一次性消费
-/// 登记（app_user_ext 行，存在 = 未消费，业务方消费后删除该行）。
+/// 签发一次性登录凭据：按用户名查询 → 状态校验 → JWT 签发 → 一次性消费登记（app_user_ext 行，存在 = 未消费，业务方消费后删除该行）。
 ///
-/// 同一用户重复签发覆盖旧登记行（UK(user_id, field_key) upsert 语义）：
-/// 旧 token 的登记随新签发失效（last-issuance-wins），但旧 token 本体在
-/// exp 前仍可通过验签——需要立即吊销时用同一密钥换发或等待过期。
+/// 重复签发覆盖旧登记行（upsert 语义，last-issuance-wins），旧 token 本体在 exp 前仍可通过验签，须立即吊销时换发或等待过期。
 async fn issue_one_time_access_token(
     users: &dyn garrison::dao::repository::UserRepository,
     ext: &dyn garrison::dao::repository::UserExtRepository,
@@ -571,8 +546,7 @@ async fn issue_one_time_access_token(
     let jti = claims.jti.clone().ok_or_else(|| {
         GarrisonError::Internal("cli-one-time-jti-missing::signed token lacks jti".to_string())
     })?;
-    // 登记值 = `<jti>|<exp RFC3339>`：消费方比对 jti 防串用，过期行可由 GC 清扫；
-    // 每用户固定单行，重复签发经 upsert 自然覆盖（last-issuance-wins）
+    // 登记值 = `<jti>|<exp RFC3339>`：消费方比对 jti 防串用，过期行可由 GC 清扫；重复签发 upsert 覆盖（last-issuance-wins）
     let expires_at_rfc3339 = chrono::DateTime::from_timestamp(claims.exp, 0).ok_or_else(|| {
         GarrisonError::Internal(format!("cli-one-time-exp-out-of-range::{}", claims.exp))
     })?;
@@ -752,10 +726,6 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // key-rotate 子命令
-    // ========================================================================
-
     #[test]
     fn generated_signing_key_is_256bit_hex_and_unique() {
         let first = generate_signing_key().expect("keygen must succeed");
@@ -779,8 +749,7 @@ mod tests {
             report.contains("jwt_secret = \""),
             "TOML 安装片段缺失:\n{report}"
         );
-        // 会话密钥无独立配置槽位（与 jwt_secret 共用），故只交付裸值，
-        // 不伪造 GARRISON_SESSION_KEY= 之类的环境变量映射
+        // 会话密钥无独立配置槽位（与 jwt_secret 共用），故只交付裸值，不伪造 GARRISON_SESSION_KEY= 之类的环境变量映射
         let signing = report
             .lines()
             .find(|l| l.starts_with("export GARRISON_JWT_SECRET="))
@@ -796,8 +765,7 @@ mod tests {
         assert_ne!(signing, session, "签名密钥与会话密钥必须独立生成");
     }
 
-    /// 轮换语义验收：新钥安装后，旧钥签发的 token 必须验证失败，新钥签发的
-    /// token 必须验证成功（JwtHandler 为既有签名设施，此处不改其行为）。
+    /// 轮换语义验收：新钥安装后旧钥 token 必须验证失败、新钥 token 必须验证成功（JwtHandler 为既有签名设施，此处不改其行为）。
     #[test]
     fn key_rotation_rejects_old_key_tokens_and_accepts_new() {
         use garrison::protocol::jwt::JwtHandler;
@@ -830,10 +798,6 @@ mod tests {
             .expect("新钥 token 必须验证成功");
         assert_eq!(claims.login_id, "user-1");
     }
-
-    // ========================================================================
-    // user-hash 子命令
-    // ========================================================================
 
     const HASH_TEST_USER: &str = "ops-admin";
     const HASH_TEST_PASSWORD: &str = "correct horse battery staple";
@@ -877,17 +841,14 @@ mod tests {
         );
     }
 
-    /// confers 派生配置 fixture：模拟部署方 bootstrap 装配的消费面
-    /// （env 前缀与片段约定一致）。Option 字段缺省 None（confers 派生
-    /// 不接受空串字面量默认值）。
+    /// confers 派生配置 fixture：模拟部署方 bootstrap 装配的消费面（env 前缀与片段约定一致）；Option 字段缺省 None（confers 派生不接受空串字面量默认值）。
     #[derive(Debug, serde::Deserialize, confers::Config)]
     #[config(env_prefix = "GARRISON_")]
     struct BootstrapUsersFixture {
         bootstrap_users: Option<String>,
     }
 
-    /// env 片段可被 confers 配置加载：片段值注入 GARRISON_BOOTSTRAP_USERS
-    /// 后经派生 Config 加载还原。
+    /// env 片段可被 confers 配置加载：片段值注入 GARRISON_BOOTSTRAP_USERS 后经派生 Config 加载还原。
     #[test]
     #[serial_test::serial]
     fn env_fragment_is_loadable_by_confers() {
@@ -913,8 +874,7 @@ mod tests {
         );
     }
 
-    /// YAML 片段可被 confers 配置加载：片段写入 .yaml 文件后经
-    /// FileSource（yaml 转换器）构建还原。
+    /// YAML 片段可被 confers 配置加载：片段写入 .yaml 文件后经 FileSource（yaml 转换器）构建还原。
     #[test]
     fn yaml_fragment_is_loadable_by_confers() {
         let report = user_hash_report(HASH_TEST_USER, HASH_TEST_PASSWORD, 1, false)
@@ -945,8 +905,7 @@ mod tests {
         );
     }
 
-    /// CLI 片段载荷与 env/YAML 同源：`--bootstrap-users <cred>` 的值即
-    /// 凭据串，注入同一 env 约定后可被 confers 加载。
+    /// CLI 片段载荷与 env/YAML 同源：`--bootstrap-users <cred>` 的值即凭据串，注入同一 env 约定后可被 confers 加载。
     #[test]
     #[serial_test::serial]
     fn cli_fragment_payload_is_loadable_by_confers() {
@@ -1022,10 +981,6 @@ mod tests {
         );
     }
 
-    // ========================================================================
-    // one-time-access-token 子命令
-    // ========================================================================
-
     use garrison::dao::repository::sqlite::{DbnexusUserExtRepository, DbnexusUserRepository};
     use garrison::dao::repository::{NewUser, UserExtRepository, UserRepository};
     use garrison::dao::{init_dbnexus, GarrisonMigration};
@@ -1053,8 +1008,7 @@ mod tests {
                     0,
                     NewUser {
                         username: username.to_string(),
-                        // 合法 Argon2id PHC 形态（R11 导入校验门：前缀白名单 +
-                        // 参数上限内；低位参数仅为测试占位，登录验证不在此路径）
+                        // 合法 Argon2id PHC 形态（R11 导入校验门：前缀白名单 + 参数上限内；低位参数仅为测试占位，登录验证不在此路径）
                         password_hash: "$argon2id$m=8,t=1,p=1$seed".to_string(),
                         status: status.to_string(),
                     },

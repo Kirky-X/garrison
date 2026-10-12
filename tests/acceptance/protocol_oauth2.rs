@@ -4,25 +4,23 @@
 //! oauth2 域验收。
 //! `OAuth2Client` 客户端侧四种授权流程（authorization_code+PKCE / client_credentials /
 //! password / refresh_token）+ Token Introspection，以及授权码重放 / 错误 client_secret /
-//! 错误 redirect_uri / PKCE verifier 不匹配 / 无效 refresh token / scope 越权
-//! 等异常路径，「正常 + 异常」成对覆盖。
+//! 错误 redirect_uri / PKCE verifier 不匹配 / 无效 refresh token / scope 越权等异常路径，
+//! 「正常 + 异常」成对覆盖。
 //!
-//! # 真实授权服务器（2026-09 起，用户裁定：验收层禁止 mock）
+//! # 真实授权服务器
 //!
-//! 全部场景打 docker/docker-compose.e2e.yml 拉起的真实 Keycloak 26（realm=garrison，
-//! scripts/keycloak_provision.py 幂等供给），授权码经 tests/acceptance/
-//! keycloak_fixture.rs 驱动真实登录表单流获取。Keycloak 不可达时按
-//! environment.rs 门控约定 `[SKIP]`。原 wiremock 模拟面（响应体断言 /
-//! expires_in=0 / 空串 scope 请求体差异）下沉至 src/protocol/oauth2/tests.rs
-//! 单元测试（单元层允许 mock）。
+//! 验收层禁止 mock：全部场景打 docker/docker-compose.e2e.yml 拉起的真实 Keycloak 26
+//! （realm=garrison，scripts/keycloak_provision.py 幂等供给），授权码经
+//! keycloak_fixture.rs 驱动真实登录表单流获取；Keycloak 不可达时按 environment.rs
+//! 门控约定 `[SKIP]`。
 //!
 //! # API 偏差记录
 //!
-//! - `OAuth2Client` 不提供 revoke 方法（RFC 7009 撤销属授权服务器职责，客户端库
-//!   无此 API）。撤销路径以「fixture 直连真实 /revoke 端点吊销 → introspection
-//!   返回 active=false」的客户端可观测语义覆盖。
-//! - 授权码重放检测同样是授权服务器的职责（客户端无状态），由真实 Keycloak
-//!   的授权码单次消费语义覆盖（首次 200 / 重放 400 invalid_grant）。
+//! - `OAuth2Client` 不提供 revoke 方法（RFC 7009 撤销属授权服务器职责）：撤销路径以
+//!   「fixture 直连真实 /revoke 端点吊销 → introspection 返回 active=false」的客户端
+//!   可观测语义覆盖。
+//! - 授权码重放检测同属授权服务器职责：由真实 Keycloak 的授权码单次消费语义覆盖
+//!   （首次 200 / 重放 400 invalid_grant）。
 
 #![cfg(feature = "protocol-oauth2")]
 
@@ -91,7 +89,7 @@ async fn acc_oauth2_001_authorization_code_with_pkce_full_flow() {
     // RFC 7636 Appendix B 测试向量（43 字符合法 verifier）
     let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 
-    // 1) 授权 URL：含 PKCE 所需全部参数（客户端侧构造）
+    // 授权 URL：含 PKCE 所需全部参数（客户端侧构造）
     let (auth_url, challenge) = client
         .get_auth_url_with_pkce("acc-state", verifier)
         .expect("get_auth_url_with_pkce 应成功");
@@ -117,7 +115,7 @@ async fn acc_oauth2_001_authorization_code_with_pkce_full_flow() {
         "URL 应含 code_challenge_method=S256"
     );
 
-    // 2) 真实登录表单流：以授权 URL 的 challenge 获取真实授权码
+    // 真实登录表单流：以授权 URL 的 challenge 获取真实授权码
     let (code, state) = real_auth_code(
         &fx,
         Some("openid"),
@@ -131,7 +129,7 @@ async fn acc_oauth2_001_authorization_code_with_pkce_full_flow() {
         "回调 state 应与授权请求一致（真实 CSRF 锚点）"
     );
 
-    // 3) 授权码 + verifier 交换 token（真实 Keycloak 校验 S256(verifier)=challenge）
+    // 授权码 + verifier 交换 token（真实 Keycloak 校验 S256(verifier)=challenge）
     let token = client
         .exchange_code_with_pkce(&code, "acc-state", &state, verifier)
         .await
@@ -430,8 +428,8 @@ async fn acc_oauth2_008_wrong_client_secret_rejected() {
 #[tokio::test]
 #[serial]
 async fn acc_oauth2_009_wrong_redirect_uri_rejected() {
-    // 1) 构造期：明文 HTTP + 公网域名回调被拒绝（P2.3）
-    // OAuth2Client 无 Debug，unwrap_err 不可用，用 match 解构
+    // 构造期：明文 HTTP + 公网域名回调被拒绝（P2.3；OAuth2Client 无 Debug，
+    // unwrap_err 不可用，用 match 解构）
     let err = match OAuth2Client::new(
         CLIENT_ID,
         CLIENT_SECRET,
@@ -459,9 +457,8 @@ async fn acc_oauth2_009_wrong_redirect_uri_rejected() {
         "localhost 回调应放行"
     );
 
-    // 2) 授权服务器侧（真实 Keycloak）：以 REDIRECT_LOCAL 获取授权码，
-    //    再以另一个已注册回调 REDIRECT_HTTPS 交换 → 授权码绑定的回调
-    //    不匹配 → 400 invalid_grant
+    // 授权服务器侧（真实 Keycloak）：以 REDIRECT_LOCAL 获取授权码，再以另一个已注册
+    // 回调 REDIRECT_HTTPS 交换 → 授权码绑定的回调不匹配 → 400 invalid_grant
     let fx = KeycloakFixture::new();
     require_keycloak!(fx);
     let verifier = "a".repeat(43);
@@ -488,7 +485,7 @@ async fn acc_oauth2_009_wrong_redirect_uri_rejected() {
 #[tokio::test]
 #[serial]
 async fn acc_oauth2_010_pkce_verifier_mismatch_rejected() {
-    // 1) 非法 verifier（长度 < 43）：客户端预校验拒绝，不发 HTTP
+    // 非法 verifier（长度 < 43）：客户端预校验拒绝，不发 HTTP
     let fx = KeycloakFixture::new();
     require_keycloak!(fx);
     let client = fx.oauth2_client(CLIENT_SECRET, REDIRECT_LOCAL);
@@ -504,7 +501,7 @@ async fn acc_oauth2_010_pkce_verifier_mismatch_rejected() {
         other => panic!("期望 InvalidParam，实际: {:?}", other),
     }
 
-    // 2) state 不匹配：CSRF 防护在客户端拦截，不发 HTTP
+    // state 不匹配：CSRF 防护在客户端拦截，不发 HTTP
     let verifier = "a".repeat(43);
     let err = client
         .exchange_code_with_pkce("code-x", "expected-state", "attacker-state", &verifier)
@@ -515,8 +512,7 @@ async fn acc_oauth2_010_pkce_verifier_mismatch_rejected() {
         other => panic!("期望 OAuth2 错误，实际: {:?}", other),
     }
 
-    // 3) 授权服务器端（真实 Keycloak）：verifier 与授权请求的 challenge
-    //    不一致 → 400 invalid_grant
+    // 授权服务器端（真实 Keycloak）：verifier 与授权请求的 challenge 不一致 → 400 invalid_grant
     let challenge = OAuth2Client::generate_pkce_challenge(&verifier).expect("challenge 应生成");
     let (code, state) = real_auth_code(
         &fx,
@@ -622,12 +618,11 @@ async fn acc_oauth2_012_scope_privilege_escalation_blocked_client_side() {
 }
 
 // ============================================================================
-// 构造校验与边界（迁自 tests/protocol/oauth2_*.rs）
+// 构造校验与边界
 // ============================================================================
 
 /// （正常+异常）：授权 URL 构造——`redirect_uri` 以 URL 编码查询参数出现；
 /// 空 client_id 构造期拒绝（`Config("oauth2-client-id-empty")`）。
-/// 迁自 tests/protocol/oauth2_integration.rs::get_auth_url_with_pkce_includes_required_params
 /// 与 new_rejects_empty_client_id（2 例合并）。纯客户端构造，无网络请求。
 #[tokio::test]
 #[serial]
@@ -666,11 +661,9 @@ async fn acc_oauth2_013_auth_url_redirect_uri_and_empty_client_id_rejected() {
     }
 }
 
-/// （正常）：请求 scope 与不请求 scope 的真实行为差异——client_credentials
-/// 携带 `scope=read` 时真实 Keycloak 签发的 token scope 含 `read`，未携带时
-/// 仅含默认 scopes，证明 scope 参数真实随请求传输并被授权服务器生效。
-/// （原 wiremock 场景「空串 scope 请求体差异」已下沉至单元测试
-/// src/protocol/oauth2/tests.rs，验收层以真实服务器可观测语义覆盖。）
+/// （正常）：请求 scope 与不请求 scope 的真实行为差异——client_credentials 携带
+/// `scope=read` 时真实 Keycloak 签发的 token scope 含 `read`，未携带时仅含默认 scopes，
+/// 证明 scope 参数真实随请求传输并被授权服务器生效。
 #[tokio::test]
 #[serial]
 async fn acc_oauth2_014_requested_scope_narrows_real_token_scope() {
@@ -782,7 +775,7 @@ async fn acc_oauth2_016_keycloak_oidc_rp_full_flow_e2e() {
                 .expect("构造 GarrisonDaoOxcache 应成功"),
         ));
 
-    // Step 1: discover（真实 discovery 端点）
+    // discover（真实 discovery 端点）
     let metadata = provider.discover().await.expect("discover 应成功");
     assert_eq!(metadata.issuer, crate::keycloak_fixture::realm_base());
     assert_eq!(
@@ -797,7 +790,7 @@ async fn acc_oauth2_016_keycloak_oidc_rp_full_flow_e2e() {
         )
     );
 
-    // Step 2: 真实登录表单流获取授权码（无 PKCE，confidential client 凭证交换）
+    // 真实登录表单流获取授权码（无 PKCE，confidential client 凭证交换）
     let (code, state) = real_auth_code(&fx, Some("openid"), REDIRECT_HTTPS, "rp-state", None).await;
     assert_eq!(state, "rp-state", "回调 state 应与授权请求一致");
     let token_set = provider
@@ -809,7 +802,7 @@ async fn acc_oauth2_016_keycloak_oidc_rp_full_flow_e2e() {
     assert!(!token_set.id_token.is_empty(), "id_token 应非空");
     assert!(token_set.expires_in > 0, "expires_in 应为正数");
 
-    // Step 3: verify_id_token（真实 JWKS RS256 验签 + claims 解析）
+    // verify_id_token（真实 JWKS RS256 验签 + claims 解析）
     let keycloak_claims = provider
         .verify_id_token(&token_set.id_token)
         .await
@@ -955,11 +948,10 @@ async fn acc_oauth2_017_redirect_uri_exact_match_adversarial() {
     }
 }
 
-/// （对抗）：state 缺失与旧回调重放拒绝——
-/// 1) state 缺失（expected/actual 任一空串）：客户端 fail-closed 拦截，不发 HTTP；
-/// 2) state 重复使用（攻击者重放旧回调 URL：旧 state + 已消费授权码）：
-///    客户端 state 比对通过（旧 state 与预期一致），由授权服务器授权码单次消费
-///    语义拒绝（400 invalid_grant）——state 防护 + 单次消费双层防线端到端锁定。
+/// （对抗）：state 缺失与旧回调重放拒绝——state 缺失（expected/actual 任一空串）客户端
+/// fail-closed 拦截，不发 HTTP；state 重复使用（攻击者重放旧回调 URL：旧 state + 已消费
+/// 授权码）由授权服务器授权码单次消费语义拒绝（400 invalid_grant）——state 防护 + 单次
+/// 消费双层防线端到端锁定。
 #[tokio::test]
 #[serial]
 async fn acc_oauth2_018_state_missing_and_callback_replay_rejected() {
@@ -967,7 +959,7 @@ async fn acc_oauth2_018_state_missing_and_callback_replay_rejected() {
     require_keycloak!(fx);
     let client = fx.oauth2_client(CLIENT_SECRET, REDIRECT_LOCAL);
 
-    // 1) state 缺失：客户端 fail-closed（不发 HTTP）
+    // state 缺失：客户端 fail-closed（不发 HTTP）
     let verifier = "a".repeat(43);
     for (expected, actual) in [("", ""), ("expected", ""), ("", "actual")] {
         let err = client
@@ -986,8 +978,8 @@ async fn acc_oauth2_018_state_missing_and_callback_replay_rejected() {
         }
     }
 
-    // 2) 旧回调重放：真实流程获取授权码 → 正常交换 → 重放同一回调
-    //    （同 state、同 code）→ 授权服务器 400 invalid_grant
+    // 旧回调重放：真实流程获取授权码 → 正常交换 → 重放同一回调（同 state、同 code）
+    // → 授权服务器 400 invalid_grant
     let challenge = OAuth2Client::generate_pkce_challenge(&verifier).expect("challenge 应生成");
     let (code, state) = real_auth_code(
         &fx,

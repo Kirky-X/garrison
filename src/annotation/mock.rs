@@ -1,13 +1,10 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 注解层测试 mock 实现。
+//! 注解层测试 mock 实现（`cfg(all(test, feature = "web-axum"))`）。
 //!
-//! 本模块仅在 `cfg(all(test, feature = "web-axum"))` 下编译（通过 `mod.rs` 中的
-//! `#[cfg(all(test, feature = "web-axum"))] mod mock;` 声明），
-//! 提供 `MockDao`（基于 `parking_lot::Mutex<HashMap>` + `Instant` 模拟 TTL）
-//! 与 `MockInterface`（模拟 `GarrisonInterface` 权限/角色回调），
-//! 供 `annotation::tests` axum extractor 集成测试复用。
+//! `MockDao` 基于 `parking_lot::Mutex<HashMap>` + `Instant` 模拟 TTL；`MockInterface`
+//! 模拟 `GarrisonInterface` 权限/角色回调，供 `annotation::tests` 复用。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -152,44 +149,37 @@ impl GarrisonInterface for MockInterface {
 mod mock_dao_coverage_tests {
     use super::*;
 
-    /// fallback / 默认方法调用的结果不再 `let _` 丢弃——
-    /// 组合回退路径逐一断言返回值；MockDao 未重写的默认方法断言
-    /// fail-closed 的 `NotImplemented` 语义。
+    /// 逐一断言组合回退路径的返回值；MockDao 未重写的默认方法断言 fail-closed 的
+    /// `NotImplemented` 语义。
     #[tokio::test]
     async fn mock_dao_atomic_and_default_methods_coverage() {
         let dao = MockDao::new();
         dao.set("k1", "v1", 60).await.unwrap();
 
         // ---- atomic_test_fallback! 方法（组合回退语义）----
-        // key 不存在 → 写入成功
         assert!(dao.set_if_absent("a1", "v1", 60).await.unwrap());
         assert_eq!(
             dao.get_and_delete("a1").await.unwrap().as_deref(),
             Some("v1")
         );
-        // 计数器：缺失 key 首次 incr → 1，再 decr → 归 0（key 删除）
         assert_eq!(dao.incr("ctr", 60).await.unwrap(), 1);
         assert_eq!(dao.decr("ctr").await.unwrap(), 0);
-        // rename：k1 存在 → Ok(())，值迁移到 k2
         dao.rename("k1", "k2").await.unwrap();
         assert_eq!(dao.get("k2").await.unwrap().as_deref(), Some("v1"));
-        // CAS：k2 当前值匹配 expected → 成功交换
         assert!(dao
             .compare_and_swap("k2", Some("v1"), "v2", 60)
             .await
             .unwrap());
         assert_eq!(dao.get("k2").await.unwrap().as_deref(), Some("v2"));
 
-        // ---- trait 默认方法 ----
+        // ---- trait 默认方法：MockDao 未重写 → fail-closed NotImplemented ----
         dao.set_permanent("p1", "val").await.unwrap();
         assert_eq!(dao.get("p1").await.unwrap().as_deref(), Some("val"));
         assert!(dao.get_with_ttl("k1").await.unwrap().is_none());
-        // MockDao 未重写 get_timeout → fail-closed NotImplemented
         assert!(matches!(
             dao.get_timeout("k1").await,
             Err(GarrisonError::NotImplemented(_))
         ));
-        // KV 抽象不支持 glob 扫描 / SQL 类默认方法 → NotImplemented
         assert!(matches!(
             dao.keys("*").await,
             Err(GarrisonError::NotImplemented(_))

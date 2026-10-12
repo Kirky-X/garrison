@@ -11,9 +11,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use std::sync::Arc;
 use uuid::Uuid;
 
-// ========================================================================
 // 算法枚举测试
-// ========================================================================
 
 /// from_str 解析 MD5。
 #[test]
@@ -55,9 +53,7 @@ fn algorithm_default_is_sha256() {
     assert_eq!(DigestAlgorithm::default(), DigestAlgorithm::Sha256);
 }
 
-// ========================================================================
 // 构造与质询测试
-// ========================================================================
 
 /// new 构造合法实例。
 #[test]
@@ -124,9 +120,7 @@ fn with_nonce_ttl_sets_ttl() {
     assert_eq!(auth.nonce_ttl(), 60);
 }
 
-// ========================================================================
 // compute_ha1 测试
-// ========================================================================
 
 /// compute_ha1 返回已知 MD5 值。
 #[test]
@@ -149,9 +143,7 @@ fn compute_ha1_sha256_returns_64_chars() {
     assert_eq!(ha1.len(), 64);
 }
 
-// ========================================================================
 // validate 测试（qop=auth）
-// ========================================================================
 
 /// 辅助函数 — 生成有效 nonce（base64(timestamp:uuid)）。
 fn make_valid_nonce() -> String {
@@ -421,12 +413,7 @@ fn validate_custom_ttl_works() {
     assert!(auth.validate(&valid_header, method, uri, &ha1));
 }
 
-/// 客户端请求 auth-int 时，validate（无 body）拒绝。
-///
-/// 关键攻击路径：攻击者用**空 body** 正确计算 auth-int response 后调用
-/// validate()（不传 body）——原实现以空 body 计算 HA2 会校验**通过**，
-/// 等于绕过 body 绑定。修复后 body 缺失时 auth-int 直接拒绝（fail-closed），
-/// 该测试确保这一语义不被回归。
+/// auth-int 经 validate（无 body）被拒：body 缺失即 fail-closed，防用空 body 预计算 response 绕过 body 绑定校验。
 #[test]
 fn validate_auth_int_rejected_without_body() {
     let auth = HttpDigestAuth::new("test@realm", "MD5").unwrap();
@@ -609,14 +596,9 @@ fn validate_sha256_succeeds() {
     assert!(auth.validate(&header, method, uri, &ha1));
 }
 
-// ========================================================================
 // parse_authorization 边界路径测试
-// ========================================================================
 
-/// 验证 validate 对无参数部分的 header 返回 false。
-///
-/// 覆盖 parse_authorization 中 `split_once(char::is_whitespace)` 返回 None 的错误路径
-/// （"Authorization header 格式错误：缺少参数部分"）。
+/// 覆盖 `split_once` 返回 None 的路径：header 缺参数部分时 validate 返回 false。
 #[test]
 fn validate_header_without_whitespace_returns_false() {
     let auth = HttpDigestAuth::new("realm", "MD5").unwrap();
@@ -624,9 +606,7 @@ fn validate_header_without_whitespace_returns_false() {
     assert!(!auth.validate("Digest", "GET", "/resource", "ha1"));
 }
 
-/// 验证 validate 对包含未知参数的 header 仍可解析。
-///
-/// 覆盖 parse_digest_params 中 `_ => {}` 分支（未知 key 被忽略）。
+/// 覆盖 parse_digest_params 的未知 key 忽略分支：含未知参数的 header 仍可解析。
 #[test]
 fn validate_header_with_unknown_params_returns_false() {
     let auth = HttpDigestAuth::new("realm", "MD5").unwrap();
@@ -640,9 +620,7 @@ fn validate_header_with_unknown_params_returns_false() {
     assert!(!auth.validate(&header, "GET", "/r", "dummy_ha1"));
 }
 
-/// 验证 validate 对包含转义字符的 header 可解析。
-///
-/// 覆盖 parse_digest_params 中 `if c == '\\' { ... }` 转义分支。
+/// 覆盖 parse_digest_params 的引号转义分支：含转义字符的 header 可解析。
 #[test]
 fn validate_header_with_escaped_chars_returns_false() {
     let auth = HttpDigestAuth::new("realm", "MD5").unwrap();
@@ -656,9 +634,7 @@ fn validate_header_with_escaped_chars_returns_false() {
     assert!(!auth.validate(&header, "GET", "/r", "dummy_ha1"));
 }
 
-/// 验证 validate 对 key 后无等号的 header 返回 false。
-///
-/// 覆盖 parse_digest_params 中 `if chars.peek() != Some(&'=') { break; }` 分支。
+/// 覆盖 parse_digest_params 的 break 分支：key 后无 `=` 时 validate 返回 false。
 #[test]
 fn validate_header_with_key_without_equals_returns_false() {
     let auth = HttpDigestAuth::new("realm", "MD5").unwrap();
@@ -671,9 +647,7 @@ fn validate_header_with_key_without_equals_returns_false() {
     assert!(!auth.validate(&header, "GET", "/r", "dummy_ha1"));
 }
 
-/// 验证 validate 对不含 qop 的 header 返回 false。
-///
-/// 覆盖 validate 中 qop=None 的分支。
+/// 覆盖 qop=None 分支：不含 qop 的 header 校验失败。
 #[test]
 fn validate_header_without_qop_returns_false() {
     let auth = HttpDigestAuth::new("realm", "MD5").unwrap();
@@ -685,9 +659,7 @@ fn validate_header_without_qop_returns_false() {
     assert!(!auth.validate(&header, "GET", "/r", "dummy_ha1"));
 }
 
-// ========================================================================
 // is_nonce_valid 直接测试
-// ========================================================================
 
 /// is_nonce_valid 对空字符串返回 false。
 #[test]
@@ -721,9 +693,7 @@ fn is_nonce_valid_non_numeric_timestamp_returns_false() {
     assert!(!auth.is_nonce_valid(&nonce));
 }
 
-// ========================================================================
 // constant_time_eq 测试
-// ========================================================================
 
 /// 验证 constant_time_eq 对不同长度输入返回 false（含单侧为空）。
 #[test]
@@ -747,9 +717,7 @@ fn constant_time_eq_different_strings_returns_false() {
     assert!(!constant_time_eq(b"abc", b"xyz"));
 }
 
-/// 超长 digest response 拒绝：response 长度是公开协议参数（hex 后 MD5 32 /
-/// SHA-256 64），长度不符必然不等，validate 在进入比较前即拒绝——客户端
-/// 可控的输入长度不得放大服务端计算量（统一原语的调用方长度预校验约定）。
+/// 超长 response 拒绝：长度为公开协议参数（hex 后 MD5 32 / SHA-256 64），长度预校验在进入比较前拦截，防可控长度放大计算量。
 #[test]
 fn validate_oversized_response_rejected() {
     let auth = HttpDigestAuth::new("test@realm", "MD5").unwrap();
@@ -792,8 +760,7 @@ fn validate_oversized_response_rejected() {
     );
 }
 
-/// 超长 nonce 签名 mac 段拒绝：mac 长度是公开参数（HMAC-SHA256 hex 64 字符），
-/// 长度不符在进入比较前即拒绝。
+/// 超长 nonce mac 段拒绝：mac 为公开定长（HMAC-SHA256 hex 64 字符），长度预校验在比较前拦截。
 #[test]
 fn is_nonce_valid_oversized_mac_returns_false() {
     let auth = HttpDigestAuth::new("realm", "SHA256")
@@ -806,9 +773,7 @@ fn is_nonce_valid_oversized_mac_returns_false() {
     assert!(!auth.is_nonce_valid(&forged), "超长 mac 段应被拒绝");
 }
 
-// ========================================================================
 // hex_encode 测试
-// ========================================================================
 
 /// 验证 hex_encode 对空字节返回空字符串。
 #[test]
@@ -822,13 +787,9 @@ fn hex_encode_known_bytes() {
     assert_eq!(hex_encode(&[0x00, 0xff, 0x0a]), "00ff0a");
 }
 
-// ========================================================================
 // nc 单调性校验测试（RFC 7616 §3.4.6 重放防护）
-// ========================================================================
 
-/// `validate_nc` 首次使用 nonce 时接受任意 nc（with DAO）。
-///
-/// 场景：注入 DAO，首次请求 nc=00000001 应通过。
+/// 注入 DAO 时首次请求 nc=00000001 通过。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_first_use_accepted_with_dao() {
     let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
@@ -858,9 +819,7 @@ async fn validate_nc_first_use_accepted_with_dao() {
     );
 }
 
-/// `validate_nc` 拒绝同一 nonce 的 nc 重复（重放攻击，with DAO）。
-///
-/// 场景：注入 DAO，第一次 nc=00000001 通过，第二次相同 nc=00000001 应被拒绝。
+/// 注入 DAO 时同一 nonce 重复 nc 被拒（重放）。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_replay_rejected_with_dao() {
     let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
@@ -895,9 +854,7 @@ async fn validate_nc_replay_rejected_with_dao() {
     );
 }
 
-/// `validate_nc` 拒绝 nc 回退（with DAO）。
-///
-/// 场景：注入 DAO，第一次 nc=00000003 通过，第二次 nc=00000002 应被拒绝（nc 回退）。
+/// 注入 DAO 时 nc 回退被拒：首次 nc=00000003 通过，第二次 nc=00000002 失败。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_decrease_rejected_with_dao() {
     let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
@@ -943,9 +900,7 @@ async fn validate_nc_decrease_rejected_with_dao() {
     );
 }
 
-/// `validate_nc` 接受 nc 单调递增（with DAO）。
-///
-/// 场景：注入 DAO，nc=1→2→3 连续递增，每次都应通过。
+/// 注入 DAO 时 nc=1→2→3 单调递增均通过。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_increasing_accepted_with_dao() {
     let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
@@ -978,9 +933,7 @@ async fn validate_nc_increasing_accepted_with_dao() {
     }
 }
 
-/// 未注入 DAO 时跳过 nc 校验（DAO 为可选依赖，fail-open）。
-///
-/// 场景：不注入 DAO（dao=None），相同 nc 重放仍被接受（仅依赖 nonce TTL 防重放）。
+/// 未注入 DAO 时跳过 nc 校验（fail-open）：相同 nc 重放仍被接受，仅靠 nonce TTL 防护。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_skipped_without_dao() {
     let auth = HttpDigestAuth::new("test@realm", "MD5").unwrap();
@@ -1012,9 +965,7 @@ async fn validate_nc_skipped_without_dao() {
     );
 }
 
-/// 不同 nonce 的 nc 计数独立（with DAO）。
-///
-/// 场景：注入 DAO，nonce-A nc=1 通过，nonce-B nc=1 也应通过（不同 nonce 独立计数）。
+/// 注入 DAO 时不同 nonce 的 nc 计数独立：各自 nc=1 均通过。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_isolates_nonces_with_dao() {
     let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
@@ -1062,19 +1013,11 @@ async fn validate_nc_isolates_nonces_with_dao() {
     );
 }
 
-// ========================================================================
-// 三维度审查修复验证测试
-// ========================================================================
+// nc fail-closed 与运行时约束测试
 
-/// `validate_nc` 在 current_thread runtime 下 fail-closed。
+/// current_thread runtime 下 validate_nc fail-closed：`block_in_place` 会 panic，故拒绝请求而非放行重放。
 ///
-/// 场景：注入 DAO，但在 current_thread tokio runtime 下调用 validate()。
-/// validate_nc 检测到 current_thread runtime 后应 fail-closed（不调用 block_in_place，
-/// 否则会 panic "Cannot block the current thread from within a runtime"），
-/// 返回 false 拒绝请求，避免允许重放攻击。
-///
-/// 原 fail-open 实现允许重放，违背 RFC 7616 §3.4.6。
-/// 注意：使用 `#[tokio::test]`（不带 `flavor = "multi_thread"`）创建 current_thread runtime。
+/// 注意：用不带 `flavor = "multi_thread"` 的 `#[tokio::test]` 构造该 runtime。
 #[tokio::test]
 async fn validate_nc_current_thread_runtime_fail_closed() {
     let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
@@ -1110,9 +1053,7 @@ async fn validate_nc_current_thread_runtime_fail_closed() {
     );
 }
 
-/// 始终返回 DAO 错误的 mock DAO。
-///
-/// 用于触发 `validate_nc` 的 fail-closed 路径（DAO 错误时拒绝请求）。
+/// 始终返回 DAO 错误的 mock DAO：触发 validate_nc 的 DAO 错误 fail-closed 路径。
 struct FailingDao;
 
 #[async_trait::async_trait]
@@ -1156,13 +1097,7 @@ impl crate::dao::GarrisonDao for FailingDao {
     crate::atomic_test_fallback!();
 }
 
-/// `validate_nc` 在 DAO 错误时 fail-closed。
-///
-/// 场景：注入始终返回错误的 FailingDao，validate_nc 内部 compare_and_update_if_greater
-/// 调用 DAO 失败后应 fail-closed（返回 false），拒绝请求防止重放攻击。
-///
-/// 原 fail-open 实现允许重放（接受请求），违背 RFC 7616 §3.4.6。
-/// nonce TTL（300s）不足以防重放（窗口内仍可重放），必须 fail-closed。
+/// DAO 错误时 validate_nc fail-closed（返回 false）：nonce TTL 不足以防重放，失败必须拒绝。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_dao_error_fail_closed() {
     // atomic + 默认 trait 方法覆盖
@@ -1225,14 +1160,9 @@ async fn validate_nc_dao_error_fail_closed() {
     );
 }
 
-/// `validate_nc` 在无 tokio runtime 时 fail-closed。
+/// 无 tokio runtime 时 `Handle::try_current()` 返回 `Err`，validate_nc fail-closed（返回 false）。
 ///
-/// 场景：注入 DAO，但 `validate()` 在非 async 上下文中调用（无 tokio runtime）。
-/// `Handle::try_current()` 返回 `Err`，validate_nc 应 fail-closed（返回 false），
-/// 拒绝请求防止重放攻击，而不是 fail-open 允许重放。
-///
-/// 原 fail-open 实现允许重放，违背 RFC 7616 §3.4.6。
-/// 注意：使用普通 `#[test]`（不引入 tokio runtime），与 `#[tokio::test]` 区分。
+/// 注意：用普通 `#[test]`（不引入 runtime）与 `#[tokio::test]` 区分。
 #[test]
 fn validate_nc_no_runtime_fail_closed() {
     let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
@@ -1268,10 +1198,7 @@ fn validate_nc_no_runtime_fail_closed() {
     );
 }
 
-/// `validate_nc` 拒绝非 hex 格式的 nc（修复验证）。
-///
-/// 场景：nc="gggggggg"（非 hex 字符），`u64::from_str_radix(_, 16)` 解析失败，
-/// validate_nc 返回 false（拒绝畸形请求，不是 fail-open）。
+/// 非 hex 格式 nc（`u64::from_str_radix` 解析失败）被拒：返回 false 而非 fail-open。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_malformed_hex_rejected() {
     let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
@@ -1297,14 +1224,9 @@ async fn validate_nc_malformed_hex_rejected() {
     );
 }
 
-// ========================================================================
 // Digest Auth URI 校验（RFC 7616 §3.4.6）
-// ========================================================================
 
-/// 客户端 uri 与实际请求 URI 不匹配时应被拒绝（防跨 URI 重放攻击）。
-///
-/// 构造 valid response（ha2 基于 `/resource`），但 validate 调用使用 `/other`。
-/// URI 常量时间比对应在 response 比对之前拦截。
+/// uri 不匹配被拒（防跨 URI 重放）：response 基于 `/resource`、validate 用 `/other`，常量时间比对比 response 比对先拦截。
 #[test]
 fn validate_uri_mismatch_rejected() {
     let auth = HttpDigestAuth::new("test@realm", "MD5").unwrap();
@@ -1334,12 +1256,9 @@ fn validate_uri_mismatch_rejected() {
     );
 }
 
-// ========================================================================
 // nonce 服务端签名（防自铸 nonce）
-// ========================================================================
 
-/// 注入 server_key 后，challenge 生成的签名 nonce 通过 is_nonce_valid；
-/// 自铸（无 HMAC / HMAC 错误）nonce 一律被拒。
+/// 注入 server_key 后签名 nonce 通过 is_nonce_valid，自铸（无 HMAC / HMAC 错误）nonce 被拒。
 #[test]
 fn signed_nonce_roundtrip_and_self_minted_rejected() {
     let auth = HttpDigestAuth::new("realm", "SHA256")
@@ -1424,9 +1343,7 @@ fn validate_succeeds_with_signed_nonce() {
     );
 }
 
-// ========================================================================
 // 辅助函数
-// ========================================================================
 
 /// 从质询头中提取 nonce 值。
 fn extract_nonce(challenge: &str) -> Option<String> {

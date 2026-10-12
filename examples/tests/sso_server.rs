@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! sso_server 示例测试（protocol-sso-server feature）。
-//!
-//! 验证 run() 完整执行（内部已包含 issue/validate/converter/channel 断言）。
+//! sso_server 示例测试（protocol-sso-server feature）：验证 run() 完整执行（内部已包含 issue/validate/converter/channel 断言）。
 
 #![cfg(feature = "protocol-sso-server")]
 

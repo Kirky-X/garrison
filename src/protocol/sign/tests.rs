@@ -25,11 +25,9 @@ fn now_ts() -> i64 {
         .as_secs() as i64
 }
 
-// ========================================================================
 // SignHandler 构造测试
-// ========================================================================
 
-/// 构造 SignHandler，字段正确填充）。
+/// 构造 SignHandler，字段正确填充。
 #[test]
 fn new_populates_fields() {
     let handler = make_handler();
@@ -37,7 +35,7 @@ fn new_populates_fields() {
     assert_eq!(handler.timestamp_window(), 300);
 }
 
-/// app_key 为空返回 Config 错误）。
+/// app_key 为空返回 Config 错误。
 #[test]
 fn new_empty_app_key_returns_config_error() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -78,18 +76,16 @@ fn new_app_secret_exactly_32_bytes_passes() {
     let _handler = result.expect("32 字节 secret 应通过校验");
 }
 
-/// 自定义时间窗口）。
+/// 自定义时间窗口。
 #[test]
 fn with_timestamp_window_sets_window() {
     let handler = make_handler().with_timestamp_window(120);
     assert_eq!(handler.timestamp_window(), 120);
 }
 
-// ========================================================================
 // sign 测试
-// ========================================================================
 
-/// 标准签名生成，返回 Base64 字符串）。
+/// 标准签名生成，返回 Base64 字符串。
 #[test]
 fn sign_returns_base64_string() {
     let handler = make_handler();
@@ -107,7 +103,7 @@ fn sign_returns_base64_string() {
         .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='));
 }
 
-/// 不同 body_sha256 产生不同签名）。
+/// 不同 body_sha256 产生不同签名。
 #[test]
 fn sign_different_body_sha256_produces_different_signatures() {
     let handler = make_handler();
@@ -116,7 +112,7 @@ fn sign_different_body_sha256_produces_different_signatures() {
     assert_ne!(s1, s2);
 }
 
-/// 不同 method 产生不同签名）。
+/// 不同 method 产生不同签名。
 #[test]
 fn sign_different_method_produces_different_signatures() {
     let handler = make_handler();
@@ -138,11 +134,9 @@ fn sign_different_app_key_produces_different_signatures() {
     assert_ne!(s1, s2, "不同 app_key 应通过 HKDF salt 产生不同签名");
 }
 
-// ========================================================================
 // validate 测试
-// ========================================================================
 
-/// 成功校验）。
+/// 成功校验。
 #[tokio::test]
 async fn validate_success() {
     let handler = make_handler();
@@ -154,7 +148,7 @@ async fn validate_success() {
     assert_eq!(result.unwrap(), (), "签名校验应返回 Ok(())");
 }
 
-/// 校验成功后 nonce 存入 dao）。
+/// 校验成功后 nonce 存入 dao。
 #[tokio::test]
 async fn validate_success_stores_nonce() {
     let dao = Arc::new(MockDao::new());
@@ -170,7 +164,7 @@ async fn validate_success_stores_nonce() {
     assert!(stored.is_some());
 }
 
-/// 签名不匹配返回错误）。
+/// 签名不匹配返回错误。
 ///
 /// 伪造签名必须是**合法 Base64**（用不同 body 真实算出一个"算法正确但内容
 /// 不匹配"的签名）：若传入含 `-` 等非法 Base64 字符的串，会先在 Base64 解码处
@@ -218,7 +212,7 @@ async fn validate_malformed_base64_signature_returns_error() {
     }
 }
 
-/// 时间戳过期返回错误）。
+/// 时间戳过期返回错误。
 #[tokio::test]
 async fn validate_expired_timestamp_returns_error() {
     let handler = make_handler();
@@ -234,7 +228,7 @@ async fn validate_expired_timestamp_returns_error() {
     }
 }
 
-/// 未来时间戳返回错误）。
+/// 未来时间戳返回错误。
 #[tokio::test]
 async fn validate_future_timestamp_returns_error() {
     let handler = make_handler();
@@ -250,7 +244,7 @@ async fn validate_future_timestamp_returns_error() {
     }
 }
 
-/// nonce 重放被拒绝）。
+/// nonce 重放被拒绝。
 #[tokio::test]
 async fn validate_nonce_replay_rejected() {
     let handler = make_handler();
@@ -271,7 +265,7 @@ async fn validate_nonce_replay_rejected() {
     }
 }
 
-/// method 大小写差异导致签名不匹配）。
+/// method 大小写差异导致签名不匹配。
 #[tokio::test]
 async fn validate_method_case_difference_returns_error() {
     let handler = make_handler();
@@ -337,10 +331,8 @@ async fn validate_nonce_isolated_by_app_key() {
 
 /// TTL 过期语义：nonce 跨窗口过期后可重新使用（经 MockDao 真实 TTL 验证）。
 ///
-/// MockDao 的 `expire`/TTL 此前为 no-op，nonce 永不过期，任何依赖 TTL 过期
-/// 的测试都会"假通过"。现 mock 实现真实过期时刻：`timestamp_window = 1s`
-/// 时 nonce 以 1s TTL 写入，等待过期后同一 nonce 在新窗口内应可再次校验
-/// 成功（若 mock 无 TTL，此处会得到 nonce 重放错误）。
+/// `timestamp_window = 1s` 时 nonce 以 1s TTL 写入，等待过期后同一 nonce 在
+/// 新窗口内应可再次校验成功（若 TTL 未真实生效，此处会得到 nonce 重放错误）。
 #[tokio::test]
 async fn validate_nonce_reusable_after_ttl_expiry() {
     let handler = make_handler().with_timestamp_window(1);

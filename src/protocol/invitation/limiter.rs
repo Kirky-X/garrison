@@ -4,8 +4,8 @@
 //! 邀请码防爆破尝试锁定器。
 //!
 //! 委托 limiteron `DistributedLimiter` 适配器（[`GarrisonDaoDistributedLimiter`]，
-//! 与 `BruteForceStrategy` 同构的原子计数路径）按来源标识（如 IP）计数，
-//! 超过阈值后拒绝后续 `validate`/`redeem` 尝试，直至窗口过期或显式 `reset`。
+//! 与 `BruteForceStrategy` 同构的原子计数路径）按来源标识（如 IP）计数，超过
+//! 阈值后拒绝后续尝试，直至窗口过期或显式 `reset`。
 //!
 //! 仅在启用 `protocol-invitation` 特性时编译。
 
@@ -46,12 +46,10 @@ impl InvitationAttemptLimiter {
 
     /// 记录一次尝试并判断是否超限。
     ///
-    /// 经 limiteron `DistributedLimiter::incr_with_ttl` 原子计数（窗口 TTL 语义：
-    /// 键不存在时以 `window_seconds` 建键）；计数超过 `max_attempts` 时返回锁定
-    /// 错误。每次调用都计数——无论调用方后续成败。
-    ///
-    /// # 错误
-    /// - `GarrisonError::InvalidParam`: 超过阈值（`invitation-too-many-attempts::<source>` 前缀）。
+    /// 经 limiteron `DistributedLimiter::incr_with_ttl` 原子计数（键不存在时以
+    /// `window_seconds` 建键）；计数超过 `max_attempts` 返回
+    /// `InvalidParam`（`invitation-too-many-attempts::<source>`）。每次调用都
+    /// 计数——无论调用方后续成败。
     pub async fn check(&self, source: &str) -> GarrisonResult<()> {
         let key = format!("{}{}", ATTEMPT_KEY_PREFIX, source_digest_hex(source));
         let count = self
