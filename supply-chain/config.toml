@@ -581,6 +581,11 @@ criteria = "safe-to-run"
 version = "0.5.17"
 criteria = "safe-to-deploy"
 
+[[exemptions.crossbeam-deque]]
+version = "0.8.8"
+criteria = "safe-to-run"
+notes = "backlog: criterion 0.8 升级带入的 dev 依赖（仅基准测试面），待审计"
+
 [[exemptions.crossbeam-epoch]]
 version = "0.9.21"
 criteria = "safe-to-deploy"
@@ -2135,6 +2140,16 @@ criteria = "safe-to-deploy"
 [[exemptions.rand_pcg]]
 version = "0.10.2"
 criteria = "safe-to-deploy"
+
+[[exemptions.rayon]]
+version = "1.12.0"
+criteria = "safe-to-run"
+notes = "backlog: criterion 0.8 升级带入的 dev 依赖（仅基准测试面），待审计"
+
+[[exemptions.rayon-core]]
+version = "1.13.0"
+criteria = "safe-to-run"
+notes = "backlog: criterion 0.8 升级带入的 dev 依赖（仅基准测试面），待审计"
 
 [[exemptions.rcgen]]
 version = "0.14.10"

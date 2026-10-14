@@ -70,10 +70,11 @@ jobs:
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # cargo-vet
         with:
           tool: cargo-vet
-      - name: Generate Cargo.lock (library crate, not committed)
-        run: cargo generate-lockfile
-      - name: Run cargo vet check
-        run: cargo vet check
+      # 仓库已提交 Cargo.lock（与全仓 --locked 构建一致性约定同步），vet 按锁定的
+      # 实际依赖集审计；不得 generate-lockfile 重解析——豁免清单按已提交锁计算，
+      # 重解析会漂移出豁免覆盖面（2026-10-14 实录：CI 的 vet job 因此必红）。
+      - name: Run cargo vet check (committed Cargo.lock)
+        run: cargo vet check --locked
 
   # SBOM（CycloneDX）软件物料清单
   # 全特性面生成（覆盖 optional 依赖：dbnexus/jsonwebtoken/argon2 等），
