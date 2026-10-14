@@ -685,7 +685,7 @@ mod tests {
         assert!(result.is_err(), "5 MiB 响应必须被拒绝");
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg.contains("oauth2-body-overflow"),
+            err_msg.contains(&crate::i18n::translate_detail("oauth2-body-overflow", &[],)),
             "错误消息应含'oauth2-body-overflow'，实际: {}",
             err_msg
         );

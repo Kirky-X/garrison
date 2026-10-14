@@ -67,9 +67,14 @@ impl PasswordHasherConfig {
     /// + 池大小区间 [1, 256]（0 = 零 permit 永久饥饿，fail-fast）。
     fn validate_argon2_params(&self) -> GarrisonResult<()> {
         if self.argon2_t_cost == 0 || self.argon2_p_cost == 0 {
-            return Err(GarrisonError::Config(
-                "config-password-hash-argon2-param-invalid::".to_string(),
-            ));
+            let which = if self.argon2_t_cost == 0 {
+                "t_cost"
+            } else {
+                "p_cost"
+            };
+            return Err(GarrisonError::Config(format!(
+                "config-password-hash-argon2-param-invalid::{which}"
+            )));
         }
         if !(ARGON2_POOL_SIZE_MIN..=ARGON2_POOL_SIZE_MAX).contains(&self.argon2_pool_size) {
             return Err(GarrisonError::Config(format!(

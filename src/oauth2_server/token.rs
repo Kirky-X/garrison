@@ -2140,7 +2140,10 @@ mod tests {
         };
         let err = handler.handle(&req).await.unwrap_err();
         assert!(
-            err.to_string().contains("invalid-scope"),
+            err.to_string().contains(&crate::i18n::translate_detail(
+                "oauth2-server-client-invalid-scope",
+                &[("arg0", "admin")],
+            )),
             "期望 invalid-scope 错误，实际: {}",
             err
         );
@@ -2170,7 +2173,10 @@ mod tests {
             password: None,
         };
         let err = handler.handle(&req).await.unwrap_err();
-        assert!(err.to_string().contains("invalid-scope"));
+        assert!(err.to_string().contains(&crate::i18n::translate_detail(
+            "oauth2-server-client-invalid-scope",
+            &[("arg0", "admin")],
+        )));
     }
 
     /// password grant 请求超出 allowed_scopes 的 scope 返回 invalid_scope。
@@ -2197,7 +2203,10 @@ mod tests {
         };
         let err = handler.handle(&req).await.unwrap_err();
         assert!(
-            err.to_string().contains("invalid-scope"),
+            err.to_string().contains(&crate::i18n::translate_detail(
+                "oauth2-server-client-invalid-scope",
+                &[("arg0", "admin")],
+            )),
             "期望 invalid-scope 错误，实际: {}",
             err
         );
@@ -2232,7 +2241,10 @@ mod tests {
         };
         let err = handler.handle(&req).await.unwrap_err();
         assert!(
-            err.to_string().contains("invalid-scope"),
+            err.to_string().contains(&crate::i18n::translate_detail(
+                "oauth2-server-client-invalid-scope",
+                &[("arg0", "any-scope")],
+            )),
             "空 allowed_scopes 应拒绝任意 scope（fail-closed），实际: {}",
             err
         );

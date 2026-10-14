@@ -71,7 +71,7 @@
 | 过程宏测试 | `macros/` | 8 |
 | 合计 | — | **约 5971** |
 | Criterion 基准 | `benches/garrison_benchmark.rs` | 6 场景 |
-| 行覆盖率门禁 | `ci.yml` coverage job | `--fail-under-lines 85`（当前行覆盖率约 95.8%） |
+| 行覆盖率门禁 | `ci.yml` coverage job | `--fail-under-lines 85`（2026-10-14 实测约 95.15%） |
 
 > 覆盖率沿用既有记录值；本轮已实测刷新测试计数（full 面 5431 / acceptance 面 416），行覆盖率未重测。
 

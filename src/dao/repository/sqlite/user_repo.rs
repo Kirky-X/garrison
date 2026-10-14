@@ -290,7 +290,10 @@ mod tests {
             Err(GarrisonError::InvalidParam(msg)) => {
                 assert!(
                     msg.contains("dao-app-user-create")
-                        && msg.contains("import-hash-argon2-m-cost"),
+                        && msg.contains(&crate::i18n::translate_detail(
+                            "import-hash-argon2-m-cost",
+                            &[("arg0", "2097152"), ("arg1", "1048576")],
+                        )),
                     "错误应含入口与越界阶段标识，实际: {}",
                     msg
                 );
@@ -367,7 +370,10 @@ mod tests {
             Err(GarrisonError::InvalidParam(msg)) => {
                 assert!(
                     msg.contains("dao-app-user-update")
-                        && msg.contains("import-hash-argon2-m-cost"),
+                        && msg.contains(&crate::i18n::translate_detail(
+                            "import-hash-argon2-m-cost",
+                            &[("arg0", "2097152"), ("arg1", "1048576")],
+                        )),
                     "错误应含入口与越界阶段标识，实际: {}",
                     msg
                 );

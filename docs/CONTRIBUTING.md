@@ -297,7 +297,7 @@ cargo doc --no-deps --features full
 
 ## 📊 测试覆盖率要求
 
-Garrison 要求测试覆盖率 **≥ 85% 行覆盖率**（CI 门禁 `cargo llvm-cov --features "full" --fail-under-lines 85`；当前约 95.8%）。新增代码不得使总覆盖率下降。分模块的期望值见下表。
+Garrison 要求测试覆盖率 **≥ 85% 行覆盖率**（CI 门禁 `cargo llvm-cov --features "full" --fail-under-lines 85`；2026-10-14 实测约 95.15%）。新增代码不得使总覆盖率下降。分模块的期望值见下表。
 
 使用 `cargo-llvm-cov` 生成覆盖率报告（与 CI 同一工具，口径一致）：
 

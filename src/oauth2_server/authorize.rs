@@ -2356,8 +2356,10 @@ mod tests {
 
         let err = handler.authorize(&req, Some(1)).await.unwrap_err();
         assert!(
-            err.to_string()
-                .contains("oauth2-server-client-invalid-scope"),
+            err.to_string().contains(&crate::i18n::translate_detail(
+                "oauth2-server-client-invalid-scope",
+                &[("arg0", "admin")],
+            )),
             "期望 invalid_scope 错误，实际: {}",
             err
         );

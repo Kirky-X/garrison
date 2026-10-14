@@ -389,9 +389,10 @@ mod tests {
             client_secret: "secret".into(),
         };
         let err = handler.handle(&req).await.unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("oauth2-server-introspect-invalid-client"));
+        assert!(err.to_string().contains(&crate::i18n::translate_detail(
+            "oauth2-server-introspect-invalid-client",
+            &[("arg0", "no-such")],
+        )));
     }
 
     #[tokio::test]

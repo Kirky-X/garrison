@@ -363,7 +363,7 @@ cargo bench --bench garrison_benchmark --features full --locked -- --quick
 
 ### 📊 Test Scale
 
-About 5971 tests (5431 lib unit + 416 acceptance / integration + 116 example-level + 8 proc macros; lib and acceptance counts measured via `cargo test --list`, examples and proc macros counted statically by attribute, as of 2026-10-13) and 6 Criterion benchmark scenarios; the coverage gate is line coverage no lower than 85% (currently about 95.8%). For the counting methodology and details, see [🧪 Test Scenarios · Test Scale](docs/TEST_SCENARIOS.md#-测试规模统计).
+About 5971 tests (5431 lib unit + 416 acceptance / integration + 116 example-level + 8 proc macros; lib and acceptance counts measured via `cargo test --list`, examples and proc macros counted statically by attribute, as of 2026-10-13) and 6 Criterion benchmark scenarios; the coverage gate is line coverage no lower than 85% (measured about 95.15% on 2026-10-14). For the counting methodology and details, see [🧪 Test Scenarios · Test Scale](docs/TEST_SCENARIOS.md#-测试规模统计).
 
 ---
 

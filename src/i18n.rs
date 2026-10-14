@@ -284,11 +284,15 @@ fn parse_keyed_detail(s: &str) -> Option<(&'static str, Vec<(&'static str, Strin
     }
     let mut parts = s.splitn(3, "::");
     let key = parts.next()?;
-    // key 必须以字母开头且为合法 kebab-case（避免误判中文串）
+    // key 必须以字母开头且为合法 kebab-case（允许数字段：argon2 / l1 / jwt-ec-sec1 等；
+    // 中文串与含空格/大写的普通句子仍不满足形态，不会被误判为 key）
     if key.is_empty() || !key.chars().next().unwrap().is_ascii_alphabetic() {
         return None;
     }
-    if key.chars().any(|c| !c.is_ascii_lowercase() && c != '-') {
+    if key
+        .chars()
+        .any(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
+    {
         return None;
     }
     let static_key = intern_string(key);
@@ -1419,5 +1423,40 @@ mod tests {
         let formatted = icu_enhanced::format_datetime_locale(&dt);
         assert!(!formatted.is_empty(), "日期格式化不应为空");
         assert!(formatted.contains("2026"), "应包含年份: {}", formatted);
+    }
+    /// 含数字的键（argon2 / l1 / jwt-ec-sec1 等）必须可解析：解析器若拒绝数字，
+    /// FTL 词条永不生效、用户只能看到原始 key（回归锚定 22 个不可达键的修复）。
+    #[test]
+    fn parse_keyed_detail_accepts_digit_keys() {
+        let (key, args) = parse_keyed_detail("config-password-hash-argon2-param-invalid::t_cost")
+            .expect("含数字键应被解析");
+        assert_eq!(key, "config-password-hash-argon2-param-invalid");
+        assert_eq!(args, [("arg0", "t_cost".to_string())]);
+        assert!(
+            parse_keyed_detail("cache-l1-init::").is_some(),
+            "纯数字段也应可解析"
+        );
+    }
+
+    /// 守卫本意不变：中文串与含空格/大写的普通句子不得被误判为 key。
+    #[test]
+    fn parse_keyed_detail_still_rejects_prose() {
+        assert!(parse_keyed_detail("这是一句中文::包含分隔符").is_none());
+        assert!(parse_keyed_detail("not a key::with spaces").is_none());
+        assert!(parse_keyed_detail("MixedCase::value").is_none());
+    }
+
+    /// 端到端：含数字键经 translate_detail 渲染 FTL 文案而非回退原始 key。
+    #[test]
+    fn translate_detail_renders_digit_key_from_catalog() {
+        let rendered = translate_detail(
+            "config-password-hash-argon2-param-invalid",
+            &[("arg0", "t_cost")],
+        );
+        assert!(rendered.contains("t_cost"), "应渲染参数: {rendered}");
+        assert!(
+            !rendered.contains("config-password-hash"),
+            "不得回退原始 key: {rendered}"
+        );
     }
 }

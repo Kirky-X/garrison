@@ -637,7 +637,10 @@ dzWfBsm+KAfTJuqbV7VnJL3G
             .or_else(|| rb.as_ref().err())
             .expect("恰有一方失败");
         assert!(
-            err.to_string().contains("jwks-rotation-conflict"),
+            err.to_string().contains(&crate::i18n::translate_detail(
+                "oauth2-server-jwks-rotation-conflict",
+                &[("arg0", "another-instance-rotated-reload-and-retry")],
+            )),
             "失败方错误必须显性指明 CAS 冲突，实际: {err}"
         );
         let winner_kid = match (ra, rb) {
@@ -804,7 +807,13 @@ dzWfBsm+KAfTJuqbV7VnJL3G
             .await
             .expect_err("并发轮换后退役方 CAS 必须失败");
         assert!(
-            err.to_string().contains("jwks-retirement-conflict"),
+            err.to_string().contains(&crate::i18n::translate_detail(
+                "oauth2-server-jwks-retirement-conflict",
+                &[(
+                    "arg0",
+                    "another-instance-rotated-retirement-deferred-to-that-rotation"
+                )],
+            )),
             "失败方错误必须显性指明 CAS 冲突，实际: {err}"
         );
     }

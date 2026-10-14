@@ -2067,8 +2067,10 @@ fn validate_rejects_argon2_m_below_floor_without_risk_acceptance() {
     config.password_hasher.argon2_m_cost = 8192;
     let err = config.validate().unwrap_err();
     assert!(
-        err.to_string()
-            .contains("config-password-hash-argon2-m-below-floor"),
+        err.to_string().contains(&crate::i18n::translate_detail(
+            "config-password-hash-argon2-m-below-floor",
+            &[("arg0", "8192 (min 19456)"), ("arg1", "argon2id")],
+        )),
         "实际: {}",
         err
     );
@@ -2096,7 +2098,10 @@ fn validate_rejects_argon2_zero_cost_params() {
         .validate()
         .unwrap_err()
         .to_string()
-        .contains("config-password-hash-argon2-param-invalid"));
+        .contains(&crate::i18n::translate_detail(
+            "config-password-hash-argon2-param-invalid",
+            &[("arg0", "t_cost")],
+        )));
 
     let mut config = GarrisonConfig::default();
     config.password_hasher.argon2_p_cost = 0;
@@ -2104,7 +2109,10 @@ fn validate_rejects_argon2_zero_cost_params() {
         .validate()
         .unwrap_err()
         .to_string()
-        .contains("config-password-hash-argon2-param-invalid"));
+        .contains(&crate::i18n::translate_detail(
+            "config-password-hash-argon2-param-invalid",
+            &[("arg0", "p_cost")],
+        )));
 }
 
 /// bcrypt cost 越界：9（低于下限）与 16（高于上界）均拒绝，10/15 边界放行。
@@ -2216,8 +2224,10 @@ fn argon2_pool_size_validation_bounds() {
         config.password_hasher.argon2_pool_size = size;
         let err = config.validate().unwrap_err();
         assert!(
-            err.to_string()
-                .contains("config-password-hash-argon2-pool-size-out-of-range"),
+            err.to_string().contains(&crate::i18n::translate_detail(
+                "config-password-hash-argon2-pool-size-out-of-range",
+                &[("arg0", &format!("{size} (allowed 1-256)"))],
+            )),
             "size={} 实际: {}",
             size,
             err
