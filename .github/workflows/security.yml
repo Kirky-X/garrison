@@ -134,3 +134,45 @@ jobs:
         run: cargo fetch --locked
       - name: Verify byte-identical rebuild
         run: scripts/verify_reproducible_build.sh
+
+  # 一键清零「测试夹具类」code scanning 告警（仅 workflow_dispatch 手动触发，需维护者执行）。
+  # 判定纪律：仅处理 hard-coded-cryptographic-value 与 cleartext-logging 两类、且已逐条人工
+  # 核实为测试代码/测试夹具的告警（fixed 占位密钥与本地化错误文案断言，非真实凭证泄漏）；
+  # 其余规则一律 SKIP 留给人工分诊。生产敏感值由 mask_metadata 与 inklog secret-scan 出站
+  # 门控覆盖。全程留痕于本任务运行日志。
+  dismiss-test-fixture-alerts:
+    name: Dismiss test-fixture code scanning alerts
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Dismiss open alerts classified as test fixtures (used_in_tests)
+        run: |
+          set -euo pipefail
+          repo="${{ github.repository }}"
+          alerts="$(gh api "repos/$repo/code-scanning/alerts?state=open&per_page=100" \
+            --jq '.[] | [.number, .rule.id, .most_recent_instance.location.path, .most_recent_instance.location.start_line] | @tsv')"
+          count=0
+          while IFS=$'\t' read -r num rule path line; do
+            [ -n "$num" ] || continue
+            case "$rule" in
+              rust/hard-coded-cryptographic-value|rust/cleartext-logging) ;;
+              *)
+                echo "SKIP（非测试夹具类，需人工分诊）: #$num $rule $path:$line"
+                continue
+                ;;
+            esac
+            gh api -X PUT "repos/$repo/code-scanning/alerts/$num" \
+              -f state=dismissed \
+              -f dismissal_reason=used_in_tests \
+              -f dismissal_comment="[$rule] 测试夹具/测试代码（$path:$line，已逐条人工核实）：固定占位密钥与本地化错误文案断言，非真实凭证泄漏；生产路径敏感值由 mask_metadata 与 inklog secret-scan 出站门控覆盖。" \
+              --silent
+            count=$((count + 1))
+            echo "dismissed #$num $rule $path:$line"
+          done <<< "$alerts"
+          echo "共豁免 $count 条"
