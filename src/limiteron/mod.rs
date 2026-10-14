@@ -12,7 +12,7 @@
 //! |--------|-----------|------|
 //! | [`GarrisonDaoStorage`](crate::limiteron::GarrisonDaoStorage) | `Storage` | KV get/set/delete |
 //! | [`GarrisonDaoDistributedLimiter`](crate::limiteron::GarrisonDaoDistributedLimiter) | `DistributedLimiter` | 原子计数 + TTL（滑动窗口） |
-//! | [`GarrisonDaoBanStorage`](crate::limiteron::GarrisonDaoBanStorage) | `BanStorage` | 封禁记录管理（暴力破解防护） |
+//! | `GarrisonDaoBanStorage`（`firewall-ddos` feature 门控） | `BanStorage` | 封禁记录管理（暴力破解防护） |
 //!
 //! # 已知限制
 //!

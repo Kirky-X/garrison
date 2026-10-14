@@ -28,7 +28,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 /// 密码逻辑 trait，定义密码登录契约。
-/// 默认返回 `NotImplemented`，`GarrisonLogicDefault` 覆写为：查用户 → 校验密码（verify 通过且档位低于配置时惰性重哈希落库并广播 [`GarrisonEvent::PasswordRehashed`]）→ [`SessionLogic::login`] 签发 token。
+/// 默认返回 `NotImplemented`，`GarrisonLogicDefault` 覆写为：查用户 → 校验密码（verify 通过且档位低于配置时惰性重哈希落库并广播 `GarrisonEvent::PasswordRehashed`，需 `listener` feature）→ [`SessionLogic::login`] 签发 token。
 /// 安全约束：用户不存在与密码错误统一返回 `InvalidParam("stp-invalid-password")`，日志和事件 reason 统一 "invalid_credentials"，防止用户枚举。
 #[async_trait]
 pub trait PasswordLogic: SessionLogic {
