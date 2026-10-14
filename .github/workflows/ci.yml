@@ -160,7 +160,7 @@ jobs:
       # 矩阵腿工具链按腿安装：版本分支快照（如 1.97.1）在源码内硬编码工具链、不声明
       # toolchain 输入（传入会被 runner 忽略并告警，实测致三档腿全部回退同一工具链）；
       # stable 分支快照声明 toolchain 输入，按 ${{ matrix.rust }} 逐腿安装。
-      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable 分支快照, nosemgrep
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # stable 分支快照, nosemgrep
         with:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
