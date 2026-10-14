@@ -93,7 +93,7 @@ async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
 
-要求 Rust **1.97.1 及以上**（`Cargo.toml` 的 `rust-version = "1.97.1"`）：依赖面中的兄弟生态 crate（confers / oxcache / dbnexus / sdforge / limiteron / inklog / trait-kit 的 rc 线）各自声明 `rust-version = "1.97.1"`，这是依赖图可满足的最低工具链，低于该版本 `cargo check` 直接拒绝构建（`rustc ... is not supported by the following packages`）；`rust-toolchain.toml` 锁的是 `stable` 通道（不锁具体版本），请确保 stable ≥ 1.97.1。
+要求 Rust **1.97.1 及以上**（`Cargo.toml` 的 `rust-version = "1.97.1"`）：依赖面中的兄弟生态 crate（confers / oxcache / dbnexus / sdforge / limiteron / inklog / trait-kit 的 rc 线）各自声明 `rust-version = "1.97.1"`，这是依赖图可满足的最低工具链，低于该版本 `cargo check` 直接拒绝构建（`rustc ... is not supported by the following packages`）；CI 测试矩阵按 `1.97.1`（MSRV 下限）/ `stable` / `beta` 三档显式验证。
 
 > 预发布版本需显式写完整版本号，`"0.9"` 无法匹配 prerelease。如需启用全部协议层与安全模块：`features = ["full"]`。
 
@@ -412,7 +412,7 @@ CI 与发布流程内置两道供应链门禁：`cargo deny check`（RustSec 公
 
 ### 🛠️ 开发环境
 
-工具链为 Rust 1.97.1+（`rust-toolchain.toml` 锁 `stable` 通道，不锁具体版本；兄弟生态依赖 rc 线要求 ≥ 1.97.1）；提交前运行 `cargo fmt --all -- --check` 与 `cargo clippy --features full --lib --tests -- -D warnings`（不可用 `--all-features`：它同时启用 db-sqlite 与 db-postgres，而 dbnexus 禁止 embedded×server-side 驱动共存，必然 compile_error）；提交信息遵循 Conventional Commits（`feat`、`fix`、`docs` 等）。完整环境搭建步骤见 [🤝 贡献指南 · 开发环境搭建](docs/CONTRIBUTING.md#-开发环境搭建)。
+工具链为 Rust 1.97.1+（兄弟生态依赖 rc 线要求 ≥ 1.97.1；CI 按 `1.97.1` / `stable` / `beta` 三档矩阵显式验证）；提交前运行 `cargo fmt --all -- --check` 与 `cargo clippy --features full --lib --tests -- -D warnings`（不可用 `--all-features`：它同时启用 db-sqlite 与 db-postgres，而 dbnexus 禁止 embedded×server-side 驱动共存，必然 compile_error）；提交信息遵循 Conventional Commits（`feat`、`fix`、`docs` 等）。完整环境搭建步骤见 [🤝 贡献指南 · 开发环境搭建](docs/CONTRIBUTING.md#-开发环境搭建)。
 
 ### 💖 贡献方式
 

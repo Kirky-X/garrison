@@ -3,7 +3,7 @@
 
 //! SignHandler 实现：构造、签名生成、签名校验、HKDF 派生与 Drop 零化。
 //!
-//! 类型定义见 [`SignHandler`](crate::protocol::sign::SignHandler)。
+//! 类型定义见 [`SignHandler`]。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};

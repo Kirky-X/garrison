@@ -43,7 +43,7 @@ rustc --version
 cargo --version
 ```
 
-项目根目录已配置 `rust-toolchain.toml`（`channel = "stable"`，不锁具体版本），`rustup` 会按它安装 stable 工具链；请确认 stable ≥ 1.97.1。
+本地工具链由 rustup 默认通道决定；请确认所用工具链 ≥ 1.97.1（CI 测试矩阵按 `1.97.1` / `stable` / `beta` 三档显式验证）。
 
 ### 1.2 系统依赖
 
@@ -175,7 +175,6 @@ garrison/
 ├── locales/                  # i18n 资源文件（zh.ftl / en.ftl）
 ├── docs/                     # 文档
 ├── Cargo.toml
-├── rust-toolchain.toml       # 锁定工具链
 ├── rustfmt.toml              # 格式化配置
 └── README.md
 ```

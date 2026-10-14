@@ -91,7 +91,7 @@ rustup update stable
 rustc --version   # 确认 >= 1.97.1
 ```
 
-项目根目录已配置 `rust-toolchain.toml`（`channel = "stable"`，不锁具体版本），`rustup` 会按它安装 stable 工具链；请确认 stable ≥ 1.97.1。
+本地工具链由 rustup 默认通道决定；请确认所用工具链 ≥ 1.97.1（CI 测试矩阵按 `1.97.1` / `stable` / `beta` 三档显式验证）。
 
 ---
 

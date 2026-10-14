@@ -55,7 +55,7 @@ Garrison 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 T
 
 ### 2. 安装 Rust 工具链
 
-Garrison 需要 **Rust 1.97.1+**：`Cargo.toml` 声明 `rust-version = "1.97.1"`，取自兄弟生态依赖的 rc 线（confers / oxcache / dbnexus / sdforge / limiteron / inklog / trait-kit）各自声明的 `rust-version = "1.97.1"`——即依赖图可满足的最低工具链；低于该版本 `cargo check --locked` 直接报 `rustc ... is not supported by the following packages`。项目根目录的 `rust-toolchain.toml` 只锁 `channel = "stable"`（不锁具体版本），执行 `cargo` 命令时 rustup 按该文件安装 **最新 stable**——因此请用 `rustup update stable` 确保 stable ≥ 1.97.1；CI 的 MSRV 腿另行钉 1.97.1（与 `rust-version` 同值，见 `.github/workflows/ci.yml`）。
+Garrison 需要 **Rust 1.97.1+**：`Cargo.toml` 声明 `rust-version = "1.97.1"`，取自兄弟生态依赖的 rc 线（confers / oxcache / dbnexus / sdforge / limiteron / inklog / trait-kit）各自声明的 `rust-version = "1.97.1"`——即依赖图可满足的最低工具链；低于该版本 `cargo check --locked` 直接报 `rustc ... is not supported by the following packages`。本地工具链由 rustup 默认通道决定（请确保 ≥ 1.97.1）；CI 测试矩阵显式钉 `1.97.1`（MSRV 腿，与 `rust-version` 同值）/ `stable` / `beta` 三档（见 `.github/workflows/ci.yml`）。
 
 如需手动安装/升级：
 

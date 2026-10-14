@@ -93,7 +93,7 @@ async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
 
-Requires Rust **1.97.1 or later** (`rust-version = "1.97.1"` in `Cargo.toml`): the sibling-ecosystem crates in the dependency set (the rc line of confers / oxcache / dbnexus / sdforge / limiteron / inklog / trait-kit) each declare `rust-version = "1.97.1"`, which is the lowest toolchain the dependency graph accepts — `cargo check` under an older toolchain fails outright (`rustc ... is not supported by the following packages`); `rust-toolchain.toml` pins the `stable` channel (no specific version), so keep stable ≥ 1.97.1.
+Requires Rust **1.97.1 or later** (`rust-version = "1.97.1"` in `Cargo.toml`): the sibling-ecosystem crates in the dependency set (the rc line of confers / oxcache / dbnexus / sdforge / limiteron / inklog / trait-kit) each declare `rust-version = "1.97.1"`, which is the lowest toolchain the dependency graph accepts — `cargo check` under an older toolchain fails outright (`rustc ... is not supported by the following packages`); the CI test matrix verifies `1.97.1` (MSRV floor) / `stable` / `beta` explicitly.
 
 > Pre-release versions require the full version number; `"0.9"` will not match prerelease. To enable all protocol and security modules: `features = ["full"]`.
 
@@ -412,7 +412,7 @@ For the detailed contribution workflow and code standards, see the [🤝 Contrib
 
 ### 🛠️ Development Environment
 
-The toolchain is Rust 1.97.1+ (`rust-toolchain.toml` pins the `stable` channel, not a specific version; the sibling-ecosystem rc dependencies require ≥ 1.97.1); run `cargo fmt --all -- --check` and `cargo clippy --features full --lib --tests -- -D warnings` before committing (do not use `--all-features`: it enables both db-sqlite and db-postgres, and dbnexus rejects mixing embedded with server-side drivers via compile_error); commit messages follow Conventional Commits (`feat`, `fix`, `docs`, etc.). For the full environment setup, see the [🤝 Contributing Guide · Development Environment](docs/CONTRIBUTING.md#-开发环境搭建).
+The toolchain is Rust 1.97.1+ (the sibling-ecosystem rc dependencies require ≥ 1.97.1; the CI matrix verifies `1.97.1` / `stable` / `beta` explicitly); run `cargo fmt --all -- --check` and `cargo clippy --features full --lib --tests -- -D warnings` before committing (do not use `--all-features`: it enables both db-sqlite and db-postgres, and dbnexus rejects mixing embedded with server-side drivers via compile_error); commit messages follow Conventional Commits (`feat`, `fix`, `docs`, etc.). For the full environment setup, see the [🤝 Contributing Guide · Development Environment](docs/CONTRIBUTING.md#-开发环境搭建).
 
 ### 💖 Ways to Contribute
 
