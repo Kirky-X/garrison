@@ -14,6 +14,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  security-events: write
   contents: read
 
 concurrency:
@@ -158,6 +159,14 @@ jobs:
         run: |
           set -uo pipefail
           repo="${{ github.repository }}"
+          echo "=== GraphQL 探针（node id + resolve 变更）==="
+          gh api graphql -f query='query { repository(owner: "Kirky-X", name: "garrison") { codeScanningAlerts(first: 3, states: OPEN) { nodes { id number } } } }' 2>&1 | head -5 || true
+          first_gid="$(gh api graphql -f query='query { repository(owner: "Kirky-X", name: "garrison") { codeScanningAlerts(first: 1, states: OPEN) { nodes { id number } } } }' --jq '.data.repository.codeScanningAlerts.nodes[0].id' 2>&1 || echo GQL-FAIL)"
+          first_num="$(gh api graphql -f query='query { repository(owner: "Kirky-X", name: "garrison") { codeScanningAlerts(first: 1, states: OPEN) { nodes { id number } } } }' --jq '.data.repository.codeScanningAlerts.nodes[0].number' 2>&1 || echo '?')"
+          echo "first_gid=$first_gid first_num=$first_num"
+          if [ -n "$first_gid" ] && [ "$first_gid" != "GQL-FAIL" ]; then
+            gh api graphql -f query='mutation($alert: ID!) { resolveSecurityAlert(input: {alertId: $alert, state: DISMISSED, reason: USED_IN_TESTS, comment: "诊断：测试夹具占位密钥（非真实凭证）。"}) { alert { state } } }' -f alert="$first_gid" 2>&1 | head -6 || true
+          fi
           echo "=== GET 诊断（状态行 + 令牌权限头）==="
           gh api -i "repos/$repo/code-scanning/alerts?state=open&per_page=2" 2>&1 | grep -E "^HTTP|x-github-token-permissions|message" | head -6 || true
           alerts="$(gh api "repos/$repo/code-scanning/alerts?state=open&per_page=100" \
