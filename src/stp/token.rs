@@ -27,7 +27,7 @@ async fn ensure_valid_token_session(session: &dyn SessionLogic) -> GarrisonResul
 }
 
 #[async_trait]
-/// Token 类型校验、显式验证与刷新契约（对应 `StpLogic` 的 token 类型区分与 `getTokenValue` 校验部分）。
+/// Token 类型校验、显式验证与刷新契约。
 /// 类型校验默认委托 [`SessionLogic::check_login`]；`verify_token` / `refresh_token` 默认 `NotImplemented`，由 `GarrisonLogicDefault` 覆写。
 pub trait TokenLogic: SessionLogic {
     /// 校验 access_token 类型会话：默认委托 [`check_login`](SessionLogic::check_login)，未登录返回 `NotLogin`。

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Stp 模块，提供核心认证逻辑与工具入口（原 `StpLogic`/`StpInterface`/`StpUtil`，现统一 `Garrison*` 前缀）。
+//! Stp 模块，提供核心认证逻辑与工具入口。
 //!
 //! 5 个子 trait 按职责域分离（super-trait `GarrisonCore`），`GarrisonLogicDefault` 为默认实现；
 //! `tokio::task_local` 存储当前请求 token，经 `with_current_token` 设置、`current_token` 读取。
@@ -62,7 +62,7 @@ pub use self::token::TokenLogic;
 pub use self::util::init_backend;
 pub use self::util::{GarrisonUtil, JwtMode};
 
-/// 登录参数（对应 `SaLoginParameter`）：device/ip/user_agent 写入 `TokenSession`，`remember_me` 延长 Token 有效期，`require_mfa` 由 `DeviceBindingPolicy` 在 strict 模式新设备登录时置位。
+/// 登录参数：device/ip/user_agent 写入 `TokenSession`，`remember_me` 延长 Token 有效期，`require_mfa` 由 `DeviceBindingPolicy` 在 strict 模式新设备登录时置位。
 ///
 /// # 用法
 ///
@@ -99,7 +99,7 @@ pub struct LoginParams {
 // Manager / Strategy / Factory 等持有方改为具体类型 `Arc<GarrisonLogicDefault>`，
 // 方法调用通过子 trait（SessionLogic/PermissionLogic/TokenLogic/MfaLogic/PasswordLogic）解析。
 
-// task_local：存储当前请求的 token（类似 SaHolder）
+// task_local：存储当前请求的 token
 
 tokio::task_local! {
     /// 当前请求的 token，由 axum middleware 通过 `with_current_token` 设置。
@@ -155,7 +155,7 @@ pub struct MockClock {
 
 // GarrisonLogicDefault：默认实现
 
-/// 默认实现：组合 `GarrisonSession` + `GarrisonConfig`，实现全部 5 个子 trait（对应 `StpLogic`）。
+/// 默认实现：组合 `GarrisonSession` + `GarrisonConfig`，实现全部 5 个子 trait。
 pub struct GarrisonLogicDefault {
     /// 会话管理器（pub(crate) 供测试验证）。
     pub(crate) session: Arc<GarrisonSession>,

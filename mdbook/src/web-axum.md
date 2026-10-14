@@ -20,7 +20,7 @@ garrison = { version = "0.9.0-rc.3", features = ["web-axum"] }
 | `GarrisonRouter` | 路由构建器，注册受保护路由并应用中件间（`garrison_middleware`） |
 | `garrison_middleware` | 中间件函数，从 header/cookie 提取 token 并设置 task_local 上下文 |
 | `impl IntoResponse for GarrisonError` | 错误自动转为 HTTP 响应（统一 `response_parts()`） |
-| `CheckLogin` / `CheckRole` / `CheckPermission` | extractor，从请求 parts 校验（对应 `@SaCheckLogin` 等） |
+| `CheckLogin` / `CheckRole` / `CheckPermission` | extractor，从请求 parts 校验 |
 
 ## 路由与中间件示例
 

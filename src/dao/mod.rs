@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! DAO 模块（对应 `SaTokenDao`）：经 oxcache / dbnexus 提供多后端（缓存 / 关系型数据库）持久化抽象。
+//! DAO 模块：经 oxcache / dbnexus 提供多后端（缓存 / 关系型数据库）持久化抽象。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
@@ -13,7 +13,7 @@ mod macros;
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub(crate) use macros::dao_session;
 
-/// DAO 抽象层 trait，定义 Token 与会话的持久化操作（对应 `SaTokenDao`）：
+/// DAO 抽象层 trait，定义 Token 与会话的持久化操作：
 /// `get` / `set` / `update` / `delete` / `expire` 五元操作 + `set_permanent` / `get_timeout` / `keys` / `rename` 等扩展。
 ///
 /// 核心语义：`set` 必须指定 TTL（Token/Session 不应永久驻留）；`update` 保留原 TTL；

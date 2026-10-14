@@ -168,7 +168,7 @@ pub enum JwtMode {
 
 // GarrisonUtil：静态方法入口（委托全局 GarrisonManager 单例）
 
-/// 工具结构体（对应 `StpUtil`）：面向使用者的静态方法入口，内部委托 `GarrisonManager::logic()` 全局单例。
+/// 工具结构体：面向使用者的静态方法入口，内部委托 `GarrisonManager::logic()` 全局单例。
 /// 使用前提：须先执行 `GarrisonManager::builder().dao(dao).config(config).interface(interface).build().await`，否则返回 `Session("GarrisonManager 未初始化")`。
 pub struct GarrisonUtil;
 

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 注解模块，定义鉴权注解枚举（`@SaCheckLogin` 等的 Rust 表达，用于 router 中间件配置）
+//! 注解模块，定义鉴权注解枚举（用于 router 中间件配置）
 //! 与 axum extractor（`CheckLogin` 等，用于 handler 参数提取）。
 //!
 //! 配套 marker trait（`RoleName` / `PermissionName` / `ModeSpec`）经关联常量表达提取器类型级参数。

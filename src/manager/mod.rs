@@ -3,7 +3,7 @@
 
 //! 管理器模块，提供全局管理器单例与编译期工厂注册。
 //!
-//! `GarrisonManager` 对应 `SaManager`，统筹 DAO、配置、策略等组件的全局生命周期：持有
+//! `GarrisonManager` 统筹 DAO、配置、策略等组件的全局生命周期：持有
 //! `Arc<GarrisonLogicDefault>` 全局单例（基于 `arc_swap::ArcSwapOption`，读路径无锁、支持
 //! 重复 init）；`GarrisonLogicFactory` trait 通过 `inventory::submit!` 编译期注册；业务方经
 //! `GarrisonManager::builder().dao(dao).config(config).interface(interface).build().await`
@@ -62,7 +62,7 @@ pub use builder::GarrisonManagerBuilder;
 
 /// 全局管理器，统筹 `GarrisonLogicDefault` 的生命周期。
 ///
-/// 对应 `SaManager`，持有全局 `Arc<GarrisonLogicDefault>` 引用，提供静态方法入口。
+/// 持有全局 `Arc<GarrisonLogicDefault>` 引用，提供静态方法入口。
 ///
 /// # 初始化
 ///

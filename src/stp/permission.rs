@@ -17,7 +17,7 @@ use crate::listener::GarrisonEvent;
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
 
-/// 权限逻辑 trait，定义权限与角色校验契约（对应 `StpLogic` 的 checkPermission / checkRole / hasPermission / hasRole 部分）。
+/// 权限逻辑 trait，定义权限与角色校验契约。
 /// `check_*` 未登录且 `throw_on_not_login=true` 返回 `NotLogin`，`false` 时降级为 `NotPermission` / `NotRole`；未持有权限/角色同后者。
 #[async_trait]
 pub trait PermissionLogic: SessionLogic {

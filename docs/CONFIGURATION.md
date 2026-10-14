@@ -576,7 +576,7 @@ GARRISON_REDIS_URL=redis://127.0.0.1:6379/0
 | `GARRISON_INTERNAL_API_KEY` | 无（必填） | 内网 API Key，缺失或为空时 fail-closed 拒绝启动；长度下限由库层 `MIN_INTERNAL_API_KEY_LEN`（32 字节）统一强制 |
 | `GARRISON_MAX_LOGIN_COUNT` | **10** | 同账号最大并发会话数（超出踢出最早登录的会话）；显式传 `0` = 不限制（覆盖框架 `default_config()` 的 `0`） |
 | `GARRISON_SEED_PRIMARY_AMR` | **true** | 登录是否向会话播种主认证因子（`amr=["pwd"]` / AAL 1 / `auth_time`）。安全敏感部署建议显式 `false`——参考部署 login 不校验凭证，默认播种会断言一次从未发生的密码认证，误导下游 step-up 判定 |
-| `GARRISON_EXTERNAL_LOGIN_ENABLED` | **false** | **是否启用外网登录端点**。框架 login 不校验凭证（Sa-Token 模型：业务层先验密码、框架只签发会话），默认对 `POST /api/v1/auth/login` 返回 404（secure-by-default）。业务方注入凭证校验后才设为 `true`；仅接受 `true`/`false`（大小写不敏感），非法值拒绝启动 |
+| `GARRISON_EXTERNAL_LOGIN_ENABLED` | **false** | **是否启用外网登录端点**。框架 login 不校验凭证（职责边界：凭证校验属业务层，框架只签发会话），默认对 `POST /api/v1/auth/login` 返回 404（secure-by-default）。业务方注入凭证校验后才设为 `true`；仅接受 `true`/`false`（大小写不敏感），非法值拒绝启动 |
 | `GARRISON_EXTERNAL_LOGIN_ACK` | 无（条件必填） | 开启外网登录且外网绑定为非回环地址时的显式风险确认：取值必须精确为 `i-understand-no-credential-check`，缺失或不匹配拒绝启动（fail-closed） |
 | `GARRISON_STRICT_SECURITY` | **true** | 严格安全档：内网 API Key 长度下限（库层 `MIN_INTERNAL_API_KEY_LEN` = 32 字节）与外网登录暴露未 ACK 均在启动期由库层 `AuthServerConfig::validate()` 拒绝（早于建库与迁移）。`false` 仅作为密钥尚未轮换时的一次性逃生阀，同条件降级为库层告警。本路径经 confers 只接受 `true`/`false`（大小写不敏感），非法值拒绝启动（库层 `AuthServerConfig::default()` 读同名变量时语义不同：非法值告警后回退缺省 `false`） |
 | `GARRISON_FIELD_ENCRYPTION_KEYS` | 无（`field-encryption` feature 启用时必填） | 落库敏感字段静态加密密钥表（逗号分隔 `key_id:hex64`，hex64 = 32 字节 AES-256 钥材，首项为主钥）；feature 启用但未配置即拒绝启动（fail-closed）。garrison-cli 的同名变量用作 `change-key` / `check-key` 的密钥来源 |

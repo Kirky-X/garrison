@@ -5,7 +5,7 @@
 use crate::error::GarrisonResult;
 use async_trait::async_trait;
 
-/// 权限/角色数据回调接口（对应 `StpInterface`，由业务方实现，数据来源不限：数据库 / YAML / 内存 / 外部服务）。
+/// 权限/角色数据回调接口（由业务方实现，数据来源不限：数据库 / YAML / 内存 / 外部服务）。
 #[async_trait]
 pub trait GarrisonInterface: Send + Sync {
     /// 获取指定主体的权限列表；数据源访问失败由实现方决定具体 `GarrisonError`。

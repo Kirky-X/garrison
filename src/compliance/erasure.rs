@@ -11,7 +11,7 @@
 //! | 账户锁定状态 | `lockout:{login_id}`（`DaoKeyPrefix::Lockout`） | login_id |
 //! | 暴力破解失败计数 | `bf:{ip}:count`（`DaoKeyPrefix::BruteForce`，同生产路径） | 客户端 IP |
 //!
-//! 会话/token 明细由委托闭包擦除（推荐 `StpLogic::logout_by_login_id`，含 per-login 锁、token 键删除与内存索引清理）；管辖外残留由报告 `residual_guidance` 提示业务方处置（API Key、验证码记录、业务用户资料、审计日志，见 `docs/DATA_COMPLIANCE.md`）。
+//! 会话/token 明细由委托闭包擦除（推荐 `SessionLogic::logout_by_login_id`，含 per-login 锁、token 键删除与内存索引清理）；管辖外残留由报告 `residual_guidance` 提示业务方处置（API Key、验证码记录、业务用户资料、审计日志，见 `docs/DATA_COMPLIANCE.md`）。
 
 use std::future::Future;
 use std::sync::Arc;
@@ -21,7 +21,7 @@ use crate::dao::GarrisonDao;
 use crate::error::GarrisonResult;
 use crate::session::account_key;
 
-/// 数据主体擦除服务：组合框架既有删除原语，按主体擦除可定位数据并产出报告；会话擦除经 [`erase_subject`](Self::erase_subject) 闭包委托（推荐注入 `StpLogic::logout_by_login_id`）。
+/// 数据主体擦除服务：组合框架既有删除原语，按主体擦除可定位数据并产出报告；会话擦除经 [`erase_subject`](Self::erase_subject) 闭包委托（推荐注入 `SessionLogic::logout_by_login_id`）。
 pub struct DataErasureService {
     dao: Arc<dyn GarrisonDao>,
 }
@@ -60,7 +60,7 @@ impl DataErasureService {
     {
         let mut erased_keys = Vec::new();
 
-        // 会话擦除委托（per-login 锁语义在 StpLogic 侧）
+        // 会话擦除委托（per-login 锁语义在 SessionLogic 侧）
         let delegated = session_erasure(login_id.to_string()).await.is_ok();
 
         // Account-Session 索引键（与 session::account_key 同源构造，委托已删时幂等）
@@ -140,7 +140,7 @@ mod tests {
 
         let dao_for_delegate = dao.clone();
         let delegated = move |id: String| async move {
-            // 模拟 StpLogic::logout_by_login_id（真实注入见集成路径）
+            // 模拟 SessionLogic::logout_by_login_id（真实注入见集成路径）
             dao_for_delegate.delete(&account_key(&id)).await.unwrap();
             Ok(())
         };

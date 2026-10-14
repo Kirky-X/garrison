@@ -157,7 +157,7 @@
 
 - **OAuth2 state / OIDC nonce 缺失 fail-closed（对抗测试驱动）**：`OAuth2Client::exchange_code_with_pkce` 拒绝空串 state（原双空相等放行，CSRF 注入可静默通过）；`OidcHandler::verify_id_token` 拒绝空串 expected nonce（原空对空恒等放行，防重放锚点失效）。redirect_uri 精确匹配 / state 旧回调重放 / nonce 缺失三形态由验收测试锁定（`tests/acceptance/protocol_oauth2.rs`）。
 - **Refresh Token 轮换退化路径显性化**：`OAuth2State::new` 未注入 `RefreshTokenRotation` 时输出结构性 warn（含 reuse detection 不可用后果），DAO 退化分支每次刷新输出请求级 warn——不再静默降级。
-- **外网登录端点 fail-closed（Critical，C-1）**：`AuthServerConfig` 新增 `external_login_enabled`（默认 **false**）。框架 login 端点不校验凭证（Sa-Token 模型），禁用时 `POST /api/v1/auth/login` 返回 404；开启时启动输出 warn。`auth_server` bin 经 `GARRISON_EXTERNAL_LOGIN_ENABLED` 显式开启；依赖外网登录的测试/示例已显式 opt-in。
+- **外网登录端点 fail-closed（Critical，C-1）**：`AuthServerConfig` 新增 `external_login_enabled`（默认 **false**）。框架 login 端点不校验凭证（职责边界：凭证校验属业务层，框架只签发会话），禁用时 `POST /api/v1/auth/login` 返回 404；开启时启动输出 warn。`auth_server` bin 经 `GARRISON_EXTERNAL_LOGIN_ENABLED` 显式开启；依赖外网登录的测试/示例已显式 opt-in。
 - **密码登录时序侧信道对齐（High，H-1）**：用户不存在分支执行一次等价开销的 dummy Argon2id verify（`DUMMY_ARGON2_HASH`），消除与密码错误分支的响应耗时双峰，防用户名枚举。
 - **OAuth2 password grant 限流 fail-closed（M-3）**：`PasswordRateLimiter::check` 与 `TokenRateLimiter::check_username`（username 维度，撞库防护）DAO 故障时改拒绝；`check_client`（client QPS）保持 fail-open。
 - **JWT 黑名单写失败重试 + 告警**：撤销写入改为最多 3 次尝试（间隔 100/300ms），最终失败升级 `error` 日志（含 jti 与尝试次数）；对外保持幂等成功。

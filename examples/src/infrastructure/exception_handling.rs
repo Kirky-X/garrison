@@ -19,7 +19,7 @@ use garrison::exception::{GarrisonException, NotLoginException};
 pub fn run() -> GarrisonResult<()> {
     println!("=== Garrison 异常处理示例 ===\n");
 
-    // 1. NotLoginException：未登录异常（对应 NotLoginException）
+    // 1. NotLoginException：未登录异常
     let ex = NotLoginException::new("please log in first").with_login_type("account");
     println!("[1] NotLoginException:");
     println!("    message   = {}", ex.message);

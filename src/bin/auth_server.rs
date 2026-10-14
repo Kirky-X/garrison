@@ -27,7 +27,7 @@
 //! - `GARRISON_MAX_LOGIN_COUNT`：同账号最大并发会话数（默认 **10**，超出时
 //!   踢出最早登录的会话；显式传 0 = 不限制）
 //! - `GARRISON_EXTERNAL_LOGIN_ENABLED`：是否启用外网登录端点（默认 **false**）。
-//!   框架 login 不校验凭证（Sa-Token 模型：业务层先验密码、框架只签发会话），
+//!   框架 login 不校验凭证（职责边界：凭证校验属业务层，框架只签发会话），
 //!   业务方注入凭证校验后才应设为 `true`；默认关闭时 `POST /api/v1/auth/login` 返回 404。
 //!   **开启前业务层必须已注入凭证校验**；开启且外网绑定为非回环地址时，
 //!   还须显式设置 `GARRISON_EXTERNAL_LOGIN_ACK` 才能启动

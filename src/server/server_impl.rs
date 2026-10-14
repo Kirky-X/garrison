@@ -179,7 +179,7 @@ impl GarrisonAuthServer {
 
     /// 是否启用外网登录端点（默认 `false`，secure-by-default）。
     ///
-    /// 框架 login 端点不校验任何凭证（Sa-Token 模型：业务层先验密码、框架只签发会话），禁用时
+    /// 框架 login 端点不校验任何凭证（职责边界：凭证校验属业务层，框架只签发会话），禁用时
     /// 外网端口对 `POST /api/v1/auth/login` 一律 404。开启前须确保业务侧已注入凭证校验，否则
     /// 任何主体都能获取任意用户的有效会话；开启后 `listen()` 启动时输出 warn。
     pub fn with_external_login_enabled(mut self, enabled: bool) -> Self {

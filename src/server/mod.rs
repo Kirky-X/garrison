@@ -103,7 +103,7 @@ pub struct AuthServerConfig {
     pub external_body_limit: usize,
     /// 内网请求体大小上限（字节，默认 1MB）。
     pub internal_body_limit: usize,
-    /// 是否启用外网登录端点（默认 **false**，secure-by-default）：框架 login 端点不校验任何凭证（Sa-Token 模型：业务层先验密码、框架只负责签发会话），因此默认关闭外网 `/api/v1/auth/login`（返回 404）；业务方注入凭证校验后经 `with_external_login_enabled(true)` 显式开启，开启时 `listen()` 启动输出 warn 提醒。
+    /// 是否启用外网登录端点（默认 **false**，secure-by-default）：框架 login 端点不校验任何凭证（职责边界：凭证校验属业务层，框架只签发会话），因此默认关闭外网 `/api/v1/auth/login`（返回 404）；业务方注入凭证校验后经 `with_external_login_enabled(true)` 显式开启，开启时 `listen()` 启动输出 warn 提醒。
     pub external_login_enabled: bool,
     /// 内网 API Key 认证失败锁定阈值（默认 10；**0 = 禁用锁定**）：同一源 IP 连续认证失败（缺失/错误/重复 `X-API-Key`）达到阈值后，窗口期内一律 429 + `Retry-After`，成功认证即清零；`GARRISON_API_KEY_LOCKOUT_THRESHOLD` 可覆盖。
     pub api_key_lockout_threshold: u32,

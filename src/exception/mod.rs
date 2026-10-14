@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 pub use crate::error::GarrisonError;
 
-/// 未登录异常（对应上游 `NotLoginException`），表示请求缺少有效登录态。
+/// 未登录异常，表示请求缺少有效登录态。
 #[derive(Debug, Clone)]
 pub struct NotLoginException {
     /// 异常消息。
@@ -17,7 +17,7 @@ pub struct NotLoginException {
     pub login_type: String,
 }
 
-/// 携带上下文的业务可恢复异常（对应 `SaTokenException` 的"携带上下文"语义）。
+/// 携带上下文的业务可恢复异常。
 ///
 /// 与 `GarrisonError` enum 解耦，提供 token / login_id / extras 上下文；经 `new(code, msg).with_*(..).build()` 链式构造，`Into<GarrisonError>` 转为 `GarrisonError::Exception` 上抛。
 ///

@@ -46,7 +46,7 @@ let report = eraser
 let ip_report = eraser.erase_ip_artifacts("203.0.113.7").await?;
 ```
 
-设计约束：会话删除的并发正确性由 `StpLogic` 承载（委托而非复制）；委托失败不中断擦除、在报告中显性暴露——删除权路径宁可报告残留也不静默宣称完成。
+设计约束：会话删除的并发正确性由 `SessionLogic` 承载（委托而非复制）；委托失败不中断擦除、在报告中显性暴露——删除权路径宁可报告残留也不静默宣称完成。
 
 ### 2.2 业务方残留责任（报告 `residual_guidance` 同步提示）
 

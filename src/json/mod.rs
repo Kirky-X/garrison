@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! JSON 模块，对应上游 JSON 模板层，隔离具体 JSON 库（serde_json / simd-json 等）。
+//! JSON 模块，隔离具体 JSON 库（serde_json / simd-json 等）。
 //!
 //! 组成：`GarrisonJsonTemplate` struct（持有 `serde_json::Value`）、`GarrisonSerializer` trait（方法签名稳定）、`GarrisonSerializerDefault`（委托 serde_json）。
 
@@ -32,7 +32,7 @@ pub struct GarrisonJsonTemplate {
     value: serde_json::Value,
 }
 
-/// 序列化抽象 trait（对应 `SaSerializerTemplate`），提供类型化的序列化/反序列化。
+/// 序列化抽象 trait，提供类型化的序列化/反序列化。
 pub trait GarrisonSerializer {
     /// 将类型化对象序列化为 JSON 字符串。
     fn serialize<T: serde::Serialize>(&self, value: &T) -> GarrisonResult<String>;

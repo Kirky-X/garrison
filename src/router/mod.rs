@@ -11,7 +11,7 @@ use crate::annotation::Annotation;
 use crate::error::GarrisonResult;
 use async_trait::async_trait;
 
-/// 拦截器 trait（对应 `SaInterceptor`）：实现方在 `pre_handle` 中按 annotation 调用
+/// 拦截器 trait：实现方在 `pre_handle` 中按 annotation 调用
 /// `GarrisonUtil` 鉴权方法，middleware 在执行 handler 前调用，返回 `Err` 时短路返回错误响应。
 #[async_trait]
 pub trait GarrisonInterceptor: Send + Sync {

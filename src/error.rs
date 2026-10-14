@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 错误类型定义模块：SaTokenException 异常体系，提供框架统一错误类型与 `GarrisonResult` 别名。
+//! 错误类型定义模块：定义框架统一错误类型与 `GarrisonResult` 别名。
 
 use crate::exception::GarrisonException;
 use thiserror::Error;
@@ -11,13 +11,13 @@ use thiserror::Error;
 /// Display 依据 i18n feature：未启用时硬编码中文，启用时按线程本地 locale 切换（详见 [`crate::i18n`]）。
 #[derive(Error)]
 pub enum GarrisonError {
-    /// 未登录异常（对应 NotLoginException）。
+    /// 未登录异常。
     NotLogin(String),
 
-    /// 无权限异常（对应 NotPermissionException）。
+    /// 无权限异常。
     NotPermission(String),
 
-    /// 无角色异常（对应 NotRoleException）。
+    /// 无角色异常。
     NotRole(String),
 
     /// Token 无效异常。

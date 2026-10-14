@@ -21,7 +21,7 @@ use async_trait::async_trait;
 #[cfg(feature = "mfa-recovery")]
 use std::sync::Arc;
 
-/// MFA 逻辑 trait，定义二级认证与账号禁用校验契约（对应 `StpLogic` 的 checkSafe / checkDisable 部分）。
+/// MFA 逻辑 trait，定义二级认证与账号禁用校验契约。
 /// 默认实现：`check_safe` 先过会话前置校验再查 `is_safe("default")`，未通过返回 `NotSafe("SAFE_EXPIRED")`；`check_disable` 过前置校验后返回 `Ok(())`，由覆写方查询禁用列表。
 #[async_trait]
 pub trait MfaLogic: SessionLogic {

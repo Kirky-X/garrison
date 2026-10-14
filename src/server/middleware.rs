@@ -433,7 +433,7 @@ pub async fn external_path_filter(req: Request, next: Next) -> Response {
 /// 外网登录端点开关（`external_login_gate` 的 middleware state）。
 ///
 /// `false`（默认）时 `POST /api/v1/auth/login` 返回 404——框架 login 端点不校验任何凭证
-/// （Sa-Token 模型：业务层先验密码、框架只签发会话），无条件暴露将允许任意主体获取任意用户会话。
+/// （职责边界：凭证校验属业务层，框架只签发会话），无条件暴露将允许任意主体获取任意用户会话。
 #[derive(Debug, Clone, Copy)]
 pub struct ExternalLoginGate(pub bool);
 

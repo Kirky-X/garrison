@@ -98,7 +98,7 @@ garrison/
 │   │   ├── token/mod.rs
 │   │   ├── permission/mod.rs
 │   │   └── auth/mod.rs
-│   ├── stp/                  # StpUtil 风格门面（v0.5.3 拆分为多文件）
+│   ├── stp/                  # 认证逻辑模块（多文件拆分）
 │   │   ├── mod.rs            # re-exports
 │   │   ├── core.rs           # GarrisonCore trait
 │   │   ├── session/          # SessionLogic trait（mod.rs + helpers.rs + tests.rs）

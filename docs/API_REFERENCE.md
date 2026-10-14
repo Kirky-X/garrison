@@ -201,7 +201,7 @@ GarrisonManager::builder()
 
 ## 🔌 业务回调 GarrisonInterface
 
-`garrison::GarrisonInterface`（`src/stp/interface.rs`）— 业务方实现，提供权限 / 角色数据（对应 Sa-Token 的 `StpInterface`）。
+`garrison::GarrisonInterface`（`src/stp/interface.rs`）— 业务方实现，提供权限 / 角色数据。
 
 | 方法 | 默认实现 | 说明 |
 |------|----------|------|
@@ -414,7 +414,7 @@ Display 行为：i18n 基础层无条件编译，`to_string()` 按线程本地 l
 
 | 变体 | HTTP 语义 | 说明 |
 |------|-----------|------|
-| `NotLogin(String)` | 401 | 未登录（对应 NotLoginException） |
+| `NotLogin(String)` | 401 | 未登录 |
 | `NotPermission(String)` / `NotRole(String)` | 403 | 无权限 / 无角色 |
 | `InvalidToken(String)` / `ExpiredToken(String)` / `TokenRevoked(String)` | 401 | token 无效 / 过期 / 已吊销（RFC 7009） |
 | `Dao(String)` | 500 | 存储层错误 |

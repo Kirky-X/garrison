@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 配置模块，提供 GarrisonConfig 全局配置（对应 `SaTokenConfig`）。
+//! 配置模块，提供 GarrisonConfig 全局配置。
 //!
 //! 配置源由 confers 接管，优先级：环境变量（`GARRISON_` 前缀自动覆盖）> toml 文件（`GarrisonConfig::load`）> 代码默认值（`ConfigBuilder::default()`）。
 //! 热更新通过 `tokio::sync::watch` 广播：`watch()` 返回接收端，`update(f)` 闭包式修改并广播。
@@ -324,7 +324,7 @@ pub type JwtSecret = zeroize::Zeroizing<String>;
 #[cfg(not(feature = "protocol-zeroize"))]
 pub type JwtSecret = String;
 
-/// 全局配置结构体，定义框架运行参数（对应 `SaTokenConfig`）。
+/// 全局配置结构体，定义框架运行参数。
 ///
 /// # 字段说明
 ///

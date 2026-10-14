@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 上下文模块，提供请求 / 响应 / 存储上下文抽象（对应 SaToken 上下文抽象层）。
+//! 上下文模块，提供请求 / 响应 / 存储上下文抽象。
 //!
 //! 经 trait 隔离 Web 框架差异，实现框架无关的鉴权逻辑：`GarrisonContext` 为入口，
 //! `GarrisonRequest` / `GarrisonResponse` / `GarrisonStorage` 分别抽象 HTTP 请求、
@@ -57,7 +57,7 @@ pub struct GarrisonPrincipal {
     pub login_id: String,
 }
 
-/// 上下文 trait，提供请求访问入口（对应 `SaTokenContext`），各 Web 框架适配需实现此 trait。
+/// 上下文 trait，提供请求访问入口，各 Web 框架适配需实现此 trait。
 ///
 /// 仅暴露 `request()` 方法获取请求对象；响应数据写入由具体适配器
 /// （如 `AxumContext::raw_response_mut()` / `into_response()`）提供，避免 trait 方法返回新实例破坏状态共享。
@@ -66,7 +66,7 @@ pub trait GarrisonContext {
     fn request(&self) -> GarrisonResult<Box<dyn GarrisonRequest>>;
 }
 
-/// 请求抽象 trait，提供 HTTP 请求数据访问（对应 `SaTokenRequest`）。
+/// 请求抽象 trait，提供 HTTP 请求数据访问。
 pub trait GarrisonRequest {
     /// 获取请求路径。
     fn path(&self) -> GarrisonResult<String>;
@@ -88,7 +88,7 @@ pub trait GarrisonRequest {
     fn get_token(&self, config: &crate::config::GarrisonConfig) -> GarrisonResult<Option<String>>;
 }
 
-/// 响应抽象 trait，提供 HTTP 响应数据写入（对应 `SaTokenResponse`）。
+/// 响应抽象 trait，提供 HTTP 响应数据写入。
 pub trait GarrisonResponse {
     /// 设置响应状态码（如 401 未登录、403 无权限）。
     fn set_status(&mut self, code: u16) -> GarrisonResult<()>;
@@ -141,7 +141,7 @@ pub trait GarrisonResponse {
     }
 }
 
-/// 存储抽象 trait，提供请求级临时数据存储（对应 `SaTokenStorage`）。
+/// 存储抽象 trait，提供请求级临时数据存储。
 ///
 /// 用于单次请求范围内传递数据（如 trace_id、用户上下文）。
 pub trait GarrisonStorage {

@@ -484,7 +484,6 @@ Garrison stands on the shoulders of these excellent open source projects:
 
 ### 💝 Special Thanks
 
-- [Sa-Token](https://github.com/dromara/sa-token): Java ecosystem auth framework, whose domain modeling informed Garrison's early design
 - Thanks to the Rust community and all [contributors](https://github.com/Kirky-X/garrison/graphs/contributors)
 
 ---

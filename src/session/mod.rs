@@ -165,7 +165,7 @@ pub trait SessionExpiryListener: Send + Sync {
     async fn on_session_expired(&self, login_id: &str, token: &str) -> GarrisonResult<()>;
 }
 
-/// 会话管理器，封装 `GarrisonDao` 提供双模会话操作（对应 `SaSession` 管理逻辑）。
+/// 会话管理器，封装 `GarrisonDao` 提供双模会话操作。
 ///
 /// 存储格式：`account:session:{login_id}` → `AccountSession`（JSON），`token:session:{token}` → `TokenSession`（JSON）。
 pub struct GarrisonSession {

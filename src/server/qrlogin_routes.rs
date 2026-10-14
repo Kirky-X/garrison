@@ -48,15 +48,15 @@ pub struct QrLoginHttpState {
     pub issuer: Arc<dyn QrLoginSessionIssuer>,
 }
 
-/// 基于 Stp 的默认会话签发端口实现。
+/// 基于框架默认逻辑的会话签发端口实现。
 ///
 /// `resolve_app_login_id` 在 task_local 上下文内调 `get_login_id`；`issue_session` 走
 /// `SessionLogic::login`（与密码登录同路径，device 固定 "qrlogin"），使扫码登录会话继承
 /// 权限/踢下线/续期/hijack 检测/审计等全部下游能力。
-pub struct StpQrLoginIssuer;
+pub struct GarrisonQrLoginIssuer;
 
 #[async_trait]
-impl QrLoginSessionIssuer for StpQrLoginIssuer {
+impl QrLoginSessionIssuer for GarrisonQrLoginIssuer {
     async fn resolve_app_login_id(&self, app_token: &str) -> GarrisonResult<String> {
         let logic = GarrisonManager::logic()?;
         let login_id =

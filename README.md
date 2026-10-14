@@ -484,7 +484,6 @@ Garrison 站在以下优秀开源项目的肩膀上：
 
 ### 💝 特别感谢
 
-- [Sa-Token](https://github.com/dromara/sa-token)：Java 生态的认证鉴权框架，为本项目早期领域建模提供参考
 - 感谢 Rust 社区与所有 [贡献者](https://github.com/Kirky-X/garrison/graphs/contributors)
 
 ---
