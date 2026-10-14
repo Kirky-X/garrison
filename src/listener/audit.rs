@@ -833,7 +833,7 @@ impl AuditLogListener {
                 tracing::warn!(
                     error = %e,
                     metadata_len = metadata.len(),
-                    "audit mask_metadata: metadata is not valid JSON, masking skipped and raw value kept"
+                    "{}", crate::i18n::translate_detail("logs-audit-mask-metadata-invalid-json", &[])
                 );
                 return metadata.to_string();
             },
@@ -1854,7 +1854,7 @@ mod db_sqlite_tests {
         );
     }
 
-    // export_csv / export_json / verify_signature_chain 测试（Red）
+    // export_csv / export_json / verify_signature_chain 测试
 
     /// `export_csv` 应返回有效 CSV 格式字符串。
     ///

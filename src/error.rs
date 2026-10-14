@@ -301,7 +301,7 @@ impl GarrisonError {
     #[cfg(any(feature = "web-axum", feature = "web-actix", feature = "web-warp"))]
     pub(crate) fn log_rejection(&self) {
         if matches!(self, Self::RateLimited { .. }) {
-            tracing::warn!(error = ?self, "garrison rejection: rate limited");
+            tracing::warn!(error = ?self, "{}", crate::i18n::translate_detail("logs-error-rejection-rate-limited", &[]));
         } else {
             tracing::error!(error = ?self, "garrison rejection");
         }
@@ -856,6 +856,144 @@ mod tests {
             "GarrisonError 体积膨胀（{size} 字节）：请改用 Box 装载大 payload，\
              避免热路径 Result 越过 result_large_err 阈值"
         );
+    }
+
+    /// Debug 的变体名分支：日志/告警按变体名过滤，缺分支会让结构体变体的 Debug 失真。
+    #[test]
+    #[cfg_attr(
+        not(any(feature = "email-verification", feature = "credit-metering")),
+        allow(unused_mut)
+    )]
+    fn debug_prints_variant_name_for_struct_variants() {
+        let mut cases: Vec<(GarrisonError, &str)> = vec![
+            (
+                GarrisonError::InvalidResponse("bad-json".into()),
+                "InvalidResponse",
+            ),
+            (
+                GarrisonError::FirewallBlocked("waf".into()),
+                "FirewallBlocked",
+            ),
+            (
+                GarrisonError::DisableService {
+                    service: "default".into(),
+                    until: None,
+                },
+                "DisableService",
+            ),
+            (
+                GarrisonError::NotSafe {
+                    reason: "MFA_TOTP_REQUIRED".into(),
+                },
+                "NotSafe",
+            ),
+            (
+                GarrisonError::InvalidStateTransition {
+                    from: "Active".into(),
+                    to: "Revoked".into(),
+                },
+                "InvalidStateTransition",
+            ),
+            (
+                GarrisonError::SmsRateLimitExceeded {
+                    window: "hourly".into(),
+                },
+                "SmsRateLimitExceeded",
+            ),
+            (GarrisonError::SmsVerifyMaxAttempts, "SmsVerifyMaxAttempts"),
+            (GarrisonError::SmsCodeNotFound, "SmsCodeNotFound"),
+            (GarrisonError::SmsChannelRecycled, "SmsChannelRecycled"),
+        ];
+        #[cfg(feature = "email-verification")]
+        cases.extend([
+            (
+                GarrisonError::EmailRateLimitExceeded {
+                    window: "daily".into(),
+                },
+                "EmailRateLimitExceeded",
+            ),
+            (
+                GarrisonError::EmailVerifyMaxAttempts,
+                "EmailVerifyMaxAttempts",
+            ),
+            (GarrisonError::EmailCodeNotFound, "EmailCodeNotFound"),
+            (GarrisonError::EmailChannelRecycled, "EmailChannelRecycled"),
+        ]);
+        #[cfg(feature = "credit-metering")]
+        cases.push((
+            GarrisonError::CreditInsufficient {
+                tenant_id: 1,
+                requested: 10,
+                remaining: 0,
+            },
+            "CreditInsufficient",
+        ));
+
+        for (err, variant) in &cases {
+            let debug = format!("{:?}", err);
+            assert!(
+                debug.starts_with(&format!("{variant}(")),
+                "Debug 变体名前缀应为 {variant}，实际: {debug}"
+            );
+        }
+    }
+
+    /// Debug 对超长 Display 截断到 200 字符 + `...`，且在多字节字符边界回退（切碎 UTF-8 会 panic）。
+    #[test]
+    fn debug_truncates_long_message_on_char_boundary() {
+        let cases = [
+            "x".repeat(400),
+            format!("{}尾", "错".repeat(300)),
+            "🌠".repeat(200),
+        ];
+        for message in cases {
+            let debug = format!("{:?}", GarrisonError::Internal(message.clone()));
+            assert!(
+                debug.contains("...)"),
+                "超长消息应截断并以 `...)` 收尾，实际尾部: {}",
+                &debug[debug.len().saturating_sub(16)..]
+            );
+            assert!(
+                debug.len() < message.len(),
+                "截断后长度应小于原始消息（{} < {}）",
+                debug.len(),
+                message.len()
+            );
+        }
+    }
+
+    /// `CreditError` → `GarrisonError` 的四条映射：Insufficient 保留配额三元组，其余按语义分流。
+    #[cfg(feature = "credit-metering")]
+    #[test]
+    fn credit_error_maps_to_garrison_error() {
+        let insufficient = GarrisonError::from(crate::credit::CreditError::Insufficient {
+            tenant_id: 7,
+            requested: 10,
+            remaining: 3,
+        });
+        assert!(
+            matches!(
+                insufficient,
+                GarrisonError::CreditInsufficient {
+                    tenant_id: 7,
+                    requested: 10,
+                    remaining: 3
+                }
+            ),
+            "Insufficient 应保留 tenant_id/requested/remaining"
+        );
+        assert!(matches!(
+            GarrisonError::from(crate::credit::CreditError::ConfigInvalid("bad".into())),
+            GarrisonError::Config(msg) if msg == "bad"
+        ));
+        assert!(matches!(
+            GarrisonError::from(crate::credit::CreditError::Dao("down".into())),
+            GarrisonError::Dao(msg) if msg == "down"
+        ));
+        assert!(matches!(
+            GarrisonError::from(crate::credit::CreditError::CycleExpired),
+            GarrisonError::Internal(msg) if msg == "credit-cycle-expired"
+        ));
     }
 
     #[test]

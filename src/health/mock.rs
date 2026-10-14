@@ -58,3 +58,38 @@ impl HealthCheck for AlwaysDegraded {
         Box::pin(async { Ok(HealthStatus::Degraded) })
     }
 }
+
+/// 检查体 panic 的 HealthCheck mock（验证 `check_all` 的 panic 隔离）。
+pub struct PanickingCheck;
+
+impl HealthCheck for PanickingCheck {
+    fn name(&self) -> &str {
+        "panicking"
+    }
+
+    fn check(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = HealthResult<HealthStatus>> + Send>>
+    {
+        Box::pin(async { panic!("probe blew up") })
+    }
+}
+
+/// 检查体长时间挂起的 HealthCheck mock（验证 `check_all` 的超时护栏）。
+pub struct HangingCheck;
+
+impl HealthCheck for HangingCheck {
+    fn name(&self) -> &str {
+        "hanging"
+    }
+
+    fn check(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = HealthResult<HealthStatus>> + Send>>
+    {
+        Box::pin(async {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            Ok(HealthStatus::Healthy)
+        })
+    }
+}

@@ -936,6 +936,100 @@ async fn check_role_in_tenant_queries_tenant_scoped_data_source() {
     );
 }
 
+// check_role_scoped 判定缓存（注入 DAO 的路径）回归
+
+/// check_role_in_tenant 注入 DAO 时回填判定缓存：true / false 两种结果都落 `garrison:role:cache:` 键（租户段 + 纪元哨兵）。
+#[tokio::test]
+async fn check_role_in_tenant_fills_decision_cache() {
+    let mut iface = MockInterface::new();
+    iface.set_roles("u-cache", &["admin"]);
+    let dao = Arc::new(MockCacheDao::new());
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
+
+    assert!(
+        fw.check_role_in_tenant(1, "u-cache", "admin")
+            .await
+            .unwrap(),
+        "数据源持有角色应判定 true"
+    );
+    assert_eq!(
+        dao.get("garrison:role:cache:v0:1:u-cache:admin")
+            .await
+            .unwrap(),
+        Some("true".to_string()),
+        "true 判定应回填缓存键"
+    );
+
+    assert!(
+        !fw.check_role_in_tenant(1, "u-cache", "auditor")
+            .await
+            .unwrap(),
+        "数据源未持有角色应判定 false"
+    );
+    assert_eq!(
+        dao.get("garrison:role:cache:v0:1:u-cache:auditor")
+            .await
+            .unwrap(),
+        Some("false".to_string()),
+        "false 判定同样回填缓存键"
+    );
+}
+
+/// check_role_in_tenant 命中缓存直接返回缓存值：数据源无该角色时也以缓存为准（证明未回源判定）。
+#[tokio::test]
+async fn check_role_in_tenant_serves_cached_decision() {
+    let iface = MockInterface::new();
+    let dao = Arc::new(MockCacheDao::new());
+    dao.set("garrison:role:cache:v0:1:u-hit:admin", "true", 300)
+        .await
+        .unwrap();
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao);
+
+    assert!(
+        fw.check_role_in_tenant(1, "u-hit", "admin").await.unwrap(),
+        "缓存命中应返回缓存值 true（数据源为空）"
+    );
+    assert!(
+        !fw.check_role_in_tenant(1, "u-hit", "auditor")
+            .await
+            .unwrap(),
+        "缓存未命中且数据源为空应判定 false"
+    );
+}
+
+/// 空角色名显性报错（不做静默放行）。
+#[tokio::test]
+async fn check_role_in_tenant_empty_role_errors() {
+    let iface = MockInterface::new();
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface));
+
+    assert!(
+        matches!(
+            fw.check_role_in_tenant(1, "1001", "").await,
+            Err(GarrisonError::InvalidParam(_))
+        ),
+        "空角色名应抛 InvalidParam"
+    );
+}
+
+/// 角色层级展开与判定缓存共存：admin 隐含 user，回源展开后按层级判定 true。
+#[tokio::test]
+async fn check_role_in_tenant_hierarchy_with_cache_dao() {
+    let mut iface = MockInterface::new();
+    iface.set_roles("u-hier", &["admin"]);
+    let mut hierarchy = HashMap::new();
+    hierarchy.insert("admin".to_string(), vec!["user".to_string()]);
+    let dao = Arc::new(MockCacheDao::new());
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface))
+        .with_dao(dao)
+        .with_role_hierarchy(hierarchy);
+
+    assert!(
+        fw.check_role_in_tenant(1, "u-hier", "user").await.unwrap(),
+        "admin 应隐含 user（层级展开生效）"
+    );
+}
+
 /// check_permission_in_tenant 在租户感知数据源已实现时按租户过滤权限。
 #[tokio::test]
 async fn check_permission_in_tenant_queries_tenant_scoped_data_source() {

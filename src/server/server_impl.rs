@@ -81,17 +81,21 @@ async fn oauth2_consent_startup_reconcile(state: &oauth2_routes::OAuth2State) {
             tracing::info!(
                 removed,
                 kept,
-                "oauth2 consent startup reconcile: removed orphan consent rows of deleted clients"
+                "{}",
+                crate::i18n::translate_detail("logs-server-consent-reconcile-removed-orphans", &[])
             );
         },
         Ok((_, kept)) => {
-            tracing::debug!(kept, "oauth2 consent startup reconcile: no orphan rows");
+            tracing::debug!(
+                kept,
+                "{}",
+                crate::i18n::translate_detail("logs-server-consent-reconcile-no-orphans", &[])
+            );
         },
         Err(e) => {
             tracing::warn!(
                 error = %e,
-                "oauth2 consent startup reconcile failed (fail-open); orphan rows \
-                 (if any) remain — retry on next restart or via reconcile_consents"
+                "{}", crate::i18n::translate_detail("logs-server-consent-reconcile-failed", &[])
             );
         },
     }
@@ -729,7 +733,11 @@ impl GarrisonAuthServer {
                     None => {
                         tracing::warn!(
                             timeout_secs = SHUTDOWN_DRAIN_TIMEOUT_SECS,
-                            "external server graceful drain timeout exceeded, stopping to wait for in-flight requests"
+                            "{}",
+                            crate::i18n::translate_detail(
+                                "logs-server-external-drain-timeout",
+                                &[]
+                            )
                         );
                         Ok(())
                     },
@@ -820,7 +828,11 @@ impl GarrisonAuthServer {
                     None => {
                         tracing::warn!(
                             timeout_secs = SHUTDOWN_DRAIN_TIMEOUT_SECS,
-                            "internal server graceful drain timeout exceeded, stopping to wait for in-flight requests"
+                            "{}",
+                            crate::i18n::translate_detail(
+                                "logs-server-internal-drain-timeout",
+                                &[]
+                            )
                         );
                         Ok(())
                     },

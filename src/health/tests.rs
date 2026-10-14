@@ -5,7 +5,7 @@
 //!
 //! 通过 `mod.rs` 中的 `#[cfg(test)] mod tests;` 引入。
 
-use super::mock::{AlwaysDegraded, AlwaysHealthy, AlwaysUnhealthy};
+use super::mock::{AlwaysDegraded, AlwaysHealthy, AlwaysUnhealthy, HangingCheck, PanickingCheck};
 use super::*;
 use crate::config::GarrisonConfig;
 use std::sync::Arc;
@@ -98,6 +98,46 @@ async fn registry_all_healthy_returns_healthy() {
     assert_eq!(report.checks.len(), 1);
     assert_eq!(report.checks[0].name, "always-healthy");
     assert_eq!(report.checks[0].status, HealthStatus::Healthy);
+}
+
+/// `with_check_timeout` 覆盖默认 5 秒护栏，供超时测试压到毫秒级。
+#[test]
+fn with_check_timeout_overrides_default() {
+    let registry = HealthRegistry::new().with_check_timeout(std::time::Duration::from_millis(50));
+    assert_eq!(registry.check_timeout, std::time::Duration::from_millis(50));
+}
+
+/// 检查体 panic 按 Unhealthy 聚合（panic 隔离），不拖垮其余检查项。
+#[tokio::test]
+async fn registry_panicking_check_is_isolated_as_unhealthy() {
+    let mut registry = HealthRegistry::new();
+    registry.register(Box::new(AlwaysHealthy));
+    registry.register(Box::new(PanickingCheck));
+    let report = registry.check_all().await;
+    assert_eq!(report.overall, HealthStatus::Unhealthy);
+    let panicked = report
+        .checks
+        .iter()
+        .find(|c| c.name == "panicking")
+        .expect("应有 panicking 检查项");
+    assert_eq!(panicked.status, HealthStatus::Unhealthy);
+    assert_eq!(
+        panicked.message.as_deref(),
+        Some("check failed"),
+        "HTTP 响应只暴露通用描述，不泄漏 panic 细节"
+    );
+}
+
+/// 超时护栏：挂起的检查超过 `check_timeout` 按 Unhealthy 聚合，readiness 不被拖住。
+#[tokio::test]
+async fn registry_hanging_check_times_out_as_unhealthy() {
+    let mut registry =
+        HealthRegistry::new().with_check_timeout(std::time::Duration::from_millis(20));
+    registry.register(Box::new(HangingCheck));
+    let report = registry.check_all().await;
+    assert_eq!(report.overall, HealthStatus::Unhealthy);
+    assert_eq!(report.checks.len(), 1);
+    assert_eq!(report.checks[0].status, HealthStatus::Unhealthy);
 }
 
 #[tokio::test]
@@ -789,4 +829,47 @@ async fn cache_health_check_unhealthy_when_probe_errors() {
     );
 
     GarrisonManager::reset_for_test();
+}
+
+// actix_routes 测试（feature = "web-actix"）
+
+/// actix 健康路由：`/health/live` 恒 200，`/health/ready` 按聚合状态 200 / 503。
+#[cfg(feature = "web-actix")]
+#[tokio::test]
+async fn test_actix_health_routes_serve_live_and_ready() {
+    use actix_web::test::{call_service, init_service, TestRequest};
+    use actix_web::{http::StatusCode, web, App};
+
+    let healthy = Arc::new(HealthRegistry::new());
+    let app = init_service(
+        App::new()
+            .app_data(web::Data::new(healthy))
+            .configure(super::actix_routes::configure_health_routes),
+    )
+    .await;
+
+    let live = call_service(&app, TestRequest::get().uri("/health/live").to_request()).await;
+    assert_eq!(live.status(), StatusCode::OK, "liveness 进程存活即 200");
+
+    let ready = call_service(&app, TestRequest::get().uri("/health/ready").to_request()).await;
+    assert_eq!(
+        ready.status(),
+        StatusCode::OK,
+        "空 registry 聚合为 Healthy，readiness 应 200"
+    );
+
+    let mut unhealthy = HealthRegistry::new();
+    unhealthy.register(Box::new(AlwaysUnhealthy));
+    let app = init_service(
+        App::new()
+            .app_data(web::Data::new(Arc::new(unhealthy)))
+            .configure(super::actix_routes::configure_health_routes),
+    )
+    .await;
+    let ready = call_service(&app, TestRequest::get().uri("/health/ready").to_request()).await;
+    assert_eq!(
+        ready.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "任一检查项 Unhealthy 时 readiness 应 503"
+    );
 }

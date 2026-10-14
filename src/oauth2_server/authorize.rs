@@ -87,7 +87,8 @@ fn current_tenant_id_with_warn() -> i64 {
         Some(t) => t,
         None => {
             tracing::warn!(
-                "oauth2 authorize: tenant context missing, falling back to default tenant 0 (consent memory keyed to default tenant)"
+                "{}",
+                crate::i18n::translate_detail("logs-oauth2-authorize-tenant-context-missing", &[])
             );
             0
         },

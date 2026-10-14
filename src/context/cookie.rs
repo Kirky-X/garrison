@@ -57,8 +57,11 @@ impl CookieScope {
             Self::NoneHttpOnly => {
                 NONE_DOWNGRADE_WARN.call_once(|| {
                     tracing::warn!(
-                        "cookie SameSite=None requires a Secure context (cookie_secure=false); \
-                         downgraded to SameSite=Lax"
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "logs-cookie-same-site-none-without-secure",
+                            &[]
+                        )
                     );
                 });
                 "Lax"

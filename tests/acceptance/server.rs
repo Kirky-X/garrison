@@ -351,7 +351,7 @@ async fn acc_srv_004_external_refresh_returns_new_token() {
 
 /// （正常）：内网 get-token-info 返回 token 元数据
 ///（`data.token` 一致、`created_at=1000` 与 mock 契约一致）。
-/// GAR-23: 所有权校验强制必填，请求携带与主体一致的 caller_login_id。
+/// 所有权校验强制必填，请求携带与主体一致的 caller_login_id。
 #[tokio::test]
 #[serial]
 async fn acc_srv_005_internal_get_token_info() {
@@ -375,7 +375,7 @@ async fn acc_srv_005_internal_get_token_info() {
 
 /// （正常）：内网 get-session 返回会话主体
 ///（`data.login_id` 与登录主体一致）。
-/// GAR-23: 所有权校验强制必填，请求携带与主体一致的 caller_login_id。
+/// 所有权校验强制必填，请求携带与主体一致的 caller_login_id。
 #[tokio::test]
 #[serial]
 async fn acc_srv_006_internal_get_session() {
@@ -479,7 +479,7 @@ async fn acc_srv_009_internal_switch_to_changes_session_subject() {
     let resp = client
         .post(format!("{}/api/v1/auth/get-session", internal_url))
         .header("x-api-key", "test-key")
-        // GAR-23: caller_login_id 强制必填；switch-to 后会话主体已是 user2
+        // caller_login_id 强制必填；switch-to 后会话主体已是 user2
         .json(&serde_json::json!({ "token": token, "caller_login_id": "user2" }))
         .send_relay_retry()
         .await
@@ -592,9 +592,9 @@ async fn acc_srv_012_external_internal_paths_mutually_exclusive() {
     );
 }
 
-// 安全审计回归（GAR-13/14/23/25/27/28/29）
+// 安全审计回归
 
-/// GAR-23（异常→修复后）：内网 get-session / get-token-info 缺失
+/// （异常→修复后）：内网 get-session / get-token-info 缺失
 /// `caller_login_id` 一律 400（fail-closed），不再 warn+放行返回会话。
 #[tokio::test]
 #[serial]
@@ -635,7 +635,7 @@ async fn acc_srv_023_get_session_missing_caller_fail_closed() {
     assert_eq!(body["error_code"], "NOT_PERMISSION");
 }
 
-/// GAR-27：外网 login 畸形类型 body 返回统一 JSON 错误体——
+/// 外网 login 畸形类型 body 返回统一 JSON 错误体——
 /// 不回显内部 Rust 类型名 / 字段名 / 字节偏移，状态码保持 4xx。
 #[tokio::test]
 #[serial]
@@ -669,7 +669,7 @@ async fn acc_srv_024_external_422_rejection_sanitized() {
     assert_eq!(body["error"], "bad_request");
 }
 
-/// GAR-29：外网 login 读体超限（>256KB）返回 413 统一 JSON 错误体，
+/// 外网 login 读体超限（>256KB）返回 413 统一 JSON 错误体，
 /// 不再以空 body 透传出误导性 400 EOF。
 #[tokio::test]
 #[serial]
@@ -690,7 +690,7 @@ async fn acc_srv_025_external_oversize_body_returns_413() {
     assert_eq!(body["error"], "payload_too_large");
 }
 
-/// GAR-29 残留收口：**非 login** 端点超限 body（>256KB）不再透传 axum 裸
+/// 残留收口：**非 login** 端点超限 body（>256KB）不再透传 axum 裸
 /// 413 text/plain 诊断体，而是与 login 路径统一的 JSON 错误体（refresh 走
 /// `DefaultBodyLimit` → `LengthLimitError` 413，由 sanitize 中间件归一）。
 #[tokio::test]
@@ -717,14 +717,17 @@ async fn acc_srv_034_external_non_login_oversize_body_returns_413_json() {
     let body: serde_json::Value = serde_json::from_str(&text)
         .unwrap_or_else(|e| panic!("413 错误体应为合法 JSON: {e}，实际: {text}"));
     assert_eq!(body["error"], "payload_too_large");
-    assert_eq!(body["message"], "request body exceeds size limit");
+    assert_eq!(
+        body["message"],
+        garrison::i18n::translate_detail("server-http-body-too-large-msg", &[])
+    );
     assert!(
         !text.contains("buffer"),
         "不得回显 axum 内部诊断，实际: {text}"
     );
 }
 
-/// GAR-28：重复 X-API-Key 头（任意顺序组合）一律 401 fail-closed。
+/// 重复 X-API-Key 头（任意顺序组合）一律 401 fail-closed。
 #[tokio::test]
 #[serial]
 async fn acc_srv_026_internal_duplicate_api_key_header_rejected() {
@@ -755,7 +758,7 @@ async fn acc_srv_026_internal_duplicate_api_key_header_rejected() {
     }
 }
 
-/// GAR-25：内网 API Key 连续失败达阈值后锁定——窗口内正确 key 也 429
+/// 内网 API Key 连续失败达阈值后锁定——窗口内正确 key 也 429
 /// 并携带 Retry-After（with_api_key_lockout 显式配置的小阈值）。
 #[tokio::test]
 #[serial]
@@ -822,7 +825,7 @@ async fn acc_srv_027_internal_api_key_lockout_after_threshold() {
     assert_eq!(resp.status(), 429, "锁定窗口内正确 key 也应 429");
 }
 
-/// GAR-13：auth-server 聚合含 web-security-headers 后，token 承载端点
+/// auth-server 聚合含 web-security-headers 后，token 承载端点
 /// 响应携带 Cache-Control: no-store / X-Content-Type-Options / X-Frame-Options。
 #[cfg(feature = "web-security-headers")]
 #[tokio::test]
@@ -852,7 +855,7 @@ async fn acc_srv_028_auth_responses_have_security_headers() {
     assert_eq!(resp.headers().get("x-frame-options").unwrap(), "DENY");
 }
 
-/// GAR-14：健康探针最小化——外网仅 /healthz 且无版本字段；/readyz 仅内网；
+/// 健康探针最小化——外网仅 /healthz 且无版本字段；/readyz 仅内网；
 /// 内网 /readyz 默认剥离 checks[].details（GARRISON_HEALTH_DETAILS 未开启）。
 #[cfg(feature = "server-health-check")]
 #[tokio::test]
@@ -1574,7 +1577,7 @@ const TEST_FIELD_ENCRYPTION_KEYS: &str =
     "test-only-field-key-0:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 /// 合规测试占位 API Key（≥32 字节，非真实凭据）：bin 对
-/// `GARRISON_INTERNAL_API_KEY` 强制最低 32 字节（GAR-33 fail-closed）。
+/// `GARRISON_INTERNAL_API_KEY` 强制最低 32 字节（fail-closed）。
 #[cfg(feature = "auth-server")]
 const TEST_API_KEY: &str = "test-only-not-a-real-key-0123456789abcdef";
 
@@ -1798,7 +1801,7 @@ async fn poll_http_alive(url: &str) -> bool {
     false
 }
 
-/// （异常）：fail-closed（GAR-33）——`GARRISON_INTERNAL_API_KEY` 不足 32 字节时，
+/// （异常）：fail-closed——`GARRISON_INTERNAL_API_KEY` 不足 32 字节时，
 /// 管理面唯一凭证强度不达标，进程以退出码 1 拒绝启动。
 #[cfg(feature = "auth-server")]
 #[tokio::test]
@@ -1827,7 +1830,7 @@ async fn acc_srv_030_auth_server_exits_with_short_api_key() {
     let _ = child.wait();
 }
 
-/// （异常）：fail-closed（GAR-34）——`GARRISON_TRUSTED_PROXIES` 含非法字面量
+/// （异常）：fail-closed——`GARRISON_TRUSTED_PROXIES` 含非法字面量
 /// 或公网 IP（可被路径中间设备伪造，不得进入 XFF 信任边界）时拒绝启动。
 #[cfg(feature = "auth-server")]
 #[tokio::test]
@@ -1868,7 +1871,7 @@ async fn acc_srv_031_auth_server_exits_with_invalid_trusted_proxies() {
     let _ = child.wait();
 }
 
-/// （异常 + 正常）：GAR-03 分层收口——外网登录开启且外网绑定为非回环地址时，
+/// （异常 + 正常）：分层收口——外网登录开启且外网绑定为非回环地址时，
 /// 未提供 `GARRISON_EXTERNAL_LOGIN_ACK`（或值非精确匹配）即拒绝启动；
 /// 精确匹配 `i-understand-no-credential-check` 后方可启动。
 #[cfg(feature = "auth-server")]
@@ -1930,7 +1933,7 @@ async fn acc_srv_032_auth_server_external_login_non_loopback_requires_ack() {
     let _ = child.wait();
 }
 
-/// （正常）：GAR-03 分层收口的回环豁免——外网登录开启但绑定保持默认回环
+/// （正常）：分层收口的回环豁免——外网登录开启但绑定保持默认回环
 /// （127.0.0.1）时，无需 `GARRISON_EXTERNAL_LOGIN_ACK` 即可启动。
 #[cfg(feature = "auth-server")]
 #[tokio::test]

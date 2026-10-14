@@ -48,7 +48,7 @@ pub trait EmailSender: Send + Sync {
 
 /// 邮箱验证码限速器（双窗口：小时 + 天）。
 ///
-/// 窗口判定与补偿委托泛型内核 [`DualWindowQuota`]（limiteron `QuotaStorage` 账本，经
+/// 窗口判定与补偿委托泛型内核 `DualWindowQuota`（limiteron `QuotaStorage` 账本，经
 /// `GarrisonDaoQuotaStorage` 落 DAO）；本类型只保留邮箱特有面：normalize/validate、
 /// `email:` 命名空间与 `EmailRateLimitExceeded` 错误变体。
 pub struct EmailRateLimiter {

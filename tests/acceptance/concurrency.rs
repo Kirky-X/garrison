@@ -872,6 +872,8 @@ mod perf_util {
             "ts": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             "test_name": test_name,
             "endpoint": endpoint,
+            // 构建档位：debug 下 assert_perf_baseline 仅 SOFT 警告，报告据此软判定
+            "profile": if cfg!(debug_assertions) { "debug" } else { "release" },
             "total": report.total,
             "errors": report.errors,
             "rps": report.rps,
@@ -942,7 +944,6 @@ mod perf_util {
         headers: Vec<(String, String)>,
         concurrency: usize,
         duration: Duration,
-        max_requests: Option<u64>,
     }
 
     impl LoadRunner {
@@ -963,12 +964,10 @@ mod perf_util {
                 headers: Vec::new(),
                 concurrency,
                 duration,
-                max_requests: None,
             }
         }
 
         /// 设置动态 body 生成器（优先于静态 body）。
-        #[allow(dead_code)]
         pub(super) fn with_body_fn(
             mut self,
             f: std::sync::Arc<dyn Fn(u64) -> serde_json::Value + Send + Sync>,
@@ -982,13 +981,6 @@ mod perf_util {
             self
         }
 
-        /// 原样保留的公共 API（e2e perf.rs 的 LoadRunner 亦有此方法；当前 3 个基线未使用）。
-        #[allow(dead_code)]
-        pub(super) fn with_max_requests(mut self, max: u64) -> Self {
-            self.max_requests = Some(max);
-            self
-        }
-
         async fn worker(
             runner: Arc<LoadRunner>,
             stop: Arc<AtomicBool>,
@@ -997,11 +989,6 @@ mod perf_util {
         ) -> Vec<u64> {
             let mut latencies: Vec<u64> = Vec::new();
             while !stop.load(Ordering::Relaxed) {
-                if let Some(max) = runner.max_requests {
-                    if total.load(Ordering::Relaxed) >= max {
-                        break;
-                    }
-                }
                 let mut req = runner
                     .client
                     .request(runner.method.clone(), runner.url.as_str());

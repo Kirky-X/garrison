@@ -13,14 +13,42 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// 提取 `Ok`；`Err` 时 panic 并携带 prefix 上下文（fail-loud，禁止吞错）。
+///
+/// `what` 为标签 key：命中 FTL 时按当前 locale 输出（如 `dao-conformance-what-set-overwrite`），
+/// 未命中（纯英文标签，如 `set`/`get`）由 `translate_detail` 原样返回，等价于直传文本。
 fn expect_ok<T>(prefix: &str, what: &str, r: GarrisonResult<T>) -> T {
-    r.unwrap_or_else(|e| panic!("[{prefix}] {what} 不应失败: {e}"))
+    r.unwrap_or_else(|e| {
+        let what = crate::i18n::translate_detail(what, &[]);
+        let error = e.to_string();
+        panic!(
+            "{}",
+            crate::i18n::translate_detail(
+                "dao-conformance-expect-ok-failed",
+                &[
+                    ("prefix", prefix),
+                    ("what", what.as_str()),
+                    ("error", error.as_str()),
+                ]
+            )
+        )
+    })
 }
 
-/// 断言结果为 `Err` 且匹配给定变体模式，否则 panic。
+/// 断言结果为 `Err` 且匹配给定变体模式，否则 panic（`$msg` 为 FTL 标签 key）。
 macro_rules! expect_err {
     ($prefix:expr, $r:expr, $pat:pat, $msg:expr) => {
-        assert!(matches!($r, Err($pat)), "[{}] {}: {:?}", $prefix, $msg, $r);
+        assert!(
+            matches!($r, Err($pat)),
+            "{}",
+            crate::i18n::translate_detail(
+                "dao-conformance-expect-err-failed",
+                &[
+                    ("prefix", $prefix),
+                    ("what", crate::i18n::translate_detail($msg, &[]).as_str()),
+                    ("actual", format!("{:?}", $r).as_str()),
+                ]
+            )
+        );
     };
 }
 
@@ -35,7 +63,11 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         Some("v1"),
         "[{prefix}] set→get 应往返精确值"
     );
-    expect_ok(prefix, "set 覆盖", dao.set(&k, "v2", 3600).await);
+    expect_ok(
+        prefix,
+        "dao-conformance-what-set-overwrite",
+        dao.set(&k, "v2", 3600).await,
+    );
     assert_eq!(
         expect_ok(prefix, "get", dao.get(&k).await).as_deref(),
         Some("v2"),
@@ -44,7 +76,11 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
 
     let missing = format!("{prefix}basic:missing");
     assert_eq!(
-        expect_ok(prefix, "get 缺键", dao.get(&missing).await),
+        expect_ok(
+            prefix,
+            "dao-conformance-what-get-missing-key",
+            dao.get(&missing).await
+        ),
         None,
         "[{prefix}] get 缺键应返回 Ok(None)"
     );
@@ -57,7 +93,11 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         None,
         "[{prefix}] delete 后键应不存在"
     );
-    expect_ok(prefix, "delete 缺键", dao.delete(&missing).await);
+    expect_ok(
+        prefix,
+        "dao-conformance-what-delete-missing-key",
+        dao.delete(&missing).await,
+    );
 
     let k = format!("{prefix}basic:update");
     expect_ok(prefix, "set", dao.set(&k, "old", 3600).await);
@@ -72,7 +112,7 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         prefix,
         r,
         GarrisonError::Dao(_),
-        "update 缺键应返回 Err(Dao)"
+        "dao-conformance-expect-err-update-missing-key"
     );
 
     let k = format!("{prefix}basic:expire");
@@ -89,7 +129,7 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         prefix,
         r,
         GarrisonError::Dao(_),
-        "expire 缺键应返回 Err(Dao)"
+        "dao-conformance-expect-err-expire-missing-key"
     );
 
     let k1 = format!("{prefix}basic:perm_set_zero");
@@ -135,7 +175,11 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
 
     let k = format!("{prefix}basic:incr");
     assert_eq!(
-        expect_ok(prefix, "incr 新键", dao.incr(&k, 60).await),
+        expect_ok(
+            prefix,
+            "dao-conformance-what-incr-new-key",
+            dao.incr(&k, 60).await
+        ),
         1,
         "[{prefix}] incr 新键应初始化为 1"
     );
@@ -144,7 +188,11 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         "[{prefix}] incr 新键应设置 TTL"
     );
     assert_eq!(
-        expect_ok(prefix, "incr 续增", dao.incr(&k, 60).await),
+        expect_ok(
+            prefix,
+            "dao-conformance-what-incr-increment",
+            dao.incr(&k, 60).await
+        ),
         2,
         "[{prefix}] 续增应返回 2"
     );
@@ -155,7 +203,7 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         prefix,
         r,
         GarrisonError::Dao(_),
-        "非数值值 incr 应返回 Err(Dao)，禁止静默归零"
+        "dao-conformance-expect-err-incr-non-numeric"
     );
     let kmax = format!("{prefix}basic:incr_overflow");
     expect_ok(
@@ -164,11 +212,20 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         dao.set(&kmax, &u64::MAX.to_string(), 60).await,
     );
     let r = dao.incr(&kmax, 60).await;
-    expect_err!(prefix, r, GarrisonError::Dao(_), "u64 溢出应返回 Err(Dao)");
+    expect_err!(
+        prefix,
+        r,
+        GarrisonError::Dao(_),
+        "dao-conformance-expect-err-incr-overflow"
+    );
 
     let kmissing = format!("{prefix}basic:decr_missing");
     assert_eq!(
-        expect_ok(prefix, "decr 缺键", dao.decr(&kmissing).await),
+        expect_ok(
+            prefix,
+            "dao-conformance-what-decr-missing-key",
+            dao.decr(&kmissing).await
+        ),
         0,
         "[{prefix}] decr 缺键应返回 0"
     );
@@ -180,7 +237,11 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     let kzero = format!("{prefix}basic:decr_zero");
     expect_ok(prefix, "set", dao.set(&kzero, "0", 60).await);
     assert_eq!(
-        expect_ok(prefix, "decr 零值", dao.decr(&kzero).await),
+        expect_ok(
+            prefix,
+            "dao-conformance-what-decr-zero",
+            dao.decr(&kzero).await
+        ),
         0,
         "[{prefix}] 存量值 0 的 decr 应返回 0（不递减为负）"
     );
@@ -243,7 +304,7 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         prefix,
         r,
         GarrisonError::Dao(_),
-        "非数值值 compare_and_update_if_greater 应返回 Err(Dao)"
+        "dao-conformance-expect-err-caui-non-numeric"
     );
 
     let old = format!("{prefix}basic:rename_old");
@@ -251,12 +312,21 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     expect_ok(prefix, "set", dao.set(&old, "v", 60).await);
     expect_ok(prefix, "rename", dao.rename(&old, &new).await);
     assert_eq!(
-        expect_ok(prefix, "get 旧键", dao.get(&old).await),
+        expect_ok(
+            prefix,
+            "dao-conformance-what-get-old-key",
+            dao.get(&old).await
+        ),
         None,
         "[{prefix}] rename 后旧键应消失"
     );
     assert_eq!(
-        expect_ok(prefix, "get 新键", dao.get(&new).await).as_deref(),
+        expect_ok(
+            prefix,
+            "dao-conformance-what-get-new-key",
+            dao.get(&new).await
+        )
+        .as_deref(),
         Some("v"),
         "[{prefix}] rename 后新键应保留值"
     );
@@ -267,7 +337,7 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         prefix,
         r,
         GarrisonError::InvalidParam(_),
-        "rename 缺键应返回 Err(InvalidParam)（trait 文档契约）"
+        "dao-conformance-expect-err-rename-missing-key"
     );
 }
 
@@ -339,7 +409,11 @@ pub async fn run_atomic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         "[{prefix}] get_and_delete 后键应删除"
     );
     assert_eq!(
-        expect_ok(prefix, "get_and_delete 缺键", dao.get_and_delete(&k).await),
+        expect_ok(
+            prefix,
+            "dao-conformance-what-gd-missing-key",
+            dao.get_and_delete(&k).await
+        ),
         None,
         "[{prefix}] get_and_delete 缺键应返回 None"
     );
@@ -418,10 +492,24 @@ pub async fn run_concurrent(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     let mut ok_true = 0;
     let mut ok_false = 0;
     for h in handles {
-        match h.await.expect("[{prefix}] set_if_absent 任务 join 失败") {
+        match h.await.unwrap_or_else(|e| {
+            panic!(
+                "{}: {e}",
+                crate::i18n::translate_detail(
+                    "dao-conformance-concurrent-sia-join-failed",
+                    &[("prefix", prefix)],
+                )
+            )
+        }) {
             Ok(true) => ok_true += 1,
             Ok(false) => ok_false += 1,
-            Err(e) => panic!("[{prefix}] set_if_absent 并发不应返回错误: {e}"),
+            Err(e) => panic!(
+                "{}",
+                crate::i18n::translate_detail(
+                    "dao-conformance-concurrent-sia-error",
+                    &[("prefix", prefix), ("error", e.to_string().as_str())]
+                )
+            ),
         }
     }
     assert_eq!(
@@ -449,10 +537,24 @@ pub async fn run_concurrent(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     let mut got_some = 0;
     let mut got_none = 0;
     for h in handles {
-        match h.await.expect("[{prefix}] get_and_delete 任务 join 失败") {
+        match h.await.unwrap_or_else(|e| {
+            panic!(
+                "{}: {e}",
+                crate::i18n::translate_detail(
+                    "dao-conformance-concurrent-gd-join-failed",
+                    &[("prefix", prefix)],
+                )
+            )
+        }) {
             Ok(Some(_)) => got_some += 1,
             Ok(None) => got_none += 1,
-            Err(e) => panic!("[{prefix}] get_and_delete 并发不应返回错误: {e}"),
+            Err(e) => panic!(
+                "{}",
+                crate::i18n::translate_detail(
+                    "dao-conformance-concurrent-gd-error",
+                    &[("prefix", prefix), ("error", e.to_string().as_str())]
+                )
+            ),
         }
     }
     assert_eq!(
@@ -473,9 +575,23 @@ pub async fn run_concurrent(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     }
     let mut results = Vec::with_capacity(32);
     for h in handles {
-        match h.await.expect("[{prefix}] incr 任务 join 失败") {
+        match h.await.unwrap_or_else(|e| {
+            panic!(
+                "{}: {e}",
+                crate::i18n::translate_detail(
+                    "dao-conformance-concurrent-incr-join-failed",
+                    &[("prefix", prefix)],
+                )
+            )
+        }) {
             Ok(v) => results.push(v),
-            Err(e) => panic!("[{prefix}] incr 并发不应返回错误: {e}"),
+            Err(e) => panic!(
+                "{}",
+                crate::i18n::translate_detail(
+                    "dao-conformance-concurrent-incr-error",
+                    &[("prefix", prefix), ("error", e.to_string().as_str())]
+                )
+            ),
         }
     }
     results.sort_unstable();
@@ -500,9 +616,23 @@ pub async fn run_concurrent(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     }
     let mut results = Vec::with_capacity(16);
     for h in handles {
-        match h.await.expect("[{prefix}] decr 任务 join 失败") {
+        match h.await.unwrap_or_else(|e| {
+            panic!(
+                "{}: {e}",
+                crate::i18n::translate_detail(
+                    "dao-conformance-concurrent-decr-join-failed",
+                    &[("prefix", prefix)],
+                )
+            )
+        }) {
             Ok(v) => results.push(v),
-            Err(e) => panic!("[{prefix}] decr 并发不应返回错误: {e}"),
+            Err(e) => panic!(
+                "{}",
+                crate::i18n::translate_detail(
+                    "dao-conformance-concurrent-decr-error",
+                    &[("prefix", prefix), ("error", e.to_string().as_str())]
+                )
+            ),
         }
     }
     results.sort_unstable();
@@ -527,9 +657,23 @@ pub async fn run_concurrent(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         }));
     }
     for h in handles {
-        match h.await.expect("[{prefix}] caui 任务 join 失败") {
+        match h.await.unwrap_or_else(|e| {
+            panic!(
+                "{}: {e}",
+                crate::i18n::translate_detail(
+                    "dao-conformance-concurrent-caui-join-failed",
+                    &[("prefix", prefix)],
+                )
+            )
+        }) {
             Ok(_) => {},
-            Err(e) => panic!("[{prefix}] compare_and_update_if_greater 并发不应返回错误: {e}"),
+            Err(e) => panic!(
+                "{}",
+                crate::i18n::translate_detail(
+                    "dao-conformance-concurrent-caui-error",
+                    &[("prefix", prefix), ("error", e.to_string().as_str())]
+                )
+            ),
         }
     }
     let expected_max = 15 * 3 + 5;
@@ -553,10 +697,24 @@ pub async fn run_concurrent(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     }
     let mut winners = Vec::new();
     for h in handles {
-        match h.await.expect("[{prefix}] cas 任务 join 失败") {
+        match h.await.unwrap_or_else(|e| {
+            panic!(
+                "{}: {e}",
+                crate::i18n::translate_detail(
+                    "dao-conformance-concurrent-cas-join-failed",
+                    &[("prefix", prefix)],
+                )
+            )
+        }) {
             Ok((true, i)) => winners.push(i),
             Ok((false, _)) => {},
-            Err(e) => panic!("[{prefix}] compare_and_swap 并发不应返回错误: {e}"),
+            Err(e) => panic!(
+                "{}",
+                crate::i18n::translate_detail(
+                    "dao-conformance-concurrent-cas-error",
+                    &[("prefix", prefix), ("error", e.to_string().as_str())]
+                )
+            ),
         }
     }
     assert_eq!(
@@ -755,11 +913,24 @@ pub async fn run_refresh_token_rotation(prefix: &str, pool: &dbnexus::DbPool) {
                 .get_session("admin")
                 .await
                 .map_err(dao_err)
-                .unwrap_or_else(|e| panic!("[{prefix}] get_session 不应失败: {e}"));
-            let conn = session
-                .connection()
-                .map_err(dao_err)
-                .unwrap_or_else(|e| panic!("[{prefix}] connection 不应失败: {e}"));
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "dao-conformance-get-session-failed",
+                            &[("prefix", prefix), ("error", e.to_string().as_str())]
+                        )
+                    )
+                });
+            let conn = session.connection().map_err(dao_err).unwrap_or_else(|e| {
+                panic!(
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "dao-conformance-connection-failed",
+                        &[("prefix", prefix), ("error", e.to_string().as_str())]
+                    )
+                )
+            });
             let stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 sql,
@@ -769,10 +940,33 @@ pub async fn run_refresh_token_rotation(prefix: &str, pool: &dbnexus::DbPool) {
                 .query_one_raw(stmt)
                 .await
                 .map_err(dao_err)
-                .unwrap_or_else(|e| panic!("[{prefix}] 查询不应失败: {e}"))
-                .unwrap_or_else(|| panic!("[{prefix}] 查询应有结果行: {sql}"));
-            row.try_get::<i64>("", "val")
-                .unwrap_or_else(|e| panic!("[{prefix}] val 列读取失败: {e}"))
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "dao-conformance-query-failed",
+                            &[("prefix", prefix), ("error", e.to_string().as_str())]
+                        )
+                    )
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "dao-conformance-query-returned-no-row",
+                            &[("prefix", prefix), ("sql", sql)]
+                        )
+                    )
+                });
+            row.try_get::<i64>("", "val").unwrap_or_else(|e| {
+                panic!(
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "dao-conformance-val-column-read-failed",
+                        &[("prefix", prefix), ("error", e.to_string().as_str())]
+                    )
+                )
+            })
         }
     };
 
@@ -783,16 +977,37 @@ pub async fn run_refresh_token_rotation(prefix: &str, pool: &dbnexus::DbPool) {
                 .get_session("admin")
                 .await
                 .map_err(dao_err)
-                .unwrap_or_else(|e| panic!("[{prefix}] get_session 不应失败: {e}"));
-            let conn = session
-                .connection()
-                .map_err(dao_err)
-                .unwrap_or_else(|e| panic!("[{prefix}] connection 不应失败: {e}"));
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "dao-conformance-get-session-failed",
+                            &[("prefix", prefix), ("error", e.to_string().as_str())]
+                        )
+                    )
+                });
+            let conn = session.connection().map_err(dao_err).unwrap_or_else(|e| {
+                panic!(
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "dao-conformance-connection-failed",
+                        &[("prefix", prefix), ("error", e.to_string().as_str())]
+                    )
+                )
+            });
             let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, vec![]);
             conn.execute_raw(stmt)
                 .await
                 .map_err(dao_err)
-                .unwrap_or_else(|e| panic!("[{prefix}] execute 不应失败: {e}"));
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "dao-conformance-execute-failed",
+                            &[("prefix", prefix), ("error", e.to_string().as_str())]
+                        )
+                    )
+                });
         }
     };
 
@@ -877,7 +1092,16 @@ pub async fn run_refresh_token_rotation(prefix: &str, pool: &dbnexus::DbPool) {
                 "[{prefix}] 补偿成功时错误应标注 rolled-back，实际 {msg}"
             );
         },
-        other => panic!("[{prefix}] 注入失败应返回 Dao 错误，实际 {other:?}"),
+        other => panic!(
+            "{}",
+            crate::i18n::translate_detail(
+                "dao-conformance-injection-expected-dao-error",
+                &[
+                    ("prefix", prefix),
+                    ("actual", format!("{other:?}").as_str())
+                ]
+            )
+        ),
     }
     // 无残留子代 + 原链仍可用（回退后可再次正常轮换）
     let children = query_i64(
@@ -938,7 +1162,16 @@ pub async fn run_webauthn_credential_repository(prefix: &str, pool: &dbnexus::Db
                 "[{prefix}] AlreadyBound 应携带当前占用者，不泄露其他行内容"
             );
         },
-        other => panic!("[{prefix}] 重复绑定应返回 AlreadyBound，实际: {other:?}"),
+        other => panic!(
+            "{}",
+            crate::i18n::translate_detail(
+                "dao-conformance-duplicate-binding-expected-already-bound",
+                &[
+                    ("prefix", prefix),
+                    ("actual", format!("{other:?}").as_str())
+                ]
+            )
+        ),
     }
 
     // find：全字段 roundtrip；缺失 → None
@@ -953,12 +1186,27 @@ pub async fn run_webauthn_credential_repository(prefix: &str, pool: &dbnexus::Db
                 "[{prefix}] roundtrip attestation"
             );
         },
-        other => panic!("[{prefix}] 已绑定凭据应可查得，实际: {other:?}"),
+        other => panic!(
+            "{}",
+            crate::i18n::translate_detail(
+                "dao-conformance-bound-credential-not-found",
+                &[
+                    ("prefix", prefix),
+                    ("actual", format!("{other:?}").as_str())
+                ]
+            )
+        ),
     }
     assert!(
         repo.find_by_credential_id(tenant, "cred-wn-missing")
             .await
-            .expect("[{prefix}] 查询不应失败")
+            .unwrap_or_else(|e| panic!(
+                "{}: {e}",
+                crate::i18n::translate_detail(
+                    "dao-conformance-query-must-succeed",
+                    &[("prefix", prefix)]
+                )
+            ))
             .is_none(),
         "[{prefix}] 未绑定凭据应返回 None"
     );
@@ -979,13 +1227,29 @@ pub async fn run_webauthn_credential_repository(prefix: &str, pool: &dbnexus::Db
     // update：持久化 sign_count/backup flags；缺失显性 InvalidParam
     repo.update_authenticator_state(tenant, "cred-wn-1", 5, true, true)
         .await
-        .expect("[{prefix}] 更新既有凭据应成功");
+        .unwrap_or_else(|e| {
+            panic!(
+                "{}: {e}",
+                crate::i18n::translate_detail(
+                    "dao-conformance-credential-update-must-succeed",
+                    &[("prefix", prefix)],
+                )
+            )
+        });
     let updated = repo
         .find_by_credential_id(tenant, "cred-wn-1")
         .await
         .ok()
         .flatten()
-        .expect("[{prefix}] 更新后凭据应仍存在");
+        .unwrap_or_else(|| {
+            panic!(
+                "{}",
+                crate::i18n::translate_detail(
+                    "dao-conformance-credential-must-exist-after-update",
+                    &[("prefix", prefix)],
+                )
+            )
+        });
     assert_eq!(updated.sign_count, 5, "[{prefix}] sign_count 应持久化");
     assert!(
         updated.backup_eligible,
@@ -1025,7 +1289,15 @@ pub async fn run_webauthn_credential_repository(prefix: &str, pool: &dbnexus::Db
         .await
         .ok()
         .flatten()
-        .expect("[{prefix}] 回退拒绝后凭据应仍存在");
+        .unwrap_or_else(|| {
+            panic!(
+                "{}",
+                crate::i18n::translate_detail(
+                    "dao-conformance-credential-must-exist-after-rollback",
+                    &[("prefix", prefix)],
+                )
+            )
+        });
     assert_eq!(
         after_regression.sign_count, 5,
         "[{prefix}] 回退拒绝后落库计数不应变化"
@@ -1044,9 +1316,15 @@ pub async fn run_webauthn_credential_repository(prefix: &str, pool: &dbnexus::Db
     );
 
     // delete：幂等（删除后 find None，重复 delete Ok）
-    repo.delete(tenant, "cred-wn-1")
-        .await
-        .expect("[{prefix}] 解绑应成功");
+    repo.delete(tenant, "cred-wn-1").await.unwrap_or_else(|e| {
+        panic!(
+            "{}: {e}",
+            crate::i18n::translate_detail(
+                "dao-conformance-unbind-must-succeed",
+                &[("prefix", prefix)],
+            )
+        )
+    });
     assert!(
         repo.find_by_credential_id(tenant, "cred-wn-1")
             .await
@@ -1055,7 +1333,13 @@ pub async fn run_webauthn_credential_repository(prefix: &str, pool: &dbnexus::Db
             .is_none(),
         "[{prefix}] 解绑后不可再查得"
     );
-    repo.delete(tenant, "cred-wn-1")
-        .await
-        .expect("[{prefix}] 重复解绑应幂等 Ok");
+    repo.delete(tenant, "cred-wn-1").await.unwrap_or_else(|e| {
+        panic!(
+            "{}: {e}",
+            crate::i18n::translate_detail(
+                "dao-conformance-unbind-must-be-idempotent",
+                &[("prefix", prefix)],
+            )
+        )
+    });
 }

@@ -71,19 +71,19 @@ pub fn validate_imported_hash(hash: &str) -> GarrisonResult<()> {
         })?;
         if m_cost > ARGON2_IMPORT_MAX_M_COST {
             return Err(GarrisonError::InvalidParam(format!(
-                "import-hash-argon2-m-cost::{}>{}",
+                "import-hash-argon2-m-cost::{}::{}",
                 m_cost, ARGON2_IMPORT_MAX_M_COST
             )));
         }
         if t_cost > ARGON2_IMPORT_MAX_T {
             return Err(GarrisonError::InvalidParam(format!(
-                "import-hash-argon2-t-cost::{}>{}",
+                "import-hash-argon2-t-cost::{}::{}",
                 t_cost, ARGON2_IMPORT_MAX_T
             )));
         }
         if p_cost > ARGON2_IMPORT_MAX_P {
             return Err(GarrisonError::InvalidParam(format!(
-                "import-hash-argon2-p-cost::{}>{}",
+                "import-hash-argon2-p-cost::{}::{}",
                 p_cost, ARGON2_IMPORT_MAX_P
             )));
         }
@@ -101,7 +101,7 @@ pub fn validate_imported_hash(hash: &str) -> GarrisonResult<()> {
             })?;
         if cost > BCRYPT_IMPORT_MAX_COST {
             return Err(GarrisonError::InvalidParam(format!(
-                "import-hash-bcrypt-cost::{}>{}",
+                "import-hash-bcrypt-cost::{}::{}",
                 cost, BCRYPT_IMPORT_MAX_COST
             )));
         }

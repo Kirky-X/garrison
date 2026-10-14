@@ -715,7 +715,7 @@ mod tests {
             parse_quote! { async fn list_feedback() -> Result<i32, MyError> { Ok(42) } };
         let tokens =
             expand_check_with_args_forge("check_permission", &["admin".to_string()], item_fn);
-        let ts: proc_macro2::TokenStream = tokens.into();
+        let ts: proc_macro2::TokenStream = tokens;
         let code = ts.to_string();
         assert!(
             !code.contains("__garrison_inner_"),
@@ -731,7 +731,7 @@ mod tests {
             parse_quote! { async fn handler() -> Result<i32, MyError> { Ok(42) } };
         let tokens =
             expand_check_with_args_forge("check_permission", &["admin".to_string()], item_fn);
-        let ts: proc_macro2::TokenStream = tokens.into();
+        let ts: proc_macro2::TokenStream = tokens;
         let code = ts.to_string();
         assert!(
             code.contains("check_permission"),
@@ -749,7 +749,7 @@ mod tests {
             parse_quote! { async fn handler() -> Result<i32, MyError> { Ok(42) } };
         let tokens =
             expand_check_with_args_forge("check_permission", &["admin".to_string()], item_fn);
-        let ts: proc_macro2::TokenStream = tokens.into();
+        let ts: proc_macro2::TokenStream = tokens;
         let code = ts.to_string();
         assert!(code.contains("Result"), "应保留 Result 返回类型");
         assert!(
@@ -764,7 +764,7 @@ mod tests {
         let item_fn: ItemFn =
             parse_quote! { async fn handler() -> Result<i32, MyError> { Ok(42) } };
         let tokens = expand_check_login_forge(item_fn);
-        let ts: proc_macro2::TokenStream = tokens.into();
+        let ts: proc_macro2::TokenStream = tokens;
         let code = ts.to_string();
         assert!(code.contains("check_login"), "应插入 check_login 调用");
         assert!(code.contains("Ok (true)"), "应处理 Ok(true) 分支");
@@ -781,7 +781,7 @@ mod tests {
             &["admin".to_string(), "moderator".to_string()],
             item_fn,
         );
-        let ts: proc_macro2::TokenStream = tokens.into();
+        let ts: proc_macro2::TokenStream = tokens;
         let code = ts.to_string();
         let count = code.matches("check_role").count();
         assert!(
@@ -802,7 +802,7 @@ mod tests {
         };
         let checks = quote! { /* checks placeholder */ };
         let tokens = expand_forge_inline(&item_fn, checks);
-        let ts: proc_macro2::TokenStream = tokens.into();
+        let ts: proc_macro2::TokenStream = tokens;
         let code = ts.to_string();
         assert!(code.contains("cfg"), "应保留 #[cfg] 属性");
     }

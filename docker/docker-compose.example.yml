@@ -65,15 +65,16 @@ services:
       retries: 3
       start_period: 10s
 
-  # Redis（可选，仅限流后端生效）
+  # Redis（可选，当前仅配置校验语义，不改变限流实现）
   # ⚠️ 接线范围如实说明，勿照抄本块假设：
-  #   - Redis 仅在 rate-limit-redis feature 面生效：需构建时传
-  #     args: { FEATURES: "auth-server,cache-memory,server-health-check,tracing-log,rate-limit-redis" }
-  #     且运行时同时设置 GARRISON_RATE_LIMIT_BACKEND=redis 与 GARRISON_REDIS_URL
-  #     （限流后端默认 Memory，仅设 GARRISON_REDIS_URL 不改变后端）。
+  #   - GARRISON_RATE_LIMIT_BACKEND 当前仅作配置占位 + 启动期 fail-closed 校验
+  #     （未知值拒绝启动；backend=redis 须配 GARRISON_REDIS_URL；需构建时传
+  #     args: { FEATURES: "auth-server,cache-memory,server-health-check,tracing-log,rate-limit-redis" }），
+  #     不驱动限流实现切换：限流实现统一跟随 GarrisonDao 后端（本示例为进程内
+  #     oxcache，多实例限流计数不共享）。
   #   - 会话/DAO 侧的 Redis L2 尚未接线（oxcache with_redis_config 未被
   #     auth_server 调用）：多实例会话共享当前不可用，本示例不构成
-  #     Redis 会话存储方案。
+  #     Redis 会话存储方案；分布式限流需部署方自备 Redis 后端 DAO。
   # 满足上述条件后取消下方注释，并给 auth-server 追加：
   #   environment:
   #     GARRISON_RATE_LIMIT_BACKEND: redis

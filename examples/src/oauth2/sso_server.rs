@@ -234,30 +234,72 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 6. 订阅侧验签消费：pub/sub 通道无传输层认证、原文不可信；push_message 已自动
     // 封装 HMAC-SHA256 信封，订阅侧必须经 verify_sso_message 验签取回 payload。
-    println!("\n[验签] 订阅侧 verify_sso_message 消费信封:");
+    println!(
+        "\n{}",
+        garrison::i18n::translate_detail("example-sso-envelope-consume", &[])
+    );
     let secret = "test-sso-secret-key-for-unit-tests-01";
     let received = channel.messages.lock().clone();
-    assert_eq!(received.len(), 2, "channel 应收到两封消息");
+    assert_eq!(
+        received.len(),
+        2,
+        "{}",
+        garrison::i18n::translate_detail("example-sso-channel-message-count", &[])
+    );
     // last_seq 从 0 起算（发布侧 seq 从 1 开始递增）
     let mut last_seq = 0u64;
     for raw in &received {
         let payload = verify_sso_message(secret, raw, &mut last_seq)?;
+        let seq = last_seq.to_string();
         println!(
-            "    验签通过（last_seq={}），取回业务消息 = {}",
-            last_seq, payload
+            "    {}",
+            garrison::i18n::translate_detail(
+                "example-sso-envelope-verified",
+                &[("seq", seq.as_str()), ("payload", payload.as_str())],
+            )
         );
     }
 
     // 重放：同一封信再次投递（seq 不大于已见 last_seq）→ 验签返回 Err，不可消费
     match verify_sso_message(secret, &received[0], &mut last_seq) {
-        Err(e) => println!("    重放同一封 → 拒绝（{}）", e),
-        Ok(payload) => panic!("重放的信封消息应验签失败，实际取回: {}", payload),
+        Err(e) => {
+            let reason = e.to_string();
+            println!(
+                "    {}",
+                garrison::i18n::translate_detail(
+                    "example-sso-replay-rejected",
+                    &[("reason", reason.as_str())]
+                )
+            )
+        },
+        Ok(payload) => panic!(
+            "{}",
+            garrison::i18n::translate_detail(
+                "example-sso-replay-not-rejected",
+                &[("payload", payload.as_str())]
+            )
+        ),
     }
 
     // 未封装的裸消息（任意发布者伪造）→ 信封格式校验失败
     match verify_sso_message(secret, "permission change", &mut last_seq) {
-        Err(e) => println!("    裸消息（无信封）→ 拒绝（{}）", e),
-        Ok(payload) => panic!("未封装的裸消息应被拒，实际取回: {}", payload),
+        Err(e) => {
+            let reason = e.to_string();
+            println!(
+                "    {}",
+                garrison::i18n::translate_detail(
+                    "example-sso-bare-message-rejected",
+                    &[("reason", reason.as_str())]
+                )
+            )
+        },
+        Ok(payload) => panic!(
+            "{}",
+            garrison::i18n::translate_detail(
+                "example-sso-bare-message-not-rejected",
+                &[("payload", payload.as_str())]
+            )
+        ),
     }
 
     // 7. 销毁 ticket（幂等）

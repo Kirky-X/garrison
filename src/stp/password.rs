@@ -135,7 +135,7 @@ async fn reset_password_failures(dao: &Arc<dyn GarrisonDao>, login_id: &str) {
         tracing::warn!(
             login_id = login_id,
             error = %e,
-            "password lockout reset-on-success failed (does not affect the login result)"
+            "{}", crate::i18n::translate_detail("logs-stp-password-lockout-reset-failed", &[])
         );
     }
 }
@@ -149,7 +149,11 @@ impl PasswordLogic for GarrisonLogicDefault {
         #[cfg(feature = "firewall-bruteforce")]
         match is_password_locked(self.session.dao(), login_id).await {
             Ok(true) => {
-                tracing::warn!(login_id = login_id, "login_with_password: account locked");
+                tracing::warn!(
+                    login_id = login_id,
+                    "{}",
+                    crate::i18n::translate_detail("logs-stp-password-account-locked", &[])
+                );
                 return Err(GarrisonError::FirewallBlocked(format!(
                     "stp-password-account-locked::{}",
                     login_id
@@ -157,7 +161,7 @@ impl PasswordLogic for GarrisonLogicDefault {
             },
             Err(e) => {
                 tracing::warn!(login_id = login_id, error = %e,
-                    "password lockout check failed, degrading open (final defense is password verify)");
+                    "{}", crate::i18n::translate_detail("logs-stp-password-lockout-check-failed", &[]));
             },
             Ok(false) => {},
         }
@@ -206,7 +210,7 @@ impl PasswordLogic for GarrisonLogicDefault {
                 #[cfg(feature = "firewall-bruteforce")]
                 if let Err(e) = record_password_failure(self.session.dao(), login_id).await {
                     tracing::warn!(login_id = login_id, error = %e,
-                        "password lockout record_failure failed (does not affect the login result)");
+                        "{}", crate::i18n::translate_detail("logs-stp-password-lockout-record-failed", &[]));
                 }
                 return Err(GarrisonError::InvalidParam(
                     "stp-invalid-password::".to_string(),
@@ -238,7 +242,7 @@ impl PasswordLogic for GarrisonLogicDefault {
                 if let Err(record_err) = record_password_failure(self.session.dao(), login_id).await
                 {
                     tracing::warn!(login_id = login_id, error = %record_err,
-                        "password lockout record_failure failed (does not affect the login result)");
+                        "{}", crate::i18n::translate_detail("logs-stp-password-lockout-record-failed", &[]));
                 }
                 return Err(GarrisonError::InvalidParam(
                     "stp-invalid-password::".to_string(),
@@ -265,7 +269,7 @@ impl PasswordLogic for GarrisonLogicDefault {
             #[cfg(feature = "firewall-bruteforce")]
             if let Err(e) = record_password_failure(self.session.dao(), login_id).await {
                 tracing::warn!(login_id = login_id, error = %e,
-                    "password lockout record_failure failed (does not affect the login result)");
+                    "{}", crate::i18n::translate_detail("logs-stp-password-lockout-record-failed", &[]));
             }
             return Err(GarrisonError::InvalidParam(
                 "stp-invalid-password::".to_string(),
@@ -304,7 +308,7 @@ impl PasswordLogic for GarrisonLogicDefault {
                     tracing::warn!(
                         login_id = login_id,
                         error = %e,
-                        "password rehash persist failed (does not affect the login result)"
+                        "{}", crate::i18n::translate_detail("logs-stp-password-rehash-persist-failed", &[])
                     );
                 },
             }

@@ -267,7 +267,7 @@ impl SessionLogic for GarrisonLogicDefault {
     async fn logout_by_login_id(&self, login_id: &str) -> GarrisonResult<()> {
         // 权限判定缓存联动失效（回收角色/权限后 + 登出，旧 Allow 不得存续；锁外执行，失败不影响登出结果）
         if let Err(e) = self.firewall.invalidate_login_cache(login_id).await {
-            tracing::warn!(error = %e, login_id, "invalidate_login_cache failed (does not affect the logout result)");
+            tracing::warn!(error = %e, login_id, "{}", crate::i18n::translate_detail("logs-stp-invalidate-login-cache-logout-failed", &[]));
         }
         // 「token 快照 → jti 黑名单 → 会话删除」同一 per-login_id 临界区，闭合「锁外快照被并发 login 插队、新 token 的 jti 未入黑名单」的 TOCTOU 窗口（Stateless 下该 token 会存活至自然过期；锁序见 `GarrisonSession::logout_by_login_id_inner`）。
         self.session
@@ -292,7 +292,7 @@ impl SessionLogic for GarrisonLogicDefault {
     async fn kickout(&self, login_id: &str) -> GarrisonResult<()> {
         // 权限判定缓存联动失效（锁外执行，失败不影响踢出结果）
         if let Err(e) = self.firewall.invalidate_login_cache(login_id).await {
-            tracing::warn!(error = %e, login_id, "invalidate_login_cache failed (does not affect the kickout result)");
+            tracing::warn!(error = %e, login_id, "{}", crate::i18n::translate_detail("logs-stp-invalidate-login-cache-kickout-failed", &[]));
         }
         // 语义等同 logout_by_login_id：快照 + jti 黑名单 + 会话删除同一 per-login_id 临界区（并发 login 在同一锁内串行，不会漏掉随后被删除的 token）。
         self.session

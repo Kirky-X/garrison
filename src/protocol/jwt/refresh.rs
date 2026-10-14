@@ -668,7 +668,12 @@ mod service {
             if self.grace_period_secs <= 0 {
                 return;
             }
-            let mut entries = self.grace_entries.lock().expect("grace_entries 锁不应中毒");
+            let mut entries = self.grace_entries.lock().unwrap_or_else(|e| {
+                panic!(
+                    "{}: {e}",
+                    crate::i18n::translate_detail("jwt-refresh-grace-entries-lock-poisoned", &[],)
+                )
+            });
             entries.retain(|_, entry| rotated_at - entry.rotated_at <= self.grace_period_secs);
             entries.insert(
                 old_hash.to_string(),
@@ -688,7 +693,12 @@ mod service {
                 return None;
             }
             let now = Self::now_unix();
-            let mut entries = self.grace_entries.lock().expect("grace_entries 锁不应中毒");
+            let mut entries = self.grace_entries.lock().unwrap_or_else(|e| {
+                panic!(
+                    "{}: {e}",
+                    crate::i18n::translate_detail("jwt-refresh-grace-entries-lock-poisoned", &[],)
+                )
+            });
             let entry = entries.get_mut(old_hash)?;
             if now - entry.rotated_at > self.grace_period_secs || entry.uses >= self.grace_max_uses
             {
@@ -908,7 +918,15 @@ mod service {
                 // 中毒即 fail-fast——安全相关清理不可静默跳过（与文件内其余
                 // 锁使用点一致）。作用域块即时释放 guard，不得跨 await 持锁。
                 {
-                    let mut entries = self.grace_entries.lock().expect("grace_entries 锁不应中毒");
+                    let mut entries = self.grace_entries.lock().unwrap_or_else(|e| {
+                        panic!(
+                            "{}: {e}",
+                            crate::i18n::translate_detail(
+                                "jwt-refresh-grace-entries-lock-poisoned",
+                                &[],
+                            )
+                        )
+                    });
                     entries.remove(&hash);
                 }
 

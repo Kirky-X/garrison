@@ -64,9 +64,12 @@ pub struct GetSessionRequest {
 
 /// caller_login_id 缺失的 fail-closed 拒绝（两所有权校验端点共用）。
 fn missing_caller_login_id() -> ApiError {
-    tracing::warn!("caller_login_id missing: ownership check is mandatory, rejecting");
+    tracing::warn!(
+        "{}",
+        crate::i18n::translate_detail("logs-sdforge-caller-login-id-missing", &[])
+    );
     ApiError::InvalidInput {
-        message: "caller_login_id is required".to_string(),
+        message: crate::i18n::translate_detail("sdforge-caller-login-id-required-msg", &[]),
         field: Some("caller_login_id".to_string()),
         value: None,
     }

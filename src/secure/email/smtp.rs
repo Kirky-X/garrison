@@ -134,3 +134,108 @@ impl EmailSender for SmtpEmailSender {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 构造指向回环高位端口的配置（无 SMTP 服务，连接必失败：只验证失败路径映射）。
+    fn config_without_tls() -> SmtpConfig {
+        SmtpConfig {
+            host: "127.0.0.1".to_string(),
+            port: 1,
+            username: "noreply@example.com".to_string(),
+            password: "secret".to_string(),
+            from_name: "Garrison".to_string(),
+            from_addr: String::new(),
+            use_tls: false,
+        }
+    }
+
+    /// Debug 输出必须脱敏 SMTP 密码（CWE-532）。
+    #[test]
+    fn debug_redacts_password() {
+        let config = SmtpConfig {
+            password: "smtp-secret".to_string(),
+            ..config_without_tls()
+        };
+        let debug = format!("{config:?}");
+        assert!(
+            debug.contains("<redacted>"),
+            "应输出 <redacted>，实际: {debug}"
+        );
+        assert!(
+            !debug.contains("smtp-secret"),
+            "不得泄露密码明文，实际: {debug}"
+        );
+    }
+
+    /// `from_addr` 为空回退到 `username`；显式设置时按原值使用；无 TLS 配置仍可构造（仅告警）。
+    #[test]
+    fn from_config_resolves_from_addr_and_accepts_plaintext_transport() {
+        let fallback = SmtpEmailSender::from_config(&config_without_tls())
+            .expect("无 TLS 配置应可构造（仅告警不拒绝）");
+        assert_eq!(
+            fallback.from_addr, "noreply@example.com",
+            "空 from_addr 应回退 username"
+        );
+        assert_eq!(fallback.from_name, "Garrison");
+
+        let explicit = SmtpEmailSender::from_config(&SmtpConfig {
+            from_addr: "support@example.com".to_string(),
+            ..config_without_tls()
+        })
+        .expect("显式 from_addr 应可构造");
+        assert_eq!(explicit.from_addr, "support@example.com");
+
+        let starttls = SmtpEmailSender::from_config(&SmtpConfig {
+            use_tls: true,
+            ..config_without_tls()
+        })
+        .expect("STARTTLS 配置应可构造");
+        assert_eq!(starttls.from_addr, "noreply@example.com");
+    }
+
+    /// 发件人/收件人地址非法：构造消息前显性报错（不发起连接）。
+    #[tokio::test]
+    async fn send_rejects_invalid_addresses_before_connecting() {
+        let sender = SmtpEmailSender::from_config(&config_without_tls()).expect("构造应成功");
+
+        let bad_recipient = sender
+            .send("not-an-email", "subject", "body")
+            .await
+            .expect_err("非法收件人必须显性拒绝");
+        assert!(
+            matches!(&bad_recipient, GarrisonError::Internal(m) if m.contains("email-to-parse-failed")),
+            "错误应指明 email-to-parse-failed，实际: {bad_recipient:?}"
+        );
+
+        let bad_sender = SmtpEmailSender::from_config(&SmtpConfig {
+            from_addr: "not-an-email".to_string(),
+            ..config_without_tls()
+        })
+        .expect("构造应成功");
+        let err = bad_sender
+            .send("to@example.com", "subject", "body")
+            .await
+            .expect_err("非法发件人必须显性拒绝");
+        assert!(
+            matches!(&err, GarrisonError::Internal(m) if m.contains("email-from-parse-failed")),
+            "错误应指明 email-from-parse-failed，实际: {err:?}"
+        );
+    }
+
+    /// 传输层失败映射为 `Network`（回环无 SMTP 服务 → 连接失败）。
+    #[tokio::test]
+    async fn send_maps_transport_failure_to_network_error() {
+        let sender = SmtpEmailSender::from_config(&config_without_tls()).expect("构造应成功");
+        let err = sender
+            .send("to@example.com", "subject", "body")
+            .await
+            .expect_err("无 SMTP 服务时发送必须失败");
+        assert!(
+            matches!(&err, GarrisonError::Network(m) if m.contains("email-smtp-send-failed")),
+            "错误应指明 email-smtp-send-failed，实际: {err:?}"
+        );
+    }
+}

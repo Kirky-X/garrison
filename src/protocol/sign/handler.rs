@@ -68,20 +68,6 @@ impl SignHandler {
         self.timestamp_window
     }
 
-    /// 用 HKDF-SHA256 从 (app_secret, app_key) 派生 HMAC 密钥：salt=app_key 提供
-    /// 域分隔（防同一密钥跨用途复用），info 版本化。构造时已一次性派生并缓存，
-    /// 此方法仅供测试验证派生结果。
-    #[cfg(test)]
-    #[allow(dead_code, reason = "test helper: 仅供测试验证派生密钥结果")]
-    fn derive_hmac_key(&self) -> [u8; 32] {
-        let hkdf = Hkdf::<Sha256>::new(Some(self.app_key.as_bytes()), self.app_secret.as_bytes());
-        let mut okm = [0u8; 32];
-        // expand 在 IKM 长度合法时不会失败（32 字节远小于 SHA256 最大输出 255*32）
-        hkdf.expand(HKDF_INFO, &mut okm)
-            .expect("HKDF expand 32 bytes must not fail");
-        okm
-    }
-
     /// 生成签名：`base64(hmac_sha256(hkdf_key, "{method}\n{path}\n{timestamp}\n{nonce}\n{body_sha256}"))`，
     /// 使用构造时缓存的 `derived_key`（`hkdf_key` 定义见模块头）。
     pub fn sign(

@@ -260,8 +260,8 @@ fn ed_jwk_from_seed(seed: &[u8; 32]) -> JwkPublicKey {
 fn ec_jwk_from_sec1(sec1: &[u8]) -> GarrisonResult<JwkPublicKey> {
     use base64::Engine;
 
-    // SEC1 未压缩点：0x04 ‖ X ‖ Y（X/Y 等长）
-    if sec1.first() != Some(&0x04) || sec1.len() < 3 || (sec1.len() - 1) % 2 != 0 {
+    // SEC1 未压缩点：0x04 ‖ X ‖ Y（X/Y 等长，故总长必为奇数）
+    if sec1.first() != Some(&0x04) || sec1.len() < 3 || sec1.len().is_multiple_of(2) {
         return Err(GarrisonError::Internal("jwt-ec-sec1-format::".to_string()));
     }
     let coord = (sec1.len() - 1) / 2;

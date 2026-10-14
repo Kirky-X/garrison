@@ -201,9 +201,8 @@ async fn social_binding_service_find_or_create_creates_new_binding() {
     );
 }
 
-// 社交登录异常消息 i18n（feature = "i18n"）：wechat / alipay 的 loc! 宏中英文翻译
+// 社交登录异常消息 i18n：wechat / alipay 的 loc! 宏中英文翻译
 
-#[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_wechat_token_request_failed_zh() {
     use crate::i18n::{set_locale, GarrisonLocale};
@@ -216,7 +215,6 @@ fn loc_i18n_wechat_token_request_failed_zh() {
     assert_eq!(msg, "微信 token 请求失败: conn refused");
 }
 
-#[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_wechat_token_request_failed_en() {
     use crate::i18n::{set_locale, GarrisonLocale};
@@ -229,7 +227,6 @@ fn loc_i18n_wechat_token_request_failed_en() {
     assert_eq!(msg, "WeChat token request failed: conn refused");
 }
 
-#[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_wechat_error_response_with_code_message_zh() {
     use crate::i18n::{set_locale, GarrisonLocale};
@@ -243,7 +240,6 @@ fn loc_i18n_wechat_error_response_with_code_message_zh() {
     assert_eq!(msg, "微信错误 40029: invalid code");
 }
 
-#[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_alipay_rsa_key_parse_failed_zh() {
     use crate::i18n::{set_locale, GarrisonLocale};
@@ -256,7 +252,6 @@ fn loc_i18n_alipay_rsa_key_parse_failed_zh() {
     assert_eq!(msg, "支付宝 RSA 私钥解析失败: bad pem");
 }
 
-#[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_alipay_rsa_key_parse_failed_en() {
     use crate::i18n::{set_locale, GarrisonLocale};

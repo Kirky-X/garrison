@@ -178,7 +178,7 @@ impl QuotaStorage for GarrisonDaoQuotaStorage {
             // TTL 自然过期，不得把「限流拒绝」升级成存储错误。
             for _ in 0..cost {
                 if let Err(e) = self.dao.decr(&key).await {
-                    tracing::warn!(error = %e, key = %key, "quota consume over-limit rollback failed");
+                    tracing::warn!(error = %e, key = %key, "{}", crate::i18n::translate_detail("logs-limiteron-quota-consume-rollback-failed", &[]));
                 }
             }
             Ok(ConsumeResult::rejected(cur - cost, limit))
@@ -385,7 +385,7 @@ mod tests {
             .unwrap()
             .expect("至少一次成功消费后账本应存在");
         assert!(
-            info.consumed <= limit as u64,
+            info.consumed <= limit,
             "账本不得超过 limit，实际 {}",
             info.consumed
         );

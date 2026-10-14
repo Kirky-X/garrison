@@ -214,7 +214,8 @@ impl PasswordResetService {
                         tracing::error!(
                             to = %mask_email_for_log(&to),
                             error = %e,
-                            "password reset mail delivery failed"
+                            "{}",
+                            crate::i18n::translate_detail("logs-pwdreset-mail-delivery-failed", &[])
                         );
                     }
                 });
@@ -311,8 +312,7 @@ impl PasswordResetService {
         // HistoryRule 无从比对，直接比对补齐该缺口
         if self.hasher.verify(new_password, &current.secret_data)? {
             return Err(GarrisonError::InvalidParam(
-                "pwdreset-policy-violated::history-rule::new password equals current password"
-                    .to_string(),
+                "pwdreset-policy-violated-current-password::".to_string(),
             ));
         }
 
@@ -366,7 +366,11 @@ impl PasswordResetService {
         {
             tracing::error!(
                 error = %e,
-                "password history append (replaced generation) failed; current-generation hash may be invisible to HistoryRule"
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-pwdreset-history-append-replaced-generation-failed",
+                    &[]
+                )
             );
         }
         if let Err(e) = self.history.append(tenant_id, &claims.sub, &new_hash).await {
@@ -374,7 +378,11 @@ impl PasswordResetService {
             if let Err(re) = self.credentials.update(&claims.sub, original).await {
                 tracing::error!(
                     error = %re,
-                    "password history append failed and credential rollback also failed; credential may be inconsistent"
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-pwdreset-history-append-and-rollback-failed",
+                        &[]
+                    )
                 );
             }
             return Err(e);

@@ -793,7 +793,7 @@ fn asymmetric_empty_secret_placeholder_sign_verify_symmetric() {
     assert_eq!(claims.login_id, "user123");
 }
 
-// 跨密钥类型 alg confusion（T020-T023 KeyMaterial 齐备后的交叉验证）
+// 跨密钥类型 alg confusion（KeyMaterial 齐备后的交叉验证）
 
 /// 跨密钥类型令牌交叉使用全部必须被拒绝：
 /// RS 签发 → HS 验证、HS 签发 → RS 验证、HS 签发 → EC 验证、HS 签发 → Ed 验证。

@@ -4434,7 +4434,7 @@ mod session_token_security_tests {
         );
     }
 
-    // 渗透-租户隔离 tid 单一 claims 结构（性能 M2 / 架构 L4 收敛）：
+    // 渗透-租户隔离 tid 单一 claims 结构（收敛）
     // 租户上下文签发统一走 GarrisonJwtClaims（with_tid），无二次验签探测
 
     /// 租户上下文内登录签发的 JWT 经 `GarrisonJwtClaims::verify` 读回 `tid == Some(签发租户)`（单一 claims 结构往返）。

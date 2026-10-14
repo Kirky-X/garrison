@@ -220,4 +220,55 @@ mod tests {
         assert!(lockout.check_locked("ip-e").is_some());
         assert!(lockout.check_locked("ip-f").is_none());
     }
+
+    /// 构造小容量实例（`new` 固定 100_000 上限，走满需十万条记录；容量路径用结构体字面量直接压到 2）。
+    fn lockout_with_capacity(
+        threshold: u32,
+        window_secs: u64,
+        max_entries: usize,
+    ) -> ApiKeyLockout {
+        ApiKeyLockout {
+            records: DashMap::with_capacity(8),
+            threshold,
+            window: Duration::from_secs(window_secs),
+            max_entries,
+        }
+    }
+
+    /// 条目超限先清窗口已过期的记录（清零窗口使所有记录立即过期）。
+    #[test]
+    fn eviction_clears_expired_records_over_capacity() {
+        let lockout = lockout_with_capacity(3, 0, 2);
+        lockout.record_failure("ip-a");
+        lockout.record_failure("ip-b");
+        assert_eq!(lockout.records.len(), 2, "未超容量不应淘汰");
+        lockout.record_failure("ip-c");
+        assert_eq!(
+            lockout.records.len(),
+            0,
+            "超容量且全部过期时应清出过期记录，实际 {}",
+            lockout.records.len()
+        );
+    }
+
+    /// 条目超限且无过期记录：淘汰 `window_start` 最旧的一条，跳过当前记账的源 IP。
+    #[test]
+    fn eviction_drops_oldest_record_keeps_current() {
+        let lockout = lockout_with_capacity(3, 300, 2);
+        lockout.record_failure("ip-oldest");
+        std::thread::sleep(Duration::from_millis(2));
+        lockout.record_failure("ip-newer");
+        lockout.record_failure("ip-current");
+
+        assert_eq!(lockout.records.len(), 2, "超容量后应回落到容量内");
+        assert!(
+            !lockout.records.contains_key("ip-oldest"),
+            "最旧记录应被淘汰"
+        );
+        assert!(lockout.records.contains_key("ip-newer"), "较新记录应保留");
+        assert!(
+            lockout.records.contains_key("ip-current"),
+            "当前源 IP 不得被淘汰（本次记账语义正确性）"
+        );
+    }
 }

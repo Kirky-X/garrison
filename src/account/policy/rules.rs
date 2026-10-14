@@ -81,12 +81,12 @@ const MAX_HISTORY_COUNT: u32 = 24;
 /// ```
 pub struct HistoryRule {
     /// 比对的历史 hash 数量（从 `password_history` 末尾取最近 `count` 条，
-    /// 上限 [`MAX_HISTORY_COUNT`]）。
+    /// 上限 `MAX_HISTORY_COUNT`）。
     count: u32,
 }
 
 impl HistoryRule {
-    /// 创建密码历史规则；`count` 超过 [`MAX_HISTORY_COUNT`]（24）时钳制到上限，防热路径无上限 KDF 校验。
+    /// 创建密码历史规则；`count` 超过 `MAX_HISTORY_COUNT`（24）时钳制到上限，防热路径无上限 KDF 校验。
     pub fn new(count: u32) -> Self {
         Self {
             count: count.min(MAX_HISTORY_COUNT),
@@ -1222,5 +1222,47 @@ mod hibp_tests {
             .unwrap();
         assert!(!verdict.pwned);
         assert!(!verdict.service_available);
+    }
+}
+
+#[cfg(test)]
+mod nist_rule_tests {
+    use super::*;
+
+    fn ctx() -> PolicyContext {
+        PolicyContext {
+            user_id: "test-user".to_string(),
+            tenant_id: None,
+            username: None,
+            email: None,
+            password_history: Vec::new(),
+            password_created_at: None,
+        }
+    }
+
+    /// 字符数（非字节数）达标即通过：多字节字符按 chars 计数。
+    #[test]
+    fn nist_rule_counts_chars_not_bytes() {
+        let rule = NistComplianceRule::new(8);
+        assert_eq!(rule.name(), "nist_compliance");
+        assert!(
+            rule.validate(&ctx(), "密码密码密码密码").is_ok(),
+            "8 个多字节字符应满足 min_length=8（chars 计数）"
+        );
+    }
+
+    /// 字符数不足 min_length：显性拒绝并携带实际长度与下限（不静默放行）。
+    #[test]
+    fn nist_rule_rejects_too_short_with_lengths() {
+        let rule = NistComplianceRule::new(12);
+        let err = rule
+            .validate(&ctx(), "short")
+            .expect_err("不足 12 字符必须拒绝");
+        assert_eq!(err.rule_name, "nist_compliance");
+        assert!(
+            err.message.contains("policy-nist-length-too-short::5::12"),
+            "错误应携带实际长度 5 与下限 12，实际: {}",
+            err.message
+        );
     }
 }

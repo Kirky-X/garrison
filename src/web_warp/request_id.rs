@@ -62,7 +62,7 @@ async fn post_process(id: Arc<str>, mut response: Response) -> Response {
     tracing::debug!(
         request_id = %id,
         status = response.status().as_u16(),
-        "request_id_middleware: request completed"
+        "{}", crate::i18n::translate_detail("logs-request-id-middleware-completed", &[])
     );
 
     let status = response.status();
@@ -81,7 +81,7 @@ async fn post_process(id: Arc<str>, mut response: Response) -> Response {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
             // 失败显性化：原 body 已消费不可恢复，替换为统一错误体；原状态码与响应头（含 Retry-After / X-Request-ID）保留透传
-            tracing::error!(error = %e, "warp request_id: error body collect failed");
+            tracing::error!(error = %e, "{}", crate::i18n::translate_detail("logs-warp-request-id-body-collect-failed", &[]));
             let fallback =
                 crate::error::GarrisonError::Internal("warp-body-collect-failed::".to_string());
             let mut rebuilt =

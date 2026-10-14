@@ -1357,3 +1357,508 @@ compliance-erasure-residual-audit-log = Audit logs: compliance retention outrank
 compliance-erasure-residual-business-data = Business user profiles and business-side replicas: stored in the business party's own tables, unreachable by the framework
 compliance-erasure-residual-verification-code = Verification code / email verification records: keyed by phone number/email (business mapping), expiring naturally via TTL (<= 1 hour)
 compliance-erasure-residual-issued-jwt = Already issued JWTs: stateless signatures cannot be withdrawn before expiry (unless revocation is enabled, see config enable_jwt_revocation)
+
+# i18n sweep 2026-10: hardcoded tracing / CLI / example strings wired to translate_detail
+
+# Log messages (tracing) — account password reset
+logs-pwdreset-mail-delivery-failed = password reset mail delivery failed
+logs-pwdreset-history-append-replaced-generation-failed = password history append (replaced generation) failed; current-generation hash may be invisible to HistoryRule
+logs-pwdreset-history-append-and-rollback-failed = password history append failed and credential rollback also failed; credential may be inconsistent
+
+# Log messages (tracing) — config
+logs-config-argon2-weak-params-accepted = password_hasher: argon2 m_cost {$cost} < OWASP floor {$floor} KiB — weak params explicitly accepted via allow_weak_argon2_params (memory-constrained deployment?)
+logs-config-deprecated-key-migrated = deprecated config key "{$key}" (since {$since}) processed: {$outcome}; update your configuration before 1.0.0
+logs-config-deprecated-key-unmigratable = deprecated config key "{$key}" (since {$since}) is no longer auto-mappable and will be rejected at 1.0.0; {$guidance}
+config-deprecation-guidance-delete = delete it from your configuration
+config-deprecation-guidance-rename = rename it manually
+logs-config-rate-limit-redis-feature-disabled = rate-limit-redis feature disabled: rate limiting is per-process counting only; multi-instance deployments MUST enable rate-limit-redis for global limits
+logs-config-rate-limit-memory-backend = rate_limit_backend=Memory: per-process counting only; multi-instance deployments MUST switch to Redis for global limits
+config-deprecation-slot-lock-poisoned = deprecation slot lock must be available
+logs-cookie-same-site-none-without-secure = cookie SameSite=None requires a Secure context (cookie_secure=false); downgraded to SameSite=Lax
+
+# Log messages (tracing) — dao / cache / limiteron / audit
+logs-dao-identifier-register-conflict-row-vanished = identifier register: unique conflict row vanished before tenant-scoped recheck, returning neutral Registered
+logs-event-tx-dropped-without-commit = garrison-event-tx-dropped-without-commit: {$count} buffered event(s) discarded, kinds: [{$kinds}], open transaction rolled back via dbnexus drop cascade
+logs-event-tx-discarded-after-commit-failure = garrison-event-tx-discarded-after-commit-failure: commit returned Err, {$count} buffered event(s) discarded without dispatch, kinds: [{$kinds}]
+logs-event-tx-dispatch-cancelled-after-commit = garrison-event-tx-dispatch-cancelled-after-commit: commit succeeded but the dispatch future was cancelled mid-dispatch, {$dispatched} of {$total} event(s) dispatched, remaining discarded without dispatch, kinds: [{$kinds}]
+logs-error-rejection-rate-limited = garrison rejection: rate limited
+logs-limiteron-quota-consume-rollback-failed = quota consume over-limit rollback failed
+logs-audit-mask-metadata-invalid-json = audit mask_metadata: metadata is not valid JSON, masking skipped and raw value kept
+logs-cache-l3-write-back-failed = cache: L3 succeeded but write-back failed, returning uncached value
+logs-cache-chain-read-failed-evict-and-fallback = cache: chain read/deserialize failed, evicting key and falling back to L3
+
+# Log messages (tracing) — oauth2 / apikey
+logs-oauth2-authorize-tenant-context-missing = oauth2 authorize: tenant context missing, falling back to default tenant 0 (consent memory keyed to default tenant)
+logs-oauth2-refresh-rotation-not-configured = oauth2 refresh_token rotation not configured: serving refresh grant via DAO fallback without reuse detection — stolen refresh_token replay will NOT trigger chain revocation
+logs-apikey-global-verify-enabled = apikey global verify enabled: verify() may validate keys from ANY namespace; prefer verify_with_namespace for tenant isolation
+
+# Log messages (tracing) — secure
+logs-secure-rollback-hourly-window-counter-failed = rollback hourly window counter failed
+logs-secure-rollback-daily-window-counter-failed = rollback daily window counter failed
+logs-secure-rollback-window-counter-failed = rollback {$label} window counter failed
+logs-field-encryption-degenerate-non-primary-key = field-encryption: non-primary key is degenerate (single repeated byte); allowed for legacy decryption only — rotate it away via change-key
+
+# Log messages (tracing) — server / http layer
+logs-server-config-unrecognized-boolean = unrecognized boolean, falling back to default
+logs-server-config-unrecognized-number = unrecognized number, falling back to default
+logs-server-readiness-body-read-failed = readiness probe: upstream body read failed
+logs-server-readiness-body-not-json = readiness probe: upstream body is not valid JSON
+logs-server-apikey-auth-locked-window = api key auth locked: brute-force lockout window active
+logs-server-apikey-duplicate-header = duplicate X-API-Key header rejected
+logs-server-apikey-auth-failed = api key auth failed
+logs-server-apikey-auth-locked-out = api key auth locked out
+logs-server-inject-login-body-read-failed = inject_login_client_ip: body read failed (oversize or IO)
+logs-server-sanitize-rejection-body-read-failed = sanitize_json_rejection: body read failed
+logs-server-oauth2-state-without-refresh-rotation = OAuth2State constructed without RefreshTokenRotation: /oauth2/token refresh grant will serve via DAO fallback without reuse detection — refresh_token replay/chain revocation is UNAVAILABLE; inject TokenHandler::with_refresh_rotation to enable
+logs-server-jwks-retention-zero-fallback = with_jwks_retention_secs(0) would retire Passive keys immediately; falling back to default {$secs}s
+logs-server-discovery-jwks-algorithms-failed = discovery metadata jwks algorithms derivation failed
+logs-server-discovery-scopes-failed = discovery metadata scopes derivation failed
+logs-server-jwks-document-build-failed = jwks keystore document build failed
+logs-sdforge-caller-login-id-missing = caller_login_id missing: ownership check is mandatory, rejecting
+logs-server-consent-reconcile-removed-orphans = oauth2 consent startup reconcile: removed orphan consent rows of deleted clients
+logs-server-consent-reconcile-no-orphans = oauth2 consent startup reconcile: no orphan rows
+logs-server-consent-reconcile-failed = oauth2 consent startup reconcile failed (fail-open); orphan rows (if any) remain — retry on next restart or via reconcile_consents
+logs-server-external-drain-timeout = external server graceful drain timeout exceeded, stopping to wait for in-flight requests
+logs-server-internal-drain-timeout = internal server graceful drain timeout exceeded, stopping to wait for in-flight requests
+logs-tls-watcher-start-failed = tls cert watcher start failed; certificate hot reload disabled
+logs-tls-certificate-reloaded = tls certificate reloaded after file change
+logs-tls-certificate-reload-failed = tls certificate reload failed; keeping the previous certificate
+logs-tls-watcher-stopped = tls cert watcher stopped; certificate hot reload no longer available
+
+# Log messages (tracing) — stp / strategy / web
+logs-stp-password-lockout-reset-failed = password lockout reset-on-success failed (does not affect the login result)
+logs-stp-password-account-locked = login_with_password: account locked
+logs-stp-password-lockout-check-failed = password lockout check failed, degrading open (final defense is password verify)
+logs-stp-password-lockout-record-failed = password lockout record_failure failed (does not affect the login result)
+logs-stp-password-rehash-persist-failed = password rehash persist failed (does not affect the login result)
+logs-stp-role-union-get-role-list-failed = role union cache: get_role_list failed, skip (fail-open)
+logs-stp-role-union-no-sql-backend = role union cache: dao has no SQL backend, skip
+logs-stp-role-union-precompute-failed = role union cache precompute failed, skip (fail-open)
+logs-stp-role-union-write-failed = role union cache write failed (fail-open)
+logs-stp-role-union-serialize-failed = role union cache serialize failed (fail-open)
+logs-stp-remember-me-disabled = remember_me requested but disabled by config, using default timeout
+logs-stp-jti-blacklist-snapshot-read-failed = jti blacklist snapshot read failed; revoked tokens may remain valid until natural expiry
+logs-stp-invalidate-login-cache-logout-failed = invalidate_login_cache failed (does not affect the logout result)
+logs-stp-invalidate-login-cache-kickout-failed = invalidate_login_cache failed (does not affect the kickout result)
+logs-strategy-permission-cache-invalidate-failed = permission cache invalidation failed on logout (cache TTL will expire)
+logs-strategy-role-cache-write-failed = role cache write failed (login_id={$login_id}, role={$role}): {$error}
+strategy-rate-limit-adaptive-config-invalid = rate_limit: AdaptiveThresholdConfig invalid: {$error}
+logs-request-id-middleware-completed = request_id_middleware: request completed
+logs-warp-request-id-body-collect-failed = warp request_id: error body collect failed
+
+# Panic / expect invariant messages (fail-loud internal invariants)
+mfa-hkdf-okm-len-static = 32-byte OKM is within the HKDF-SHA256 output limit
+mfa-webauthn-factor-registry-lock-poisoned = mfa webauthn factor registry lock must not be poisoned
+cache-fallback-consumed-once = cache fallback must be consumed exactly once
+cache-fallback-not-yet-executed = the error occurred before the fallback, which has not run yet
+jwt-refresh-grace-entries-lock-poisoned = grace_entries lock must not be poisoned
+secure-csprng-unavailable = OS CSPRNG unavailable
+secure-aes-key-len-static = AES-256 key length is statically fixed at 32 bytes
+secure-gcm-nonce-len-static = GCM nonce length is statically fixed at 12 bytes
+server-inject-login-client-ip-invariant = should_inject implies client_ip is present
+
+# HTTP response bodies (axum server middleware / sdforge routes)
+server-http-body-invalid-json-msg = request body must be valid JSON
+server-http-body-validation-failed-msg = request body failed validation
+server-http-body-too-large-msg = request body exceeds size limit
+sdforge-caller-login-id-required-msg = caller_login_id is required
+
+# CLI (garrison-cli / garrison-healthcheck)
+cli-field-encryption-feature-disabled = WARN: GARRISON_FIELD_ENCRYPTION_KEYS is set but the field-encryption feature is not enabled; the value is ignored
+cli-change-key-report =
+    change-key report (tenant={$tenant}, batch={$batch_size}, non-transactional: row-level atomic, re-run with old keys to converge after interruption):
+      scanned: {$scanned}
+      reencrypted: {$reencrypted}
+      legacy_plaintext_reencrypted: {$legacy_plaintext_reencrypted}
+      legacy_key_migrated: {$legacy_key_migrated}
+      skipped_current_key: {$skipped_current_key}
+      failed: {$failed}
+cli-change-key-failed-row = failed-row: {$row}
+cli-change-key-empty-scan-warning =
+    WARNING: scanned = 0. The sensitive-key namespace of this deployment is likely
+    NOT addressable via --db-url (production default stores KV in process-local oxcache,
+    invisible to an external process). Do NOT remove old keys based on this run.
+cli-check-key-report =
+    check-key report (tenant={$tenant}, pattern={$pattern}):
+      scanned: {$scanned}
+      encrypted_ok: {$encrypted_ok}
+      legacy_plaintext: {$legacy_plaintext}
+      legacy_raw_key: {$legacy_raw_key}
+      corrupt: {$corrupt}
+
+      non-zero legacy counts mean migration is incomplete; run change-key to converge.
+cli-check-key-corrupt-row = corrupt-row: {$row}
+cli-check-key-empty-scan-hint =
+    scanned = 0 likely means this deployment's KV data is not addressable via --db-url
+    (production default keeps KV in process-local oxcache); see module docs.
+cli-one-time-access-token-issued =
+    Issued one-time access token for user '{$user}' (tenant {$tenant}).
+
+    token:
+    {$token}
+
+    expires at: {$expires_at} (unix {$unix})
+
+    one-time registry: app_user_ext field_key = {$field_key}
+
+    SINGLE-USE SEMANTICS REQUIRE SERVER-SIDE WIRING: this framework
+    does not consume the registry row automatically. Your login path must
+    verify the token with the same signing secret AND atomically delete the
+    registry row (find_by_user_and_key + delete) before creating a session;
+    without that wiring the token is a short-lived bearer credential
+    replayable within its TTL. Re-issuing for the same user replaces the
+    registry row.
+bin-healthcheck-failed = garrison-healthcheck: {$arg0}
+bin-healthcheck-status = garrison-healthcheck: /healthz on 127.0.0.1:{$arg0} returned non-2xx status {$arg1}
+
+# Official examples (examples/)
+example-apikey-handler-built = [1] ApiKeyHandler constructed (allow_global_verify=true, example semantics)
+example-apikey-verify-nonexistent = verify("nonexistent-key") -> Err(InvalidToken) OK (global verify enabled)
+example-sso-envelope-consume = [Verify] subscriber-side verify_sso_message consuming the envelope:
+example-sso-channel-message-count = channel must receive two messages
+example-sso-envelope-verified = signature verified (last_seq={$seq}), business payload = {$payload}
+example-sso-replay-rejected = replay of the same envelope rejected ({$reason})
+example-sso-replay-not-rejected = replayed envelope must fail verification, but payload was returned: {$payload}
+example-sso-bare-message-rejected = bare message (no envelope) rejected ({$reason})
+example-sso-bare-message-not-rejected = bare unenveloped message must be rejected, but payload was returned: {$payload}
+
+# i18n audit 2026-10: key:: convention keys referenced in code but missing from both bundles (P4 fill-up)
+# Note: `waf-xxx-key` from the audit list is a documentation placeholder (src/web/axum/waf.rs:49), not a real key — no entry.
+# Note: `auth-server-bootstrap-proxies-empty-entry`, `auth-server-bootstrap-proxy-not-private`,
+#       `auth-server-field-encryption-no-keys` and `pwdreset-policy-violated-current-password` split out
+#       of the audit keys above so each message keeps its own wording.
+
+# account
+account-argon2-params = argon2 password hashing failed: {$arg0}
+account-argon2-pool-closed = the argon2 hashing thread pool is closed
+action-token-jti-invalid = action token has an invalid jti: {$arg0}
+action-token-purpose-mismatch = action token purpose mismatch: {$arg0}
+credential-create-hash-gate = credential creation rejected by the stored-hash gate: {$arg0}
+credential-possible-compromise = credential possibly compromised: {$arg0}
+credential-update-hash-gate = credential update rejected by the stored-hash gate: {$arg0}
+credential-verify-blocking = credential verification failed (blocking offload): {$arg0}
+list-credentials = credential listing failed: {$arg0}
+pwdreset-binding-missing = password reset session binding is missing
+pwdreset-identifier-invalid = password reset identifier invalid ({$arg0})
+pwdreset-password-credential-missing = no enabled password credential for this user
+pwdreset-policy-violated = password policy violated: {$arg0}
+pwdreset-policy-violated-current-password = the new password must differ from the current password
+pwdreset-restricted-endpoint-denied = endpoint '{$arg0}' is not available to restricted password-reset sessions
+pwdreset-session-not-found = password reset session not found
+pwdreset-session-subject-mismatch = password reset session subject mismatch: session={$arg0}, token={$arg1}
+pwdreset-subject-binding-mismatch = password reset subject binding mismatch: token-sub={$arg0}, binding={$arg1}
+pwdreset-system-clock = system clock error: {$arg0}
+pwdreset-tenant-binding-missing = password reset tenant binding is missing
+pwdreset-tenant-mismatch = password reset token tenant mismatch
+pwdreset-token-consume-failed = password reset token consume failed (already used or expired)
+pwdreset-ttl-negative = password reset ttl must not be negative: {$arg0}
+pwdreset-ttl-overflow = password reset ttl overflows i64: {$arg0}
+
+# apikey
+apikey-global-verify-disabled = global API key verification is disabled; use verify_with_namespace or enable it via with_allow_global_verify
+
+# auth server bootstrap (bin/auth_server)
+auth-server-bootstrap = invalid {$arg0}: '{$arg1}' — require an IPv4/IPv6 literal (e.g. 127.0.0.1 or 0.0.0.0), or for GARRISON_TRUSTED_PROXIES a comma-separated IP list (e.g. 10.0.0.1,127.0.0.1)
+auth-server-bootstrap-proxies-empty-entry = GARRISON_TRUSTED_PROXIES contains an empty entry; expect a comma-separated IP list (e.g. 10.0.0.1,127.0.0.1)
+auth-server-bootstrap-proxy-not-private = trusted proxy {$arg0} is not a private address; trusted proxies must be loopback/RFC1918/link-local/IPv6 ULA (public IPs can be spoofed on the path)
+auth-server-fatal = FATAL: {$arg0}
+auth-server-field-encryption = invalid GARRISON_FIELD_ENCRYPTION_KEYS entry '{$arg1}' ({$arg0}) — expect comma-separated key_id:hex64 entries
+auth-server-field-encryption-no-keys = no field-encryption key configured: set GARRISON_FIELD_ENCRYPTION_KEYS (key_id:hex64,...) or disable the field-encryption feature
+
+# backchannel logout queue
+backchannel-http-client = back-channel logout HTTP client build failed: {$arg0}
+backchannel-queue-connection = back-channel logout queue: get connection failed: {$arg0}
+backchannel-queue-count = back-channel logout queue: count query failed: {$arg0}
+backchannel-queue-find = back-channel logout queue: pending-entry scan failed: {$arg0}
+backchannel-queue-get-session = back-channel logout queue: get session failed: {$arg0}
+backchannel-queue-missing-row = back-channel logout queue: the claimed row no longer exists: {$arg0}
+backchannel-queue-parse-count = back-channel logout queue: count parse failed: {$arg0}
+backchannel-queue-pending = back-channel logout queue: pending list failed: {$arg0}
+
+# cache
+cache-l1-init = L1 cache initialization failed: {$arg0}
+garrison-dao-cache = DAO cache backend error: {$arg0}
+garrison-dao-cache-value-not-utf8 = DAO cache value is not valid UTF-8: {$arg0}
+
+# cli (garrison-cli)
+cli-change-key-empty-scan = refusing to report success: the sensitive-key namespace looks unreachable via --db-url (scanned = 0)
+cli-change-key-rows-failed = change-key finished with rows needing attention: {$arg0}
+cli-check-key-corrupt-rows = check-key found rows needing attention: {$arg0}
+cli-check-key-empty-scan = refusing to report success: the sensitive-key namespace looks unreachable via --db-url (scanned = 0); see the module docs
+cli-healthcheck-failed = healthcheck probe failed: {$arg0}
+cli-healthcheck-join = healthcheck probe task join failed: {$arg0}
+cli-healthcheck-status = /healthz on 127.0.0.1:{$arg0} returned non-2xx status {$arg1}
+cli-key-source-missing = pass --key or set GARRISON_FIELD_ENCRYPTION_KEYS
+cli-key-spec-empty-id = key id must not be empty: {$arg0}
+cli-key-spec-format = expected key_id:hex, got: {$arg0}
+cli-key-spec-hex-invalid = hex for key '{$arg0}' must be exactly 64 hex chars (32 bytes)
+cli-key-specs-empty = pass at least one --key key_id:hex
+cli-keygen-csprng = signing key generation failed (OS CSPRNG): {$arg0}
+cli-one-time-exp-out-of-range = one-time token exp out of range: {$arg0}
+cli-one-time-jti-missing = signed token has no jti claim
+cli-one-time-migrate = database migration failed: {$arg0}
+cli-one-time-secret-empty = signing secret must not be empty
+cli-one-time-secret-missing = pass --secret or set GARRISON_JWT_SECRET
+cli-one-time-ttl-invalid = ttl invalid: {$arg0} ({$arg1})
+cli-one-time-user-not-active = user '{$arg0}' status is {$arg1} (only active users may be issued one-time credentials)
+cli-one-time-user-not-found = no user '{$arg0}' in tenant {$arg1}
+cli-runtime-build = tokio runtime build failed: {$arg0}
+cli-user-hash-password-empty = password must not be empty
+cli-user-hash-password-missing = pass --password or set GARRISON_CLI_PASSWORD
+cli-user-hash-user-colon = username must not contain ':'
+cli-user-hash-user-empty = username must not be empty
+
+# config
+config-csrf-enabled-unsupported = unsupported csrf_enabled value: {$arg0} (allowed: true/false, case-insensitive)
+config-jwks-retention-must-positive = jwks_retention_secs must be positive
+config-jwt-key-missing = JWT key missing from the configuration: {$arg0}
+config-jwt-key-multiple-types = JWT key must not be configured with multiple types at once
+config-jwt-key-unexpected-for-hs = JWT key '{$arg0}' is unexpected for an HMAC algorithm
+config-mfa-chain-factor-unknown = unknown MFA chain factor: {$arg0}
+config-password-hash-algorithm-unsupported = unsupported password hash algorithm: {$arg0}
+config-password-hash-argon2-m-below-floor = argon2 m_cost {$arg0} is below the OWASP floor; algorithm: {$arg1}
+config-password-hash-argon2-param-invalid = invalid argon2 parameter: {$arg0}
+config-password-hash-argon2-pool-size-out-of-range = argon2 pool_size out of range: {$arg0}
+config-password-hash-bcrypt-cost-out-of-range = bcrypt cost out of range: {$arg0}
+config-refresh-grace-max-uses-zero = refresh_grace_max_uses must be >= 1, got: {$arg0}
+config-refresh-grace-period-negative = refresh_grace_period_secs must not be negative, got: {$arg0}
+
+# context
+ctx-invalid-cookie-domain = invalid cookie domain for '{$arg0}'
+ctx-invalid-cookie-max-age = invalid cookie max-age: {$arg0}
+ctx-invalid-cookie-path = invalid cookie path for '{$arg0}'
+ctx-invalid-cookie-same-site = invalid cookie same_site '{$arg0}': expected Lax/Strict/None
+
+# dao
+dao-app-password-history-append = app_password_history append failed: {$arg0}
+dao-app-password-history-recent = app_password_history recent query failed: {$arg0}
+dao-app-user-create-hash-gate = app_user create rejected by the stored-hash gate: {$arg0}
+dao-app-user-identifier-find-owner = app_user_identifier find-owner failed: {$arg0}
+dao-app-user-identifier-find-owner-in-tenant = app_user_identifier find-owner-in-tenant failed: {$arg0}
+dao-app-user-identifier-register = app_user_identifier register failed: {$arg0}
+dao-app-user-update-hash-gate = app_user update rejected by the stored-hash gate: {$arg0}
+dao-app-webauthn-credential-conflict-lookup = webauthn credential conflict lookup failed: {$arg0}
+dao-app-webauthn-credential-conflict-without-owner = webauthn credential conflict without an owning row: {$arg0}
+dao-app-webauthn-credential-delete = webauthn credential delete failed: {$arg0}
+dao-app-webauthn-credential-insert = webauthn credential insert failed: {$arg0}
+dao-app-webauthn-credential-list = webauthn credential list failed: {$arg0}
+dao-app-webauthn-credential-not-found = webauthn credential not found: {$arg0}
+dao-app-webauthn-credential-query = webauthn credential query failed: {$arg0}
+dao-app-webauthn-credential-sign-count-regression = webauthn sign counter regression: refusing to move the counter backwards ({$arg0})
+dao-app-webauthn-credential-update = webauthn credential update failed: {$arg0}
+dao-app-webauthn-credential-update-probe = webauthn credential update probe failed: {$arg0}
+dao-app-webauthn-credential-update-probe-empty = webauthn credential update probe returned no row
+dao-app-webauthn-credential-update-probe-parse = webauthn credential update probe row parse failed: {$arg0}
+dao-conformance = failed to construct {$arg0}
+dao-webauthn-credential-parse-attestation = webauthn credential row parse failed (attestation): {$arg0}
+dao-webauthn-credential-parse-created = webauthn credential row parse failed (created): {$arg0}
+dao-webauthn-credential-parse-cred-id = webauthn credential row parse failed (cred_id): {$arg0}
+dao-webauthn-credential-parse-pk = webauthn credential row parse failed (public_key): {$arg0}
+dao-webauthn-credential-parse-sign-count = webauthn credential row parse failed (sign_count): {$arg0}
+dao-webauthn-credential-parse-tenant = webauthn credential row parse failed (tenant_id): {$arg0}
+dao-webauthn-credential-parse-updated = webauthn credential row parse failed (updated): {$arg0}
+dao-webauthn-credential-parse-user = webauthn credential row parse failed (user_id): {$arg0}
+dao-webauthn-credential-sign-count-range = webauthn sign_count out of range: {$arg0}
+event-tx-begin = event transaction begin failed: {$arg0}
+event-tx-commit = event transaction commit failed: {$arg0}
+event-tx-execute = event transaction execute failed: {$arg0}
+event-tx-get-session = event transaction get session failed: {$arg0}
+event-tx-rollback = event transaction rollback failed: {$arg0}
+import-hash-argon2-format = argon2 hash import failed: params segment missing or incomplete
+import-hash-argon2-m-cost = argon2 m_cost {$arg0} exceeds the import maximum {$arg1}
+import-hash-argon2-p-cost = argon2 p_cost {$arg0} exceeds the import maximum {$arg1}
+import-hash-argon2-t-cost = argon2 t_cost {$arg0} exceeds the import maximum {$arg1}
+import-hash-bcrypt-cost = bcrypt cost {$arg0} exceeds the import maximum {$arg1}
+import-hash-bcrypt-format = bcrypt hash import failed: cost segment missing or invalid
+import-hash-unsupported = unsupported hash algorithm for import: {$arg0}
+legacy-key-migration = legacy key migration is not supported on this backend (TTL query unsupported)
+
+# jwt / jwks
+jwks-clock-invalid = JWKS state clock invalid: {$arg0}
+jwks-state-corrupt = JWKS state corrupt: {$arg0}
+jwks-state-serialize = JWKS state serialize failed: {$arg0}
+jwt-ec-curve-missing = EC key is missing the curve identifier
+jwt-ec-curve-unsupported = unsupported EC curve: {$arg0}
+jwt-ec-key = EC key build failed: {$arg0}
+jwt-ec-pem-invalid = EC PEM parse failed: {$arg0}
+jwt-ec-sec1-format = expected a SEC1 EC private key
+jwt-ed-key = Ed25519 key build failed: {$arg0}
+jwt-ed-pem-invalid = Ed25519 PEM parse failed: {$arg0}
+jwt-ed-seed-len = Ed25519 seed length invalid
+jwt-header-invalid = JWT header invalid: {$arg0}
+jwt-jwks-symmetric = JWKS export does not support symmetric keys
+jwt-jwks-unsupported-alg = JWKS export does not support algorithm {$arg0}
+jwt-key-algorithm-mismatch = key algorithm mismatch: key={$arg0}, alg={$arg1}
+jwt-keystore-no-active-key = keystore has no active key
+jwt-kid-already-registered = kid '{$arg0}' is already registered
+jwt-kid-retired = kid '{$arg0}' has been retired
+jwt-kid-symmetric = kid must not reference a symmetric key
+jwt-kid-unknown = unknown kid: {$arg0}
+jwt-refresh-compensate-delete = refresh token compensation delete failed: {$arg0}
+jwt-refresh-compensate-restore = refresh token compensation restore failed: {$arg0}
+jwt-refresh-count-empty = refresh token count chain is empty
+jwt-refresh-insert-and-compensate-failed = refresh token insert failed and compensation also failed: {$arg0}, {$arg1}
+jwt-refresh-insert-rolled-back = refresh token insert rolled back: {$arg0}
+jwt-refresh-reuse-rejected = refresh token reuse rejected: {$arg0}
+jwt-rsa-key = RSA key build failed: {$arg0}
+jwt-rsa-pem-invalid = RSA PEM parse failed: {$arg0}
+jwt-sign-claims = JWT claim signing failed: {$arg0}
+jwt-snapshot-kid-mismatch = key snapshot kid mismatch: {$arg0} != {$arg1}
+jwt-snapshot-multiple-active = key snapshot has multiple active keys: {$arg0}
+
+# mfa
+mfa-aal-out-of-range = aal out of range ({$arg1}), got: {$arg0}
+mfa-amr-method-unknown = unknown AMR method: {$arg0} ({$arg1})
+mfa-recovery-batch-size-invalid = recovery code batch size invalid ({$arg1}), got: {$arg0}
+mfa-recovery-misuse-parse = recovery misuse-state parse failed: {$arg0}
+mfa-remember-secret-too-short = remember-me secret too short: {$arg0} ({$arg1})
+mfa-remember-sign = remember-me token signing failed: {$arg0}
+mfa-remember-ttl-overflow = remember-me ttl overflows i64: {$arg0}
+mfa-webauthn-assertion-parse = webauthn assertion parse failed: {$arg0}
+mfa-webauthn-factor-already-registered = webauthn factor is already registered
+mfa-webauthn-factor-not-registered = webauthn factor is not registered
+mfa-webauthn-subject-mismatch = webauthn assertion subject mismatch: asserted-for={$arg0}, session={$arg1}
+
+# oauth2 server
+oauth2-server-authorize-ticket-deserialize = authorize ticket deserialize failed: {$arg0}
+oauth2-server-jwks-retirement-conflict = another instance rotated the key set; retirement deferred to that rotation
+oauth2-server-jwks-rotation-conflict = another instance rotated the key set; reload and retry
+
+# qrlogin
+qrlogin-session-parse = QR login session parse failed: {$arg0}
+qrlogin-session-serialize = QR login session serialize failed: {$arg0}
+qrlogin-ticket-hmac-init = QR login ticket HMAC init failed: {$arg0}
+
+# secure
+secure-field-encryption-change-key = change-key batch size must be greater than zero
+secure-field-encryption-config = field-encryption config error: {$arg0}
+secure-field-encryption-dao = sensitive-key namespace operation rejected: {$arg0}
+secure-field-encryption-decode = field decryption failed: {$arg0}
+secure-field-encryption-open = field decryption failed: AAD, key or authentication tag mismatch
+secure-field-encryption-seal = field encryption failed: {$arg0}
+secure-field-encryption-utf8 = field value is not valid UTF-8: {$arg0}
+secure-limiter-refund = limiter refund failed: {$arg0}
+session-sim-primary-amr = primary AMR simulation failed: {$arg0}
+
+# server
+server-external-login-unacknowledged = external login is enabled on a non-loopback bind without acknowledgement ({$arg0}); pass the acknowledgement string external_login_ack
+server-internal-api-key-too-short = internal API key is shorter than the minimum ({$arg0}); rotate to a key of at least 32 bytes
+
+# sso
+sso-client-secret-too-short = SSO client secret too short: {$arg0}, {$arg1}
+sso-message-envelope-format = SSO message envelope format invalid
+sso-message-envelope-serialize = SSO message envelope serialize failed: {$arg0}
+sso-message-hmac-init = SSO message HMAC init failed: {$arg0}
+sso-message-hmac-verify = SSO message HMAC verification failed
+sso-message-seq-replay = SSO message sequence replay rejected: {$arg0}, {$arg1}
+sso-saml-audience-not-configured = SAML audience is not configured; asserted audience: {$arg0}
+sso-saml-destination-not-configured = SAML destination is not configured; asserted destination: {$arg0}
+sso-server-secret-too-short = SSO server secret too short: {$arg0}, {$arg1}
+
+# stp
+stp-check-disable-token-session-not-found = check_disable: token session not found
+stp-check-login-session-tenant-unbound = check_login: session has no tenant binding while a tenant context is present
+stp-check-login-tenant-mismatch = check_login: session tenant does not match the request tenant
+stp-check-login-tenant-unbound = check_login: token has no tenant binding while a tenant context is present
+stp-login-id-control-char = login_id must not contain control characters
+stp-login-id-sep = login_id must not contain the unit separator (U+001F)
+stp-login-id-too-long = login_id too long: {$arg0} bytes (max {$arg1})
+stp-login-id-whitespace = login_id must not contain whitespace
+stp-password-account-locked = account locked: {$arg0}
+stp-password-lock-check = password lockout check failed: {$arg0}
+stp-password-lock-incr = password lockout failure count increment failed: {$arg0}
+stp-password-lock-set = password lockout state write failed: {$arg0}
+stp-refresh-token-revoked = refresh token has been revoked
+stp-secondary-check-not-login = secondary check requires a logged-in session
+strategy-sliding-window-count-parse = sliding window count parse failed: {$arg0}
+strategy-sliding-window-key-empty = sliding window key must not be empty
+strategy-sliding-window-response-length = sliding window script returned an unexpected response length
+
+# webauthn
+webauthn-attestation-format = attestation object format invalid: {$arg0}
+webauthn-ceremony = webauthn ceremony failed: {$arg0}
+webauthn-challenge-conflict = challenge key already claimed: {$arg0}
+webauthn-challenge-deserialize = challenge deserialize failed: {$arg0}
+webauthn-challenge-encode = challenge encode failed: {$arg0}
+webauthn-challenge-getdel = challenge consume (GETDEL) failed: {$arg0}
+webauthn-challenge-serialize = challenge serialize failed: {$arg0}
+webauthn-challenge-setifabsent = challenge store (SETNX) failed: {$arg0}
+webauthn-cred-id-encode = credential id encode failed: {$arg0}
+webauthn-cred-row-encode = credential row encode failed: {$arg0}
+webauthn-cred-row-format = credential row format invalid: {$arg0}
+webauthn-cred-row-identity-mismatch = credential row identity mismatch (credential_id={$arg0})
+webauthn-cred-row-parse = credential row parse failed: {$arg0}
+webauthn-issuer-host-missing = issuer has no host: {$arg0}
+webauthn-issuer-invalid = issuer invalid: {$arg0}
+webauthn-rp-build = relying party build failed: {$arg0}
+webauthn-rp-mismatch = relying party mismatch: {$arg0}
+clientdata-parse = clientDataJSON parse failed: {$arg0}
+clientdata-utf8 = clientDataJSON is not valid UTF-8: {$arg0}
+cred-id = credential id decode failed: {$arg0}
+start-auth = webauthn authentication start failed: {$arg0}
+start-register = webauthn registration start failed: {$arg0}
+update-state = webauthn state update failed: {$arg0}
+
+# misc
+warp-body-collect-failed = warp request_id: error body collect failed
+
+# DAO conformance suite (dao::testing, `testing` feature — 下游自定义后端复用的契约测试)
+# 断言消息保持原样（测试诊断文案，与仓库测试代码惯例一致）；panic/expect 失败路径与标签走 FTL。
+dao-conformance-expect-ok-failed = [{$prefix}] {$what} must not fail: {$error}
+dao-conformance-expect-err-failed = [{$prefix}] {$what}, got: {$actual}
+dao-conformance-what-set-overwrite = set (overwrite)
+dao-conformance-what-get-missing-key = get (missing key)
+dao-conformance-what-delete-missing-key = delete (missing key)
+dao-conformance-what-get-with-ttl-missing-key = get_with_ttl (missing key)
+dao-conformance-what-incr-new-key = incr (new key)
+dao-conformance-what-incr-increment = incr (second increment)
+dao-conformance-what-decr-missing-key = decr (missing key)
+dao-conformance-what-decr-zero = decr (stored zero)
+dao-conformance-what-caui-missing-key = compare_and_update_if_greater (missing key)
+dao-conformance-what-caui-smaller-value = compare_and_update_if_greater (smaller value)
+dao-conformance-what-get-old-key = get (old key)
+dao-conformance-what-get-new-key = get (new key)
+dao-conformance-what-sia-new-key = set_if_absent (new key)
+dao-conformance-what-sia-existing-key = set_if_absent (existing key)
+dao-conformance-what-gd-missing-key = get_and_delete (missing key)
+dao-conformance-what-cas-mismatch = compare_and_swap (expected mismatch)
+dao-conformance-what-cas-match = compare_and_swap (expected match)
+dao-conformance-what-cas-missing-key = compare_and_swap (missing key)
+dao-conformance-what-keys-single-char = keys ('?' single-character pattern)
+dao-conformance-what-keys-no-match = keys (no match)
+dao-conformance-what-keys-after-delete = keys (after delete)
+dao-conformance-what-keys-after-rename = keys (after rename)
+dao-conformance-expect-err-update-missing-key = update on a missing key must return Err(Dao)
+dao-conformance-expect-err-expire-missing-key = expire on a missing key must return Err(Dao)
+dao-conformance-expect-err-incr-non-numeric = incr on a non-numeric value must return Err(Dao) (no silent reset to zero)
+dao-conformance-expect-err-incr-overflow = incr overflow on u64 must return Err(Dao)
+dao-conformance-expect-err-caui-non-numeric = compare_and_update_if_greater on a non-numeric value must return Err(Dao)
+dao-conformance-expect-err-rename-missing-key = rename on a missing key must return Err(InvalidParam) (trait contract)
+dao-conformance-concurrent-sia-join-failed = [{$prefix}] set_if_absent task join failed
+dao-conformance-concurrent-sia-error = [{$prefix}] set_if_absent must not fail concurrently: {$error}
+dao-conformance-concurrent-gd-join-failed = [{$prefix}] get_and_delete task join failed
+dao-conformance-concurrent-gd-error = [{$prefix}] get_and_delete must not fail concurrently: {$error}
+dao-conformance-concurrent-incr-join-failed = [{$prefix}] incr task join failed
+dao-conformance-concurrent-incr-error = [{$prefix}] incr must not fail concurrently: {$error}
+dao-conformance-concurrent-decr-join-failed = [{$prefix}] decr task join failed
+dao-conformance-concurrent-decr-error = [{$prefix}] decr must not fail concurrently: {$error}
+dao-conformance-concurrent-caui-join-failed = [{$prefix}] compare_and_update_if_greater task join failed
+dao-conformance-concurrent-caui-error = [{$prefix}] compare_and_update_if_greater must not fail concurrently: {$error}
+dao-conformance-concurrent-cas-join-failed = [{$prefix}] compare_and_swap task join failed
+dao-conformance-concurrent-cas-error = [{$prefix}] compare_and_swap must not fail concurrently: {$error}
+dao-conformance-get-session-failed = [{$prefix}] get_session must not fail: {$error}
+dao-conformance-connection-failed = [{$prefix}] connection must not fail: {$error}
+dao-conformance-query-failed = [{$prefix}] query must not fail: {$error}
+dao-conformance-query-returned-no-row = [{$prefix}] query must return a row: {$sql}
+dao-conformance-val-column-read-failed = [{$prefix}] reading the val column failed: {$error}
+dao-conformance-execute-failed = [{$prefix}] execute must not fail: {$error}
+dao-conformance-injection-expected-dao-error = [{$prefix}] the injected failure must return a Dao error, got: {$actual}
+dao-conformance-duplicate-binding-expected-already-bound = [{$prefix}] duplicate binding must return AlreadyBound, got: {$actual}
+dao-conformance-bound-credential-not-found = [{$prefix}] a bound credential must be queryable, got: {$actual}
+dao-conformance-query-must-succeed = [{$prefix}] query must succeed
+dao-conformance-credential-update-must-succeed = [{$prefix}] updating an existing credential must succeed
+dao-conformance-credential-must-exist-after-update = [{$prefix}] the credential must still exist after the update
+dao-conformance-credential-must-exist-after-rollback = [{$prefix}] the credential must still exist after the rejected regression
+dao-conformance-unbind-must-succeed = [{$prefix}] unbinding must succeed
+dao-conformance-unbind-must-be-idempotent = [{$prefix}] repeated unbinding must stay Ok (idempotent)
+cli-healthcheck-healthy = healthy: /healthz on 127.0.0.1:{$port} returned {$code}

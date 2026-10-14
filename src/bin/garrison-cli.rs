@@ -17,7 +17,7 @@
 //! # 用法
 //!
 //! ```sh
-//! cargo build --bins --features cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption
+//! cargo build --bins --features cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption,dao-key-index
 //! ./target/debug/garrison-cli --help
 //! ```
 use clap::{Parser, Subcommand};
@@ -180,16 +180,14 @@ async fn dispatch(command: Command) -> GarrisonResult<()> {
 fn parse_key_entries(specs: &[String]) -> GarrisonResult<Vec<(String, String)>> {
     if specs.is_empty() {
         return Err(GarrisonError::InvalidParam(
-            "cli-key-specs-empty::pass at least one --key key_id:hex".to_string(),
+            "cli-key-specs-empty::".to_string(),
         ));
     }
     let mut keys = Vec::with_capacity(specs.len());
     for spec in specs {
-        let (key_id, hex) = spec.split_once(':').ok_or_else(|| {
-            GarrisonError::InvalidParam(format!(
-                "cli-key-spec-format::expected key_id:hex got {spec}"
-            ))
-        })?;
+        let (key_id, hex) = spec
+            .split_once(':')
+            .ok_or_else(|| GarrisonError::InvalidParam(format!("cli-key-spec-format::{spec}")))?;
         if key_id.is_empty() {
             return Err(GarrisonError::InvalidParam(format!(
                 "cli-key-spec-empty-id::{spec}"
@@ -197,7 +195,7 @@ fn parse_key_entries(specs: &[String]) -> GarrisonResult<Vec<(String, String)>> 
         }
         if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(GarrisonError::InvalidParam(format!(
-                "cli-key-spec-hex-invalid::{key_id}::hex must be exactly 64 hex chars (32 bytes)"
+                "cli-key-spec-hex-invalid::{key_id}"
             )));
         }
         keys.push((key_id.to_string(), hex.to_ascii_lowercase()));
@@ -215,11 +213,12 @@ async fn run_change_key(
     // from_key_entries 语义：首把即主钥（新写入用它加密）
     let cipher = garrison::secure::encryption::FieldCipher::from_key_entries(&entries)?;
     let pool = garrison::dao::init_dbnexus(&db_url).await?;
-    let inner: std::sync::Arc<dyn garrison::dao::GarrisonDao> =
-        std::sync::Arc::new(garrison::dao::GarrisonDaoDbnexus::new(
-            pool,
-            std::sync::Arc::new(garrison::dao::InMemoryDao::new()),
-        ));
+    // KV 委托 SQL 持久化层（garrison_kv 表）：离线命令跨进程读取落库密文行
+    let kv = garrison::dao::DbnexusKvDao::new(pool.clone());
+    kv.ensure_table().await?;
+    let inner: std::sync::Arc<dyn garrison::dao::GarrisonDao> = std::sync::Arc::new(
+        garrison::dao::GarrisonDaoDbnexus::new(pool, std::sync::Arc::new(kv)),
+    );
     let dao = garrison::secure::encryption::FieldEncryptionDao::new(
         inner.clone(),
         std::sync::Arc::new(cipher.clone()),
@@ -227,21 +226,43 @@ async fn run_change_key(
     )?;
     let new_cipher = garrison::secure::encryption::FieldCipher::from_key_entries(&entries)?;
     let report = dao.change_key(new_cipher, batch_size).await?;
+    let batch = batch_size.to_string();
+    let scanned = report.scanned.to_string();
+    let reencrypted = report.reencrypted.to_string();
+    let legacy_plaintext_reencrypted = report.legacy_plaintext_reencrypted.to_string();
+    let legacy_key_migrated = report.legacy_key_migrated.to_string();
+    let skipped_current_key = report.skipped_current_key.to_string();
+    let failed = report.failed.len().to_string();
     println!(
-        "change-key report (tenant={tenant}, batch={batch_size}, non-transactional: row-level atomic, re-run with old keys to converge after interruption):\n  scanned: {}\n  reencrypted: {}\n  legacy_plaintext_reencrypted: {}\n  legacy_key_migrated: {}\n  skipped_current_key: {}\n  failed: {}",
-        report.scanned,
-        report.reencrypted,
-        report.legacy_plaintext_reencrypted,
-        report.legacy_key_migrated,
-        report.skipped_current_key,
-        report.failed.len()
+        "{}",
+        translate_detail(
+            "cli-change-key-report",
+            &[
+                ("tenant", tenant.as_str()),
+                ("batch_size", batch.as_str()),
+                ("scanned", scanned.as_str()),
+                ("reencrypted", reencrypted.as_str()),
+                (
+                    "legacy_plaintext_reencrypted",
+                    legacy_plaintext_reencrypted.as_str()
+                ),
+                ("legacy_key_migrated", legacy_key_migrated.as_str()),
+                ("skipped_current_key", skipped_current_key.as_str()),
+                ("failed", failed.as_str()),
+            ]
+        )
     );
     for line in &report.failed {
-        println!("  failed-row: {line:?}");
+        let row = format!("{line:?}");
+        println!(
+            "  {}",
+            translate_detail("cli-change-key-failed-row", &[("row", row.as_str())])
+        );
     }
     if report.scanned == 0 {
         println!(
-            "\nWARNING: scanned = 0. The sensitive-key namespace of this deployment is likely\nNOT addressable via --db-url (production default stores KV in process-local oxcache,\ninvisible to an external process). Do NOT remove old keys based on this run."
+            "\n{}",
+            translate_detail("cli-change-key-empty-scan-warning", &[])
         );
         return Err(GarrisonError::Config(
             "cli-change-key-empty-scan::data-addressing-likely-unavailable::refusing-to-report-success"
@@ -266,29 +287,50 @@ async fn run_check_key(
     let entries = resolve_key_entries(key_specs)?;
     let cipher = garrison::secure::encryption::FieldCipher::from_key_entries(&entries)?;
     let pool = garrison::dao::init_dbnexus(&db_url).await?;
-    let inner: std::sync::Arc<dyn garrison::dao::GarrisonDao> =
-        std::sync::Arc::new(garrison::dao::GarrisonDaoDbnexus::new(
-            pool,
-            std::sync::Arc::new(garrison::dao::InMemoryDao::new()),
-        ));
+    // KV 委托 SQL 持久化层（garrison_kv 表）：离线命令跨进程读取落库密文行
+    let kv = garrison::dao::DbnexusKvDao::new(pool.clone());
+    kv.ensure_table().await?;
+    let inner: std::sync::Arc<dyn garrison::dao::GarrisonDao> = std::sync::Arc::new(
+        garrison::dao::GarrisonDaoDbnexus::new(pool, std::sync::Arc::new(kv)),
+    );
     let dao = garrison::secure::encryption::FieldEncryptionDao::new(
         inner,
         std::sync::Arc::new(cipher),
         &tenant,
     )?;
     let report = dao.check_key(&pattern).await?;
+    let scanned = report.scanned.to_string();
+    let encrypted_ok = report.encrypted_ok.to_string();
+    let legacy_plaintext = report.legacy_plaintext.to_string();
+    let legacy_raw_key = report.legacy_raw_key.to_string();
+    let corrupt = report.corrupt.len().to_string();
     println!(
-        "check-key report (tenant={tenant}, pattern={pattern}):\n  scanned: {}\n  encrypted_ok: {}\n  legacy_plaintext: {}\n  legacy_raw_key: {}\n  corrupt: {}\n\n  non-zero legacy counts mean migration is incomplete; run change-key to converge.\n  scanned = 0 likely means this deployment's KV data is not addressable via --db-url\n  (production default keeps KV in process-local oxcache); see module docs.",
-        report.scanned,
-        report.encrypted_ok,
-        report.legacy_plaintext,
-        report.legacy_raw_key,
-        report.corrupt.len()
+        "{}",
+        translate_detail(
+            "cli-check-key-report",
+            &[
+                ("tenant", tenant.as_str()),
+                ("pattern", pattern.as_str()),
+                ("scanned", scanned.as_str()),
+                ("encrypted_ok", encrypted_ok.as_str()),
+                ("legacy_plaintext", legacy_plaintext.as_str()),
+                ("legacy_raw_key", legacy_raw_key.as_str()),
+                ("corrupt", corrupt.as_str()),
+            ]
+        )
     );
     for line in &report.corrupt {
-        println!("  corrupt-row: {line:?}");
+        let row = format!("{line:?}");
+        println!(
+            "  {}",
+            translate_detail("cli-check-key-corrupt-row", &[("row", row.as_str())])
+        );
     }
     if report.scanned == 0 {
+        println!(
+            "\n{}",
+            translate_detail("cli-check-key-empty-scan-hint", &[])
+        );
         return Err(GarrisonError::Config(
             "cli-check-key-empty-scan::data-addressing-likely-unavailable::see-module-docs"
                 .to_string(),
@@ -386,11 +428,19 @@ async fn run_healthcheck(port_override: Option<u16>) -> GarrisonResult<()> {
         .map_err(|e| GarrisonError::Internal(format!("cli-healthcheck-join::{}", e)))?;
     match result {
         Ok(code) if garrison::health::probe::is_healthy(code) => {
-            println!("healthy: /healthz on 127.0.0.1:{port} returned {code}");
+            let port_arg = port.to_string();
+            let code_arg = code.to_string();
+            println!(
+                "{}",
+                translate_detail(
+                    "cli-healthcheck-healthy",
+                    &[("port", port_arg.as_str()), ("code", code_arg.as_str())]
+                )
+            );
             Ok(())
         },
         Ok(code) => Err(GarrisonError::Internal(format!(
-            "cli-healthcheck-status::/healthz on 127.0.0.1:{port} returned non-2xx status {code}"
+            "cli-healthcheck-status::{port}::{code}"
         ))),
         Err(reason) => Err(GarrisonError::Internal(format!(
             "cli-healthcheck-failed::{reason}"
@@ -408,10 +458,7 @@ async fn run_user_hash(
     let password = match password {
         Some(p) => p,
         None => std::env::var("GARRISON_CLI_PASSWORD").map_err(|_| {
-            GarrisonError::InvalidParam(
-                "cli-user-hash-password-missing::pass --password or set GARRISON_CLI_PASSWORD"
-                    .to_string(),
-            )
+            GarrisonError::InvalidParam("cli-user-hash-password-missing::".to_string())
         })?,
     };
     print!(
@@ -430,7 +477,7 @@ fn validate_username(user: &str) -> GarrisonResult<()> {
     }
     if user.contains(':') {
         return Err(GarrisonError::InvalidParam(
-            "cli-user-hash-user-colon::username must not contain ':'".to_string(),
+            "cli-user-hash-user-colon::".to_string(),
         ));
     }
     Ok(())
@@ -474,6 +521,9 @@ fn user_hash_report(
 /// 签发一次性登录凭据的持久化登记键（app_user_ext.field_key，每用户固定单行：值为 `<jti>|<exp RFC3339>`，行存在 = 该用户尚有未消费的一次性凭据）。
 const ONE_TIME_LOGIN_REGISTRY_KEY: &str = "one_time_login";
 
+/// 一次性凭据 TTL 上界（≤ 1 天，防「短时效」名不副实的超长凭据）。
+const MAX_TTL_SECS: u64 = 86_400;
+
 /// 一次性登录凭据签发结果；`Debug` 手工实现：token 本体脱敏（错误路径日志不得携带可用凭据）。
 struct IssuedOneTimeToken {
     /// 自包含 JWT（sub/login_id = user_id，exp = iat + ttl，jti 唯一）。
@@ -515,9 +565,9 @@ async fn issue_one_time_access_token(
     signing_secret: &str,
 ) -> GarrisonResult<IssuedOneTimeToken> {
     if ttl_seconds == 0 {
-        return Err(GarrisonError::InvalidParam(
-            "cli-one-time-ttl-invalid::ttl must be > 0".to_string(),
-        ));
+        return Err(GarrisonError::InvalidParam(format!(
+            "cli-one-time-ttl-invalid::{ttl_seconds}::allowed=1..={MAX_TTL_SECS}"
+        )));
     }
     if signing_secret.is_empty() {
         return Err(GarrisonError::InvalidParam(
@@ -529,12 +579,12 @@ async fn issue_one_time_access_token(
         .await?
         .ok_or_else(|| {
             GarrisonError::InvalidParam(format!(
-                "cli-one-time-user-not-found::no user {username:?} in tenant {tenant_id}"
+                "cli-one-time-user-not-found::{username}::{tenant_id}"
             ))
         })?;
     if user.status != "active" {
         return Err(GarrisonError::InvalidParam(format!(
-            "cli-one-time-user-not-active::user {username:?} status is {:?} (only active users may be issued one-time credentials)",
+            "cli-one-time-user-not-active::{username}::{}",
             user.status
         )));
     }
@@ -579,8 +629,6 @@ async fn run_one_time_access_token(
     migrate: bool,
     migrations_dir: String,
 ) -> GarrisonResult<()> {
-    // L-1：上界防「短时效」名不副实的超长凭据（≤ 1 天）
-    const MAX_TTL_SECS: u64 = 86_400;
     if ttl_seconds == 0 || ttl_seconds > MAX_TTL_SECS {
         return Err(GarrisonError::InvalidParam(format!(
             "cli-one-time-ttl-invalid::{ttl_seconds}::allowed=1..={MAX_TTL_SECS}"
@@ -589,9 +637,7 @@ async fn run_one_time_access_token(
     let signing_secret = match secret {
         Some(s) => s,
         None => std::env::var("GARRISON_JWT_SECRET").map_err(|_| {
-            GarrisonError::InvalidParam(
-                "cli-one-time-secret-missing::pass --secret or set GARRISON_JWT_SECRET".to_string(),
-            )
+            GarrisonError::InvalidParam("cli-one-time-secret-missing::".to_string())
         })?,
     };
     let pool = garrison::dao::init_dbnexus(&db_url).await?;
@@ -611,24 +657,21 @@ async fn run_one_time_access_token(
     let expires_at_rfc3339 = chrono::DateTime::from_timestamp(issued.expires_at_unix, 0)
         .map(|dt| dt.to_rfc3339())
         .unwrap_or_else(|| issued.expires_at_unix.to_string());
-    print!(
-        "Issued one-time access token for user '{}' (tenant {}).\n\n\
-         token:\n{}\n\n\
-         expires at: {} (unix {})\n\
-         one-time registry: app_user_ext field_key = {}\n\n\
-         SINGLE-USE SEMANTICS REQUIRE SERVER-SIDE WIRING: this framework\n\
-         does not consume the registry row automatically. Your login path must\n\
-         verify the token with the same signing secret AND atomically delete the\n\
-         registry row (find_by_user_and_key + delete) before creating a session;\n\
-         without that wiring the token is a short-lived bearer credential\n\
-         replayable within its TTL. Re-issuing for the same user replaces the\n\
-         registry row.\n",
-        issued.username,
-        issued.tenant_id,
-        issued.token,
-        expires_at_rfc3339,
-        issued.expires_at_unix,
-        issued.registry_field_key
+    let tenant_arg = issued.tenant_id.to_string();
+    let expires_at_unix_arg = issued.expires_at_unix.to_string();
+    println!(
+        "{}",
+        translate_detail(
+            "cli-one-time-access-token-issued",
+            &[
+                ("user", issued.username.as_str()),
+                ("tenant", tenant_arg.as_str()),
+                ("token", issued.token.as_str()),
+                ("expires_at", expires_at_rfc3339.as_str()),
+                ("unix", expires_at_unix_arg.as_str()),
+                ("field_key", issued.registry_field_key.as_str()),
+            ]
+        )
     );
     Ok(())
 }
@@ -931,13 +974,22 @@ mod tests {
     fn user_hash_rejects_invalid_input_explicitly() {
         let empty_user =
             user_hash_report("", HASH_TEST_PASSWORD, 1, false).expect_err("空用户名必须显性报错");
-        assert!(empty_user.to_string().contains("user-empty"));
+        assert!(matches!(
+            empty_user,
+            GarrisonError::InvalidParam(ref m) if m.contains("user-empty")
+        ));
         let colon_user = user_hash_report("a:b", HASH_TEST_PASSWORD, 1, false)
             .expect_err("含 ':' 用户名必须显性报错");
-        assert!(colon_user.to_string().contains("user-colon"));
+        assert!(matches!(
+            colon_user,
+            GarrisonError::InvalidParam(ref m) if m.contains("user-colon")
+        ));
         let empty_password =
             user_hash_report(HASH_TEST_USER, "", 1, false).expect_err("空密码必须显性报错");
-        assert!(empty_password.to_string().contains("password-empty"));
+        assert!(matches!(
+            empty_password,
+            GarrisonError::InvalidParam(ref m) if m.contains("password-empty")
+        ));
     }
 
     #[test]
@@ -1061,7 +1113,7 @@ mod tests {
             .expect_err("unknown user must fail explicitly");
         let reason = err.to_string();
         assert!(
-            reason.contains("user-not-found") && reason.contains("ghost"),
+            matches!(err, GarrisonError::InvalidParam(ref m) if m.contains("user-not-found") && m.contains("ghost")),
             "未知用户必须显性报错且点名目标，实际: {reason}"
         );
     }
@@ -1074,7 +1126,7 @@ mod tests {
             .expect_err("suspended user must fail explicitly");
         let reason = err.to_string();
         assert!(
-            reason.contains("user-not-active"),
+            matches!(err, GarrisonError::InvalidParam(ref m) if m.contains("user-not-active")),
             "非 active 用户必须显性报错，实际: {reason}"
         );
     }
@@ -1128,10 +1180,221 @@ mod tests {
         let zero_ttl = issue_one_time_access_token(&users, &ext, 0, "dave", 0, ONE_TIME_SECRET)
             .await
             .expect_err("ttl=0 must fail explicitly");
-        assert!(zero_ttl.to_string().contains("ttl-invalid"));
+        assert!(
+            matches!(zero_ttl, GarrisonError::InvalidParam(ref m) if m.contains("ttl-invalid"))
+        );
         let empty_secret = issue_one_time_access_token(&users, &ext, 0, "dave", 300, "")
             .await
             .expect_err("空密钥必须显性报错");
-        assert!(empty_secret.to_string().contains("secret-empty"));
+        assert!(matches!(
+            empty_secret,
+            GarrisonError::InvalidParam(ref m) if m.contains("secret-empty")
+        ));
+    }
+
+    /// change-key / check-key 真实 sqlite 端到端（file DB + Dbnexus 栈，与命令实现同构）。
+    mod field_crypto_tests {
+        use super::*;
+        use garrison::dao::GarrisonDao;
+        use garrison::secure::encryption::{FieldCipher, FieldEncryptionDao};
+        use std::sync::Arc;
+
+        /// 非退化测试钥材（hex 64 字符 = 32 字节，字节各异以通过退化钥检测；oldk 加密存量行，newk 为轮换目标主钥）。
+        fn key_spec(id: &str, seed: u8) -> String {
+            let hex: String = (0..32)
+                .map(|i| format!("{:02x}", seed.wrapping_add((i as u8).wrapping_mul(37))))
+                .collect();
+            format!("{id}:{hex}")
+        }
+
+        /// 建临时 file sqlite（驱动不自动建库，先建空文件）+ core 迁移 + 旧钥门面播种敏感命名空间行；
+        /// 返回 (TempDir——持有 db 文件生命周期, db_url, inner 裸 DAO——绕过加密门面断言落库原值)。
+        /// inner 的 KV 委托与命令实现同构（DbnexusKvDao → garrison_kv 表），播种行真实落库。
+        async fn field_crypto_fixture() -> (tempfile::TempDir, String, Arc<dyn GarrisonDao>) {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let db_path = dir.path().join("fields.db");
+            std::fs::File::create(&db_path).expect("sqlite 文件必须先建");
+            let db_url = format!("sqlite://{}", db_path.display());
+            let pool = init_dbnexus(&db_url)
+                .await
+                .expect("init_dbnexus must succeed");
+            let migrations_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("migrations")
+                .join("sqlite");
+            GarrisonMigration::with_base_dir(pool.clone(), migrations_dir)
+                .migrate_core()
+                .await
+                .expect("migrate_core must succeed");
+            let kv = Arc::new(garrison::dao::DbnexusKvDao::new(pool.clone()));
+            kv.ensure_table().await.expect("ensure_table must succeed");
+            let kv: Arc<dyn GarrisonDao> = kv;
+            let inner: Arc<dyn GarrisonDao> = Arc::new(garrison::dao::GarrisonDaoDbnexus::new(
+                pool,
+                Arc::clone(&kv),
+            ));
+            let old_hex = key_spec("oldk", 0xaa)
+                .split_once(':')
+                .expect("spec must contain ':'")
+                .1
+                .to_string();
+            let old_cipher = FieldCipher::from_key_entries(&[("oldk".to_string(), old_hex)])
+                .expect("old cipher must build");
+            let facade = FieldEncryptionDao::new(Arc::clone(&kv), Arc::new(old_cipher), "tenant-a")
+                .expect("facade must build");
+            for (key, value) in [
+                ("oauth2:atoken:tok-1", "token-1"),
+                ("oauth2:rtoken:rt-1", "refresh-1"),
+                ("totp:seed:uid", "seed-1"),
+            ] {
+                facade
+                    .set(key, value, 0)
+                    .await
+                    .expect("seed row must insert");
+            }
+            (dir, db_url, inner)
+        }
+
+        /// 落库原值快照（key → raw value），供只读性断言。
+        async fn raw_snapshot(inner: &Arc<dyn GarrisonDao>) -> Vec<(String, Option<String>)> {
+            let mut rows = Vec::new();
+            for prefix in ["oauth2:atoken:", "oauth2:rtoken:", "totp:seed:"] {
+                for key in inner
+                    .keys(&format!("{prefix}*"))
+                    .await
+                    .expect("keys must list")
+                {
+                    rows.push((
+                        key.clone(),
+                        inner.get(&key).await.expect("get must succeed"),
+                    ));
+                }
+            }
+            rows.sort();
+            rows
+        }
+
+        #[tokio::test]
+        async fn change_key_reencrypts_sqlite_rows_to_new_primary() {
+            let (_dir, db_url, inner) = field_crypto_fixture().await;
+            // 轮换前：落库为 oldk 密文
+            for (key, raw) in raw_snapshot(&inner).await {
+                assert!(
+                    raw.unwrap().starts_with("enc:v1:oldk:"),
+                    "{key} 应为旧钥密文"
+                );
+            }
+
+            // 密钥集首把为主钥（newk），oldk 供存量行解密——与运维轮换流程一致
+            run_change_key(
+                db_url.clone(),
+                "tenant-a".to_string(),
+                vec![key_spec("newk", 0xbb), key_spec("oldk", 0xaa)],
+                2,
+            )
+            .await
+            .expect("change-key must succeed");
+
+            // 三行全部重加密为 newk 密文（批大小 2 < 行数 3，覆盖批边界）
+            let snapshot = raw_snapshot(&inner).await;
+            assert_eq!(snapshot.len(), 3, "行数不变");
+            for (key, raw) in &snapshot {
+                assert!(
+                    raw.as_deref().unwrap_or("").starts_with("enc:v1:newk:"),
+                    "{key} 应重加密为新主钥密文: {raw:?}"
+                );
+            }
+
+            // check-key（新钥集）全绿；且只读——复查后落库字节不变
+            let before = raw_snapshot(&inner).await;
+            run_check_key(
+                db_url,
+                "tenant-a".to_string(),
+                vec![key_spec("newk", 0xbb)],
+                "*".to_string(),
+            )
+            .await
+            .expect("check-key with new key must be clean");
+            assert_eq!(
+                before,
+                raw_snapshot(&inner).await,
+                "check-key 不得改动任何行"
+            );
+        }
+
+        #[tokio::test]
+        async fn check_key_reports_wrong_tenant_rows_explicitly_and_readonly() {
+            let (_dir, db_url, inner) = field_crypto_fixture().await;
+            let before = raw_snapshot(&inner).await;
+
+            // 错误租户（AAD 不匹配）→ 解密失败行显性入报告，命令显性失败
+            let err = run_check_key(
+                db_url.clone(),
+                "tenant-b".to_string(),
+                vec![key_spec("oldk", 0xaa)],
+                "oauth2:*".to_string(),
+            )
+            .await
+            .expect_err("错误租户必须显性失败");
+            assert!(
+                matches!(err, GarrisonError::Dao(ref m) if m.contains("cli-check-key-corrupt-rows")),
+                "实际: {err:?}"
+            );
+
+            // 只读性：失败路径同样不改动任何行
+            assert_eq!(
+                before,
+                raw_snapshot(&inner).await,
+                "check-key 失败路径不得改动任何行"
+            );
+        }
+
+        #[tokio::test]
+        async fn change_key_without_old_key_fails_rows_explicitly() {
+            let (_dir, db_url, _inner) = field_crypto_fixture().await;
+            // 密钥集缺 oldk → 存量行解密失败 → 报告 failed 后命令显性失败（不静默成功）
+            let err = run_change_key(
+                db_url,
+                "tenant-a".to_string(),
+                vec![key_spec("newk", 0xbb)],
+                200,
+            )
+            .await
+            .expect_err("缺旧钥必须显性失败");
+            assert!(
+                matches!(err, GarrisonError::Dao(ref m) if m.contains("cli-change-key-rows-failed")),
+                "实际: {err:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn change_key_empty_scan_refuses_success() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let db_path = dir.path().join("empty.db");
+            std::fs::File::create(&db_path).expect("sqlite 文件必须先建");
+            let db_url = format!("sqlite://{}", db_path.display());
+            let pool = init_dbnexus(&db_url)
+                .await
+                .expect("init_dbnexus must succeed");
+            let migrations_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("migrations")
+                .join("sqlite");
+            GarrisonMigration::with_base_dir(pool, migrations_dir)
+                .migrate_core()
+                .await
+                .expect("migrate_core must succeed");
+
+            let err = run_change_key(
+                db_url,
+                "tenant-a".to_string(),
+                vec![key_spec("newk", 0xbb)],
+                200,
+            )
+            .await
+            .expect_err("空扫描必须显性拒绝（数据寻址不可用的疑似故障面）");
+            assert!(
+                matches!(err, GarrisonError::Config(ref m) if m.contains("cli-change-key-empty-scan")),
+                "实际: {err:?}"
+            );
+        }
     }
 }

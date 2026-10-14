@@ -10,7 +10,7 @@
 #
 # 构建示例：
 #   docker build \
-#     --build-arg VERSION=0.9.0-rc.2 \
+#     --build-arg VERSION=0.9.0-rc.3 \
 #     --build-arg GIT_SHA=$(git rev-parse HEAD) \
 #     -t garrison-auth:local .
 #

@@ -32,6 +32,25 @@ export RUST_BACKTRACE=1
 # CI Linux 同款：规避 sqlite 文件库 SQLITE_READONLY 偶发（见 ci.yml test job）
 export GARRISON_TEST_SQLITE_MEMORY=1
 
+# protoc well-known include 自举（对齐 CI 的 taiki-e/install-action 导出行为）：
+# prost-build 仅从 PROTOC_INCLUDE 取 well-known include（prost-build config.rs
+# 只读该环境变量，无 /usr/include 兜底），非系统包方式自装 protoc 时缺失会导致
+# etcd-client 等 build script 报 `google/protobuf/descriptor.proto: File not found`。
+# 按常见安装布局推导；未命中不猜，让缺失 protoc 的报错显性暴露。
+if [ -z "${PROTOC_INCLUDE:-}" ]; then
+    _protoc_dir=""
+    if command -v protoc > /dev/null 2>&1; then
+        _protoc_dir="$(cd "$(dirname "$(command -v protoc)")/.." && pwd)"
+    fi
+    for _cand in "${_protoc_dir}/include" "${HOME}/.local/share/protoc/include" "/usr/include"; do
+        if [ -f "${_cand}/google/protobuf/descriptor.proto" ]; then
+            export PROTOC_INCLUDE="${_cand}"
+            break
+        fi
+    done
+    unset _protoc_dir _cand
+fi
+
 COMPOSE="docker compose -f docker/docker-compose.e2e.yml"
 LOG_DIR="${REPO_ROOT}/logs/e2e_matrix"
 mkdir -p "${LOG_DIR}"

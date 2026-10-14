@@ -508,6 +508,31 @@ fn test_auth_server_config_default() {
     );
 }
 
+/// Debug 输出必须脱敏 `internal_api_key`（CWE-532：防日志/错误报告泄露内网 API Key）。
+#[test]
+fn test_auth_server_config_debug_redacts_internal_api_key() {
+    let secret = "0123456789abcdef0123456789abcdef";
+    let config = AuthServerConfig {
+        internal_api_key: secret.to_string(),
+        external_login_ack: Some(EXTERNAL_LOGIN_ACK.to_string()),
+        ..AuthServerConfig::default()
+    };
+
+    let debug = format!("{:?}", config);
+    assert!(
+        debug.contains("[REDACTED]"),
+        "Debug 必须输出 [REDACTED] 占位，实际: {debug}"
+    );
+    assert!(
+        !debug.contains(secret),
+        "Debug 不得包含 internal_api_key 明文，实际: {debug}"
+    );
+    assert!(
+        debug.contains("AuthServerConfig") && debug.contains("external_port"),
+        "Debug 应保留非敏感字段，实际: {debug}"
+    );
+}
+
 /// 严格档两条拒绝 + 通配绑定不误伤 + 非严格档只告警不拒绝（TDD 红测试）。
 #[test]
 fn test_strict_security_tiers() {

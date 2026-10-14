@@ -169,27 +169,39 @@ impl Drop for GarrisonEventTx {
         // (3) commit 成功后派发中途被取消：游标停在中途，warn 已派发/总数让审计链缺口可见。
         let open_tx = self.session.take().is_some();
         if open_tx {
+            let count = self.buffer.len().to_string();
+            let kinds = event_summary(&self.buffer);
             tracing::warn!(
-                "garrison-event-tx-dropped-without-commit: {} buffered event(s) discarded, \
-                 kinds: [{}], open transaction rolled back via dbnexus drop cascade",
-                self.buffer.len(),
-                event_summary(&self.buffer)
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-event-tx-dropped-without-commit",
+                    &[("count", count.as_str()), ("kinds", kinds.as_str())]
+                )
             );
         } else if !self.buffer.is_empty() && !self.committed {
+            let count = self.buffer.len().to_string();
+            let kinds = event_summary(&self.buffer);
             tracing::warn!(
-                "garrison-event-tx-discarded-after-commit-failure: commit returned Err, \
-                 {} buffered event(s) discarded without dispatch, kinds: [{}]",
-                self.buffer.len(),
-                event_summary(&self.buffer)
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-event-tx-discarded-after-commit-failure",
+                    &[("count", count.as_str()), ("kinds", kinds.as_str())]
+                )
             );
         } else if self.committed && self.dispatched < self.buffer.len() {
+            let dispatched = self.dispatched.to_string();
+            let total = self.buffer.len().to_string();
+            let kinds = event_summary(&self.buffer[self.dispatched..]);
             tracing::warn!(
-                "garrison-event-tx-dispatch-cancelled-after-commit: commit succeeded but the \
-                 dispatch future was cancelled mid-dispatch, {} of {} event(s) dispatched, \
-                 remaining discarded without dispatch, kinds: [{}]",
-                self.dispatched,
-                self.buffer.len(),
-                event_summary(&self.buffer[self.dispatched..])
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-event-tx-dispatch-cancelled-after-commit",
+                    &[
+                        ("dispatched", dispatched.as_str()),
+                        ("total", total.as_str()),
+                        ("kinds", kinds.as_str()),
+                    ]
+                )
             );
         }
         self.buffer.clear();
@@ -568,6 +580,235 @@ mod tests {
     fn garrison_event_tx_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<GarrisonEventTx>();
+    }
+
+    /// 丢弃 warn 的事件摘要：全部变体在 `event_kind` 中有名（穷尽 match，无 `_` 兜底），同名变体聚合计数。
+    #[test]
+    fn event_summary_names_all_variants_and_aggregates() {
+        let ctx = None;
+        #[cfg_attr(
+            not(any(feature = "anomalous-detector-dual", feature = "credit-metering")),
+            allow(unused_mut)
+        )]
+        let mut events: Vec<GarrisonEvent> = vec![
+            GarrisonEvent::Login {
+                login_id: "u".into(),
+                token: "t".into(),
+                device: None,
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::Logout {
+                login_id: "u".into(),
+                token: "t".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::Kickout {
+                login_id: "u".into(),
+                token: "t".into(),
+                reason: "r".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::PermissionCheck {
+                login_id: "u".into(),
+                permission: "p".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::RoleCheck {
+                login_id: "u".into(),
+                role: "r".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::TokenExpired {
+                token: "t".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::LoginFailure {
+                login_id: "u".into(),
+                reason: "invalid_credentials".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::PasswordRehashed {
+                login_id: "u".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::TokenRefresh {
+                login_id: "u".into(),
+                old_token: "o".into(),
+                new_token: "n".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::RevokeToken {
+                token: "t".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::SessionTimeout {
+                login_id: "u".into(),
+                token: "t".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::AccountLocked {
+                login_id: "u".into(),
+                reason: "r".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::FirewallBlock {
+                login_id: "u".into(),
+                reason: "r".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::Replaced {
+                login_id: "u".into(),
+                token: "t".into(),
+                reason: "r".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::ConfigReload {
+                config_version: 1,
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::SocialLogin {
+                provider: "wechat".into(),
+                user_id: "uid".into(),
+                login_id: None,
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::TenantSwitch {
+                login_id: "u".into(),
+                from_tenant: 1,
+                to_tenant: 2,
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::TokenRotate {
+                old_key: "o".into(),
+                new_key: "n".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::TempCredentialConsumed {
+                key: "k".into(),
+                value: "v".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::InvitationCreated {
+                code: "c".into(),
+                issuer_id: "i".into(),
+            },
+            GarrisonEvent::InvitationRedeemed {
+                code: "c".into(),
+                redeemer_id: "r".into(),
+            },
+            GarrisonEvent::InvitationRevoked {
+                code: "c".into(),
+                issuer_id: "i".into(),
+            },
+            GarrisonEvent::QrLoginCreated {
+                qr_id: "q".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::QrLoginScanned {
+                qr_id: "q".into(),
+                app_login_id: "u".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::QrLoginConfirmed {
+                qr_id: "q".into(),
+                app_login_id: "u".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::QrLoginCancelled {
+                qr_id: "q".into(),
+                app_login_id: "u".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::DeviceBlock {
+                login_id: "u".into(),
+                device: "d".into(),
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::DeviceUnblock {
+                login_id: "u".into(),
+                device: "d".into(),
+                request_context: ctx.clone(),
+            },
+        ];
+        #[cfg(feature = "anomalous-detector-dual")]
+        events.push(GarrisonEvent::AnomalousLoginDetected {
+            login_id: "u".into(),
+            reason: "burst_login".into(),
+            detail: serde_json::json!({}),
+            timestamp: 1,
+            request_context: ctx.clone(),
+        });
+        #[cfg(feature = "credit-metering")]
+        events.extend([
+            GarrisonEvent::CreditConsumed {
+                tenant_id: 1,
+                resource: "r".into(),
+                cost: 1,
+                credits: 1,
+                total_consumed: 1,
+                request_context: ctx.clone(),
+            },
+            GarrisonEvent::CreditAlert {
+                tenant_id: 1,
+                threshold: 80,
+                usage_percent: 81.0,
+                total_consumed: 1,
+                credit_limit: 100,
+                request_context: ctx.clone(),
+            },
+        ]);
+
+        let summary = event_summary(&events);
+        let expected_names = [
+            "Login",
+            "Logout",
+            "Kickout",
+            "PermissionCheck",
+            "RoleCheck",
+            "TokenExpired",
+            "LoginFailure",
+            "PasswordRehashed",
+            "TokenRefresh",
+            "RevokeToken",
+            "SessionTimeout",
+            "AccountLocked",
+            "FirewallBlock",
+            "Replaced",
+            "ConfigReload",
+            "SocialLogin",
+            "TenantSwitch",
+            "TokenRotate",
+            "TempCredentialConsumed",
+            "InvitationCreated",
+            "InvitationRedeemed",
+            "InvitationRevoked",
+            "QrLoginCreated",
+            "QrLoginScanned",
+            "QrLoginConfirmed",
+            "QrLoginCancelled",
+            "DeviceBlock",
+            "DeviceUnblock",
+        ];
+        for name in expected_names {
+            assert!(
+                summary.contains(&format!("{name}=1")),
+                "摘要应含 {name}=1，实际: {summary}"
+            );
+        }
+        #[cfg(feature = "anomalous-detector-dual")]
+        assert!(
+            summary.contains("AnomalousLoginDetected=1"),
+            "摘要应含 AnomalousLoginDetected=1，实际: {summary}"
+        );
+        #[cfg(feature = "credit-metering")]
+        assert!(
+            summary.contains("CreditConsumed=1") && summary.contains("CreditAlert=1"),
+            "摘要应含 Credit 变体计数，实际: {summary}"
+        );
+
+        // 同名变体聚合计数（丢弃 warn 摘要按变体名归并）
+        let repeated = vec![login_event("a"), login_event("b"), login_event("c")];
+        assert_eq!(event_summary(&repeated), "Login=3");
     }
 
     // 缓冲事件丢弃显性化：tracing 捕获层断言丢弃 warn

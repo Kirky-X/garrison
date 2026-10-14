@@ -163,7 +163,14 @@ impl RateLimitStrategy {
                 .transpose()
                 .unwrap_or_else(|e| {
                     // 配置由 garrison 侧显式构造（区间已保证 min<=base<=max），库校验失败属配置构造缺陷，fail-loud 不静默降级
-                    panic!("rate_limit: AdaptiveThresholdConfig invalid: {e}")
+                    let detail = e.to_string();
+                    panic!(
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "strategy-rate-limit-adaptive-config-invalid",
+                            &[("error", detail.as_str())]
+                        )
+                    )
                 }),
             atomic_lock: Mutex::new(()),
         }

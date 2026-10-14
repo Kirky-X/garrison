@@ -1356,3 +1356,504 @@ compliance-erasure-residual-audit-log = 审计日志：合规保留期优先于�
 compliance-erasure-residual-business-data = 业务用户资料与业务副本：存储于业务方自有表，框架不可达
 compliance-erasure-residual-verification-code = 验证码 / 邮箱验证记录：以手机号/邮箱为键（业务映射），随 TTL（≤1 小时）自然过期
 compliance-erasure-residual-issued-jwt = 已发出的 JWT：无状态签名，到期前技术不可撤回（除非启用 revocation，见 config enable_jwt_revocation）
+
+# i18n sweep 2026-10: hardcoded tracing / CLI / example strings wired to translate_detail
+
+# Log messages (tracing) — account password reset
+logs-pwdreset-mail-delivery-failed = 密码重置邮件投递失败
+logs-pwdreset-history-append-replaced-generation-failed = 密码历史追加（替换代次）失败；当前代次的哈希可能对 HistoryRule 不可见
+logs-pwdreset-history-append-and-rollback-failed = 密码历史追加失败且凭据回滚同样失败；凭据可能不一致
+
+# Log messages (tracing) — config
+logs-config-argon2-weak-params-accepted = password_hasher：argon2 m_cost {$cost} 低于 OWASP 下限 {$floor} KiB——已通过 allow_weak_argon2_params 显式接受弱参数（内存受限部署？）
+logs-config-deprecated-key-migrated = 弃用配置键 "{$key}"（自 {$since}）已处理：{$outcome}；请在 1.0.0 前更新配置
+logs-config-deprecated-key-unmigratable = 弃用配置键 "{$key}"（自 {$since}）已不可自动映射，1.0.0 将拒绝该键；{$guidance}
+config-deprecation-guidance-delete = 请从配置中删除该键
+config-deprecation-guidance-rename = 请手动重命名该键
+logs-config-rate-limit-redis-feature-disabled = rate-limit-redis 特性未启用：限流仅按进程计数；多实例部署必须启用 rate-limit-redis 才能获得全局限额
+logs-config-rate-limit-memory-backend = rate_limit_backend=Memory：限流仅按进程计数；多实例部署必须切换 Redis 获得全局限额
+config-deprecation-slot-lock-poisoned = deprecation 槽位锁应可用
+logs-cookie-same-site-none-without-secure = cookie SameSite=None 需要 Secure 上下文（cookie_secure=false）；已降级为 SameSite=Lax
+
+# Log messages (tracing) — dao / cache / limiteron / audit
+logs-dao-identifier-register-conflict-row-vanished = identifier register：租户内复查前唯一冲突行已消失，返回中性 Registered
+logs-event-tx-dropped-without-commit = garrison-event-tx-dropped-without-commit：{$count} 条缓冲事件被丢弃，类型：[{$kinds}]，打开的事务经 dbnexus drop 级联回滚
+logs-event-tx-discarded-after-commit-failure = garrison-event-tx-discarded-after-commit-failure：commit 返回 Err，{$count} 条缓冲事件未派发即丢弃，类型：[{$kinds}]
+logs-event-tx-dispatch-cancelled-after-commit = garrison-event-tx-dispatch-cancelled-after-commit：commit 成功但派发 future 中途被取消，已派发 {$dispatched}/{$total} 条事件，其余未派发即丢弃，类型：[{$kinds}]
+logs-error-rejection-rate-limited = garrison 拒绝：已触发限流
+logs-limiteron-quota-consume-rollback-failed = 配额消费超限回滚失败
+logs-audit-mask-metadata-invalid-json = 审计 mask_metadata：metadata 不是合法 JSON，已跳过掩码并保留原值
+logs-cache-l3-write-back-failed = cache：L3 成功但写回失败，返回未缓存的值
+logs-cache-chain-read-failed-evict-and-fallback = cache：链读/反序列化失败，逐出该键并回源 L3
+
+# Log messages (tracing) — oauth2 / apikey
+logs-oauth2-authorize-tenant-context-missing = oauth2 authorize：缺少租户上下文，回退默认租户 0（consent 记忆以默认租户为键）
+logs-oauth2-refresh-rotation-not-configured = oauth2 refresh_token 轮换未配置：refresh grant 走 DAO 退化路径且无 reuse detection——被盗 refresh_token 重放不会触发链式撤销
+logs-apikey-global-verify-enabled = apikey 全局校验已开启：verify() 可校验任意 namespace 的 key；租户隔离请优先使用 verify_with_namespace
+
+# Log messages (tracing) — secure
+logs-secure-rollback-hourly-window-counter-failed = 小时窗口计数回滚失败
+logs-secure-rollback-daily-window-counter-failed = 天窗口计数回滚失败
+logs-secure-rollback-window-counter-failed = {$label} 窗口计数回滚失败
+logs-field-encryption-degenerate-non-primary-key = 字段加密：非主钥为退化密钥（单字节重复）；仅允许用于旧数据解密——请用 change-key 轮换掉
+
+# Log messages (tracing) — server / http layer
+logs-server-config-unrecognized-boolean = 无法识别的布尔值，回退默认值
+logs-server-config-unrecognized-number = 无法识别的数值，回退默认值
+logs-server-readiness-body-read-failed = readiness 探针：上游响应体读取失败
+logs-server-readiness-body-not-json = readiness 探针：上游响应体不是合法 JSON
+logs-server-apikey-auth-locked-window = API Key 认证已锁定：暴力破解锁定窗口生效中
+logs-server-apikey-duplicate-header = 重复的 X-API-Key 头已拒绝
+logs-server-apikey-auth-failed = API Key 认证失败
+logs-server-apikey-auth-locked-out = API Key 认证已锁定
+logs-server-inject-login-body-read-failed = inject_login_client_ip：请求体读取失败（超限或 IO 错误）
+logs-server-sanitize-rejection-body-read-failed = sanitize_json_rejection：请求体读取失败
+logs-server-oauth2-state-without-refresh-rotation = OAuth2State 构造时未注入 RefreshTokenRotation：/oauth2/token 的 refresh grant 走 DAO 退化路径且无 reuse detection——refresh_token 重放与链式撤销不可用；请注入 TokenHandler::with_refresh_rotation
+logs-server-jwks-retention-zero-fallback = with_jwks_retention_secs(0) 会让 Passive 钥立即退役；回退默认 {$secs} 秒
+logs-server-discovery-jwks-algorithms-failed = discovery 元数据 jwks algorithms 派生失败
+logs-server-discovery-scopes-failed = discovery 元数据 scopes 派生失败
+logs-server-jwks-document-build-failed = jwks keystore 文档构建失败
+logs-sdforge-caller-login-id-missing = 缺少 caller_login_id：所有权校验为强制项，拒绝请求
+logs-server-consent-reconcile-removed-orphans = oauth2 consent 启动期 reconcile：已移除指向已删除 client 的孤儿 consent 行
+logs-server-consent-reconcile-no-orphans = oauth2 consent 启动期 reconcile：无孤儿行
+logs-server-consent-reconcile-failed = oauth2 consent 启动期 reconcile 失败（fail-open）；孤儿行（若有）仍留在存储中——下次重启或调用 reconcile_consents 重试
+logs-server-external-drain-timeout = 外网服务优雅停机超时，停止等待在途请求
+logs-server-internal-drain-timeout = 内网服务优雅停机超时，停止等待在途请求
+logs-tls-watcher-start-failed = TLS 证书监视器启动失败；证书热重载已禁用
+logs-tls-certificate-reloaded = 文件变更后已重新加载 TLS 证书
+logs-tls-certificate-reload-failed = TLS 证书重新加载失败；继续使用原证书
+logs-tls-watcher-stopped = TLS 证书监视器已停止；证书热重载不再可用
+
+# Log messages (tracing) — stp / strategy / web
+logs-stp-password-lockout-reset-failed = 登录成功后的密码锁定清零失败（不影响登录结果）
+logs-stp-password-account-locked = login_with_password：账号已锁定
+logs-stp-password-lockout-check-failed = 密码锁定检查失败，降级放行（最终防线是密码校验）
+logs-stp-password-lockout-record-failed = 密码锁定失败计数失败（不影响登录结果）
+logs-stp-password-rehash-persist-failed = 密码重新哈希落盘失败（不影响登录结果）
+logs-stp-role-union-get-role-list-failed = 角色并集缓存：get_role_list 失败，跳过（fail-open）
+logs-stp-role-union-no-sql-backend = 角色并集缓存：DAO 无 SQL 后端，跳过
+logs-stp-role-union-precompute-failed = 角色并集缓存预计算失败，跳过（fail-open）
+logs-stp-role-union-write-failed = 角色并集缓存写入失败（fail-open）
+logs-stp-role-union-serialize-failed = 角色并集缓存序列化失败（fail-open）
+logs-stp-remember-me-disabled = 请求了 remember_me 但配置已禁用，使用默认超时
+logs-stp-jti-blacklist-snapshot-read-failed = jti 黑名单快照读取失败；已撤销 token 可能在自然过期前仍然有效
+logs-stp-invalidate-login-cache-logout-failed = invalidate_login_cache 失败（不影响登出结果）
+logs-stp-invalidate-login-cache-kickout-failed = invalidate_login_cache 失败（不影响踢出结果）
+logs-strategy-permission-cache-invalidate-failed = 登出时权限缓存失效失败（缓存将随 TTL 过期）
+logs-strategy-role-cache-write-failed = 角色缓存写入失败（login_id={$login_id}, role={$role}）：{$error}
+strategy-rate-limit-adaptive-config-invalid = rate_limit：AdaptiveThresholdConfig 非法：{$error}
+logs-request-id-middleware-completed = request_id_middleware：请求处理完成
+logs-warp-request-id-body-collect-failed = warp request_id：错误响应体收集失败
+
+# Panic / expect invariant messages (fail-loud internal invariants)
+mfa-hkdf-okm-len-static = 32 字节 OKM 在 HKDF-SHA256 输出上限内
+mfa-webauthn-factor-registry-lock-poisoned = mfa webauthn factor 注册表锁不应中毒
+cache-fallback-consumed-once = fallback 只被消费一次
+cache-fallback-not-yet-executed = 错误发生在 fallback 之前，其尚未执行
+jwt-refresh-grace-entries-lock-poisoned = grace_entries 锁不应中毒
+secure-csprng-unavailable = OS CSPRNG 不可用
+secure-aes-key-len-static = AES-256 密钥长度静态固定为 32 字节
+secure-gcm-nonce-len-static = GCM nonce 长度静态固定为 12 字节
+server-inject-login-client-ip-invariant = should_inject 蕴含 client_ip 存在
+
+# HTTP response bodies (axum server middleware / sdforge routes)
+server-http-body-invalid-json-msg = 请求体必须是合法 JSON
+server-http-body-validation-failed-msg = 请求体未通过校验
+server-http-body-too-large-msg = 请求体超出大小限制
+sdforge-caller-login-id-required-msg = caller_login_id 为必填
+
+# CLI (garrison-cli / garrison-healthcheck)
+cli-field-encryption-feature-disabled = WARN: 已设置 GARRISON_FIELD_ENCRYPTION_KEYS，但未启用 field-encryption 特性；该值被忽略
+cli-change-key-report =
+    change-key 报告（tenant={$tenant}, batch={$batch_size}，非事务：行级原子，中断后用旧密钥重跑即可收敛）：
+      scanned: {$scanned}
+      reencrypted: {$reencrypted}
+      legacy_plaintext_reencrypted: {$legacy_plaintext_reencrypted}
+      legacy_key_migrated: {$legacy_key_migrated}
+      skipped_current_key: {$skipped_current_key}
+      failed: {$failed}
+cli-change-key-failed-row = failed-row: {$row}
+cli-change-key-empty-scan-warning =
+    警告：scanned = 0。本部署的敏感键命名空间很可能无法通过 --db-url 访问
+    （生产默认把 KV 存放在进程内 oxcache 中，外部进程不可见）。不要依据本次运行删除旧密钥。
+cli-check-key-report =
+    check-key 报告（tenant={$tenant}, pattern={$pattern}）：
+      scanned: {$scanned}
+      encrypted_ok: {$encrypted_ok}
+      legacy_plaintext: {$legacy_plaintext}
+      legacy_raw_key: {$legacy_raw_key}
+      corrupt: {$corrupt}
+
+      legacy 计数非零说明迁移未完成；请运行 change-key 收敛。
+cli-check-key-corrupt-row = corrupt-row: {$row}
+cli-check-key-empty-scan-hint =
+    scanned = 0 通常说明本部署的 KV 数据无法通过 --db-url 访问
+    （生产默认把 KV 存放在进程内 oxcache）；详见模块文档。
+cli-one-time-access-token-issued =
+    已为用户 '{$user}'（租户 {$tenant}）签发一次性访问令牌。
+
+    token:
+    {$token}
+
+    过期时间: {$expires_at} (unix {$unix})
+
+    一次性登记: app_user_ext 的 field_key = {$field_key}
+
+    单次使用语义需要服务端接线：本框架不会自动消费登记行。你的登录路径必须
+    用同一签名密钥校验该 token，并在创建会话前原子删除登记行
+    （find_by_user_and_key + delete）；没有该接线时，该 token 只是可在 TTL 内
+    重放的短期 bearer 凭据。为同一用户重新签发会替换登记行。
+bin-healthcheck-failed = garrison-healthcheck: {$arg0}
+bin-healthcheck-status = garrison-healthcheck: 127.0.0.1:{$arg0} 的 /healthz 返回非 2xx 状态码 {$arg1}
+
+# Official examples (examples/)
+example-apikey-handler-built = [1] ApiKeyHandler 构建完成（allow_global_verify=true，示例语义）
+example-apikey-verify-nonexistent = verify("nonexistent-key") → Err(InvalidToken) ✓（全局 verify 已放开）
+example-sso-envelope-consume = [验签] 订阅侧 verify_sso_message 消费信封:
+example-sso-channel-message-count = channel 应收到两封消息
+example-sso-envelope-verified = 验签通过（last_seq={$seq}），取回业务消息 = {$payload}
+example-sso-replay-rejected = 重放同一封 → 拒绝（{$reason}）
+example-sso-replay-not-rejected = 重放的信封消息应验签失败，实际取回: {$payload}
+example-sso-bare-message-rejected = 裸消息（无信封）→ 拒绝（{$reason}）
+example-sso-bare-message-not-rejected = 未封装的裸消息应被拒，实际取回: {$payload}
+
+# i18n audit 2026-10: key:: convention keys referenced in code but missing from both bundles (P4 fill-up)
+# 说明：审计清单中的 `waf-xxx-key` 是文档占位符（src/web/axum/waf.rs:49），不是真实 key，故无条目。
+# 说明：`auth-server-bootstrap-proxies-empty-entry`、`auth-server-bootstrap-proxy-not-private`、
+#       `auth-server-field-encryption-no-keys`、`pwdreset-policy-violated-current-password`
+#       从审计 key 中拆出，使各条消息保持各自措辞。
+
+# account
+account-argon2-params = argon2 密码哈希失败：{$arg0}
+account-argon2-pool-closed = argon2 哈希线程池已关闭
+action-token-jti-invalid = 动作令牌的 jti 非法：{$arg0}
+action-token-purpose-mismatch = 动作令牌用途不匹配：{$arg0}
+credential-create-hash-gate = 凭据创建被存量哈希门禁拒绝：{$arg0}
+credential-possible-compromise = 凭据可能已泄露：{$arg0}
+credential-update-hash-gate = 凭据更新被存量哈希门禁拒绝：{$arg0}
+credential-verify-blocking = 凭据校验失败（阻塞任务卸载）：{$arg0}
+list-credentials = 凭据列表查询失败：{$arg0}
+pwdreset-binding-missing = 密码重置会话绑定缺失
+pwdreset-identifier-invalid = 密码重置标识非法（{$arg0}）
+pwdreset-password-credential-missing = 该用户没有启用的密码凭据
+pwdreset-policy-violated = 密码策略不满足：{$arg0}
+pwdreset-policy-violated-current-password = 新密码不得与当前密码相同
+pwdreset-restricted-endpoint-denied = 受限密码重置会话不可访问端点 '{$arg0}'
+pwdreset-session-not-found = 密码重置会话不存在
+pwdreset-session-subject-mismatch = 密码重置会话主体不匹配：session={$arg0}, token={$arg1}
+pwdreset-subject-binding-mismatch = 密码重置主体绑定不匹配：token-sub={$arg0}, binding={$arg1}
+pwdreset-system-clock = 系统时间错误：{$arg0}
+pwdreset-tenant-binding-missing = 密码重置租户绑定缺失
+pwdreset-tenant-mismatch = 密码重置令牌租户不匹配
+pwdreset-token-consume-failed = 密码重置令牌消费失败（已使用或已过期）
+pwdreset-ttl-negative = 密码重置 TTL 不能为负数：{$arg0}
+pwdreset-ttl-overflow = 密码重置 TTL 超出 i64 范围：{$arg0}
+
+# apikey
+apikey-global-verify-disabled = 全局 API Key 校验已禁用；请改用 verify_with_namespace，或通过 with_allow_global_verify 显式放开
+
+# auth server bootstrap (bin/auth_server)
+auth-server-bootstrap = {$arg0} 的值非法：'{$arg1}'——要求 IPv4/IPv6 字面量（如 127.0.0.1 或 0.0.0.0）；GARRISON_TRUSTED_PROXIES 则要求逗号分隔的 IP 列表（如 10.0.0.1,127.0.0.1）
+auth-server-bootstrap-proxies-empty-entry = GARRISON_TRUSTED_PROXIES 含空条目；要求逗号分隔的 IP 列表（如 10.0.0.1,127.0.0.1）
+auth-server-bootstrap-proxy-not-private = 可信代理 {$arg0} 不是私有地址；可信代理必须是回环/RFC1918/link-local/IPv6 ULA（公网 IP 可在链路上被伪造）
+auth-server-fatal = 致命错误：{$arg0}
+auth-server-field-encryption = GARRISON_FIELD_ENCRYPTION_KEYS 条目非法 '{$arg1}'（{$arg0}）——要求逗号分隔的 key_id:hex64 条目
+auth-server-field-encryption-no-keys = 未配置字段加密密钥：请设置 GARRISON_FIELD_ENCRYPTION_KEYS（key_id:hex64,...），或关闭 field-encryption 特性
+
+# backchannel logout queue
+backchannel-http-client = back-channel logout HTTP 客户端构建失败：{$arg0}
+backchannel-queue-connection = back-channel logout 队列：获取连接失败：{$arg0}
+backchannel-queue-count = back-channel logout 队列：计数查询失败：{$arg0}
+backchannel-queue-find = back-channel logout 队列：待投递条目扫描失败：{$arg0}
+backchannel-queue-get-session = back-channel logout 队列：获取会话失败：{$arg0}
+backchannel-queue-missing-row = back-channel logout 队列：已认领的行已不存在：{$arg0}
+backchannel-queue-parse-count = back-channel logout 队列：计数解析失败：{$arg0}
+backchannel-queue-pending = back-channel logout 队列：待投递列表查询失败：{$arg0}
+
+# cache
+cache-l1-init = L1 缓存初始化失败：{$arg0}
+garrison-dao-cache = DAO 缓存后端错误：{$arg0}
+garrison-dao-cache-value-not-utf8 = DAO 缓存值不是合法 UTF-8：{$arg0}
+
+# cli (garrison-cli)
+cli-change-key-empty-scan = 拒绝报告成功：敏感键命名空间看似无法通过 --db-url 访问（scanned = 0）
+cli-change-key-rows-failed = change-key 结束，存在需要处理的行：{$arg0}
+cli-check-key-corrupt-rows = check-key 发现需要处理的行：{$arg0}
+cli-check-key-empty-scan = 拒绝报告成功：敏感键命名空间看似无法通过 --db-url 访问（scanned = 0）；详见模块文档
+cli-healthcheck-failed = 健康检查探测失败：{$arg0}
+cli-healthcheck-join = 健康检查探测任务 join 失败：{$arg0}
+cli-healthcheck-status = 127.0.0.1:{$arg0} 的 /healthz 返回非 2xx 状态码 {$arg1}
+cli-key-source-missing = 请传入 --key 或设置 GARRISON_FIELD_ENCRYPTION_KEYS
+cli-key-spec-empty-id = key_id 不能为空：{$arg0}
+cli-key-spec-format = 期望 key_id:hex 形式，实际：{$arg0}
+cli-key-spec-hex-invalid = 密钥 '{$arg0}' 的 hex 必须恰为 64 个十六进制字符（32 字节）
+cli-key-specs-empty = 至少传入一个 --key key_id:hex
+cli-keygen-csprng = 签名密钥生成失败（OS CSPRNG）：{$arg0}
+cli-one-time-exp-out-of-range = 一次性令牌 exp 超出范围：{$arg0}
+cli-one-time-jti-missing = 已签名令牌缺少 jti
+cli-one-time-migrate = 数据库迁移失败：{$arg0}
+cli-one-time-secret-empty = 签名密钥不能为空
+cli-one-time-secret-missing = 请传入 --secret 或设置 GARRISON_JWT_SECRET
+cli-one-time-ttl-invalid = TTL 非法：{$arg0}（{$arg1}）
+cli-one-time-user-not-active = 用户 '{$arg0}' 的状态为 {$arg1}（仅活跃用户可签发一次性凭据）
+cli-one-time-user-not-found = 租户 {$arg1} 中不存在用户 '{$arg0}'
+cli-runtime-build = tokio runtime 构建失败：{$arg0}
+cli-user-hash-password-empty = 密码不能为空
+cli-user-hash-password-missing = 请传入 --password 或设置 GARRISON_CLI_PASSWORD
+cli-user-hash-user-colon = 用户名不得包含 ':'
+cli-user-hash-user-empty = 用户名不能为空
+
+# config
+config-csrf-enabled-unsupported = csrf_enabled 值不支持：{$arg0}（允许 true/false，不区分大小写）
+config-jwks-retention-must-positive = jwks_retention_secs 必须为正数
+config-jwt-key-missing = 配置中缺少 JWT 密钥：{$arg0}
+config-jwt-key-multiple-types = JWT 密钥不得同时配置多种类型
+config-jwt-key-unexpected-for-hs = HMAC 算法不应配置 JWT 密钥 '{$arg0}'
+config-mfa-chain-factor-unknown = 未知的 MFA 链因子：{$arg0}
+config-password-hash-algorithm-unsupported = 不支持的密码哈希算法：{$arg0}
+config-password-hash-argon2-m-below-floor = argon2 m_cost {$arg0} 低于 OWASP 下限；算法：{$arg1}
+config-password-hash-argon2-param-invalid = argon2 参数非法：{$arg0}
+config-password-hash-argon2-pool-size-out-of-range = argon2 pool_size 超出范围：{$arg0}
+config-password-hash-bcrypt-cost-out-of-range = bcrypt cost 超出范围：{$arg0}
+config-refresh-grace-max-uses-zero = refresh_grace_max_uses 必须 >= 1，实际：{$arg0}
+config-refresh-grace-period-negative = refresh_grace_period_secs 不能为负数，实际：{$arg0}
+
+# context
+ctx-invalid-cookie-domain = cookie '{$arg0}' 的 domain 非法
+ctx-invalid-cookie-max-age = cookie max-age 非法：{$arg0}
+ctx-invalid-cookie-path = cookie '{$arg0}' 的 path 非法
+ctx-invalid-cookie-same-site = cookie same_site '{$arg0}' 非法：期望 Lax/Strict/None
+
+# dao
+dao-app-password-history-append = app_password_history 追加失败：{$arg0}
+dao-app-password-history-recent = app_password_history 最近记录查询失败：{$arg0}
+dao-app-user-create-hash-gate = app_user 创建被存量哈希门禁拒绝：{$arg0}
+dao-app-user-identifier-find-owner = app_user_identifier 查询归属失败：{$arg0}
+dao-app-user-identifier-find-owner-in-tenant = app_user_identifier 租户内查询归属失败：{$arg0}
+dao-app-user-identifier-register = app_user_identifier 注册失败：{$arg0}
+dao-app-user-update-hash-gate = app_user 更新被存量哈希门禁拒绝：{$arg0}
+dao-app-webauthn-credential-conflict-lookup = webauthn 凭据冲突查询失败：{$arg0}
+dao-app-webauthn-credential-conflict-without-owner = webauthn 凭据冲突但归属行不存在：{$arg0}
+dao-app-webauthn-credential-delete = webauthn 凭据删除失败：{$arg0}
+dao-app-webauthn-credential-insert = webauthn 凭据写入失败：{$arg0}
+dao-app-webauthn-credential-list = webauthn 凭据列表查询失败：{$arg0}
+dao-app-webauthn-credential-not-found = webauthn 凭据不存在：{$arg0}
+dao-app-webauthn-credential-query = webauthn 凭据查询失败：{$arg0}
+dao-app-webauthn-credential-sign-count-regression = webauthn 签名计数回退：拒绝将计数回拨（{$arg0}）
+dao-app-webauthn-credential-update = webauthn 凭据更新失败：{$arg0}
+dao-app-webauthn-credential-update-probe = webauthn 凭据更新后复核失败：{$arg0}
+dao-app-webauthn-credential-update-probe-empty = webauthn 凭据更新后复核未返回行
+dao-app-webauthn-credential-update-probe-parse = webauthn 凭据更新后复核行解析失败：{$arg0}
+dao-conformance = 构造 {$arg0} 失败
+dao-webauthn-credential-parse-attestation = webauthn 凭据行解析失败（attestation）：{$arg0}
+dao-webauthn-credential-parse-created = webauthn 凭据行解析失败（created）：{$arg0}
+dao-webauthn-credential-parse-cred-id = webauthn 凭据行解析失败（cred_id）：{$arg0}
+dao-webauthn-credential-parse-pk = webauthn 凭据行解析失败（public_key）：{$arg0}
+dao-webauthn-credential-parse-sign-count = webauthn 凭据行解析失败（sign_count）：{$arg0}
+dao-webauthn-credential-parse-tenant = webauthn 凭据行解析失败（tenant_id）：{$arg0}
+dao-webauthn-credential-parse-updated = webauthn 凭据行解析失败（updated）：{$arg0}
+dao-webauthn-credential-parse-user = webauthn 凭据行解析失败（user_id）：{$arg0}
+dao-webauthn-credential-sign-count-range = webauthn sign_count 超出范围：{$arg0}
+event-tx-begin = 事件事务开启失败：{$arg0}
+event-tx-commit = 事件事务提交失败：{$arg0}
+event-tx-execute = 事件事务执行失败：{$arg0}
+event-tx-get-session = 事件事务获取会话失败：{$arg0}
+event-tx-rollback = 事件事务回滚失败：{$arg0}
+import-hash-argon2-format = argon2 哈希导入失败：params 段缺失或不完整
+import-hash-argon2-m-cost = argon2 m_cost {$arg0} 超过导入上限 {$arg1}
+import-hash-argon2-p-cost = argon2 p_cost {$arg0} 超过导入上限 {$arg1}
+import-hash-argon2-t-cost = argon2 t_cost {$arg0} 超过导入上限 {$arg1}
+import-hash-bcrypt-cost = bcrypt cost {$arg0} 超过导入上限 {$arg1}
+import-hash-bcrypt-format = bcrypt 哈希导入失败：cost 段缺失或非法
+import-hash-unsupported = 不支持的导入哈希算法：{$arg0}
+legacy-key-migration = 该后端不支持旧密钥迁移（不支持 TTL 查询）
+
+# jwt / jwks
+jwks-clock-invalid = JWKS 状态时钟非法：{$arg0}
+jwks-state-corrupt = JWKS 状态损坏：{$arg0}
+jwks-state-serialize = JWKS 状态序列化失败：{$arg0}
+jwt-ec-curve-missing = EC 密钥缺少曲线标识
+jwt-ec-curve-unsupported = 不支持的 EC 曲线：{$arg0}
+jwt-ec-key = EC 密钥构建失败：{$arg0}
+jwt-ec-pem-invalid = EC PEM 解析失败：{$arg0}
+jwt-ec-sec1-format = 期望 SEC1 格式的 EC 私钥
+jwt-ed-key = Ed25519 密钥构建失败：{$arg0}
+jwt-ed-pem-invalid = Ed25519 PEM 解析失败：{$arg0}
+jwt-ed-seed-len = Ed25519 seed 长度非法
+jwt-header-invalid = JWT header 非法：{$arg0}
+jwt-jwks-symmetric = JWKS 导出不支持对称密钥
+jwt-jwks-unsupported-alg = JWKS 导出不支持算法 {$arg0}
+jwt-key-algorithm-mismatch = 密钥算法不匹配：key={$arg0}, alg={$arg1}
+jwt-keystore-no-active-key = keystore 没有活跃密钥
+jwt-kid-already-registered = kid '{$arg0}' 已注册
+jwt-kid-retired = kid '{$arg0}' 已退役
+jwt-kid-symmetric = kid 不得指向对称密钥
+jwt-kid-unknown = 未知的 kid：{$arg0}
+jwt-refresh-compensate-delete = refresh token 补偿删除失败：{$arg0}
+jwt-refresh-compensate-restore = refresh token 补偿恢复失败：{$arg0}
+jwt-refresh-count-empty = refresh token 计数链为空
+jwt-refresh-insert-and-compensate-failed = refresh token 写入失败且补偿同样失败：{$arg0}, {$arg1}
+jwt-refresh-insert-rolled-back = refresh token 写入已回滚：{$arg0}
+jwt-refresh-reuse-rejected = refresh token 重放已拒绝：{$arg0}
+jwt-rsa-key = RSA 密钥构建失败：{$arg0}
+jwt-rsa-pem-invalid = RSA PEM 解析失败：{$arg0}
+jwt-sign-claims = JWT claim 签名失败：{$arg0}
+jwt-snapshot-kid-mismatch = 密钥快照 kid 不匹配：{$arg0} != {$arg1}
+jwt-snapshot-multiple-active = 密钥快照存在多个活跃密钥：{$arg0}
+
+# mfa
+mfa-aal-out-of-range = aal 超出范围（{$arg1}），实际：{$arg0}
+mfa-amr-method-unknown = 未知的 AMR 方法：{$arg0}（{$arg1}）
+mfa-recovery-batch-size-invalid = 恢复码批量大小非法（{$arg1}），实际：{$arg0}
+mfa-recovery-misuse-parse = 恢复码误用状态解析失败：{$arg0}
+mfa-remember-secret-too-short = remember-me 密钥过短：{$arg0}（{$arg1}）
+mfa-remember-sign = remember-me 令牌签名失败：{$arg0}
+mfa-remember-ttl-overflow = remember-me TTL 超出 i64 范围：{$arg0}
+mfa-webauthn-assertion-parse = webauthn 断言解析失败：{$arg0}
+mfa-webauthn-factor-already-registered = webauthn 因子已注册
+mfa-webauthn-factor-not-registered = webauthn 因子未注册
+mfa-webauthn-subject-mismatch = webauthn 断言主体不匹配：asserted-for={$arg0}, session={$arg1}
+
+# oauth2 server
+oauth2-server-authorize-ticket-deserialize = authorize ticket 反序列化失败：{$arg0}
+oauth2-server-jwks-retirement-conflict = 另一实例已轮换密钥集；退役推迟到该次轮换
+oauth2-server-jwks-rotation-conflict = 另一实例已轮换密钥集；请重新加载并重试
+
+# qrlogin
+qrlogin-session-parse = 扫码登录会话解析失败：{$arg0}
+qrlogin-session-serialize = 扫码登录会话序列化失败：{$arg0}
+qrlogin-ticket-hmac-init = 扫码登录 ticket HMAC 初始化失败：{$arg0}
+
+# secure
+secure-field-encryption-change-key = change-key 批量大小必须大于 0
+secure-field-encryption-config = 字段加密配置错误：{$arg0}
+secure-field-encryption-dao = 敏感键命名空间操作被拒绝：{$arg0}
+secure-field-encryption-decode = 字段解密失败：{$arg0}
+secure-field-encryption-open = 字段解密失败：AAD、密钥或认证标签不匹配
+secure-field-encryption-seal = 字段加密失败：{$arg0}
+secure-field-encryption-utf8 = 字段值不是合法 UTF-8：{$arg0}
+secure-limiter-refund = 限流器退还失败：{$arg0}
+session-sim-primary-amr = 主 AMR 模拟失败：{$arg0}
+
+# server
+server-external-login-unacknowledged = 外网登录在非回环绑定上开启且未确认（{$arg0}）；请传入确认串 external_login_ack
+server-internal-api-key-too-short = 内网 API Key 短于下限（{$arg0}）；请轮换为 ≥32 字节密钥
+
+# sso
+sso-client-secret-too-short = SSO 客户端密钥过短：{$arg0}, {$arg1}
+sso-message-envelope-format = SSO 消息信封格式非法
+sso-message-envelope-serialize = SSO 消息信封序列化失败：{$arg0}
+sso-message-hmac-init = SSO 消息 HMAC 初始化失败：{$arg0}
+sso-message-hmac-verify = SSO 消息 HMAC 校验失败
+sso-message-seq-replay = SSO 消息序号重放已拒绝：{$arg0}, {$arg1}
+sso-saml-audience-not-configured = 未配置 SAML audience；断言中的 audience：{$arg0}
+sso-saml-destination-not-configured = 未配置 SAML destination；断言中的 destination：{$arg0}
+sso-server-secret-too-short = SSO 服务端密钥过短：{$arg0}, {$arg1}
+
+# stp
+stp-check-disable-token-session-not-found = check_disable：未找到 token 会话
+stp-check-login-session-tenant-unbound = check_login：存在租户上下文但会话无租户绑定
+stp-check-login-tenant-mismatch = check_login：会话租户与请求租户不一致
+stp-check-login-tenant-unbound = check_login：存在租户上下文但 token 无租户绑定
+stp-login-id-control-char = login_id 不得包含控制字符
+stp-login-id-sep = login_id 不得包含单元分隔符（U+001F）
+stp-login-id-too-long = login_id 过长：{$arg0} 字节（上限 {$arg1}）
+stp-login-id-whitespace = login_id 不得包含空白字符
+stp-password-account-locked = 账号已锁定：{$arg0}
+stp-password-lock-check = 密码锁定检查失败：{$arg0}
+stp-password-lock-incr = 密码锁定失败计数递增失败：{$arg0}
+stp-password-lock-set = 密码锁定状态写入失败：{$arg0}
+stp-refresh-token-revoked = refresh token 已被撤销
+stp-secondary-check-not-login = 二级校验要求已登录会话
+strategy-sliding-window-count-parse = 滑动窗口计数解析失败：{$arg0}
+strategy-sliding-window-key-empty = 滑动窗口 key 不能为空
+strategy-sliding-window-response-length = 滑动窗口脚本返回的响应长度异常
+
+# webauthn
+webauthn-attestation-format = attestation 对象格式非法：{$arg0}
+webauthn-ceremony = webauthn 仪式失败：{$arg0}
+webauthn-challenge-conflict = challenge 键已被占用：{$arg0}
+webauthn-challenge-deserialize = challenge 反序列化失败：{$arg0}
+webauthn-challenge-encode = challenge 编码失败：{$arg0}
+webauthn-challenge-getdel = challenge 消费（GETDEL）失败：{$arg0}
+webauthn-challenge-serialize = challenge 序列化失败：{$arg0}
+webauthn-challenge-setifabsent = challenge 写入（SETNX）失败：{$arg0}
+webauthn-cred-id-encode = 凭据 ID 编码失败：{$arg0}
+webauthn-cred-row-encode = 凭据行编码失败：{$arg0}
+webauthn-cred-row-format = 凭据行格式非法：{$arg0}
+webauthn-cred-row-identity-mismatch = 凭据行身份不匹配（credential_id={$arg0}）
+webauthn-cred-row-parse = 凭据行解析失败：{$arg0}
+webauthn-issuer-host-missing = issuer 缺少 host：{$arg0}
+webauthn-issuer-invalid = issuer 非法：{$arg0}
+webauthn-rp-build = relying party 构建失败：{$arg0}
+webauthn-rp-mismatch = relying party 不匹配：{$arg0}
+clientdata-parse = clientDataJSON 解析失败：{$arg0}
+clientdata-utf8 = clientDataJSON 不是合法 UTF-8：{$arg0}
+cred-id = 凭据 ID 解码失败：{$arg0}
+start-auth = webauthn 认证发起失败：{$arg0}
+start-register = webauthn 注册发起失败：{$arg0}
+update-state = webauthn 状态更新失败：{$arg0}
+
+# misc
+warp-body-collect-failed = warp request_id：错误响应体收集失败
+
+# DAO 契约测试套件（dao::testing，`testing` feature——下游自定义后端复用同一套契约测试）
+# 断言消息保持原样（测试诊断文案，与仓库测试代码惯例一致）；panic/expect 失败路径与标签走 FTL。
+dao-conformance-expect-ok-failed = [{$prefix}] {$what} 不应失败：{$error}
+dao-conformance-expect-err-failed = [{$prefix}] {$what}，实际：{$actual}
+dao-conformance-what-set-overwrite = set（覆盖）
+dao-conformance-what-get-missing-key = get（缺键）
+dao-conformance-what-delete-missing-key = delete（缺键）
+dao-conformance-what-get-with-ttl-missing-key = get_with_ttl（缺键）
+dao-conformance-what-incr-new-key = incr（新键）
+dao-conformance-what-incr-increment = incr（续增）
+dao-conformance-what-decr-missing-key = decr（缺键）
+dao-conformance-what-decr-zero = decr（存量值 0）
+dao-conformance-what-caui-missing-key = compare_and_update_if_greater（缺键）
+dao-conformance-what-caui-smaller-value = compare_and_update_if_greater（更小值）
+dao-conformance-what-get-old-key = get（旧键）
+dao-conformance-what-get-new-key = get（新键）
+dao-conformance-what-sia-new-key = set_if_absent（新键）
+dao-conformance-what-sia-existing-key = set_if_absent（已存在键）
+dao-conformance-what-gd-missing-key = get_and_delete（缺键）
+dao-conformance-what-cas-mismatch = compare_and_swap（期望值不匹配）
+dao-conformance-what-cas-match = compare_and_swap（期望值匹配）
+dao-conformance-what-cas-missing-key = compare_and_swap（缺键）
+dao-conformance-what-keys-single-char = keys（'?' 单字符模式）
+dao-conformance-what-keys-no-match = keys（无匹配）
+dao-conformance-what-keys-after-delete = keys（delete 之后）
+dao-conformance-what-keys-after-rename = keys（rename 之后）
+dao-conformance-expect-err-update-missing-key = update 缺键应返回 Err(Dao)
+dao-conformance-expect-err-expire-missing-key = expire 缺键应返回 Err(Dao)
+dao-conformance-expect-err-incr-non-numeric = 非数值值 incr 应返回 Err(Dao)，禁止静默归零
+dao-conformance-expect-err-incr-overflow = u64 溢出应返回 Err(Dao)
+dao-conformance-expect-err-caui-non-numeric = 非数值值 compare_and_update_if_greater 应返回 Err(Dao)
+dao-conformance-expect-err-rename-missing-key = rename 缺键应返回 Err(InvalidParam)（trait 文档契约）
+dao-conformance-concurrent-sia-join-failed = [{$prefix}] set_if_absent 任务 join 失败
+dao-conformance-concurrent-sia-error = [{$prefix}] set_if_absent 并发不应返回错误：{$error}
+dao-conformance-concurrent-gd-join-failed = [{$prefix}] get_and_delete 任务 join 失败
+dao-conformance-concurrent-gd-error = [{$prefix}] get_and_delete 并发不应返回错误：{$error}
+dao-conformance-concurrent-incr-join-failed = [{$prefix}] incr 任务 join 失败
+dao-conformance-concurrent-incr-error = [{$prefix}] incr 并发不应返回错误：{$error}
+dao-conformance-concurrent-decr-join-failed = [{$prefix}] decr 任务 join 失败
+dao-conformance-concurrent-decr-error = [{$prefix}] decr 并发不应返回错误：{$error}
+dao-conformance-concurrent-caui-join-failed = [{$prefix}] compare_and_update_if_greater 任务 join 失败
+dao-conformance-concurrent-caui-error = [{$prefix}] compare_and_update_if_greater 并发不应返回错误：{$error}
+dao-conformance-concurrent-cas-join-failed = [{$prefix}] compare_and_swap 任务 join 失败
+dao-conformance-concurrent-cas-error = [{$prefix}] compare_and_swap 并发不应返回错误：{$error}
+dao-conformance-get-session-failed = [{$prefix}] get_session 不应失败：{$error}
+dao-conformance-connection-failed = [{$prefix}] connection 不应失败：{$error}
+dao-conformance-query-failed = [{$prefix}] 查询不应失败：{$error}
+dao-conformance-query-returned-no-row = [{$prefix}] 查询应有结果行：{$sql}
+dao-conformance-val-column-read-failed = [{$prefix}] val 列读取失败：{$error}
+dao-conformance-execute-failed = [{$prefix}] execute 不应失败：{$error}
+dao-conformance-injection-expected-dao-error = [{$prefix}] 注入失败应返回 Dao 错误，实际：{$actual}
+dao-conformance-duplicate-binding-expected-already-bound = [{$prefix}] 重复绑定应返回 AlreadyBound，实际：{$actual}
+dao-conformance-bound-credential-not-found = [{$prefix}] 已绑定凭据应可查得，实际：{$actual}
+dao-conformance-query-must-succeed = [{$prefix}] 查询不应失败
+dao-conformance-credential-update-must-succeed = [{$prefix}] 更新既有凭据应成功
+dao-conformance-credential-must-exist-after-update = [{$prefix}] 更新后凭据应仍存在
+dao-conformance-credential-must-exist-after-rollback = [{$prefix}] 回退拒绝后凭据应仍存在
+dao-conformance-unbind-must-succeed = [{$prefix}] 解绑应成功
+dao-conformance-unbind-must-be-idempotent = [{$prefix}] 重复解绑应幂等 Ok
+cli-healthcheck-healthy = 健康：127.0.0.1:{$port} 的 /healthz 返回 {$code}

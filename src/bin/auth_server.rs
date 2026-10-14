@@ -154,12 +154,10 @@ struct AuthServerBootstrapConfig {
 fn resolve_bind_addr(env_name: &str, raw: Option<&str>) -> GarrisonResult<IpAddr> {
     match raw {
         None => Ok(IpAddr::from([127, 0, 0, 1])),
-        Some(s) => s.trim().parse::<IpAddr>().map_err(|_| {
-            GarrisonError::Config(format!(
-                "auth-server-bootstrap::{env_name}-invalid::{s} \
-                 (require an IPv4/IPv6 literal, e.g. 127.0.0.1 or 0.0.0.0)"
-            ))
-        }),
+        Some(s) => s
+            .trim()
+            .parse::<IpAddr>()
+            .map_err(|_| GarrisonError::Config(format!("auth-server-bootstrap::{env_name}::{s}"))),
     }
 }
 
@@ -175,24 +173,19 @@ fn parse_trusted_proxies(spec: &str) -> GarrisonResult<Vec<IpAddr>> {
             let raw = entry.trim();
             if raw.is_empty() {
                 return Err(GarrisonError::Config(
-                    "auth-server-bootstrap::trusted-proxies-empty-entry \
-                     (comma-separated IP list, e.g. 10.0.0.1,127.0.0.1)"
-                        .to_string(),
+                    "auth-server-bootstrap-proxies-empty-entry::".to_string(),
                 ));
             }
             raw.parse::<IpAddr>().map_err(|_| {
                 GarrisonError::Config(format!(
-                    "auth-server-bootstrap::trusted-proxies-invalid::{raw} \
-                     (require an IPv4/IPv6 literal)"
+                    "auth-server-bootstrap::GARRISON_TRUSTED_PROXIES::{raw}"
                 ))
             })
         })
         .collect::<GarrisonResult<Vec<_>>>()?;
     if let Some(public) = proxies.iter().find(|ip| !is_private_proxy_addr(ip)) {
         return Err(GarrisonError::Config(format!(
-            "auth-server-bootstrap::trusted-proxy-not-private::{public} \
-             (trusted proxies must be loopback/RFC1918/link-local/IPv6 ULA; \
-             public IPs can be spoofed on the path)"
+            "auth-server-bootstrap-proxy-not-private::{public}"
         )));
     }
     Ok(proxies)
@@ -259,12 +252,12 @@ fn parse_field_encryption_keys(spec: &str) -> GarrisonResult<Vec<(String, String
         .map(|entry| {
             let (key_id, key_hex) = entry.split_once(':').ok_or_else(|| {
                 GarrisonError::Config(format!(
-                    "auth-server-field-encryption::entry-missing-colon::{entry}"
+                    "auth-server-field-encryption::missing-colon::{entry}"
                 ))
             })?;
             if key_id.is_empty() || key_hex.is_empty() {
                 return Err(GarrisonError::Config(format!(
-                    "auth-server-field-encryption::entry-empty-part::{entry}"
+                    "auth-server-field-encryption::empty-part::{entry}"
                 )));
             }
             Ok((key_id.to_string(), key_hex.to_string()))
@@ -287,10 +280,7 @@ async fn setup_garrison_manager(
         let entries = parse_field_encryption_keys(field_encryption_keys)?;
         if entries.is_empty() {
             return Err(GarrisonError::Config(
-                "auth-server-field-encryption::no-keys-configured::set \
-                 GARRISON_FIELD_ENCRYPTION_KEYS (key_id:hex64,...) or disable \
-                 the field-encryption feature"
-                    .to_string(),
+                "auth-server-field-encryption-no-keys::".to_string(),
             ));
         }
         let cipher = garrison::secure::encryption::FieldCipher::from_key_entries(&entries)?;
@@ -304,8 +294,8 @@ async fn setup_garrison_manager(
     #[cfg(not(feature = "field-encryption"))]
     if !field_encryption_keys.is_empty() {
         eprintln!(
-            "WARN: GARRISON_FIELD_ENCRYPTION_KEYS is set but the field-encryption \
-             feature is not enabled; the value is ignored"
+            "{}",
+            garrison::i18n::translate_detail("cli-field-encryption-feature-disabled", &[])
         );
     }
     let config = Arc::new(assemble_garrison_config(max_login_count, seed_primary_amr));
@@ -364,13 +354,37 @@ async fn async_main() -> GarrisonResult<()> {
         );
         std::process::exit(1);
     }
+    // 限流后端环境变量 fail-closed 校验（与库层 `parse_rate_limit_backend_env` 同源单点，
+    // 保持在 setup_garrison_manager 之前——DAO / 迁移不因配置错误被触碰）：
+    // 未知值拒绝启动；backend=redis 须配非空 GARRISON_REDIS_URL（对齐 validate_rate_limit_redis）。
+    #[cfg(feature = "rate-limit-redis")]
+    match garrison::config::impls::parse_rate_limit_backend_env() {
+        Ok(Some(garrison::strategy::rate_limiter_backend::RateLimitBackend::Redis {
+            redis_url,
+        })) if redis_url.trim().is_empty() => {
+            eprintln!(
+                "FATAL: GARRISON_RATE_LIMIT_BACKEND=redis requires a non-empty \
+                 GARRISON_REDIS_URL; refusing to start"
+            );
+            std::process::exit(1);
+        },
+        Ok(_) => {},
+        Err(e) => {
+            eprintln!("FATAL: {e}; refusing to start");
+            std::process::exit(1);
+        },
+    }
     // 绑定地址 / 可信代理 / 密钥强度 / 外网登录暴露确认统一交由库层
     // `validate()` 判定，且保持在 `setup_garrison_manager` 之前——任何一项
     // 不满足即拒绝启动，不触碰 DAO 与迁移。
     let config = match resolve_bootstrap_security(&bootstrap) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("FATAL: {e}");
+            let reason = e.to_string();
+            eprintln!(
+                "{}",
+                garrison::i18n::translate_detail("auth-server-fatal", &[("arg0", reason.as_str())])
+            );
             std::process::exit(1);
         },
     };

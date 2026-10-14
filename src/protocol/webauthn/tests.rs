@@ -778,3 +778,132 @@ async fn dual_policy_admission_differs_by_purpose() {
         second_factor.err()
     );
 }
+
+// 认证发起（非空凭据 allow-list）与 clientDataJSON 校验
+
+/// start_authentication 以用户既有凭据构造 allow-list 并暂存认证仪式态（非空凭据路径）。
+#[cfg(feature = "db-sqlite")]
+#[tokio::test(flavor = "multi_thread")]
+async fn start_authentication_lists_credentials_and_stores_state() {
+    let (service, _repo, store) = test_service_sqlite(test_config()).await;
+    seed_registration(&store, 0, "user-1", FactorPurpose::Passwordless).await;
+    let reg: RegisterPublicKeyCredential =
+        serde_json::from_str(REG_VECTOR_JSON).expect("注册向量应可解析");
+    service
+        .finish_registration(&reg)
+        .await
+        .expect("注册向量应落库");
+
+    let rcr = service
+        .start_authentication(0, "user-1")
+        .await
+        .expect("已有凭据时 start_authentication 应成功");
+    assert_eq!(
+        rcr.public_key.allow_credentials.len(),
+        1,
+        "allow-list 应恰含该用户唯一凭据"
+    );
+    assert!(
+        !rcr.public_key.challenge.as_slice().is_empty(),
+        "应下发非空 challenge"
+    );
+
+    let challenge_key = serde_json::to_string(&rcr.public_key.challenge)
+        .expect("challenge 应可序列化")
+        .trim_matches('"')
+        .to_string();
+    let payload = store
+        .consume(&challenge_key)
+        .await
+        .expect("认证仪式态应按 challenge 暂存");
+    assert!(
+        matches!(payload, ChallengePayload::Authentication { .. }),
+        "暂存的仪式态应为 Authentication"
+    );
+}
+
+/// clientDataJSON 解析失败 / 缺 challenge / challenge 字符集或长度非法：显性拒绝（fail-closed）。
+#[cfg(feature = "db-sqlite")]
+#[tokio::test(flavor = "multi_thread")]
+async fn finish_registration_rejects_malformed_client_data() {
+    let (service, _repo, _store) = test_service_sqlite(test_config()).await;
+    let base: RegisterPublicKeyCredential =
+        serde_json::from_str(REG_VECTOR_JSON).expect("注册向量应可解析");
+
+    let too_long = format!(r#"{{"challenge":"{}"}}"#, "A".repeat(513));
+    let cases: [(&[u8], &str); 4] = [
+        (b"not-json", "clientdata-parse"),
+        (
+            br#"{"type":"webauthn.create"}"#,
+            "clientdata-challenge-missing",
+        ),
+        (
+            br#"{"challenge":"!bad!"}"#,
+            "clientdata-challenge-malformed",
+        ),
+        (too_long.as_bytes(), "clientdata-challenge-malformed"),
+    ];
+    for (client_data, expected) in cases {
+        let mut reg = base.clone();
+        reg.response.client_data_json =
+            webauthn_rs::prelude::Base64UrlSafeData::from(client_data.to_vec());
+        let err = service
+            .finish_registration(&reg)
+            .await
+            .expect_err("畸形 clientDataJSON 必须显式拒绝");
+        assert!(
+            matches!(&err, WebauthnCeremonyError::CeremonyRejected(detail) if detail.contains(expected)),
+            "错误应含 {expected}，实际: {err:?}"
+        );
+    }
+}
+
+/// 仪式错误的 Display 文案与 `GarrisonError` 边界映射：七变体齐备，统一映射为 `InvalidParam`。
+#[test]
+fn ceremony_error_display_and_garrison_mapping() {
+    let cases: [(WebauthnCeremonyError, &str); 7] = [
+        (
+            WebauthnCeremonyError::ChallengeReplayed,
+            "replayed or expired",
+        ),
+        (
+            WebauthnCeremonyError::ChallengeKindMismatch,
+            "challenge kind mismatch",
+        ),
+        (
+            WebauthnCeremonyError::CeremonyRejected("detail".to_string()),
+            "ceremony rejected: detail",
+        ),
+        (
+            WebauthnCeremonyError::CredentialAlreadyBound,
+            "credential already bound",
+        ),
+        (
+            WebauthnCeremonyError::CloneSuspected {
+                stored: 5,
+                asserted: 3,
+            },
+            "stored=5, asserted=3",
+        ),
+        (
+            WebauthnCeremonyError::NoCredentialBound,
+            "no webauthn credential bound",
+        ),
+        (
+            WebauthnCeremonyError::PolicyDisabled(FactorPurpose::SecondFactor),
+            "SecondFactor",
+        ),
+    ];
+    for (err, fragment) in cases {
+        let display = err.to_string();
+        assert!(
+            display.contains(fragment),
+            "Display 应含 {fragment}，实际: {display}"
+        );
+        let mapped = crate::error::GarrisonError::from(err);
+        assert!(
+            matches!(mapped, crate::error::GarrisonError::InvalidParam(ref m) if m.contains("webauthn-ceremony")),
+            "仪式错误应映射为 InvalidParam，实际: {mapped:?}"
+        );
+    }
+}

@@ -291,4 +291,16 @@ mod tests {
             "应设置 Vary: Origin 确保缓存正确性"
         );
     }
+    /// mock 响应的 `set_cookie_with_config` 为 no-op 且返回 Ok（Cookie 语义由各框架适配器测试覆盖）。
+    #[test]
+    fn mock_response_set_cookie_with_config_is_noop_ok() {
+        let mut resp = WebMockResponse::new();
+        let config = crate::config::GarrisonConfig::default_config();
+        assert!(
+            resp.set_cookie_with_config("session", "token", &config)
+                .is_ok(),
+            "mock 实现应返回 Ok（不产生副作用）"
+        );
+        assert!(resp.headers.is_empty(), "mock 不应写入任何 header");
+    }
 }

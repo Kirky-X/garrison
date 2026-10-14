@@ -580,3 +580,98 @@ pub use garrison_macros::{
     check_login_forge, check_mfa, check_permission, check_permission_forge, check_role,
     check_role_forge, check_temp_token,
 };
+
+// MSRV 元数据守卫（仅测试）
+
+/// `rust-version` 单一事实源守卫：该字段是发布契约，仓库内四处编码同一数值，任一处漂移即
+/// 复现「声明 1.85、依赖面需 1.97.1」型矛盾——cargo 以 `rustc ... is not supported by the
+/// following packages` 拒绝低于依赖面要求的工具链，故声明值必须是依赖图可满足的最低工具链：
+/// 根清单 `[package]` / `[workspace.package]`（macros、examples 经前者继承）、`clippy.toml`
+/// 的 `msrv`（lint 据此判定 API 可用性）、CI 测试矩阵的 MSRV 腿及其门控步骤（以声明值编译
+/// 锁定依赖图，是声明与依赖面一致性的实测门禁）、README 双语徽章（用户侧口径）。
+#[cfg(test)]
+mod msrv_guard {
+    /// 按路径取 TOML 字符串值（缺键返回 `None`，由调用方给出可读失败信息）。
+    fn toml_str<'a>(value: &'a toml::Value, path: &[&str]) -> Option<&'a str> {
+        let mut cur = value;
+        for key in path {
+            cur = cur.get(*key)?;
+        }
+        cur.as_str()
+    }
+
+    fn cargo_toml() -> toml::Value {
+        toml::from_str(include_str!("../Cargo.toml")).expect("根 Cargo.toml 应为合法 TOML")
+    }
+
+    fn declared_msrv() -> String {
+        toml_str(&cargo_toml(), &["package", "rust-version"])
+            .expect("根 Cargo.toml 的 [package] 应声明 rust-version")
+            .to_string()
+    }
+
+    /// 枚举 `text` 中全部「`prefix` 之后到下一处 `delimiter`」片段，用于比对同一标记的多处取值。
+    fn extract_values<'a>(text: &'a str, prefix: &str, delimiter: &str) -> Vec<&'a str> {
+        let mut out = Vec::new();
+        let mut rest = text;
+        while let Some(idx) = rest.find(prefix) {
+            let tail = &rest[idx + prefix.len()..];
+            let Some(end) = tail.find(delimiter) else {
+                break;
+            };
+            out.push(&tail[..end]);
+            rest = &tail[end..];
+        }
+        out
+    }
+
+    #[test]
+    fn msrv_single_source_of_truth_manifest_and_clippy() {
+        let msrv = declared_msrv();
+        assert_eq!(
+            toml_str(&cargo_toml(), &["workspace", "package", "rust-version"]),
+            Some(msrv.as_str()),
+            "[workspace.package].rust-version 必须与 [package].rust-version 一致（macros/examples 经此继承）"
+        );
+        let clippy: toml::Value =
+            toml::from_str(include_str!("../clippy.toml")).expect("clippy.toml 应为合法 TOML");
+        assert_eq!(
+            toml_str(&clippy, &["msrv"]),
+            Some(msrv.as_str()),
+            "clippy.toml 的 msrv 必须与 Cargo.toml 的 rust-version 一致，否则 lint 按错误 MSRV 判定 API 可用性"
+        );
+    }
+
+    #[test]
+    fn msrv_single_source_of_truth_ci_and_badge() {
+        let msrv = declared_msrv();
+        let ci = include_str!("../.github/workflows/ci.yml");
+        let matrix = format!("rust: [{msrv}, stable, beta]");
+        assert!(
+            ci.contains(&matrix),
+            "ci.yml 测试矩阵的 MSRV 腿未钉在声明值（期望 `{matrix}`）：该腿以声明值编译锁定依赖图，声明与依赖面不一致时先在此暴露"
+        );
+        // 门控步骤（Linux 独占的 run 维度补齐）必须整体切到声明值：只改矩阵行会留下旧值门控
+        let gates = extract_values(ci, "matrix.rust == '", "'");
+        assert!(
+            !gates.is_empty(),
+            "ci.yml 未找到 MSRV 腿门控步骤（`matrix.rust == '<版本>'`）"
+        );
+        let stale: Vec<&str> = gates.iter().copied().filter(|v| *v != msrv).collect();
+        assert!(
+            stale.is_empty(),
+            "ci.yml 的 MSRV 腿门控步骤仍钉在旧值 {stale:?}（声明值为 {msrv}）"
+        );
+        for (name, text) in [
+            ("README.md", include_str!("../README.md")),
+            ("README_EN.md", include_str!("../README_EN.md")),
+        ] {
+            let badges = extract_values(text, "badge/rust-", "%2B");
+            assert_eq!(
+                badges,
+                vec![msrv.as_str()],
+                "{name} 的 Rust 徽章必须唯一且等于 Cargo.toml 的 rust-version（实际 {badges:?}，声明值 {msrv}）"
+            );
+        }
+    }
+}

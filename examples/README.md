@@ -22,14 +22,15 @@ cargo run -p garrison-examples --bin axum_integration --features "cache-memory,w
 
 | 示例 | 主题 |
 |---|---|
-| `basic_login` / `session_management` / `token_styles` / `token_introspection` | 登录 / 会话 / Token 基础 |
+| `readme_quickstart` / `basic_login` / `session_management` / `token_styles` / `token_introspection` | README 快速开始 / 登录 / 会话 / Token 基础 |
 | `password_login` / `jwt_login` / `jwt_modes` | 密码与 JWT 登录模式 |
 | `permission_check` / `strategy_registry` / `auth_logic_impl` | 权限决策与策略 |
 | `macro_annotations` / `axum_integration` / `context_request` | 注解与 axum 集成 |
 | `web_actix_example` / `web_warp_example` / `web_security` / `grpc_interceptor` | 多框架与安全中间件 |
 | `manager_lifecycle` / `state_machine` / `dao_operations` / `alone_cache` / `three_tier_cache` / `cache_redis` | 管理器 / 状态机 / 存储与缓存 |
-| `jwt` 协议族：`oauth2_flow` / `oauth2_pkce` / `oauth2_server_flow` / `token_introspection` | OAuth2 流程 |
+| OAuth2 流程：`oauth2_flow` / `oauth2_pkce` / `oauth2_server_flow` / `token_introspection` | OAuth2 流程 |
 | `sso_flow` / `sso_server` / `oidc_handler` / `scope_handler` / `keycloak_oidc` | SSO / OIDC 联合登录 |
+| `social_alipay` | 社交登录（支付宝，`social-alipay` feature） |
 | `httpbasic_login` / `httpdigest_login` / `sign_protocol` / `sign_utils` / `apikey_management` / `apikey_namespace` / `temp_credential` / `invitation_credential` / `json_template` | 协议层（Basic/Digest/签名/API Key/临时凭证/邀请码） |
 | `totp_login` / `email_verification` / `sms_rate_limit` / `constant_time_eq` / `secure_module` | 安全模块 |
 | `abac_policy` / `account_security` | ABAC / 账号安全引擎 |

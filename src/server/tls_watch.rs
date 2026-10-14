@@ -77,7 +77,7 @@ pub(super) fn spawn_cert_watcher(
                     error = %e,
                     cert = %cert_path.display(),
                     key = %key_path.display(),
-                    "tls cert watcher start failed; certificate hot reload disabled"
+                    "{}", crate::i18n::translate_detail("logs-tls-watcher-start-failed", &[])
                 );
                 return;
             },
@@ -91,17 +91,17 @@ pub(super) fn spawn_cert_watcher(
                         match reload_from_paths(&config, &cert_path, &key_path).await {
                             Ok(()) => tracing::info!(
                                 changed = %changed.display(),
-                                "tls certificate reloaded after file change"
+                                "{}", crate::i18n::translate_detail("logs-tls-certificate-reloaded", &[])
                             ),
                             Err(e) => tracing::error!(
                                 error = %e,
-                                "tls certificate reload failed; keeping the previous certificate"
+                                "{}", crate::i18n::translate_detail("logs-tls-certificate-reload-failed", &[])
                             ),
                         }
                     },
                     None => {
                         tracing::warn!(
-                            "tls cert watcher stopped; certificate hot reload no longer available"
+                            "{}", crate::i18n::translate_detail("logs-tls-watcher-stopped", &[])
                         );
                         break;
                     },

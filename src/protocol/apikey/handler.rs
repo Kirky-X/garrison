@@ -124,8 +124,8 @@ impl ApiKeyHandler {
     pub fn with_allow_global_verify(mut self, allow: bool) -> Self {
         if allow {
             tracing::warn!(
-                "apikey global verify enabled: verify() may validate keys from ANY namespace; \
-                 prefer verify_with_namespace for tenant isolation"
+                "{}",
+                crate::i18n::translate_detail("logs-apikey-global-verify-enabled", &[])
             );
         }
         self.allow_global_verify = allow;
@@ -296,7 +296,7 @@ impl ApiKeyHandler {
         // rotate / update_last_used 等管理操作走 verify_internal 不受影响。
         if !self.allow_global_verify {
             return Err(GarrisonError::InvalidParam(
-                "apikey-global-verify-disabled::use verify_with_namespace or enable via with_allow_global_verify".to_string(),
+                "apikey-global-verify-disabled::".to_string(),
             ));
         }
         self.verify_internal(key).await

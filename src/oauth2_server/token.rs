@@ -654,7 +654,8 @@ impl TokenHandler {
         // DAO fallback 路径显性化（每次降级刷新告警一次）：本路径无 reuse detection，盗用 refresh_token 的重放
         // 仅因单次消费失败而拒绝，不会触发链式撤销；启动期已输出结构性 warn，此处为按请求级标记。
         tracing::warn!(
-            "oauth2 refresh_token rotation not configured: serving refresh grant via DAO fallback without reuse detection — stolen refresh_token replay will NOT trigger chain revocation"
+            "{}",
+            crate::i18n::translate_detail("logs-oauth2-refresh-rotation-not-configured", &[])
         );
         //
         // 原子消费（get_and_delete）：读取 + 删除在 DAO 单次临界区内完成，
@@ -2202,7 +2203,7 @@ mod tests {
         );
     }
 
-    /// 空 allowed_scopes 的客户端 fail-closed：任意 scope 请求被拒（T016）。
+    /// 空 allowed_scopes 的客户端 fail-closed：任意 scope 请求被拒。
     #[tokio::test]
     async fn handle_client_credentials_empty_allowed_scopes_fail_closed() {
         let (handler, _) = make_handler();
@@ -2237,7 +2238,7 @@ mod tests {
         );
     }
 
-    /// allowed_scopes = ["*"] 通配允许任意 scope（替代旧空列表语义，T016）。
+    /// allowed_scopes = ["*"] 通配允许任意 scope（替代旧空列表语义）。
     #[tokio::test]
     async fn handle_client_credentials_wildcard_scope_allows_any() {
         let (handler, _) = make_handler();
@@ -3210,17 +3211,13 @@ mod refresh_rotation_tests {
             logs.0.lock().expect("日志缓冲锁应可用").clone()
         });
 
+        // 期望文案按当前 locale 取值（同 backchannel deliver 断言），避免系统语言探测差异
+        let degraded_warn =
+            crate::i18n::translate_detail("logs-oauth2-refresh-rotation-not-configured", &[]);
         let degraded_warns: Vec<&String> = logs_value
             .iter()
-            .filter(|l| l.contains("rotation not configured"))
+            .filter(|l| l.contains(&degraded_warn))
             .collect();
-        assert!(
-            degraded_warns
-                .iter()
-                .any(|l| l.contains("without reuse detection")),
-            "退化 warn 应说明 reuse detection 不可用后果，日志: {:?}",
-            logs_value
-        );
         assert_eq!(
             degraded_warns.len(),
             1,
@@ -3296,10 +3293,11 @@ mod refresh_rotation_tests {
             logs.0.lock().expect("日志缓冲锁应可用").clone()
         });
 
+        // 期望文案按当前 locale 取值（同上），避免系统语言探测差异令断言只对英文成立
+        let degraded_warn =
+            crate::i18n::translate_detail("logs-oauth2-refresh-rotation-not-configured", &[]);
         assert!(
-            !logs_value
-                .iter()
-                .any(|l| l.contains("rotation not configured")),
+            !logs_value.iter().any(|l| l.contains(&degraded_warn)),
             "注入 rotation 后不得输出退化 warn，日志: {:?}",
             logs_value
         );

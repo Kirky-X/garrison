@@ -85,7 +85,7 @@ where
                         tracing::debug!(
                             request_id = %id,
                             status = res.status().as_u16(),
-                            "request_id_middleware: request completed"
+                            "{}", crate::i18n::translate_detail("logs-request-id-middleware-completed", &[])
                         );
                         if let Ok(value) = HeaderValue::from_str(id.as_ref()) {
                             res.headers_mut().insert(X_REQUEST_ID, value);

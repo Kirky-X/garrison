@@ -49,6 +49,9 @@ regexes = [
     # 测试用固定 P-256 EC / Ed25519 私钥 PEM base64 body 片段（src/oauth2_server/jwks.rs 的 TEST_EC_PEM / TEST_ED_PEM，与 src/protocol/jwt/tests.rs 假钥逐字节相同）
     '''MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgHu89Emnr1D\+OpkZF''',
     '''MC4CAQAwBQYDK2VwBCIEIOChr1YQD9KWBWWGBLFFjHQiHx9\+OznRi69Gh25Uhv8H''',
+    # Debug 脱敏测试的字面占位 PEM（src/protocol/jwt/keystore.rs key_snapshot_debug_redacts_private_pem：
+    # body 即字面 "secret-material"，非真实密钥；整段精确匹配，避免放行真实 PEM）
+    '''\\nsecret-material\\n-----END'''
 ]
 
 # nosemgrep/nosecret 显式标注行的降噪由上方 paths 覆盖（测试/示例目录）。

@@ -28,7 +28,7 @@ fn env_flag(key: &str) -> Option<bool> {
                 tracing::warn!(
                     env = key,
                     value = %raw,
-                    "unrecognized boolean, falling back to default"
+                    "{}", crate::i18n::translate_detail("logs-server-config-unrecognized-boolean", &[])
                 );
                 None
             },
@@ -40,7 +40,7 @@ fn env_num<T: std::str::FromStr>(key: &str) -> Option<T> {
     std::env::var(key).ok().and_then(|raw| match raw.trim().parse::<T>() {
         Ok(v) => Some(v),
         Err(_) => {
-            tracing::warn!(env = key, value = %raw, "unrecognized number, falling back to default");
+            tracing::warn!(env = key, value = %raw, "{}", crate::i18n::translate_detail("logs-server-config-unrecognized-number", &[]));
             None
         },
     })

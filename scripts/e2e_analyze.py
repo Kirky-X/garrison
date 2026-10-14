@@ -153,6 +153,7 @@ def section_perf_baseline(perf_entries: list[dict[str, Any]]) -> str:
             latest_by_name[name] = entry
             latest_ts[name] = ts
 
+    soft_marked = False
     for test_name, endpoint, t_p99, t_rps, t_err in PERF_TARGETS:
         actual = latest_by_name.get(test_name)
         if actual is None:
@@ -167,10 +168,26 @@ def section_perf_baseline(perf_entries: list[dict[str, Any]]) -> str:
         a_errors = int(actual.get("errors", 0))
         a_err_pct = (a_errors * 100.0 / a_total) if a_total else 100.0
         ok = a_p99 < t_p99 and a_rps >= t_rps and a_err_pct < t_err
-        mark = "✅ 达标" if ok else "❌ 不达标"
+        # profile 由 tests/acceptance/concurrency.rs append_perf_report 写入；
+        # debug 档位下未达标不 panic，报告随之软判定（与测试判定口径一致）。
+        if ok:
+            mark = "✅ 达标"
+        elif str(actual.get("profile", "")).lower() == "debug":
+            mark = "⚠️ 未达标（debug SOFT，不阻塞）"
+            soft_marked = True
+        else:
+            mark = "❌ 不达标"
         lines.append(
             f"| {test_name} | `{endpoint}` | {t_p99} | {a_p99} | "
             f"{t_rps} | {a_rps} | {t_err} | {a_err_pct:.4f} | {mark} |"
+        )
+
+    if soft_marked:
+        lines.append("")
+        lines.append(
+            "> `debug` 构建下 `assert_perf_baseline`（`tests/acceptance/concurrency.rs`）"
+            "仅输出 `⚠️ [debug SOFT]` 警告、不 panic；上表 ⚠️ 行为 debug 记录值，"
+            "release 构建下同阈值即硬门禁（`❌ 不达标`）。"
         )
 
     lines.append("")

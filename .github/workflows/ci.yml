@@ -31,11 +31,11 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
         with:
           components: rustfmt, clippy
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # protoc
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -53,11 +53,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
         with:
           components: rustfmt, clippy
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # protoc
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -77,11 +77,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
         with:
           components: rustfmt, clippy
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # protoc
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -99,7 +99,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
         with:
           components: rustfmt
       - name: Check formatting
@@ -112,11 +112,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
         with:
           components: clippy
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # protoc
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -129,7 +129,9 @@ jobs:
 
   # 测试矩阵
   # GitHub Actions 限制：uses 字段不能使用 matrix 上下文（解析期未展开 matrix）
-  # 因此固定使用 1.85.1 SHA pin，通过 with.toolchain 参数切换实际工具链版本
+  # 因此 action 固定使用同一 SHA pin；pin 指向 dtolnay/rust-toolchain 的 1.97.1 快照
+  # （与 Cargo.toml rust-version 同值），无 with.toolchain 的步骤即装 MSRV 工具链；
+  # 矩阵腿的实际工具链由 with.toolchain 覆盖（MSRV 腿取 Cargo.toml 的 rust-version，守卫测试断言同值）
   # protoc 用 taiki-e/install-action 跨平台统一安装（Linux/macOS/Windows 均支持）
   test:
     name: Test (${{ matrix.os }} / Rust ${{ matrix.rust }})
@@ -139,15 +141,15 @@ jobs:
     #（超时在 GitHub 上表现为 job cancelled）。其余平台维持 25min。
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 25 }}
     env:
-      # Linux runner 上 sqlite 文件库 URL 在 1.85/beta 面触发
-      # SQLITE_READONLY（预创建空文件亦然），统一回退内存库；
+      # Linux runner 上 sqlite 文件库 URL 在 MSRV/beta 面触发
+      # SQLITE_READONLY（预创建空文件亦然，历史 MSRV 腿实录），统一回退内存库；
       # macOS/Windows 文件库修多连接 "no such table" 偶发。
       GARRISON_TEST_SQLITE_MEMORY: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [1.85, stable, beta]
+        rust: [1.97.1, stable, beta]
         exclude:
           - os: windows-latest
             rust: beta
@@ -155,12 +157,12 @@ jobs:
             rust: beta
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
         with:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # protoc
         with:
           tool: protoc
       # Windows runner 无系统 OpenSSL 开发文件：webauthn-rs 0.5.5 引入的
@@ -188,25 +190,25 @@ jobs:
       - name: Test (full)
         run: cargo test --features "full" --lib --locked
       - name: garrison-cli bin tests (cli-ops combo)
-        run: cargo test --features "cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption" --bin garrison-cli --locked
+        run: cargo test --features "cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption,dao-key-index" --bin garrison-cli --locked
       # 盲区补齐（2026-09-14 审计）
       # 以下 feature 面此前不在任何 job 的「运行」维度：问题潜伏数月才被发现
       # （i18n 断言漂移 39 例、keycloak OsRng E0432、macros trybuild 自 8 月损坏、
       # doctest 从未运行导致 state/impls.rs 2 例失败）。仅在 Linux/MSRV 腿执行一次。
       - name: Test (ban-sync)
-        if: matrix.os == 'ubuntu-latest' && matrix.rust == '1.85'
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == '1.97.1'
         # redis 不可达时用例自行跳过,无服务依赖
         run: cargo test --no-default-features --features "ban-sync" --lib --locked
       - name: Doctests (full)
         # doctest 此前从未纳入 CI（doc job 只构建文档不做 test --doc）
-        if: matrix.os == 'ubuntu-latest' && matrix.rust == '1.85'
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == '1.97.1'
         run: cargo test --features "full" --doc --locked
       - name: Check (production)
         # 生产 feature 面编译门禁(不含运行时服务依赖)
-        if: matrix.os == 'ubuntu-latest' && matrix.rust == '1.85'
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == '1.97.1'
         run: cargo check --features production --locked
       - name: Test (db-sqlite)
-        if: matrix.os == 'ubuntu-latest' && matrix.rust == '1.85'
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == '1.97.1'
         # 内嵌 sqlite,无服务依赖
         run: cargo test --no-default-features --features "db-sqlite" --lib --locked
 
@@ -250,9 +252,9 @@ jobs:
             /usr/local/share/boost /usr/share/swift || true
           sudo docker image prune --all --force > /dev/null 2>&1 || true
           df -h /
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # protoc
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -278,9 +280,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # protoc
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -289,7 +291,7 @@ jobs:
       - name: Build docs
         run: cargo doc --no-deps --features "full"
       - name: Install cargo-deadlinks
-        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # cargo-deadlinks
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # cargo-deadlinks
         with:
           tool: cargo-deadlinks
       # 死链检查（显性化策略 — 规则 12：不掩盖，分类处理）
@@ -299,7 +301,7 @@ jobs:
       #   - `dispatcher` ← tracing_subscriber::WithSubscriber doc 中的 [default subscriber] reference link
       #   - `Response` ← warp::Reply::into_response doc 中的 [`Response`] intra-doc link
       # rustdoc 在 `--no-deps` 模式下无法解析这些外部 intra-doc link，生成相对路径 → 死链。
-      # 切换 nightly + `--extern-html-root-url` 可修复，但项目用 stable Rust 1.85。
+      # 切换 nightly + `--extern-html-root-url` 可修复，但项目用 stable Rust（版本见 Cargo.toml `rust-version`）。
       #
       # 处理策略：
       #   1. 过滤已知外部 crate 死链（Context/dispatcher/Response）— 不阻断 CI
@@ -336,8 +338,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
-      - uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # v1
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28 (cargo-deny)
         with:
           tool: cargo-deny
       - name: Generate Cargo.lock (library crate, not committed)
@@ -381,9 +383,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # protoc
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -434,22 +436,22 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # protoc
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ci-coverage-deps
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # cargo-llvm-cov
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # cargo-llvm-cov
         with:
           tool: cargo-llvm-cov
       - name: Run coverage (fail under 85% lines)
         run: cargo llvm-cov --features "full" --fail-under-lines 85 --lcov --output-path lcov.info
       - name: Upload coverage
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./lcov.info

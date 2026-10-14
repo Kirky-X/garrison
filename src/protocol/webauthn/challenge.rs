@@ -85,7 +85,7 @@ impl ChallengeStore {
             .map_err(|e| GarrisonError::Dao(format!("webauthn-challenge-setifabsent::{e}")))?;
         if !claimed {
             return Err(GarrisonError::InvalidParam(format!(
-                "webauthn-challenge-conflict::challenge key already claimed: {challenge_b64}"
+                "webauthn-challenge-conflict::{challenge_b64}"
             )));
         }
         Ok(())

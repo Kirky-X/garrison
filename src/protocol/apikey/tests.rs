@@ -1103,7 +1103,7 @@ async fn global_verify_disabled_by_default() {
     // 默认禁用：verify() 返回明确错误
     let err = handler.verify(&key).await.unwrap_err();
     assert!(
-        err.to_string().contains("apikey-global-verify-disabled"),
+        matches!(err, GarrisonError::InvalidParam(ref m) if m.contains("apikey-global-verify-disabled")),
         "默认 verify() 应被禁用，实际: {}",
         err
     );

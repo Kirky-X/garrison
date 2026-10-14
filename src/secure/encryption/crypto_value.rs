@@ -102,7 +102,12 @@ impl CryptoValue {
         validate_key_id(key_id, "seal")?;
         let mut nonce = [0u8; NONCE_LEN];
         // 直读 OS CSPRNG（与 oauth2 授权码 / CSRF 路径同一安全立场）
-        getrandom::fill(&mut nonce).expect("OS CSPRNG 不可用");
+        getrandom::fill(&mut nonce).unwrap_or_else(|e| {
+            panic!(
+                "{}: {e}",
+                crate::i18n::translate_detail("secure-csprng-unavailable", &[],)
+            )
+        });
         let cipher = Aes256Gcm::new(key_view(key));
         let ciphertext = cipher
             .encrypt(
@@ -203,17 +208,22 @@ fn op_err(op: &str, detail: &str) -> GarrisonError {
 
 /// `&[u8; 32]` → `&Key<Aes256Gcm>` 视图（长度静态匹配，转换不会失败）。
 fn key_view(key: &[u8; KEY_LEN]) -> &Key<Aes256Gcm> {
-    key.as_slice()
-        .try_into()
-        .expect("AES-256 密钥长度静态固定为 32 字节")
+    key.as_slice().try_into().unwrap_or_else(|e| {
+        panic!(
+            "{}: {e}",
+            crate::i18n::translate_detail("secure-aes-key-len-static", &[],)
+        )
+    })
 }
 
 /// `&[u8; 12]` → `&Nonce<Aes256Gcm>` 视图（长度静态匹配，转换不会失败）。
 fn nonce_view(nonce: &[u8; NONCE_LEN]) -> &Nonce<Aes256Gcm> {
-    nonce
-        .as_slice()
-        .try_into()
-        .expect("GCM nonce 长度静态固定为 12 字节")
+    nonce.as_slice().try_into().unwrap_or_else(|e| {
+        panic!(
+            "{}: {e}",
+            crate::i18n::translate_detail("secure-gcm-nonce-len-static", &[],)
+        )
+    })
 }
 
 #[cfg(test)]

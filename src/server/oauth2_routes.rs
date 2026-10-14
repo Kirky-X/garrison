@@ -113,7 +113,11 @@ impl OAuth2State {
         #[cfg(feature = "db-sqlite")]
         if !token_handler.has_refresh_rotation() {
             tracing::warn!(
-                "OAuth2State constructed without RefreshTokenRotation: /oauth2/token refresh grant will serve via DAO fallback without reuse detection — refresh_token replay/chain revocation is UNAVAILABLE; inject TokenHandler::with_refresh_rotation to enable"
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-server-oauth2-state-without-refresh-rotation",
+                    &[]
+                )
             );
         }
         Self {
@@ -175,9 +179,13 @@ impl OAuth2State {
     /// `retention_secs = 0` 等价于 Passive 钥即刻退役（发布面清空），回退默认值并 warn。
     pub fn with_jwks_retention_secs(mut self, retention_secs: u64) -> Self {
         if retention_secs == 0 {
+            let secs = crate::config::DEFAULT_JWKS_RETENTION_SECS.to_string();
             tracing::warn!(
-                "with_jwks_retention_secs(0) would retire Passive keys immediately; falling back to default {}s",
-                crate::config::DEFAULT_JWKS_RETENTION_SECS
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-server-jwks-retention-zero-fallback",
+                    &[("secs", secs.as_str())]
+                )
             );
             self.jwks_retention_secs = crate::config::DEFAULT_JWKS_RETENTION_SECS;
             return self;
@@ -273,7 +281,14 @@ async fn discovery_response(state: &OAuth2State, flavor: DiscoveryFlavor) -> Res
         Err(e) => {
             // 与 scopes 同语义：派生失败不静默降级（错误元数据比无元数据更危险——
             // 丢失 jwks_uri 的元数据会让 RP 无法解析签名钥）
-            tracing::error!("discovery metadata jwks algorithms derivation failed: {e}");
+            tracing::error!(
+                error = %e,
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-server-discovery-jwks-algorithms-failed",
+                    &[]
+                )
+            );
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         },
     };
@@ -325,7 +340,11 @@ async fn derive_scopes_supported(
         Err(e) => {
             // 派生失败不静默降级：500 显性暴露（错误元数据比无元数据更危险）；
             // 失败不写缓存，下一请求重试派生
-            tracing::error!("discovery metadata scopes derivation failed: {e}");
+            tracing::error!(
+                error = %e,
+                "{}",
+                crate::i18n::translate_detail("logs-server-discovery-scopes-failed", &[])
+            );
             Err(StatusCode::INTERNAL_SERVER_ERROR.into_response())
         },
     }
@@ -427,7 +446,11 @@ async fn jwks_endpoint(State(state): State<Arc<OAuth2State>>) -> Response {
             Ok(_) => StatusCode::NOT_FOUND.into_response(),
             Err(e) => {
                 // 状态损坏不静默：记日志后按 fail-closed 404（不暴露损坏细节）
-                tracing::error!("jwks keystore document build failed: {e}");
+                tracing::error!(
+                    error = %e,
+                    "{}",
+                    crate::i18n::translate_detail("logs-server-jwks-document-build-failed", &[])
+                );
                 StatusCode::NOT_FOUND.into_response()
             },
         };

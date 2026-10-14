@@ -32,7 +32,7 @@ pub async fn readiness_handler(State(enabled): State<HealthDetailsEnabled>) -> R
     let bytes = match axum::body::to_bytes(upstream.into_body(), 256 * 1024).await {
         Ok(b) => b,
         Err(e) => {
-            tracing::warn!(error = %e, "readiness probe: upstream body read failed");
+            tracing::warn!(error = %e, "{}", crate::i18n::translate_detail("logs-server-readiness-body-read-failed", &[]));
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({ "status": "unknown" })),
@@ -43,7 +43,7 @@ pub async fn readiness_handler(State(enabled): State<HealthDetailsEnabled>) -> R
     let mut value: serde_json::Value = match serde_json::from_slice(&bytes) {
         Ok(v) => v,
         Err(e) => {
-            tracing::warn!(error = %e, "readiness probe: upstream body is not valid JSON");
+            tracing::warn!(error = %e, "{}", crate::i18n::translate_detail("logs-server-readiness-body-not-json", &[]));
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({ "status": "unknown" })),

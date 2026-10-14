@@ -110,7 +110,7 @@ impl<S: QuotaStorage> DualWindowQuota<S> {
             tracing::warn!(
                 error = %e,
                 key = %ledger_key(RESOURCE_HOUR, identity),
-                "rollback hourly window counter failed"
+                "{}", crate::i18n::translate_detail("logs-secure-rollback-hourly-window-counter-failed", &[])
             );
             first_err.get_or_insert(e);
         }
@@ -118,7 +118,7 @@ impl<S: QuotaStorage> DualWindowQuota<S> {
             tracing::warn!(
                 error = %e,
                 key = %ledger_key(RESOURCE_DAY, identity),
-                "rollback daily window counter failed"
+                "{}", crate::i18n::translate_detail("logs-secure-rollback-daily-window-counter-failed", &[])
             );
             first_err.get_or_insert(e);
         }
@@ -134,7 +134,11 @@ impl<S: QuotaStorage> DualWindowQuota<S> {
             tracing::warn!(
                 error = %e,
                 key = %ledger_key(resource, identity),
-                "rollback {label} window counter failed"
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-secure-rollback-window-counter-failed",
+                    &[("label", label)]
+                )
             );
         }
     }

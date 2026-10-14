@@ -86,10 +86,14 @@ impl PasswordHasherConfig {
                 self.argon2_m_cost, ARGON2_MIN_M_COST, self.algorithm
             )));
         }
+        let cost = self.argon2_m_cost.to_string();
+        let floor = ARGON2_MIN_M_COST.to_string();
         tracing::warn!(
-            "password_hasher: argon2 m_cost {} < OWASP floor {} KiB — weak params explicitly accepted via allow_weak_argon2_params (memory-constrained deployment?)",
-            self.argon2_m_cost,
-            ARGON2_MIN_M_COST
+            "{}",
+            crate::i18n::translate_detail(
+                "logs-config-argon2-weak-params-accepted",
+                &[("cost", cost.as_str()), ("floor", floor.as_str())]
+            )
         );
         Ok(())
     }
@@ -436,7 +440,12 @@ impl GarrisonConfig {
             if let Err(msgs) =
                 deprecation::apply_deprecations(tree, &registry, current_version, &new_key_defaults)
             {
-                *failure_slot.lock().expect("deprecation 槽位锁应可用") = msgs;
+                *failure_slot.lock().unwrap_or_else(|e| {
+                    panic!(
+                        "{}: {e}",
+                        crate::i18n::translate_detail("config-deprecation-slot-lock-poisoned", &[],)
+                    )
+                }) = msgs;
             }
         });
 
@@ -445,7 +454,12 @@ impl GarrisonConfig {
         // 弃用键硬错误在 validate() 之前显性拦截（错误含键名与迁移指引）。
         let failures = deprecation_failures
             .lock()
-            .expect("deprecation 槽位锁应可用")
+            .unwrap_or_else(|e| {
+                panic!(
+                    "{}: {e}",
+                    crate::i18n::translate_detail("config-deprecation-slot-lock-poisoned", &[],)
+                )
+            })
             .clone();
         if !failures.is_empty() {
             return Err(GarrisonError::Config(failures.join("; ")));
@@ -518,8 +532,8 @@ impl GarrisonConfig {
     fn warn_memory_rate_limit_backend(&self) {
         tracing::warn!(
             backend = "memory",
-            "rate-limit-redis feature disabled: rate limiting is per-process counting only; \
-             multi-instance deployments MUST enable rate-limit-redis for global limits"
+            "{}",
+            crate::i18n::translate_detail("logs-config-rate-limit-redis-feature-disabled", &[])
         );
     }
 
@@ -530,7 +544,8 @@ impl GarrisonConfig {
         {
             tracing::warn!(
                 backend = "memory",
-                "rate_limit_backend=Memory: per-process counting only; multi-instance deployments MUST switch to Redis for global limits"
+                "{}",
+                crate::i18n::translate_detail("logs-config-rate-limit-memory-backend", &[])
             );
         }
     }
@@ -1064,29 +1079,34 @@ fn apply_web_csrf_env_override(config: &mut GarrisonConfig) -> GarrisonResult<()
     Ok(())
 }
 
+/// 解析 `GARRISON_RATE_LIMIT_BACKEND` 环境变量为后端选择（`rate-limit-redis` 面公开）：
+/// 未设置返回 `None`；`memory` / `redis` 返回对应后端（`redis` 的 URL 取 `GARRISON_REDIS_URL`，
+/// 缺省空串由 `validate_rate_limit_redis` 拒绝）；未知值返回配置错误（fail-closed）。
+/// 库内 `apply_rate_limit_env_override` 与参考部署 bin（auth_server 启动期 fail-closed 校验）
+/// 共用本单点解析，避免判定副本漂移。
+#[cfg(feature = "rate-limit-redis")]
+pub fn parse_rate_limit_backend_env() -> GarrisonResult<Option<RateLimitBackend>> {
+    let Ok(val) = std::env::var("GARRISON_RATE_LIMIT_BACKEND") else {
+        return Ok(None);
+    };
+    match val.to_lowercase().as_str() {
+        "memory" => Ok(Some(RateLimitBackend::Memory)),
+        "redis" => {
+            let redis_url = std::env::var("GARRISON_REDIS_URL").unwrap_or_default();
+            Ok(Some(RateLimitBackend::Redis { redis_url }))
+        },
+        _ => Err(GarrisonError::Config(format!(
+            "config-rate-limit-backend-unsupported::{}",
+            val
+        ))),
+    }
+}
+
 /// `rate-limit-redis` 显式环境变量覆盖：`GARRISON_RATE_LIMIT_BACKEND` + `GARRISON_REDIS_URL`；未知 backend 值返回配置错误（fail-closed）。
 #[cfg(feature = "rate-limit-redis")]
 fn apply_rate_limit_env_override(config: &mut GarrisonConfig) -> GarrisonResult<()> {
-    let Ok(val) = std::env::var("GARRISON_RATE_LIMIT_BACKEND") else {
-        return Ok(());
-    };
-    config.rate_limit_backend = match val.to_lowercase().as_str() {
-        "memory" => RateLimitBackend::Memory,
-        _ => {
-            let redis_url = std::env::var("GARRISON_REDIS_URL").unwrap_or_default();
-            RateLimitBackend::Redis { redis_url }
-        },
-    };
-    if !matches!(val.to_lowercase().as_str(), "memory" | "redis") {
-        return Err(GarrisonError::Config(format!(
-            "config-rate-limit-backend-unsupported::{}",
-            val
-        )));
-    }
-    if let Ok(val) = std::env::var("GARRISON_REDIS_URL") {
-        if let RateLimitBackend::Redis { redis_url } = &mut config.rate_limit_backend {
-            *redis_url = val;
-        }
+    if let Some(backend) = parse_rate_limit_backend_env()? {
+        config.rate_limit_backend = backend;
     }
     Ok(())
 }

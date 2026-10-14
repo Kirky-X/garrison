@@ -8,14 +8,17 @@ edition = "2021"
 cargo-fuzz = true
 
 [dependencies]
+# 必须保留默认特性 link_libfuzzer：fuzz target 均 `#![no_main]`，libfuzzer 的 main 由该特性经 build.rs 编译链接
+# （关闭后 `cargo build --bin <target>` 报 undefined symbol: main，security.yml 的 fuzz-regression 与 fuzz-weekly 深扫全部无法构建）
 libfuzzer-sys = "0.4"
 # block_on async trait 方法（fuzz_saml_xml）
 tokio = { version = "1", default-features = false, features = ["rt"] }
 # OidcDiscoveryConfig 反序列化（fuzz_oidc_discovery）
-serde_json = "1"
+serde_json = { version = "1", default-features = false, features = ["std"] }
 
 [dependencies.garrison]
 path = ".."
+default-features = false
 # fuzz 覆盖的解析入口所需 feature：
 # - protocol-saml：DefaultSamlProvider::parse_response（传递 protocol-sso/protocol-jwt）
 # - protocol-jwt：JwtHandler::verify

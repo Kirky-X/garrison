@@ -109,7 +109,7 @@ impl GarrisonLogicDefault {
                 tracing::warn!(
                     error = %e,
                     login_id = %login_id,
-                    "role union cache: get_role_list failed, skip (fail-open)"
+                    "{}", crate::i18n::translate_detail("logs-stp-role-union-get-role-list-failed", &[])
                 );
                 return;
             },
@@ -136,7 +136,7 @@ impl GarrisonLogicDefault {
                     // DAO 无 SQL 后端：常规能力缺失而非故障，debug 跳过避免 warn 刷屏
                     tracing::debug!(
                         login_id = %login_id,
-                        "role union cache: dao has no SQL backend, skip"
+                        "{}", crate::i18n::translate_detail("logs-stp-role-union-no-sql-backend", &[])
                     );
                     return;
                 },
@@ -144,7 +144,7 @@ impl GarrisonLogicDefault {
                     tracing::warn!(
                         error = %e,
                         login_id = %login_id,
-                        "role union cache precompute failed, skip (fail-open)"
+                        "{}", crate::i18n::translate_detail("logs-stp-role-union-precompute-failed", &[])
                     );
                     return;
                 },
@@ -159,7 +159,7 @@ impl GarrisonLogicDefault {
                     tracing::warn!(
                         error = %e,
                         login_id = %login_id,
-                        "role union cache write failed (fail-open)"
+                        "{}", crate::i18n::translate_detail("logs-stp-role-union-write-failed", &[])
                     );
                 }
             },
@@ -167,7 +167,7 @@ impl GarrisonLogicDefault {
                 tracing::warn!(
                     error = %e,
                     login_id = %login_id,
-                    "role union cache serialize failed (fail-open)"
+                    "{}", crate::i18n::translate_detail("logs-stp-role-union-serialize-failed", &[])
                 );
             },
         }
@@ -192,7 +192,8 @@ impl GarrisonLogicDefault {
         if remember_me && !effective_remember_me {
             tracing::debug!(
                 login_id,
-                "remember_me requested but disabled by config, using default timeout"
+                "{}",
+                crate::i18n::translate_detail("logs-stp-remember-me-disabled", &[])
             );
         }
 
@@ -800,7 +801,7 @@ impl GarrisonLogicDefault {
                 tracing::warn!(
                     error = %e,
                     login_id,
-                    "jti blacklist snapshot read failed; revoked tokens may remain valid until natural expiry"
+                    "{}", crate::i18n::translate_detail("logs-stp-jti-blacklist-snapshot-read-failed", &[])
                 );
                 return;
             },

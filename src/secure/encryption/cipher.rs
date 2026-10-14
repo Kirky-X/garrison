@@ -56,7 +56,7 @@ impl StaticFieldKeyProvider {
                 }
                 tracing::warn!(
                     key_id = %id,
-                    "field-encryption: non-primary key is degenerate (single repeated byte);                      allowed for legacy decryption only — rotate it away via change-key"
+                    "{}", crate::i18n::translate_detail("logs-field-encryption-degenerate-non-primary-key", &[])
                 );
             }
             if map.insert(id.clone(), key).is_some() {

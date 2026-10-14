@@ -532,7 +532,7 @@ impl RequiredActionProvider for WebauthnRequiredActionProvider {
         // 仪式锁定的用户绑定必须与当前会话主体一致，跨用户 assertion（他人 passkey 完成他人 step-up）在此显性拒绝
         if auth.user_id != ctx.login_id {
             return Err(GarrisonError::InvalidParam(format!(
-                "mfa-webauthn-subject-mismatch::asserted-for={}::session={}",
+                "mfa-webauthn-subject-mismatch::{}::{}",
                 auth.user_id, ctx.login_id
             )));
         }
@@ -824,7 +824,12 @@ fn mfa_remember_subkey(secret: &str) -> Vec<u8> {
     let hk = Hkdf::<sha2::Sha256>::new(None, secret.as_bytes());
     let mut okm = [0u8; 32];
     hk.expand(b"garrison:mfa-remember-cookie:v1" as &[u8], &mut okm)
-        .expect("32 字节 OKM 在 HKDF-SHA256 输出上限内");
+        .unwrap_or_else(|e| {
+            panic!(
+                "{}: {e}",
+                crate::i18n::translate_detail("mfa-hkdf-okm-len-static", &[],)
+            )
+        });
     okm.to_vec()
 }
 
@@ -1023,9 +1028,12 @@ pub mod webauthn_factor {
     /// 注册 WebAuthn factor 校验函数（进程级，重复注册显性拒绝——
     /// 静默覆盖会让「后注册者改变全库校验行为」变得不可见）。
     pub fn register_webauthn_factor(verifier: Arc<WebauthnFactorVerifier>) -> GarrisonResult<()> {
-        let mut guard = WEBAUTHN_FACTOR
-            .write()
-            .expect("mfa webauthn factor 注册表锁不应中毒");
+        let mut guard = WEBAUTHN_FACTOR.write().unwrap_or_else(|e| {
+            panic!(
+                "{}: {e}",
+                crate::i18n::translate_detail("mfa-webauthn-factor-registry-lock-poisoned", &[],)
+            )
+        });
         if guard.is_some() {
             return Err(GarrisonError::Config(
                 "mfa-webauthn-factor-already-registered::".to_string(),
@@ -1040,7 +1048,15 @@ pub mod webauthn_factor {
     pub fn webauthn_factor() -> Option<Arc<WebauthnFactorVerifier>> {
         WEBAUTHN_FACTOR
             .read()
-            .expect("mfa webauthn factor 注册表锁不应中毒")
+            .unwrap_or_else(|e| {
+                panic!(
+                    "{}: {e}",
+                    crate::i18n::translate_detail(
+                        "mfa-webauthn-factor-registry-lock-poisoned",
+                        &[],
+                    )
+                )
+            })
             .clone()
     }
 

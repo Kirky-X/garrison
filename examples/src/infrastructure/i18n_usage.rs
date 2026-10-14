@@ -1,13 +1,13 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! i18n_usage 示例（i18n feature）。
+//! i18n_usage 示例（i18n 基础层无条件编译，无需 feature）。
 //!
 //! 演示异常消息国际化：GarrisonLocale（Zh 默认 / En）、current_locale 读取、set_locale 返回 RAII guard（drop 自动恢复）、translate_error 依据 locale 翻译、嵌套栈式 scope。
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p garrison-examples --bin i18n_usage --features i18n
+//! cargo run -p garrison-examples --bin i18n_usage
 //! ```
 use garrison::error::GarrisonError;
 use garrison::exception::GarrisonException;

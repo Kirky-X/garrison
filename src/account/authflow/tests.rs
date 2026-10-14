@@ -282,3 +282,55 @@ fn auth_result_success_debug_masks_token() {
         "短 token 应全掩码，实际: {debug}"
     );
 }
+
+/// AuthResult 其余变体的手动 Debug 分支：Failed / Pending / ChallengeRequired 均带 variant 标签。
+#[test]
+fn auth_result_debug_covers_failed_pending_and_challenge_variants() {
+    let failed = AuthResult::Failed {
+        reason: "invalid_credentials".to_string(),
+        step: 2,
+    };
+    let debug = format!("{failed:?}");
+    assert!(
+        debug.contains("variant: \"Failed\"")
+            && debug.contains("invalid_credentials")
+            && debug.contains("step: 2"),
+        "Failed Debug 应含 variant 标签、reason 与 step，实际: {debug}"
+    );
+
+    let pending = AuthResult::Pending {
+        completed_step: 1,
+        next_step: 2,
+        challenge: "请输入 TOTP".to_string(),
+    };
+    let debug = format!("{pending:?}");
+    assert!(
+        debug.contains("variant: \"Pending\"")
+            && debug.contains("completed_step: 1")
+            && debug.contains("next_step: 2")
+            && debug.contains("请输入 TOTP"),
+        "Pending Debug 应含 variant 标签与三步进度，实际: {debug}"
+    );
+
+    let challenge = AuthResult::ChallengeRequired {
+        challenge_type: "captcha".to_string(),
+        message: "请完成验证码".to_string(),
+    };
+    let debug = format!("{challenge:?}");
+    assert!(
+        debug.contains("variant: \"ChallengeRequired\"")
+            && debug.contains("captcha")
+            && debug.contains("请完成验证码"),
+        "ChallengeRequired Debug 应含 variant 标签与挑战信息，实际: {debug}"
+    );
+}
+
+/// IpWhitelist::is_empty 与空/非空 CIDR 列表一致。
+#[test]
+fn ip_whitelist_is_empty_tracks_cidr_list() {
+    let empty = IpWhitelist::parse(&[]).expect("空列表应可解析");
+    assert!(empty.is_empty(), "空 CIDR 列表应判定为空");
+
+    let one = IpWhitelist::parse(&["10.0.0.0/8".to_string()]).expect("合法 CIDR 应可解析");
+    assert!(!one.is_empty(), "非空 CIDR 列表不得判定为空");
+}

@@ -5,17 +5,18 @@
 //! 与 IP 级 `BruteForceStrategy` 组合使用。
 //!
 //! 核心类型：`WaitStrategy`（倍数/线性等待）、[`UserLockoutConfig`](crate::account::lockout::UserLockoutConfig)
-//! （5 字段配置）、[`LockoutState`](crate::account::lockout::LockoutState)（4 字段，DAO 持久化）；
-//! `UserLockoutStrategy` 实现位于 [`strategy`] 子模块。
+//! （5 字段配置）、[`LockoutState`](crate::account::lockout::LockoutState)（5 字段，DAO 持久化）；
+//! `UserLockoutStrategy` 实现位于 [`strategy`](crate::account::lockout::strategy) 子模块。
+//!
+//! 持久化：状态经 [`GarrisonDao`](crate::dao::GarrisonDao) 落 `lockout:{user_id}` 键——SQL /
+//! Redis TTL / 分布式后端由 DAO 的部署选型覆盖，无独立存储抽象。写入 TTL 策略见 `strategy`
+//! 子模块：永久锁定与锁定升级计数永久驻留，纯计数窗口态在窗口到期后自然清理（键缺失读路径
+//! 返回默认态，与窗口过期重置语义等价）。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-
-/// 锁定状态存储抽象子模块：当前经 `GarrisonDao` 持久化 `LockoutState`，专用后端
-/// （Redis TTL / SQL / 分布式锁定）预留。
-pub mod storage;
 
 /// 策略实现子模块（impl 块、辅助函数、inventory 注册）。
 pub mod strategy;

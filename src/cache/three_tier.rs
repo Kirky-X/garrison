@@ -227,7 +227,12 @@ impl UserCacheService {
         let result = self
             .list_cache
             .get_or(&key_owned, || async {
-                let fb = fallback.take().expect("fallback 只被消费一次");
+                let fb = fallback.take().unwrap_or_else(|| {
+                    panic!(
+                        "{}",
+                        crate::i18n::translate_detail("cache-fallback-consumed-once", &[],)
+                    )
+                });
                 match fb().await {
                     Ok(v) => {
                         l3_value = Some(v.clone());
@@ -254,7 +259,7 @@ impl UserCacheService {
                     tracing::warn!(
                         key = %key_owned,
                         error = %e,
-                        "cache: L3 succeeded but write-back failed, returning uncached value"
+                        "{}", crate::i18n::translate_detail("logs-cache-l3-write-back-failed", &[])
                     );
                     return Ok(v);
                 }
@@ -263,10 +268,16 @@ impl UserCacheService {
                 tracing::warn!(
                     key = %key_owned,
                     error = %e,
-                    "cache: chain read/deserialize failed, evicting key and falling back to L3"
+                    "{}", crate::i18n::translate_detail("logs-cache-chain-read-failed-evict-and-fallback", &[])
                 );
                 let _ = self.list_cache.delete(&key_owned).await;
-                fallback.expect("错误发生在 fallback 之前，其尚未执行")().await
+                fallback.unwrap_or_else(|| {
+                    panic!(
+                        "{}",
+                        crate::i18n::translate_detail("cache-fallback-not-yet-executed", &[],)
+                    )
+                })()
+                .await
             },
         }
     }
@@ -288,7 +299,12 @@ impl UserCacheService {
         let result = self
             .user_cache
             .get_or_option(&key_owned, || async {
-                let fb = fallback.take().expect("fallback 只被消费一次");
+                let fb = fallback.take().unwrap_or_else(|| {
+                    panic!(
+                        "{}",
+                        crate::i18n::translate_detail("cache-fallback-consumed-once", &[],)
+                    )
+                });
                 match fb().await {
                     Ok(v) => {
                         l3_value = Some(v.clone());
@@ -313,17 +329,23 @@ impl UserCacheService {
                     tracing::warn!(
                         key = %key_owned,
                         error = %e,
-                        "cache: L3 succeeded but write-back failed, returning uncached value"
+                        "{}", crate::i18n::translate_detail("logs-cache-l3-write-back-failed", &[])
                     );
                     return Ok(v);
                 }
                 tracing::warn!(
                     key = %key_owned,
                     error = %e,
-                    "cache: chain read/deserialize failed, evicting key and falling back to L3"
+                    "{}", crate::i18n::translate_detail("logs-cache-chain-read-failed-evict-and-fallback", &[])
                 );
                 let _ = self.user_cache.delete(&key_owned).await;
-                fallback.expect("错误发生在 fallback 之前，其尚未执行")().await
+                fallback.unwrap_or_else(|| {
+                    panic!(
+                        "{}",
+                        crate::i18n::translate_detail("cache-fallback-not-yet-executed", &[],)
+                    )
+                })()
+                .await
             },
         }
     }
@@ -2381,7 +2403,7 @@ mod tests {
         assert!(build_with_capacity(30, 300, 128).is_ok());
     }
 
-    // cache-hotkey 热 key 观测（T006）
+    // cache-hotkey 热 key 观测
 
     /// L1 读写路径经 record 埋点：两次 get_permissions 后 top-k 含权限缓存键且计数 ≥2。
     #[cfg(feature = "cache-hotkey")]

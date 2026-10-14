@@ -380,7 +380,7 @@ async fn dual_device_full_flow_confirmed_and_exchange() {
     );
 
     // ⑧ 闭环核验：兑换出的 token 是服务器上的真实会话，归属确认者 app-user
-    //（GAR-23: get-session 所有权校验强制必填，caller_login_id 须为会话主体）
+    //（get-session 所有权校验强制必填，caller_login_id 须为会话主体）
     let verifier = device_client();
     let resp = verifier
         .post(format!("{}/api/v1/auth/get-session", internal_url))

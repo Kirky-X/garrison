@@ -5,6 +5,13 @@ name: "Garrison CodeQL Config"
 
 paths-ignore:
   # 独立测试文件（tests/ 目录、**/tests.rs 内联测试文件）
+  # 注意：paths-ignore 只能排除整文件，src/**/*.rs 内联 #[cfg(test)] 模块
+  # 仍在扫描范围——hard-coded-cryptographic-value / cleartext-logging 对测试
+  # 夹具（硬编码测试密码/nonce、assert 中的错误码字面量）系统性误报，此类
+  # 告警按本文件既定口径（测试代码中的硬编码密码是预期行为）以
+  # used in tests 处置（2026-10-14 全量 151 条逐条核验后处置，理由记录在
+  # GitHub Security 标签页各告警的 dismissal comment）。新增同类告警按同口径
+  # 核验后处置；生产代码命中（非测试区域）必须走代码修复，不得照搬豁免。
   - "**/tests/**"
   - "**/tests.rs"
   # 示例代码（examples/ 目录）

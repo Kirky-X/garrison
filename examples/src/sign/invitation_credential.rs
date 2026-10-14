@@ -83,9 +83,9 @@ pub async fn run() -> GarrisonResult<()> {
     // 小写 + 连字符输入同样命中（输入规范化）
     let display = format!(
         "{}-{}-{}",
-        &invitation.code[..2].to_lowercase(),
-        &invitation.code[2..6].to_lowercase(),
-        &invitation.code[6..].to_lowercase()
+        invitation.code[..2].to_lowercase(),
+        invitation.code[2..6].to_lowercase(),
+        invitation.code[6..].to_lowercase()
     );
     assert!(handler.validate(&display).await?.is_valid());
     println!("    输入规范化（小写/连字符）→ 同样命中 ✓\n");

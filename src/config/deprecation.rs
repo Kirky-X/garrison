@@ -155,27 +155,38 @@ fn warn_migrated(dep: &Deprecation, outcome: &str) {
         deprecated_key = dep.key,
         since = dep.since_version,
         new_key = dep.new_key,
-        "deprecated config key \"{}\" (since {}) processed: {}; update your configuration before 1.0.0",
-        dep.key,
-        dep.since_version,
-        outcome
+        "{}",
+        crate::i18n::translate_detail(
+            "logs-config-deprecated-key-migrated",
+            &[
+                ("key", dep.key),
+                ("since", dep.since_version),
+                ("outcome", outcome),
+            ]
+        )
     );
 }
 
 /// 不可自动迁移键的告警（< 1.0.0 放行前输出迁移指引）。
 fn warn_unmigrated(dep: &Deprecation) {
+    let guidance = if dep.new_key.is_empty() {
+        crate::i18n::translate_detail("config-deprecation-guidance-delete", &[])
+    } else {
+        crate::i18n::translate_detail("config-deprecation-guidance-rename", &[])
+    };
     tracing::warn!(
         deprecated_key = dep.key,
         since = dep.since_version,
         new_key = dep.new_key,
-        "deprecated config key \"{}\" (since {}) is no longer auto-mappable and will be rejected at 1.0.0; {}",
-        dep.key,
-        dep.since_version,
-        if dep.new_key.is_empty() {
-            "delete it from your configuration"
-        } else {
-            "rename it manually"
-        }
+        "{}",
+        crate::i18n::translate_detail(
+            "logs-config-deprecated-key-unmigratable",
+            &[
+                ("key", dep.key),
+                ("since", dep.since_version),
+                ("guidance", guidance.as_str()),
+            ]
+        )
     );
 }
 

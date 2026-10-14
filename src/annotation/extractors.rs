@@ -20,34 +20,42 @@ use std::marker::PhantomData;
 /// cookie 解析名在 production + Secure 上下文为 `__Host-` 前缀名，与写侧同名。
 fn extract_token_from_parts(parts: &Parts, config: &GarrisonConfig) -> Option<String> {
     if config.is_read_header {
-        if let Some(auth) = parts.headers.get(header::AUTHORIZATION) {
-            if let Ok(auth_str) = auth.to_str() {
-                // 大小写不敏感匹配 "Bearer " 前缀（RFC 7235）
-                if let Some(token) = strip_bearer_prefix(auth_str) {
-                    return Some(token.to_string());
-                }
-            }
-        }
-        if let Some(token) = parts.headers.get(config.token_name.as_str()) {
-            if let Ok(token_str) = token.to_str() {
-                return Some(token_str.to_string());
-            }
+        if let Some(token) = extract_header_token(parts, config) {
+            return Some(token);
         }
     }
     if config.is_read_cookie {
-        if let Some(cookie) = parts.headers.get(header::COOKIE) {
-            if let Ok(cookie_str) = cookie.to_str() {
-                let cookie_prefix = format!("{}=", crate::context::token_cookie_name(config));
-                for c in cookie_str.split(';') {
-                    let c = c.trim();
-                    if let Some(rest) = c.strip_prefix(&cookie_prefix) {
-                        return Some(rest.to_string());
-                    }
-                }
-            }
+        if let Some(token) = extract_cookie_token(parts, config) {
+            return Some(token);
         }
     }
     None
+}
+
+/// header 提取：优先 `Authorization: Bearer <token>`（RFC 7235 大小写不敏感），
+/// 其次 `config.token_name` 指定的自定义头。
+fn extract_header_token(parts: &Parts, config: &GarrisonConfig) -> Option<String> {
+    if let Some(auth) = parts.headers.get(header::AUTHORIZATION) {
+        if let Some(token) = auth.to_str().ok().and_then(strip_bearer_prefix) {
+            return Some(token.to_string());
+        }
+    }
+    parts
+        .headers
+        .get(config.token_name.as_str())
+        .and_then(|token| token.to_str().ok())
+        .map(str::to_string)
+}
+
+/// cookie 提取：按 `config` 决定的 cookie 名扫描 `Cookie` 头（production + Secure 上下文
+/// 为 `__Host-` 前缀名，与写侧同名）。
+fn extract_cookie_token(parts: &Parts, config: &GarrisonConfig) -> Option<String> {
+    let cookie_str = parts.headers.get(header::COOKIE)?.to_str().ok()?;
+    let cookie_prefix = format!("{}=", crate::context::token_cookie_name(config));
+    cookie_str
+        .split(';')
+        .map(str::trim)
+        .find_map(|c| c.strip_prefix(&cookie_prefix).map(str::to_string))
 }
 
 // 辅助函数：执行登录校验（严格模式，未登录返回 NotLogin）

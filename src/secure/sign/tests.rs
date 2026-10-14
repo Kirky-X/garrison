@@ -209,9 +209,9 @@ fn signer_implements_default() {
     let _signer: Signer = Default::default();
 }
 
-// DEEP-02 死代码守卫：constant_time_eq_manual fallback 已移除
+// 死代码守卫：constant_time_eq_manual fallback 已移除
 
-/// DEEP-02 源码级守卫：过滤注释后断言 signer.rs 不再含 `constant_time_eq_manual` 标识符与 `not(subtle)` 分支。
+/// 源码级守卫：过滤注释后断言 signer.rs 不再含 `constant_time_eq_manual` 标识符与 `not(subtle)` 分支。
 ///
 /// 该 fallback 与 `secure::ct_eq::constant_time_eq` 功能重复，且在 `secure-sign` 恒启用 subtle 下永远不可达（死代码），防回归重新引入。
 #[test]

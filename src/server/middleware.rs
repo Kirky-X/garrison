@@ -315,7 +315,7 @@ pub async fn api_key_auth_middleware(
 
     // 锁定中：窗口期内一律 429，无论本次 key 是否合法
     if let Some(retry_after) = state.lockout.check_locked(&source) {
-        tracing::warn!(source = %source, retry_after, "api key auth locked: brute-force lockout window active");
+        tracing::warn!(source = %source, retry_after, "{}", crate::i18n::translate_detail("logs-server-apikey-auth-locked-window", &[]));
         return GarrisonError::RateLimited {
             retry_after_secs: retry_after,
         }
@@ -327,7 +327,7 @@ pub async fn api_key_auth_middleware(
     let first = header_values.next();
     if header_values.next().is_some() {
         let outcome = state.lockout.record_failure(&source);
-        tracing::warn!(source = %source, failures = outcome.count, "duplicate X-API-Key header rejected");
+        tracing::warn!(source = %source, failures = outcome.count, "{}", crate::i18n::translate_detail("logs-server-apikey-duplicate-header", &[]));
         return auth_failure_response(&state, &source, outcome);
     }
 
@@ -339,7 +339,7 @@ pub async fn api_key_auth_middleware(
 
     if !valid {
         let outcome = state.lockout.record_failure(&source);
-        tracing::warn!(source = %source, failures = outcome.count, "api key auth failed");
+        tracing::warn!(source = %source, failures = outcome.count, "{}", crate::i18n::translate_detail("logs-server-apikey-auth-failed", &[]));
         return auth_failure_response(&state, &source, outcome);
     }
 
@@ -357,7 +357,7 @@ fn auth_failure_response(
     outcome: crate::server::api_key_lockout::FailureOutcome,
 ) -> Response {
     if outcome.locked {
-        tracing::warn!(source = %source, threshold = state.lockout.threshold(), "api key auth locked out");
+        tracing::warn!(source = %source, threshold = state.lockout.threshold(), "{}", crate::i18n::translate_detail("logs-server-apikey-auth-locked-out", &[]));
         return GarrisonError::RateLimited {
             retry_after_secs: outcome.retry_after_secs,
         }
@@ -583,14 +583,14 @@ pub async fn inject_login_client_ip(req: Request, next: Next) -> Response {
         Err(e) => {
             // 读体失败（超限 LengthLimitError 或 IO 错误）直接返回 413 统一 JSON 错误体——
             // 不转发空 body（会到 Json extractor 产生误导性 400 EOF），也不静默断连。
-            tracing::warn!(error = %e, "inject_login_client_ip: body read failed (oversize or IO)");
+            tracing::warn!(error = %e, "{}", crate::i18n::translate_detail("logs-server-inject-login-body-read-failed", &[]));
             return (
                 StatusCode::PAYLOAD_TOO_LARGE,
                 [(
                     CONTENT_TYPE,
                     axum::http::HeaderValue::from_static("application/json"),
                 )],
-                PAYLOAD_TOO_LARGE_BODY,
+                payload_too_large_body(),
             )
                 .into_response();
         },
@@ -606,7 +606,10 @@ pub async fn inject_login_client_ip(req: Request, next: Next) -> Response {
                 StatusCode::BAD_REQUEST,
                 Json(json!({
                     "error": "bad_request",
-                    "message": "request body must be valid JSON"
+                    "message": crate::i18n::translate_detail(
+                        "server-http-body-invalid-json-msg",
+                        &[]
+                    )
                 })),
             )
                 .into_response();
@@ -622,7 +625,12 @@ pub async fn inject_login_client_ip(req: Request, next: Next) -> Response {
 
     let new_body = if should_inject {
         if let Some(params) = json.get_mut("params").and_then(|p| p.as_object_mut()) {
-            let ip = client_ip.expect("should_inject 蕴含 client_ip 存在");
+            let ip = client_ip.unwrap_or_else(|| {
+                panic!(
+                    "{}",
+                    crate::i18n::translate_detail("server-inject-login-client-ip-invariant", &[],)
+                )
+            });
             params.insert("ip".to_string(), serde_json::Value::String(ip));
         }
         axum::body::Body::from(serde_json::to_vec(&json).unwrap_or_else(|_| bytes.to_vec()))
@@ -638,13 +646,23 @@ pub async fn inject_login_client_ip(req: Request, next: Next) -> Response {
 // Json extractor rejection 清洗（422 类型名泄露）
 
 /// Json extractor rejection 的统一错误体（不含任何类型/字段/偏移细节）。
-const REJECTION_BODY: &str =
-    r#"{"error":"bad_request","message":"request body failed validation"}"#;
+fn rejection_body() -> String {
+    serde_json::json!({
+        "error": "bad_request",
+        "message": crate::i18n::translate_detail("server-http-body-validation-failed-msg", &[])
+    })
+    .to_string()
+}
 
 /// 请求体超限（413）的统一错误体：login 读体限幅与 sanitize 中间件（axum `DefaultBodyLimit`
 /// 裸 413 rejection）共用，避免第二实现漂移。
-const PAYLOAD_TOO_LARGE_BODY: &str =
-    r#"{"error":"payload_too_large","message":"request body exceeds size limit"}"#;
+fn payload_too_large_body() -> String {
+    serde_json::json!({
+        "error": "payload_too_large",
+        "message": crate::i18n::translate_detail("server-http-body-too-large-msg", &[])
+    })
+    .to_string()
+}
 
 /// Json extractor rejection 清洗中间件 — 统一改写 axum 默认 rejection 响应。
 ///
@@ -683,9 +701,9 @@ pub async fn sanitize_json_rejection_middleware(req: Request, next: Next) -> Res
 
     let status = response.status();
     let sanitized_body = if status == StatusCode::PAYLOAD_TOO_LARGE {
-        PAYLOAD_TOO_LARGE_BODY
+        payload_too_large_body()
     } else {
-        REJECTION_BODY
+        rejection_body()
     };
     let (_, body) = response.into_parts();
     // rejection 诊断体均为短文本；64KB 上限仅为防御异常大 body
@@ -708,7 +726,7 @@ pub async fn sanitize_json_rejection_middleware(req: Request, next: Next) -> Res
         },
         // body 读取失败：错误显性化，返回统一错误体（拒绝语义不变）
         Err(e) => {
-            tracing::warn!(error = %e, status = status.as_u16(), "sanitize_json_rejection: body read failed");
+            tracing::warn!(error = %e, status = status.as_u16(), "{}", crate::i18n::translate_detail("logs-server-sanitize-rejection-body-read-failed", &[]));
             (status, axum::body::Body::from(sanitized_body)).into_response()
         },
     }
@@ -2000,7 +2018,8 @@ mod tests {
             .unwrap();
         let text = std::str::from_utf8(&body).unwrap();
         assert_eq!(
-            text, r#"{"error":"bad_request","message":"request body failed validation"}"#,
+            text,
+            rejection_body(),
             "统一错误体，无任何类型/字段/偏移细节"
         );
         for leaked in ["SanitizeProbeBody", "expected", "line", "column", "token"] {
@@ -2090,7 +2109,8 @@ mod tests {
             .unwrap();
         let text = std::str::from_utf8(&body).unwrap();
         assert_eq!(
-            text, PAYLOAD_TOO_LARGE_BODY,
+            text,
+            payload_too_large_body(),
             "413 错误体应与 login 路径统一"
         );
         assert!(

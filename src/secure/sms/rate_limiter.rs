@@ -3,7 +3,7 @@
 
 //! SmsRateLimiter 薄包装：双窗口（小时/天）渐进式限速。
 //!
-//! 窗口判定与补偿委托泛型内核 [`DualWindowQuota`]（limiteron `QuotaStorage`
+//! 窗口判定与补偿委托泛型内核 `DualWindowQuota`（limiteron `QuotaStorage`
 //! 账本），本文件只保留 SMS 特有面：手机号 normalize/validate、`sms:` 账本
 //! 命名空间、`SmsRateLimitExceeded` 错误变体与窗口桶快照类型。
 //!
@@ -72,7 +72,7 @@ fn ledger_identity(phone: &str) -> String {
 }
 
 impl SmsRateLimiter {
-    /// 创建限速器实例：以 [`GarrisonDaoQuotaStorage`] 把 `dao` 桥接为 limiteron `QuotaStorage` 账本，双窗口判定委托 [`DualWindowQuota`]。
+    /// 创建限速器实例：以 [`GarrisonDaoQuotaStorage`] 把 `dao` 桥接为 limiteron `QuotaStorage` 账本，双窗口判定委托 `DualWindowQuota`。
     pub fn new(dao: Arc<dyn GarrisonDao>, hourly_limit: u32, daily_limit: u32) -> Self {
         Self {
             kernel: DualWindowQuota::new(

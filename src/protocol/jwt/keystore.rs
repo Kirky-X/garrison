@@ -454,6 +454,43 @@ HxmxsMlpmvvbydfhRl3OoqMR
         assert_eq!(exercise(KeyStatus::Disabled), 3);
     }
 
+    /// Debug 脱敏：`JwkSet` 只输出 kid 与状态映射，不输出密钥材料。
+    #[test]
+    fn jwk_set_debug_lists_kids_without_key_material() {
+        let mut keystore = JwkSet::new();
+        let first = keystore.rotate(rsa_handler(TEST_RSA_PEM_1), 1_000).unwrap();
+        let debug = format!("{keystore:?}");
+        assert!(debug.contains(&first.activated_kid), "应输出 kid: {debug}");
+        assert!(debug.contains("Active"), "应输出状态映射: {debug}");
+        assert!(
+            !debug.contains("PRIVATE KEY") && !debug.contains("BEGIN"),
+            "不得输出密钥材料: {debug}"
+        );
+    }
+
+    /// Debug 脱敏：`KeySnapshot::private_pem` 恒为 `<redacted>`（对齐 KeyMaterial / JwkSet 惯例）。
+    #[test]
+    fn key_snapshot_debug_redacts_private_pem() {
+        let snapshot = KeySnapshot {
+            kid: "kid-1".to_string(),
+            status: KeyStatus::Active,
+            algorithm: "RS256".to_string(),
+            private_pem: "-----BEGIN PRIVATE KEY-----\nsecret-material\n-----END PRIVATE KEY-----"
+                .to_string(),
+            status_since_secs: 1_000,
+        };
+        let debug = format!("{snapshot:?}");
+        assert!(debug.contains("<redacted>"), "应输出 <redacted>: {debug}");
+        assert!(
+            !debug.contains("secret-material") && !debug.contains("BEGIN PRIVATE KEY"),
+            "不得输出私钥明文: {debug}"
+        );
+        assert!(
+            debug.contains("kid-1") && debug.contains("RS256") && debug.contains("1000"),
+            "应保留非敏感字段: {debug}"
+        );
+    }
+
     /// 轮换：新钥转 Active、旧 Active 转 Passive；首钥轮换即引导（无 Passive 产出）。
     #[test]
     fn rotate_activates_new_and_passivates_old() {
@@ -565,7 +602,7 @@ HxmxsMlpmvvbydfhRl3OoqMR
             .unwrap();
         let err = keystore.verify(&forged).expect_err("未知 kid 必须显性报错");
         assert!(
-            err.to_string().contains("jwt-kid-unknown::ghost-kid"),
+            matches!(err, GarrisonError::InvalidToken(ref m) if m.contains("jwt-kid-unknown::ghost-kid")),
             "错误必须显性指明未知 kid，实际: {err}"
         );
     }
@@ -630,7 +667,7 @@ HxmxsMlpmvvbydfhRl3OoqMR
             .verify(&old_token)
             .expect_err("Disabled 钥的 token 必须显性拒绝");
         assert!(
-            err.to_string().contains("jwt-kid-retired"),
+            matches!(err, GarrisonError::InvalidToken(ref m) if m.contains("jwt-kid-retired")),
             "拒绝原因必须显性指明钥已退役，实际: {err}"
         );
     }
@@ -658,7 +695,7 @@ HxmxsMlpmvvbydfhRl3OoqMR
             .rotate(rsa_handler(TEST_RSA_PEM_1), 2_000)
             .expect_err("同钥重复轮换必须显性拒绝");
         assert!(
-            err.to_string().contains("jwt-kid-already-registered"),
+            matches!(err, GarrisonError::InvalidParam(ref m) if m.contains("jwt-kid-already-registered")),
             "错误必须显性指明 kid 重复，实际: {err}"
         );
     }
@@ -674,7 +711,7 @@ HxmxsMlpmvvbydfhRl3OoqMR
             .rotate(hs, 1_000)
             .expect_err("对称钥不得进入 JWKS 密钥库");
         assert!(
-            err.to_string().contains("jwt-kid-symmetric"),
+            matches!(err, GarrisonError::Config(ref m) if m.contains("jwt-kid-symmetric")),
             "对称钥拒绝必须显性，实际: {err}"
         );
     }
@@ -735,7 +772,7 @@ HxmxsMlpmvvbydfhRl3OoqMR
         snapshots[0].kid = "tampered-kid".to_string();
         let err = JwkSet::from_snapshots(snapshots).expect_err("kid 篡改必须显性拒绝");
         assert!(
-            err.to_string().contains("jwt-snapshot-kid-mismatch"),
+            matches!(err, GarrisonError::InvalidParam(ref m) if m.contains("jwt-snapshot-kid-mismatch")),
             "错误必须显性指明 kid 不一致，实际: {err}"
         );
     }
@@ -763,7 +800,7 @@ HxmxsMlpmvvbydfhRl3OoqMR
         ];
         let err = JwkSet::from_snapshots(snapshots).expect_err("多 Active 必须显性拒绝");
         assert!(
-            err.to_string().contains("jwt-snapshot-multiple-active"),
+            matches!(err, GarrisonError::InvalidParam(ref m) if m.contains("jwt-snapshot-multiple-active")),
             "错误必须显性指明多 Active，实际: {err}"
         );
     }

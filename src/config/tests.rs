@@ -1972,7 +1972,7 @@ fn validate_rejects_rs256_without_rsa_pem() {
         ..GarrisonConfig::default()
     };
     let err = config.validate().unwrap_err();
-    assert!(err.to_string().contains("config-jwt-key-missing"));
+    assert!(matches!(err, GarrisonError::Config(ref m) if m.contains("config-jwt-key-missing")));
 }
 
 #[test]
@@ -1984,7 +1984,9 @@ fn validate_rejects_multiple_key_types() {
         ..GarrisonConfig::default()
     };
     let err = config.validate().unwrap_err();
-    assert!(err.to_string().contains("config-jwt-key-multiple-types"));
+    assert!(
+        matches!(err, GarrisonError::Config(ref m) if m.contains("config-jwt-key-multiple-types"))
+    );
 }
 
 #[test]
@@ -1996,7 +1998,9 @@ fn validate_rejects_asymmetric_key_for_hs() {
         ..GarrisonConfig::default()
     };
     let err = config.validate().unwrap_err();
-    assert!(err.to_string().contains("config-jwt-key-unexpected-for-hs"));
+    assert!(
+        matches!(err, GarrisonError::Config(ref m) if m.contains("config-jwt-key-unexpected-for-hs"))
+    );
 }
 
 #[test]
@@ -2051,8 +2055,7 @@ fn validate_rejects_unknown_password_hash_algorithm() {
     config.password_hasher.algorithm = "md5".to_string();
     let err = config.validate().unwrap_err();
     assert!(
-        err.to_string()
-            .contains("config-password-hash-algorithm-unsupported"),
+        matches!(err, GarrisonError::Config(ref m) if m.contains("config-password-hash-algorithm-unsupported")),
         "实际: {}",
         err
     );
@@ -2113,8 +2116,7 @@ fn validate_rejects_bcrypt_cost_out_of_range() {
         config.password_hasher.bcrypt_cost = cost;
         let err = config.validate().unwrap_err();
         assert!(
-            err.to_string()
-                .contains("config-password-hash-bcrypt-cost-out-of-range"),
+            matches!(err, GarrisonError::Config(ref m) if m.contains("config-password-hash-bcrypt-cost-out-of-range")),
             "cost={} 实际: {}",
             cost,
             err
@@ -2182,8 +2184,7 @@ fn build_hasher_rejects_unknown_algorithm() {
         Ok(_) => panic!("非法算法名应返回 Err"),
     };
     assert!(
-        err.to_string()
-            .contains("config-password-hash-algorithm-unsupported"),
+        matches!(err, GarrisonError::Config(ref m) if m.contains("config-password-hash-algorithm-unsupported")),
         "实际: {}",
         err
     );
@@ -2778,8 +2779,7 @@ fn jwks_retention_zero_fails_validation() {
     config.jwks_retention_secs = 0;
     let err = config.validate().expect_err("retention=0 必须显性拒绝");
     assert!(
-        err.to_string()
-            .contains("config-jwks-retention-must-positive"),
+        matches!(err, GarrisonError::Config(ref m) if m.contains("config-jwks-retention-must-positive")),
         "错误必须显性指明 retention 非法，实际: {err}"
     );
 }

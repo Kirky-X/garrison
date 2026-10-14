@@ -17,6 +17,8 @@ CANARY_KEY="garrison:chaos:canary"
 CANARY_VALUE="chaos-$(date +%s)"
 
 FAILED=0
+# 本次运行是否拉起过 chaos 演练拓扑（EXIT trap 据此回收，成功路径已在场景内移除）
+CHAOS_STARTED=0
 
 log()  { printf '%s\n' "$*"; }
 pass() { printf '  [PASS] %s\n' "$*"; }
@@ -168,6 +170,7 @@ scenario_sentinel() {
     fail "chaos profile 拉起失败"
     return
   }
+  CHAOS_STARTED=1
 
   local sentinel_cli="docker exec garrison-chaos-sentinel redis-cli -p 26379"
   local master_cli="docker exec garrison-chaos-master redis-cli"
@@ -181,6 +184,25 @@ scenario_sentinel() {
     sleep 1
   done
   pass "Sentinel 已监控 mymaster"
+
+  # Sentinel 只能经主库 INFO 学得副本列表（默认刷新周期 10s）。未发现副本时注入故障，
+  # failover 必然以 -failover-abort-no-good-slave 中止——冷拓扑（compose 刚拉起）下尤其
+  # 必现，故注入前必须断言 num-slaves ≥ 1（实测冷拓扑失败时序见回归记录）。
+  step "等待 Sentinel 发现副本（num-slaves ≥ 1，经主库 INFO 学习；≤60s）"
+  local num_slaves=0
+  deadline=$((SECONDS + 60))
+  while (( SECONDS < deadline )); do
+    num_slaves="$($sentinel_cli sentinel master mymaster 2>/dev/null \
+      | awk '/^num-slaves$/ { getline; gsub(/\r/, ""); print; exit }')"
+    [[ "$num_slaves" =~ ^[0-9]+$ ]] && (( num_slaves >= 1 )) && break
+    sleep 1
+  done
+  if [[ "$num_slaves" =~ ^[0-9]+$ ]] && (( num_slaves >= 1 )); then
+    pass "Sentinel 已发现 ${num_slaves} 个副本（注入故障前副本已在 Sentinel 视图内）"
+  else
+    fail "Sentinel 60s 内未发现副本（num-slaves=${num_slaves:-未知}）——拒绝在无副本可提升时注入故障"
+    return
+  fi
 
   step "预置金丝雀值（写入主库，验证复制 + 提升后可读）"
   if [[ "$($master_cli set "${CANARY_KEY}:sentinel" "$CANARY_VALUE")" == "OK" ]]; then
@@ -201,8 +223,8 @@ scenario_sentinel() {
   step "注入：docker pause 主库（进程冻结 → Sentinel sdown → odown → failover）"
   docker pause garrison-chaos-master >/dev/null || { fail "pause 主库失败"; return; }
 
-  step "等待副本提升为主（≤120s，含 sdown→选举→提升全链路）"
-  deadline=$((SECONDS + 120))
+  step "等待副本提升为主（≤240s，含 sdown→选举→提升全链路；宿主机停顿会触发 Sentinel TILT，检测被推迟）"
+  deadline=$((SECONDS + 240))
   local promoted=0
   while (( SECONDS < deadline )); do
     if [[ "$($replica_cli role 2>/dev/null | head -1)" == "master" ]]; then
@@ -214,7 +236,7 @@ scenario_sentinel() {
   if (( promoted == 1 )); then
     pass "副本已提升为主（Sentinel 自动故障切换生效）"
   else
-    fail "120s 内副本未提升——检查 Sentinel 状态"
+    fail "240s 内副本未提升——检查 Sentinel 日志（+tilt / -failover-abort-no-good-slave）与副本 master_link_down_time"
     docker unpause garrison-chaos-master >/dev/null 2>&1
     return
   fi
@@ -254,9 +276,17 @@ cleanup() {
   # 中断兜底：确保容器不被遗留为 paused / 孤离网络状态
   docker inspect -f '{{.State.Paused}}' "$CONTAINER" 2>/dev/null | grep -q true \
     && docker unpause "$CONTAINER" >/dev/null 2>&1
-  # Sentinel 演练容器中断兜底
-  docker inspect -f '{{.State.Paused}}' garrison-chaos-master 2>/dev/null | grep -q true \
-    && docker unpause garrison-chaos-master >/dev/null 2>&1
+  # Sentinel 演练拓扑兜底：失败/中断同样回收（成功路径已在场景内移除），
+  # 移除前采集诊断证据（Sentinel 日志随容器删除不可复得）。
+  if [[ "$CHAOS_STARTED" == "1" ]]; then
+    docker inspect -f '{{.State.Paused}}' garrison-chaos-master 2>/dev/null | grep -q true \
+      && docker unpause garrison-chaos-master >/dev/null 2>&1
+    if docker inspect garrison-chaos-master >/dev/null 2>&1; then
+      log "  诊断：清理前采集 garrison-chaos-sentinel 日志（最后 30 行）"
+      docker logs --tail 30 garrison-chaos-sentinel 2>&1 | sed 's/^/    /' || true
+    fi
+    docker rm -f garrison-chaos-master garrison-chaos-replica garrison-chaos-sentinel >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT
 

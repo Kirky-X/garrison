@@ -606,3 +606,177 @@ fn user_lockout_registered_via_inventory() {
         names
     );
 }
+
+/// state_ttl_seconds 表驱动：永久锁与升级计数永久驻留（TTL=0），纯计数窗口态按
+/// 「窗口/锁定到期 + margin」过期，horizon 已过则为 margin。
+#[test]
+fn state_ttl_seconds_policy_covers_all_state_shapes() {
+    use super::strategy::{state_ttl_seconds, LOCKOUT_TTL_MARGIN_SECONDS};
+
+    let window = 300u64;
+    let now = 1_000_000i64;
+
+    // 永久锁定：不可自动解锁，必须永久驻留
+    let permanent = LockoutState {
+        permanent_locked: true,
+        ..LockoutState::default()
+    };
+    assert_eq!(state_ttl_seconds(&permanent, now, window), 0);
+
+    // 升级计数 >0：永久锁定棘轮依赖该计数持续到成功登录，必须永久驻留
+    // （同时带活跃窗口中，验证优先级高于窗口计算）
+    let escalating = LockoutState {
+        temporary_lockout_count: 2,
+        first_failure_at: Some(now - 10),
+        locked_until: now + 120,
+        ..LockoutState::default()
+    };
+    assert_eq!(state_ttl_seconds(&escalating, now, window), 0);
+
+    // 纯计数窗口态：窗口进行到一半 → 剩余窗口 + margin
+    let mid_window = LockoutState {
+        failure_count: 2,
+        first_failure_at: Some(now - 150),
+        ..LockoutState::default()
+    };
+    assert_eq!(
+        state_ttl_seconds(&mid_window, now, window),
+        150 + LOCKOUT_TTL_MARGIN_SECONDS
+    );
+
+    // 纯窗口态且 locked_until 晚于窗口尾（防御构造）：取更远的 horizon
+    let horizon_is_lock = LockoutState {
+        first_failure_at: Some(now - 10),
+        locked_until: now + 500,
+        ..LockoutState::default()
+    };
+    assert_eq!(
+        state_ttl_seconds(&horizon_is_lock, now, window),
+        500 + LOCKOUT_TTL_MARGIN_SECONDS
+    );
+
+    // 窗口已过：与 advance_failure_state 的窗口过期重置等价，仅留 margin 缓冲
+    let stale_window = LockoutState {
+        failure_count: 1,
+        first_failure_at: Some(now - 600),
+        ..LockoutState::default()
+    };
+    assert_eq!(
+        state_ttl_seconds(&stale_window, now, window),
+        LOCKOUT_TTL_MARGIN_SECONDS
+    );
+
+    // 全默认态（unlock 写入形态）：无窗口无锁定，margin 后自然消失
+    assert_eq!(
+        state_ttl_seconds(&LockoutState::default(), now, window),
+        LOCKOUT_TTL_MARGIN_SECONDS
+    );
+
+    // locked_until = i64::MAX 且 now=0：remaining = i64::MAX，`as u64` 为正转换不回绕，
+    // margin 相加后恰为 i64::MAX+margin（≈2920 亿年，实践等同永久）——不得出现小 TTL
+    let max_lock = LockoutState {
+        locked_until: i64::MAX,
+        ..LockoutState::default()
+    };
+    assert_eq!(
+        state_ttl_seconds(&max_lock, 0, window),
+        i64::MAX as u64 + LOCKOUT_TTL_MARGIN_SECONDS
+    );
+}
+
+/// 验证 record_failure 写入的纯窗口态带 window+margin TTL（不再永久驻留）。
+#[tokio::test]
+async fn record_failure_sets_window_bounded_ttl() {
+    let (strategy, dao) = make_strategy();
+    strategy.record_failure("user1").await.unwrap();
+    let key = crate::constants::DaoKeyPrefix::Lockout.build_key("user1");
+    let secs = dao
+        .get_timeout(&key)
+        .await
+        .unwrap()
+        .expect("窗口态锁定键应带 TTL，不得永久驻留")
+        .as_secs();
+    assert!(
+        (300..=360).contains(&secs),
+        "record_failure 后 TTL 应≈window+margin=360s，实际: {}s",
+        secs
+    );
+}
+
+/// 验证升级计数态与永久锁定态均永久驻留（TTL=None），且永久锁判定不回归。
+#[tokio::test]
+async fn escalating_and_permanent_lockout_keys_stay_permanent() {
+    // 8 次失败（默认配置：阈值 5 / 临时上限 3）触发永久锁定
+    let (strategy, dao) = make_strategy();
+    for _ in 0..8 {
+        strategy.record_failure("user1").await.unwrap();
+    }
+    let key = crate::constants::DaoKeyPrefix::Lockout.build_key("user1");
+    assert!(
+        dao.get_timeout(&key).await.unwrap().is_none(),
+        "永久锁定键必须永久驻留，TTL 不得设置"
+    );
+    let ctx = FirewallContext::new("1.1.1.1").with_login_id("user1");
+    assert!(
+        strategy.check(&ctx).await.is_err(),
+        "permanent_locked=true 必须阻断登录"
+    );
+
+    // 6 次失败进入临时锁定升级态（temporary_lockout_count=2>0）：同样永久驻留
+    let (strategy2, dao2) = make_strategy();
+    for _ in 0..6 {
+        strategy2.record_failure("user2").await.unwrap();
+    }
+    let key2 = crate::constants::DaoKeyPrefix::Lockout.build_key("user2");
+    assert!(
+        dao2.get_timeout(&key2).await.unwrap().is_none(),
+        "含升级计数的锁定键必须永久驻留，TTL 不得设置"
+    );
+}
+
+/// 验证 record_success 后锁定键只留 margin TTL（曾失败用户不再留永久键）。
+#[tokio::test]
+async fn record_success_leaves_only_margin_ttl() {
+    let (strategy, dao) = make_strategy();
+    strategy.record_failure("user1").await.unwrap();
+    strategy.record_success("user1").await.unwrap();
+    let key = crate::constants::DaoKeyPrefix::Lockout.build_key("user1");
+    let secs = dao
+        .get_timeout(&key)
+        .await
+        .unwrap()
+        .expect("成功后应带 margin TTL，不得永久驻留")
+        .as_secs();
+    assert!(
+        (55..=60).contains(&secs),
+        "record_success 后 TTL 应≈margin=60s，实际: {}s",
+        secs
+    );
+}
+
+/// 验证 unlock 写入的全默认态只留 margin TTL，且解锁后 check 放行。
+#[tokio::test]
+async fn unlock_leaves_only_margin_ttl_and_unlocks() {
+    let (strategy, dao) = make_strategy();
+    for _ in 0..8 {
+        strategy.record_failure("user1").await.unwrap();
+    }
+    strategy.unlock("user1").await.unwrap();
+    let key = crate::constants::DaoKeyPrefix::Lockout.build_key("user1");
+    let secs = dao
+        .get_timeout(&key)
+        .await
+        .unwrap()
+        .expect("unlock 后应带 margin TTL，不得永久驻留")
+        .as_secs();
+    assert!(
+        (55..=60).contains(&secs),
+        "unlock 后 TTL 应≈margin=60s，实际: {}s",
+        secs
+    );
+    let ctx = FirewallContext::new("1.1.1.1").with_login_id("user1");
+    assert!(
+        strategy.check(&ctx).await.is_ok(),
+        "unlock 后必须解除锁定（含永久锁）"
+    );
+}

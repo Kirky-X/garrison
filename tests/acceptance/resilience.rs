@@ -959,7 +959,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
 }
 
 /// （正常+异常）：login_id 长度边界——常规长度 1/255 必须 200 + 非空 token；
-/// 256 起超框架默认上限（GAR-12：DEFAULT_LOGIN_ID_MAX_LEN=255）与空串、
+/// 256 起超框架默认上限（DEFAULT_LOGIN_ID_MAX_LEN=255）与空串、
 /// 超长 65536/70000 一律 4xx 拒绝且不返回 5xx（+ 合并移植）。
 #[tokio::test]
 async fn acc_res_010_login_id_length_boundaries_no_5xx() {
@@ -968,7 +968,7 @@ async fn acc_res_010_login_id_length_boundaries_no_5xx() {
     let (external_url, _internal_url, _handle) = start_test_server(100, "test-key").await;
     let client = reqwest::Client::new();
 
-    // 常规长度：1/255 → 200 + token（GAR-12：默认上限 255 内放行）
+    // 常规长度：1/255 → 200 + token（默认上限 255 内放行）
     for len in [1usize, 255] {
         let resp = client
             .post(format!("{}/api/v1/auth/login", external_url))
@@ -995,7 +995,7 @@ async fn acc_res_010_login_id_length_boundaries_no_5xx() {
         );
     }
 
-    // 空串：4xx 拒绝（GAR-22/GAR-24：login_id 输入不变量，wire 层 fail-closed）
+    // 空串：4xx 拒绝（login_id 输入不变量，wire 层 fail-closed）
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
         .json(&serde_json::json!({
@@ -1012,7 +1012,7 @@ async fn acc_res_010_login_id_length_boundaries_no_5xx() {
     );
 
     // 超长：256（恰好超默认上限）/ 65536 / 70000 → 一律 4xx，禁止 5xx
-    //（GAR-12：wire 层按 DEFAULT_LOGIN_ID_MAX_LEN=255 封顶，签发源头无 MB 级灌入）
+    //（wire 层按 DEFAULT_LOGIN_ID_MAX_LEN=255 封顶，签发源头无 MB 级灌入）
     for len in [256usize, 65536, 70000] {
         let resp = client
             .post(format!("{}/api/v1/auth/login", external_url))

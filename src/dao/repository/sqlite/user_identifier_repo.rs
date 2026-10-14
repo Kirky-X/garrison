@@ -59,7 +59,7 @@ impl UserIdentifierRepository for DbnexusUserIdentifierRepository {
                             // 显性告警而非静默假成功，中性 Registered 的防跨租户泄露语义不变。
                             tracing::warn!(
                                 id_type = %id_type,
-                                "identifier register: unique conflict row vanished before tenant-scoped recheck, returning neutral Registered"
+                                "{}", crate::i18n::translate_detail("logs-dao-identifier-register-conflict-row-vanished", &[])
                             );
                             Ok(RegisterOutcome::Registered)
                         },

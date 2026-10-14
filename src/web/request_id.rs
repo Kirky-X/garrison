@@ -44,7 +44,7 @@ pub async fn request_id_middleware(mut req: Request, next: Next) -> Response {
         tracing::debug!(
             request_id = %block_id,
             status = response.status().as_u16(),
-            "request_id_middleware: request completed"
+            "{}", crate::i18n::translate_detail("logs-request-id-middleware-completed", &[])
         );
         response
     })

@@ -1316,10 +1316,9 @@ mod tests {
         );
     }
 
-    // Keycloak 异常消息 i18n（feature = "i18n"）：直接调用 loc! 宏验证中英文翻译
+    // Keycloak 异常消息 i18n：直接调用 loc! 宏验证中英文翻译
 
     /// zh locale 下 keycloak-token-expired 返回中文消息（无参数）。
-    #[cfg(feature = "i18n")]
     #[test]
     fn loc_i18n_keycloak_token_expired_zh() {
         use crate::i18n::{set_locale, GarrisonLocale};
@@ -1329,7 +1328,6 @@ mod tests {
     }
 
     /// en locale 下 keycloak-token-expired 返回英文消息（无参数）。
-    #[cfg(feature = "i18n")]
     #[test]
     fn loc_i18n_keycloak_token_expired_en() {
         use crate::i18n::{set_locale, GarrisonLocale};
@@ -1339,7 +1337,6 @@ mod tests {
     }
 
     /// zh locale 下 keycloak-jwks-key-not-found 带 kid 参数返回中文。
-    #[cfg(feature = "i18n")]
     #[test]
     fn loc_i18n_keycloak_jwks_key_not_found_with_kid_zh() {
         use crate::i18n::{set_locale, GarrisonLocale};

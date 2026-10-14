@@ -387,6 +387,14 @@ mod dbnexus_dao;
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub use dbnexus_dao::GarrisonDaoDbnexus;
 
+/// SQL 持久化 KV（`garrison_kv` 表，语义镜像 `InMemoryDao`）——离线运维命令（garrison-cli
+/// change-key / check-key）的数据寻址层。
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+mod dbnexus_kv;
+
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+pub use dbnexus_kv::DbnexusKvDao;
+
 // 事件派发事务绑定（OnCommit 语义）
 // `GarrisonEventTx` 需 `listener` feature（缓冲事件派发通道）+ 任一 db 后端 feature（依赖 dbnexus Session 事务原语）。
 

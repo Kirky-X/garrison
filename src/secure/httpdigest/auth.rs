@@ -245,7 +245,7 @@ impl HttpDigestAuth {
                 // 其余降级 debug!（不传 error 避免 Display 求值开销）；warn 含采样计数 + realm + error 便于推算真实错误量。
                 let count =
                     DAO_ERROR_LOG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if count % DAO_ERROR_LOG_INTERVAL == 0 {
+                if count.is_multiple_of(DAO_ERROR_LOG_INTERVAL) {
                     tracing::warn!(
                         realm = realm,
                         count = count + 1,

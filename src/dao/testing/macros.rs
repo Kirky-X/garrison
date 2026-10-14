@@ -73,8 +73,15 @@ macro_rules! __dao_conformance_layer {
                 ::std::sync::Arc<dyn $crate::dao::GarrisonDao>,
                 $crate::error::GarrisonError,
             > = ($make)().await;
-            let dao: ::std::sync::Arc<dyn $crate::dao::GarrisonDao> = made
-                .expect(concat!("dao-conformance::构造 ", stringify!($backend), " 失败"));
+            let dao: ::std::sync::Arc<dyn $crate::dao::GarrisonDao> = made.unwrap_or_else(|_| {
+                panic!(
+                    "{}",
+                    $crate::i18n::translate_detail(
+                        "dao-conformance",
+                        &[("arg0", stringify!($backend))]
+                    )
+                )
+            });
             $crate::dao::testing::conformance::run_basic(
                 &dao,
                 concat!(stringify!($backend), ":"),
@@ -90,8 +97,15 @@ macro_rules! __dao_conformance_layer {
                 ::std::sync::Arc<dyn $crate::dao::GarrisonDao>,
                 $crate::error::GarrisonError,
             > = ($make)().await;
-            let dao: ::std::sync::Arc<dyn $crate::dao::GarrisonDao> = made
-                .expect(concat!("dao-conformance::构造 ", stringify!($backend), " 失败"));
+            let dao: ::std::sync::Arc<dyn $crate::dao::GarrisonDao> = made.unwrap_or_else(|_| {
+                panic!(
+                    "{}",
+                    $crate::i18n::translate_detail(
+                        "dao-conformance",
+                        &[("arg0", stringify!($backend))]
+                    )
+                )
+            });
             $crate::dao::testing::conformance::run_atomic(
                 &dao,
                 concat!(stringify!($backend), ":"),
@@ -107,8 +121,15 @@ macro_rules! __dao_conformance_layer {
                 ::std::sync::Arc<dyn $crate::dao::GarrisonDao>,
                 $crate::error::GarrisonError,
             > = ($make)().await;
-            let dao: ::std::sync::Arc<dyn $crate::dao::GarrisonDao> = made
-                .expect(concat!("dao-conformance::构造 ", stringify!($backend), " 失败"));
+            let dao: ::std::sync::Arc<dyn $crate::dao::GarrisonDao> = made.unwrap_or_else(|_| {
+                panic!(
+                    "{}",
+                    $crate::i18n::translate_detail(
+                        "dao-conformance",
+                        &[("arg0", stringify!($backend))]
+                    )
+                )
+            });
             $crate::dao::testing::conformance::run_concurrent(
                 &dao,
                 concat!(stringify!($backend), ":"),
@@ -124,8 +145,15 @@ macro_rules! __dao_conformance_layer {
                 ::std::sync::Arc<dyn $crate::dao::GarrisonDao>,
                 $crate::error::GarrisonError,
             > = ($make)().await;
-            let dao: ::std::sync::Arc<dyn $crate::dao::GarrisonDao> = made
-                .expect(concat!("dao-conformance::构造 ", stringify!($backend), " 失败"));
+            let dao: ::std::sync::Arc<dyn $crate::dao::GarrisonDao> = made.unwrap_or_else(|_| {
+                panic!(
+                    "{}",
+                    $crate::i18n::translate_detail(
+                        "dao-conformance",
+                        &[("arg0", stringify!($backend))]
+                    )
+                )
+            });
             $crate::dao::testing::conformance::run_ttl(
                 &dao,
                 concat!(stringify!($backend), ":"),
@@ -141,8 +169,15 @@ macro_rules! __dao_conformance_layer {
                 ::std::sync::Arc<dyn $crate::dao::GarrisonDao>,
                 $crate::error::GarrisonError,
             > = ($make)().await;
-            let dao: ::std::sync::Arc<dyn $crate::dao::GarrisonDao> = made
-                .expect(concat!("dao-conformance::构造 ", stringify!($backend), " 失败"));
+            let dao: ::std::sync::Arc<dyn $crate::dao::GarrisonDao> = made.unwrap_or_else(|_| {
+                panic!(
+                    "{}",
+                    $crate::i18n::translate_detail(
+                        "dao-conformance",
+                        &[("arg0", stringify!($backend))]
+                    )
+                )
+            });
             $crate::dao::testing::conformance::run_keys(
                 &dao,
                 concat!(stringify!($backend), ":"),

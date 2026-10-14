@@ -324,7 +324,7 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
             tracing::warn!(
                 login_id = login_id,
                 error = %e,
-                "permission cache invalidation failed on logout (cache TTL will expire)"
+                "{}", crate::i18n::translate_detail("logs-strategy-permission-cache-invalidate-failed", &[])
             );
         }
         Ok(())
@@ -617,10 +617,15 @@ impl GarrisonPermissionStrategyDefault {
                 .await
             {
                 tracing::warn!(
-                    "role cache write failed (login_id={}, role={}): {}",
-                    login_id,
-                    role,
-                    e
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-strategy-role-cache-write-failed",
+                        &[
+                            ("login_id", login_id),
+                            ("role", role),
+                            ("error", e.to_string().as_str()),
+                        ]
+                    )
                 );
             }
         }

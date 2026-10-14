@@ -67,6 +67,43 @@ enum LockoutTrigger {
     Permanent,
 }
 
+/// 陈旧锁定键清理 margin（秒）：覆盖分布式节点时钟偏移——键到期略早于他节点的
+/// 窗口/锁定判断不改变语义（窗口内读缺失 = 默认态 = 即将发生的窗口重置）。
+pub(super) const LOCKOUT_TTL_MARGIN_SECONDS: u64 = 60;
+
+/// 锁定状态写入 TTL 策略（秒；`0` = 永久驻留）：
+///
+/// - `permanent_locked`：永久锁定不可自动解除，键永久驻留（TTL 到期 = 静默解锁，是安全回归）；
+/// - `temporary_lockout_count > 0`：永久锁定棘轮的升级计数，唯一重置点为成功登录
+///   （[`record_success`](Self::record_success)），键须持续到那时；
+/// - 其余纯计数窗口态：`max(first_failure_at + failure_window, locked_until) - now + margin`
+///   后过期。键缺失时 `get_state` 返回 [`LockoutState::default`]，与
+///   [`advance_failure_state`](Self::advance_failure_state) 的窗口过期重置语义等价，
+///   仅回收存储、不改判定；horizon 已过的形态（全默认 / 过期窗口）只留 margin 缓冲。
+///
+/// `remaining > 0` 由 `<= 0` 分支守卫，`as u64` 为精确正向转换（不回绕）；margin 相加走
+/// `saturating_add` 兜底 u64 上限——`locked_until = i64::MAX` 时 TTL 为 `i64::MAX + margin`
+/// （约 2920 亿年，实践等同永久），不会得出远早于锁定意图到期的小值。
+pub(super) fn state_ttl_seconds(
+    state: &LockoutState,
+    now: i64,
+    failure_window_seconds: u64,
+) -> u64 {
+    if state.permanent_locked || state.temporary_lockout_count > 0 {
+        return 0;
+    }
+    let window_end = state.first_failure_at.map_or(now, |first| {
+        first.saturating_add(failure_window_seconds as i64)
+    });
+    let horizon = window_end.max(state.locked_until);
+    let remaining = horizon.saturating_sub(now);
+    if remaining <= 0 {
+        LOCKOUT_TTL_MARGIN_SECONDS
+    } else {
+        (remaining as u64).saturating_add(LOCKOUT_TTL_MARGIN_SECONDS)
+    }
+}
+
 impl UserLockoutStrategy {
     /// 创建用户级锁定策略实例。
     ///
@@ -110,7 +147,9 @@ impl UserLockoutStrategy {
         }
     }
 
-    /// 持久化用户锁定状态（TTL=0 永久存储，锁定状态不应自动过期）。
+    /// 持久化用户锁定状态：TTL 按 [`state_ttl_seconds`] 策略计算——永久锁定与升级计数
+    /// 永久驻留，纯计数窗口态在窗口/锁定到期 + margin 后自然消失（读缺失 = 默认态，
+    /// 与窗口过期重置语义等价）。
     pub(super) async fn set_state(
         &self,
         user_id: &str,
@@ -119,11 +158,12 @@ impl UserLockoutStrategy {
         let key = DaoKeyPrefix::Lockout.build_key(user_id);
         let json = serde_json::to_string(state)
             .map_err(|e| GarrisonError::Dao(format!("account-lockout-serialize::{}", e)))?;
-        self.dao.set(&key, &json, 0).await
+        let ttl = state_ttl_seconds(state, now_timestamp(), self.config.failure_window_seconds);
+        self.dao.set(&key, &json, ttl).await
     }
 
     /// CAS 原子写回锁定状态（expected = 读取时的原始 JSON）；`Ok(false)` 表示 CAS 失败未写入
-    /// （状态已被并发修改）。
+    /// （状态已被并发修改）。TTL 按 [`state_ttl_seconds`] 策略随每次写回重算。
     pub(super) async fn cas_state(
         &self,
         user_id: &str,
@@ -133,7 +173,8 @@ impl UserLockoutStrategy {
         let key = DaoKeyPrefix::Lockout.build_key(user_id);
         let json = serde_json::to_string(state)
             .map_err(|e| GarrisonError::Dao(format!("account-lockout-serialize::{}", e)))?;
-        self.dao.compare_and_swap(&key, expected, &json, 0).await
+        let ttl = state_ttl_seconds(state, now_timestamp(), self.config.failure_window_seconds);
+        self.dao.compare_and_swap(&key, expected, &json, ttl).await
     }
 
     /// 记录登录失败：窗口过期重置计数，自增后达阈值触发临时/永久锁定，CAS 写回。

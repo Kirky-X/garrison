@@ -49,14 +49,12 @@ use std::sync::Arc;
 // 1. 定义 marker struct（用于泛型 extractor 的类型级参数）
 
 /// admin 角色 marker struct（类型级 API 演示）。
-#[allow(dead_code)]
 pub struct AdminRole;
 impl RoleName for AdminRole {
     const NAME: &'static str = "admin";
 }
 
 /// data:read 权限 marker struct（类型级 API 演示）。
-#[allow(dead_code)]
 pub struct ReadPerm;
 impl PermissionName for ReadPerm {
     const NAME: &'static str = "data:read";

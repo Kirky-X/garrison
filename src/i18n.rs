@@ -3,7 +3,7 @@
 
 //! 国际化模块，提供异常消息多语言切换（中英文）。
 //!
-//! - `GarrisonLocale`：支持的语言枚举（默认 `Zh`，中文）
+//! - `GarrisonLocale`：支持的语言枚举（默认 `En`，英文）
 //! - thread_local 栈式 scope：`set_locale()` 返回 RAII guard，drop 时自动 pop
 //! - `OnceLock` 缓存 `FluentBundle`：首次访问时加载 .ftl 资源，后续零开销
 //! - `translate_error(&GarrisonError) -> String`：依据当前 locale 查询 fluent bundle
@@ -14,15 +14,15 @@
 //! use garrison::i18n::{set_locale, GarrisonLocale};
 //! use garrison::error::GarrisonError;
 //!
-//! // 默认中文
+//! // 默认英文
 //! let err = GarrisonError::NotLogin("请先登录".to_string());
-//! assert_eq!(err.to_string(), "未登录: 请先登录");
-//!
-//! // 切换英文
-//! let _guard = set_locale(GarrisonLocale::En);
 //! assert_eq!(err.to_string(), "Not logged in: 请先登录");
 //!
-//! // guard drop 后自动恢复中文
+//! // 切换中文
+//! let _guard = set_locale(GarrisonLocale::Zh);
+//! assert_eq!(err.to_string(), "未登录: 请先登录");
+//!
+//! // guard drop 后自动恢复英文
 //! ```
 use crate::error::GarrisonError;
 use fluent::concurrent::FluentBundle;
@@ -1167,7 +1167,11 @@ mod tests {
     #[test]
     fn error_to_key_args_all_variants() {
         let until = chrono::Utc::now();
-        let cases: Vec<GarrisonError> = vec![
+        #[cfg_attr(
+            not(any(feature = "email-verification", feature = "credit-metering")),
+            allow(unused_mut)
+        )]
+        let mut cases: Vec<GarrisonError> = vec![
             GarrisonError::NotLogin("a".into()),
             GarrisonError::NotPermission("a".into()),
             GarrisonError::NotRole("a".into()),
@@ -1199,13 +1203,125 @@ mod tests {
             GarrisonError::SmsVerifyMaxAttempts,
             GarrisonError::SmsCodeNotFound,
             GarrisonError::SmsChannelRecycled,
+            GarrisonError::RateLimited {
+                retry_after_secs: 30,
+            },
             GarrisonError::Exception(Box::new(GarrisonException::new(-1, "msg"))),
         ];
+        #[cfg(feature = "email-verification")]
+        cases.extend([
+            GarrisonError::EmailRateLimitExceeded { window: "w".into() },
+            GarrisonError::EmailVerifyMaxAttempts,
+            GarrisonError::EmailCodeNotFound,
+            GarrisonError::EmailChannelRecycled,
+        ]);
+        #[cfg(feature = "credit-metering")]
+        cases.push(GarrisonError::CreditInsufficient {
+            tenant_id: 1,
+            requested: 2,
+            remaining: 3,
+        });
+
         for err in cases {
             // 仅验证不 panic 且返回非空 key
             let (key, _args) = error_to_key_args(&err);
             assert!(!key.is_empty(), "key 不应为空: {:?}", err);
         }
+    }
+
+    /// 限流 / 邮箱 / Credit 变体的 FTL 键命中且参数透传（key 未被误用为展示文案）。
+    #[test]
+    #[cfg_attr(
+        not(any(feature = "email-verification", feature = "credit-metering")),
+        allow(unused_mut)
+    )]
+    fn error_to_key_args_feature_variants_hit_ftl_keys() {
+        let _guard = set_locale(GarrisonLocale::En);
+        let mut cases: Vec<(GarrisonError, &str)> = vec![(
+            GarrisonError::RateLimited {
+                retry_after_secs: 30,
+            },
+            "rate-limited",
+        )];
+        #[cfg(feature = "email-verification")]
+        cases.extend([
+            (
+                GarrisonError::EmailRateLimitExceeded {
+                    window: "hourly".into(),
+                },
+                "email-rate-limit-exceeded",
+            ),
+            (
+                GarrisonError::EmailVerifyMaxAttempts,
+                "email-verify-max-attempts",
+            ),
+            (GarrisonError::EmailCodeNotFound, "email-code-not-found"),
+            (
+                GarrisonError::EmailChannelRecycled,
+                "email-channel-recycled",
+            ),
+        ]);
+        #[cfg(feature = "credit-metering")]
+        cases.push((
+            GarrisonError::CreditInsufficient {
+                tenant_id: 1,
+                requested: 2,
+                remaining: 3,
+            },
+            "credit-insufficient",
+        ));
+
+        for (err, expected_key) in &cases {
+            let (key, _args) = error_to_key_args(err);
+            assert_eq!(key, *expected_key, "FTL 键失配: {err:?}");
+            let translated = translate_error(err);
+            assert_ne!(
+                translated, *expected_key,
+                "应命中 FTL 翻译而非回退 key 本身: {err:?}"
+            );
+            assert!(!translated.is_empty());
+        }
+    }
+
+    /// 限流 / 邮箱 / Credit 变体的硬编码英文回退文案（bundle 缺失时的最后防线）。
+    #[test]
+    fn fallback_display_rate_limited_and_feature_variants() {
+        assert_eq!(
+            fallback_display(&GarrisonError::RateLimited {
+                retry_after_secs: 30
+            }),
+            "Rate limited"
+        );
+        #[cfg(feature = "email-verification")]
+        {
+            assert_eq!(
+                fallback_display(&GarrisonError::EmailRateLimitExceeded {
+                    window: "hourly".into()
+                }),
+                "Email rate limit exceeded: hourly window"
+            );
+            assert_eq!(
+                fallback_display(&GarrisonError::EmailVerifyMaxAttempts),
+                "Email verification max attempts exceeded"
+            );
+            assert_eq!(
+                fallback_display(&GarrisonError::EmailCodeNotFound),
+                "Email verification code not found"
+            );
+            assert_eq!(
+                fallback_display(&GarrisonError::EmailChannelRecycled),
+                "Email channel recycled"
+            );
+        }
+        #[cfg(feature = "credit-metering")]
+        assert_eq!(
+            fallback_display(&GarrisonError::CreditInsufficient {
+                tenant_id: 1,
+                requested: 2,
+                remaining: 3
+            }),
+            "Credit insufficient: tenant=1, requested=2, remaining=3"
+        );
     }
 
     // InvalidResponse 变体 i18n 测试（上游响应解析失败专用错误类型）

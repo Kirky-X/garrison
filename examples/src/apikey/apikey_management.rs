@@ -145,7 +145,10 @@ pub async fn run() -> GarrisonResult<()> {
     // 见 docs/CHANGELOG Breaking 说明）。
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let handler = ApiKeyHandler::new(dao).with_allow_global_verify(true);
-    println!("[1] ApiKeyHandler 构建完成（allow_global_verify=true，示例语义）\n");
+    println!(
+        "{}\n",
+        garrison::i18n::translate_detail("example-apikey-handler-built", &[])
+    );
 
     // 2. generate 生成 API Key
     let key = handler
@@ -178,7 +181,10 @@ pub async fn run() -> GarrisonResult<()> {
 
     let invalid = handler.verify("nonexistent-key").await;
     assert!(invalid.is_err());
-    println!("    verify(\"nonexistent-key\") → Err(InvalidToken) ✓（全局 verify 已放开）\n");
+    println!(
+        "{}\n",
+        garrison::i18n::translate_detail("example-apikey-verify-nonexistent", &[])
+    );
 
     // 4. revoke 吊销 Key
     handler.revoke(&key).await?;

@@ -526,7 +526,7 @@ dzWfBsm+KAfTJuqbV7VnJL3G
             .await
             .expect_err("同钥重复轮换必须显性拒绝");
         assert!(
-            err.to_string().contains("jwt-kid-already-registered"),
+            matches!(err, GarrisonError::InvalidParam(ref m) if m.contains("jwt-kid-already-registered")),
             "错误必须显性指明 kid 重复，实际: {err}"
         );
     }
@@ -718,7 +718,7 @@ dzWfBsm+KAfTJuqbV7VnJL3G
             .verify(&old_token)
             .expect_err("退役钥的 token 必须显性拒绝");
         assert!(
-            err.to_string().contains("jwt-kid-retired"),
+            matches!(err, GarrisonError::InvalidToken(ref m) if m.contains("jwt-kid-retired")),
             "错误必须显性指明钥已退役，实际: {err}"
         );
     }
@@ -732,7 +732,7 @@ dzWfBsm+KAfTJuqbV7VnJL3G
             .await
             .expect_err("对称算法必须显性拒绝");
         assert!(
-            err.to_string().contains("jwt-jwks-unsupported-alg::HS256"),
+            matches!(err, GarrisonError::Config(ref m) if m.contains("jwt-jwks-unsupported-alg::HS256")),
             "错误必须显性指明算法不受支持，实际: {err}"
         );
     }
@@ -745,6 +745,111 @@ dzWfBsm+KAfTJuqbV7VnJL3G
         assert!(retired.is_empty());
         let doc = ledger.jwks_document(1_000, 10_000).await.unwrap();
         assert!(doc.keys.is_empty());
+    }
+
+    /// 轮换即退役：Passive 超过 retention 窗口的旧钥在同一次提交中转 Disabled 并移出发布文档。
+    #[tokio::test]
+    async fn rotate_disables_passive_key_beyond_retention() {
+        let (ledger, _dao) = ledger();
+        let first = ledger
+            .rotate("RS256", LEDGER_RSA_PEM_1, 1_000, 10_000)
+            .await
+            .unwrap();
+        ledger
+            .rotate("RS256", LEDGER_RSA_PEM_2, 2_000, 10_000)
+            .await
+            .unwrap();
+
+        // 第三次轮换时刻已超首钥 retention（Passive since 2_000，elapsed 18_000 ≥ 10_000）
+        ledger
+            .rotate("RS256", LEDGER_RSA_PEM_3, 20_000, 10_000)
+            .await
+            .unwrap();
+        let keystore = ledger.load_keystore().await.unwrap();
+        assert_eq!(
+            keystore.status_of(&first.activated_kid),
+            Some(crate::protocol::jwt::KeyStatus::Disabled),
+            "超期 Passive 应在轮换同批提交中转 Disabled"
+        );
+        let doc = ledger.jwks_document(20_000, 10_000).await.unwrap();
+        assert!(
+            !doc.keys.iter().any(|k| k.kid == first.activated_kid),
+            "Disabled 钥不得出现在发布文档"
+        );
+    }
+
+    /// `retire_expired` 的 CAS 冲突：并发轮换已提交时退役方显性报错（由对方同批提交承担退役）。
+    #[tokio::test]
+    async fn retire_expired_reports_cas_conflict() {
+        let inner = Arc::new(InMemoryDao::new());
+        let ledger = JwksKeystore::new(inner.clone());
+        ledger
+            .rotate("RS256", LEDGER_RSA_PEM_1, 1_000, 10_000)
+            .await
+            .unwrap();
+        ledger
+            .rotate("RS256", LEDGER_RSA_PEM_2, 2_000, 10_000)
+            .await
+            .unwrap();
+        let frozen = inner.get(JWKS_STATE_KEY).await.unwrap().unwrap();
+        let stale = JwksKeystore::new(Arc::new(FrozenReadDao::new(frozen, inner.clone())));
+        // 冻结快照后另一实例又提交一次轮换 → 冻结方的 CAS expected 已过期
+        ledger
+            .rotate("RS256", LEDGER_RSA_PEM_3, 3_000, 10_000)
+            .await
+            .unwrap();
+
+        let err = stale
+            .retire_expired(30_000, 10_000)
+            .await
+            .expect_err("并发轮换后退役方 CAS 必须失败");
+        assert!(
+            err.to_string().contains("jwks-retirement-conflict"),
+            "失败方错误必须显性指明 CAS 冲突，实际: {err}"
+        );
+    }
+
+    /// 冻结读桩的委托方法保真：除状态键冻结读外，其余读写语义与 InMemoryDao 一致（并发用例的语义前提）。
+    #[tokio::test]
+    async fn frozen_read_dao_delegates_non_state_keys() {
+        use crate::dao::GarrisonDao;
+        let dao = FrozenReadDao::new("frozen".to_string(), Arc::new(InMemoryDao::new()));
+
+        dao.set("k", "v1", 60).await.unwrap();
+        assert_eq!(dao.get("k").await.unwrap(), Some("v1".to_string()));
+        assert_eq!(
+            dao.get(JWKS_STATE_KEY).await.unwrap(),
+            Some("frozen".to_string()),
+            "状态键恒返回冻结快照"
+        );
+        dao.update("k", "v2").await.unwrap();
+        assert_eq!(dao.get("k").await.unwrap(), Some("v2".to_string()));
+        assert!(dao
+            .compare_and_swap("k", Some("v2"), "v3", 60)
+            .await
+            .unwrap());
+        assert!(!dao
+            .compare_and_swap("k", Some("v2"), "v4", 60)
+            .await
+            .unwrap());
+        assert!(dao.set_if_absent("fresh", "1", 60).await.unwrap());
+        assert!(!dao.set_if_absent("fresh", "2", 60).await.unwrap());
+        assert_eq!(dao.incr("counter", 60).await.unwrap(), 1);
+        assert_eq!(dao.decr("counter").await.unwrap(), 0);
+        assert_eq!(
+            dao.get_and_delete("k").await.unwrap(),
+            Some("v3".to_string())
+        );
+        assert!(
+            dao.get("k").await.unwrap().is_none(),
+            "get_and_delete 应删键"
+        );
+        dao.set("old", "v", 60).await.unwrap();
+        dao.rename("old", "new").await.unwrap();
+        assert_eq!(dao.get("new").await.unwrap(), Some("v".to_string()));
+        dao.expire("new", 30).await.unwrap();
+        dao.delete("new").await.unwrap();
+        assert!(dao.get("new").await.unwrap().is_none());
     }
 
     /// 快照损坏（kid 与私钥不一致）：load 显性拒绝。
@@ -765,7 +870,7 @@ dzWfBsm+KAfTJuqbV7VnJL3G
             .await
             .expect_err("kid 篡改必须显性拒绝");
         assert!(
-            err.to_string().contains("jwt-snapshot-kid-mismatch"),
+            matches!(err, GarrisonError::InvalidParam(ref m) if m.contains("jwt-snapshot-kid-mismatch")),
             "错误必须显性指明快照损坏，实际: {err}"
         );
     }
@@ -880,6 +985,41 @@ FTcfYH6rUSsxJH2JD7Adnx1iw7UhnOZXVf8YOnDrqaXJkQcXNWPSUBqA
 MC4CAQAwBQYDK2VwBCIEIOChr1YQD9KWBWWGBLFFjHQiHx9+OznRi69Gh25Uhv8H
 -----END PRIVATE KEY-----
 ";
+
+    /// 发布文档覆盖 EC / OKP 条目的 JWK 组装（kty/crv/x/y 与 RSA 分支并存）。
+    #[tokio::test]
+    async fn jwks_document_emits_ec_and_okp_entries() {
+        let ledger = JwksKeystore::new(Arc::new(crate::dao::InMemoryDao::new()));
+        ledger
+            .rotate("ES256", TEST_EC_PEM, 1_000, 10_000)
+            .await
+            .expect("EC 轮换应成功");
+        ledger
+            .rotate("EdDSA", TEST_ED_PEM, 2_000, 10_000)
+            .await
+            .expect("Ed25519 轮换应成功");
+
+        let doc = ledger.jwks_document(2_000, 10_000).await.unwrap();
+        let ec = doc
+            .keys
+            .iter()
+            .find(|k| k.kty == "EC")
+            .expect("应含 EC 公钥");
+        assert_eq!(ec.alg, "ES256");
+        assert_eq!(ec.crv.as_deref(), Some("P-256"));
+        assert!(ec.x.is_some() && ec.y.is_some(), "EC 应含 x/y");
+        assert!(ec.n.is_none() && ec.e.is_none(), "EC 不得含 RSA 成分");
+
+        let okp = doc
+            .keys
+            .iter()
+            .find(|k| k.kty == "OKP")
+            .expect("应含 OKP 公钥");
+        assert_eq!(okp.alg, "EdDSA");
+        assert_eq!(okp.crv.as_deref(), Some("Ed25519"));
+        assert!(okp.x.is_some(), "OKP 应含 x");
+        assert!(okp.y.is_none() && okp.n.is_none() && okp.e.is_none());
+    }
 
     // build_jwk_set：三算法 JWK 构建 + 对称/非法输入拒绝
     /// ES256：EC PEM → kty=EC、crv=P-256、x/y 齐备且无私钥成分。

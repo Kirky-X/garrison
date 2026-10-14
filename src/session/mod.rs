@@ -885,26 +885,7 @@ mod tests {
     #[cfg(feature = "listener")]
     #[tokio::test]
     async fn kickout_by_device_broadcasts_kickout_events() {
-        use crate::listener::{GarrisonEvent, GarrisonListener, GarrisonListenerManager};
-        use async_trait::async_trait;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        #[allow(
-            dead_code,
-            reason = "test helper: 测试用计数器，部分断言场景暂未使用全部字段"
-        )]
-        struct KickoutCounter {
-            count: AtomicUsize,
-        }
-        #[async_trait]
-        impl GarrisonListener for KickoutCounter {
-            async fn on_event(&self, event: &GarrisonEvent) -> GarrisonResult<()> {
-                if matches!(event, GarrisonEvent::Kickout { .. }) {
-                    self.count.fetch_add(1, Ordering::SeqCst);
-                }
-                Ok(())
-            }
-        }
+        use crate::listener::GarrisonListenerManager;
 
         let mgr = Arc::new(GarrisonListenerManager::new());
         // GarrisonListenerManager 经 inventory 收集，测试中无法直接注入，改为验证 with_listener_manager 链式构造成功且 kickout 不报错
