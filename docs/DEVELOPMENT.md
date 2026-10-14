@@ -5,7 +5,7 @@
 - 仓库：<https://github.com/Kirky-X/garrison>
 - License：Apache-2.0
 - 作者：Kirky-X <Kirky-X@outlook.com>
-- MSRV：Rust 1.85+
+- MSRV：Rust 1.97.1（`Cargo.toml` 的 `rust-version`，取自兄弟生态依赖 rc 线的 `rust-version`）
 - 设计参考：13 特性域领域建模
 
 > 贡献流程详见 [🤝 CONTRIBUTING.md](./CONTRIBUTING.md)；架构设计详见 [🏗️ 架构文档](./ARCHITECTURE.md)。
@@ -28,7 +28,7 @@
 
 ### 1.1 Rust 工具链
 
-Garrison 最低支持 Rust 1.85（部分依赖如 `inventory 0.3` 要求 `edition2024`，需 Rust 1.85+）。推荐使用 rustup 安装 stable 工具链：
+Garrison 需要 Rust 1.97.1+：`Cargo.toml` 的 `rust-version = "1.97.1"` 取自兄弟生态依赖的 rc 线（confers / oxcache / dbnexus / sdforge / limiteron / inklog / trait-kit）各自声明的 `rust-version = "1.97.1"`——即依赖图可满足的最低工具链，低于该版本 `cargo check --locked` 直接拒绝。推荐使用 rustup 安装 stable 工具链：
 
 ```bash
 # 安装 rustup（若尚未安装）
@@ -38,16 +38,16 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup install stable
 rustup default stable
 
-# 验证版本（需 >= 1.85）
+# 验证版本（需 >= 1.97.1）
 rustc --version
 cargo --version
 ```
 
-项目根目录已配置 `rust-toolchain.toml` 锁定工具链版本，`rustup` 会自动安装所需版本。
+项目根目录已配置 `rust-toolchain.toml`（`channel = "stable"`，不锁具体版本），`rustup` 会按它安装 stable 工具链；请确认 stable ≥ 1.97.1。
 
 ### 1.2 系统依赖
 
-以下系统依赖用于 `cargo-tarpaulin` 覆盖率工具与构建链：
+以下系统依赖用于构建链（`cargo llvm-cov` 覆盖率面同样依赖标准构建链）：
 
 ```bash
 # Debian / Ubuntu
@@ -519,14 +519,14 @@ cargo doc --no-deps --features full --open
 | `key-rotate` | 生成新签名密钥（OS CSPRNG 256-bit）并输出可直接粘贴的 env/CLI 配置片段；`--session-key` 额外独立生成会话密钥 | — |
 | `user-hash` | 生成 Argon2id 密码哈希（`Argon2Hasher::with_pool`，复用 R02 并发令牌池），输出 env/CLI/YAML 三种配置片段（对齐 tinyauth `create_user.go:85-128`） | `--user` `--password`（或 `GARRISON_CLI_PASSWORD`） `--pool-size` `--escape-dollar` |
 | `one-time-access-token` | 为指定用户签发短时效登录凭据（写入 `app_user_ext` 登记行；**一次性消费语义需业务方在登录路径接线登记行原子删除**，未接线时为 TTL 内可重放的 bearer 凭据） | `--db-url` `--user` `--tenant-id` `--ttl-seconds`（≤ 86400） `--secret` `--migrate` `--migrations-dir` |
-| `change-key` | 字段静态加密（R17）全量重加密到新主钥：事务批处理，报告 scanned/reencrypted/legacy 计数 | `--db-url` `--tenant` `--key key_id:hex`（首把为主钥，可重复） `--batch-size` |
-| `check-key` | 字段静态加密可解密性校验（不改动任何行）；非零 legacy 计数 = 迁移未收敛，跑 change-key 收敛 | `--db-url` `--tenant` `--key` `--pattern` |
+| `change-key` | 字段静态加密（R17）全量重加密到新主钥：事务批处理，报告 scanned/reencrypted/legacy 计数；KV 数据面为部署库 `garrison_kv` 表（`DbnexusKvDao`，`018_kv_store.sql`，`ensure_table` 幂等建表） | `--db-url` `--tenant` `--key key_id:hex`（首把为主钥，可重复；存量行解密须携旧钥） `--batch-size` |
+| `check-key` | 字段静态加密可解密性校验（不改动任何行）；非零 legacy 计数 = 迁移未收敛，跑 change-key 收敛；KV 数据面同 change-key（`garrison_kv` 表） | `--db-url` `--tenant` `--key` `--pattern` |
 
 构建与运行：
 
 ```bash
-cargo build --features cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption --bins
-cargo run --features cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption --bin garrison-cli -- user-hash --user admin
+cargo build --features cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption,dao-key-index --bins
+cargo run --features cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption,dao-key-index --bin garrison-cli -- user-hash --user admin
 ```
 
 `export/import` 子命令明确不做（R16 范围决策）。
@@ -542,7 +542,7 @@ cargo run --features cli-ops,account-credential,protocol-zeroize,db-sqlite,proto
 | Clippy 检查（零警告） | `cargo clippy --features full --lib --tests -- -D warnings` |
 | 格式化 | `cargo fmt --all` |
 | 格式化检查 | `cargo fmt --all -- --check` |
-| 覆盖率测试 | `cargo tarpaulin --features "default,db-sqlite" --lib --out Lcov --output-dir coverage` |
+| 覆盖率测试 | `cargo llvm-cov --features "full" --fail-under-lines 85`（与 CI 同口径；Lcov 报告追加 `--lcov --output-path coverage/lcov.info`） |
 | 生成文档 | `cargo doc --no-deps --features full --open` |
 | 生产构建 | `cargo build --release --features production` |
 | 检查依赖更新 | `cargo update --dry-run` |
@@ -565,7 +565,7 @@ cargo run --features cli-ops,account-credential,protocol-zeroize,db-sqlite,proto
 
 ## 9. 数据库迁移时间字段约定
 
-Garrison 支持 4 个数据库后端（PostgreSQL、MySQL、SQLite、DuckDB），每个后端有独立的 SQL 方言迁移文件（`migrations/<backend>/core/`）。
+Garrison 提供 3 个数据库后端（PostgreSQL、MySQL、SQLite），每个后端有独立的 SQL 方言迁移文件（`migrations/<backend>/core/`）。`migrations/duckdb/` 保留同类方言迁移文件，但仓库无 `db-duckdb` feature（`Cargo.toml` 仅 `db-sqlite` / `db-postgres` / `db-mysql`），`src/` 内也无 DuckDB 代码路径——用户无法选择 DuckDB 后端。
 
 ### 时间字段格式
 
@@ -599,7 +599,8 @@ Garrison 在 `tests/acceptance/` 下提供完整的端到端（E2E）测试矩�
 ```mermaid
 flowchart TD
     Start["bash scripts/e2e_run.sh"] --> Env["export env (API Key / Port / RateLimit)"]
-    Env --> Spawn["spawn auth_server_serve (background)"]
+    Env --> Build["cargo build auth_server_serve（冷构建预热，失败即 exit 1）"]
+    Build --> Spawn["spawn auth_server_serve (background)"]
     Spawn --> Health["curl health check (30 次重试)"]
     Health -->|OK| E2E["cargo test --test acceptance (in-process + remote)"]
     Health -->|Fail| Exit["exit 1"]
@@ -611,7 +612,7 @@ flowchart TD
 
 ### 一键执行：`scripts/e2e_run.sh`
 
-`scripts/e2e_run.sh` 是 E2E 测试入口，自动完成：启动 `auth_server_serve` 后台进程 → 等待 health check 就绪 → 依次执行 E2E / 性能 / 渗透测试 → 聚合生成 Markdown 综合报告。
+`scripts/e2e_run.sh` 是 E2E 测试入口，自动完成：构建 `auth_server_serve`（冷构建可能数分钟；与就绪探测分离，避免把编译耗时误报为「服务未就绪」）→ 启动后台进程 → 等待 health check 就绪 → 依次执行 E2E / 性能 / 渗透测试 → 聚合生成 Markdown 综合报告。
 
 ```bash
 # 默认配置一键执行
@@ -642,7 +643,7 @@ bash scripts/e2e_run.sh
 
 | 文件 | 格式 | 写入者 | 内容 |
 |------|------|--------|------|
-| `logs/perf.jsonl` | JSONL（每行 1 个 LoadReport） | `tests/acceptance/concurrency.rs` 的 `perf_util::append_perf_report` | 性能基线测试报告（P50/P95/P99/RPS） |
+| `logs/perf.jsonl` | JSONL（每行 1 个 LoadReport） | `tests/acceptance/concurrency.rs` 的 `perf_util::append_perf_report` | 性能基线测试报告（P50/P95/P99/RPS，含构建档位 `profile`） |
 | `logs/e2e_final_report.md` | Markdown | `scripts/e2e_analyze.py` | 综合报告（HTTP 统计 / 性能基线 / 渗透矩阵 / 异常列表） |
 
 > `scripts/e2e_analyze.py` 还会尝试读取 `logs/e2e_http.jsonl` 与 `logs/pentest_report.json`，但当前测试套件已不产生这两个文件——缺失时报告相应章节显性标注「不存在」。
@@ -726,7 +727,7 @@ python3 scripts/e2e_analyze.py --log-dir /path/to/logs
 生成 `logs/e2e_final_report.md` 含 4 节：
 
 1. **HTTP 交互统计**：总请求数 / 状态码分布 / P50/P95/P99 / 平均延迟
-2. **性能基线对照表**：实际 P99/RPS/错误率 vs 目标基线，✅ 达标 / ❌ 不达标标记
+2. **性能基线对照表**：实际 P99/RPS/错误率 vs 目标基线，✅ 达标 / ❌ 不达标标记；`profile=debug` 的未达标项标 ⚠️ 软警告（与 `assert_perf_baseline` 的 debug 不阻断口径一致，release 构建下 ❌ 即硬门禁）
 3. **渗透测试矩阵**：7 类攻击 × N payload 表格 + 详细 finding 列表（payload / endpoint / status / bypassed / severity / snippet）
 4. **异常请求列表**：5xx 请求 / 超时请求（≥5s）/ 响应体 >4KB 警告
 

@@ -28,7 +28,7 @@
 | 0.7.3 | ✅ 已完成 | 2026-07-22 | `#[check_disable]` 过程宏 + `dao_session!` 宏 + garrison-macros 版本对齐 |
 | 0.8.0 | ✅ 已完成 | 2026-07-24 | 安全加固：常量时间比较原语 + JWT 弱密钥拒绝 + API Key 安全迁移 + tech-review 修复批次 |
 | 0.8.1 | ✅ 已完成 | 2026-07-24 | 审计日志 token 泄漏修复（CWE-532） |
-| 0.9.0 | 🚧 进行中（rc.2） | rc.1：2026-09-07 | 自研库特性吸收 + 依赖批量升级 + 配置/数据库/防火墙增强 + 协议域统一重命名（secure-httpbasic/httpdigest → protocol-*）+ feature 整合改名（safe-defaults / decision-trace / permission-registry 合并为 core-advanced） |
+| 0.9.0 | 🚧 进行中（rc.3 开发验证中，未发布） | rc.1：2026-09-07 | 自研库特性吸收 + 依赖批量升级 + 配置/数据库/防火墙增强 + 协议域统一重命名（secure-httpbasic/httpdigest → protocol-*）+ feature 整合改名（safe-defaults / decision-trace / permission-registry 合并为 core-advanced） |
 | 1.0.0 | 📋 待规划 | 2027 Q2 | 稳定版 |
 
 ## v0.1.0 核心基础设施（已完成）
@@ -65,7 +65,7 @@
 
 - ✅ OpenTelemetry OTLP 分布式追踪（`otlp` feature，OTLP gRPC 导出）
 - ✅ gRPC 鉴权拦截器（`grpc` feature，`tonic::Interceptor` 实现）
-- ✅ 异常消息国际化（`i18n` feature，fluent-rs 中英文切换）
+- ✅ 异常消息国际化（fluent-rs 中英文切换，基础层无条件编译）
 - ✅ Prometheus 指标（`metrics-prometheus` feature）
 
 **已知限制**：PostgreSQL / MySQL 后端仍待 `dbnexus` 0.3+ 提供（推迟至 0.5.0+）；actix-web / warp 适配仅提供最小骨架，未做完整 extractor 适配。

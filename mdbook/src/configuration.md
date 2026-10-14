@@ -51,7 +51,7 @@ let config = GarrisonConfig::load(None)?;
 | `auto_renewal_threshold` | i64 | `-1` | 自动续签阈值百分比（-1 不启用） |
 | `session_hover_timeout` | i64 | `-1` | 会话悬停超时秒数（-1 不启用） |
 
-> 完整配置项列表（含 feature-gated 配置）详见项目根目录 `docs/CONFIGURATION.md`；其中尚未收录 JWT 撤销与 refresh token 重用处置相关字段（`enable_jwt_revocation` / `recent_reuse_behaviour` / `refresh_grace_period_secs` / `refresh_grace_max_uses` / `allow_stateless_jwt_no_revocation`，默认分别为 `false` / `theft_detected` / `0` / `1` / `false`）。
+> 完整配置项列表（含 feature-gated 配置）详见项目根目录 `docs/CONFIGURATION.md`；本页未展开的 JWT 撤销与 refresh token 重用处置字段已收录于该文档 §2.13 / §2.14：`enable_jwt_revocation`（`false`）/ `allow_stateless_jwt_no_revocation`（`false`）/ `rate_limit_backend`（`memory`）与 `recent_reuse_behaviour`（`theft_detected`）/ `refresh_grace_period_secs`（`0`）/ `refresh_grace_max_uses`（`1`）。
 
 ## 环境变量覆盖
 

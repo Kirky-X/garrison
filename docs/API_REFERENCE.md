@@ -410,7 +410,7 @@ garrison::dao_conformance_tests! {
 
 `garrison::GarrisonError`（`src/error.rs`，`thiserror` 派生）— 统一错误枚举，`GarrisonResult<T> = Result<T, GarrisonError>`。
 
-Display 行为：未启用 `i18n` 时硬编码中文；启用 `i18n` 后按线程本地 locale 切换中英文。
+Display 行为：i18n 基础层无条件编译，`to_string()` 按线程本地 locale 切换中英文（缺省跟随系统语言检测）。
 
 | 变体 | HTTP 语义 | 说明 |
 |------|-----------|------|
@@ -521,7 +521,6 @@ Display 行为：未启用 `i18n` 时硬编码中文；启用 `i18n` 后按线�
 | `grpc`（`grpc`） | gRPC 拦截器 |
 | `observability`（`tracing-log` / `metrics-prometheus` / `otlp`） | 可观测性 |
 | `health` | 健康检查 |
-| `i18n` | 国际化（基础层无条件编译） |
 | `testing`（`testing`） | 测试辅助（验收矩阵配套） |
 
 `protocol::qrlogin`（`protocol-qrlogin`）经 `GarrisonAuthServer::with_qrlogin` 装配后暴露 4 个 HTTP 端点（create / poll 匿名，scan / confirm 需 Bearer App 会话 token）：

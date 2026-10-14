@@ -4,7 +4,7 @@
 
 ## 运行环境要求
 
-- Rust 1.85+（MSRV，`inventory 0.3` 等依赖要求 edition 2024）
+- Rust 1.97.1+（`Cargo.toml` 的 `rust-version`；兄弟生态依赖（confers / oxcache / dbnexus / sdforge / limiteron / inklog / trait-kit 的 rc 线）要求同值，`inventory 0.3` 等依赖要求 edition 2024）
 - Tokio 运行时（`rt-multi-thread` feature）
 - 可选：SQLite（默认数据库后端）/ Redis（L2 缓存）
 
@@ -14,11 +14,11 @@ Garrison 默认启用 `backend-embedded` feature（嵌入式后端模式），�
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.2", features = ["web-axum", "cache-memory", "db-sqlite"] }
+garrison = { version = "0.9.0-rc.3", features = ["web-axum", "cache-memory", "db-sqlite"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
-> 注：当前版本为 pre-release（0.9.0-rc.2），`version = "0.9"` 不会匹配它——Cargo 要求显式写出完整 pre-release 版本号；待 0.9.0 正式发布后可再改为 `"0.9"`。
+> 注：当前版本为 pre-release（0.9.0-rc.3），`version = "0.9"` 不会匹配它——Cargo 要求显式写出完整 pre-release 版本号；待 0.9.0 正式发布后可再改为 `"0.9"`。
 
 ## Feature flags 说明
 

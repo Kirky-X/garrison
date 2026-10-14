@@ -84,6 +84,8 @@ python3 scripts/e2e_analyze.py --log-dir logs
 - **debug 构建**：软警告——login 链路涉及 argon2/bcrypt，debug 下 P99 约 1.1s 不达标属预期；
 - **release 构建**：硬失败（panic）。外部 release 服务的硬判定经 `GARRISON_E2E_EXTERNAL_URL` / `GARRISON_E2E_INTERNAL_URL` / `GARRISON_E2E_API_KEY` 注入（`RemoteContext::connect_env` 路径）。
 
+报告侧同口径：`logs/perf.jsonl` 的每条采样带构建档位 `profile`，`scripts/e2e_analyze.py` 对 `profile=debug` 的未达标项标 ⚠️ 软警告（不阻塞），release 档位标 ❌ 不达标——避免出现「报告判 ❌、同轮测试 passed」的分歧表述。
+
 方法论记录（`perf_login` 基线重校准，2026-09-11）：压测使用 100 账号轮转（`LoadRunner::with_body_fn`）度量多用户真实流量，而非单账号并发——登录路径存在 per-login_id 互斥锁（`GarrisonSession::with_login_lock`，TOCTOU 修复，设计如此：保护同账号 Account-Session 读改写原子性），单账号并发必然串行化（实测 P99 约 700ms）。同账号并发正确性由 concurrency 域竞争测试覆盖。
 
 ---

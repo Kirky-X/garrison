@@ -4,7 +4,7 @@
 
 - 仓库：<https://github.com/Kirky-X/garrison>
 - License：Apache-2.0
-- MSRV：Rust 1.85+
+- MSRV：Rust 1.97.1+（`Cargo.toml` 的 `rust-version`，同兄弟生态依赖 rc 线的要求）
 
 > 开发环境搭建详见 [🛠️ 开发规范](./DEVELOPMENT.md)；部署问题详见 [🚀 部署指南](./DEPLOYMENT.md)。
 
@@ -29,13 +29,15 @@ Caused by:
   No such file or directory (os error 2)
 ```
 
-**原因**：早期版本（≤ 0.5.3）的 `Cargo.toml` 中 `oxcache` 使用本地 `path` 依赖，但该路径下不存在项目。0.9.0 起已切换为 crates.io 发布的 `oxcache = "0.5"`，不再需要本地 path 依赖。
+**原因**：早期版本（≤ 0.5.3）的 `Cargo.toml` 中 `oxcache` 使用本地 `path` 依赖，但该路径下不存在项目。0.9.0 起已切换为 crates.io 发布的 `oxcache`，不再需要本地 path 依赖。
 
-**解决**：升级到 0.9.0+，`Cargo.toml` 中 oxcache 已改为 crates.io 依赖：
+**解决**：升级到 0.9.0+，`Cargo.toml` 中 oxcache 已改为 crates.io 依赖（当前为 rc 预发布线，版本须写全）：
 
 ```toml
-oxcache = { version = "0.5", optional = true, default-features = false }
+oxcache = { version = "0.5.0-rc.8", optional = true, default-features = false }
 ```
+
+> 注意：`"0.5"` 这类版本要求无法匹配预发布版本，写 `"0.5"` 会解析失败或落回旧版；rc 线必须显式写完整版本号（对照 `Cargo.toml` workspace 依赖声明）。
 
 若仍使用旧版本，将 oxcache 仓库克隆到指定路径：
 
@@ -80,16 +82,16 @@ error: feature `edition2024` is required
 The cargo feature `edition2024` requires nightly cargo
 ```
 
-**原因**：部分依赖（如 `inventory 0.3`）要求 `edition2024`，需要 Rust 1.85+。
+**原因**：部分依赖（如 `inventory 0.3`）要求 `edition2024`（需 Rust 1.85+）；依赖面中的兄弟生态 crate rc 线进一步要求 Rust 1.97.1+，故 `Cargo.toml` 的 MSRV 取后者。
 
-**解决**：更新 Rust 工具链至 1.85+：
+**解决**：更新 Rust 工具链至 1.97.1+：
 
 ```bash
 rustup update stable
-rustc --version   # 确认 >= 1.85
+rustc --version   # 确认 >= 1.97.1
 ```
 
-项目根目录已配置 `rust-toolchain.toml` 锁定工具链版本，`rustup` 会自动安装所需版本。
+项目根目录已配置 `rust-toolchain.toml`（`channel = "stable"`，不锁具体版本），`rustup` 会按它安装 stable 工具链；请确认 stable ≥ 1.97.1。
 
 ---
 
@@ -288,30 +290,31 @@ fn test_env_var_override() {
 
 ---
 
-### Q3.2 `cargo tarpaulin` 报错或覆盖率工具异常
+### Q3.2 `cargo llvm-cov` 报错或覆盖率工具异常
 
 **现象**：运行覆盖率测试时报错或结果异常。
 
-**原因**：`cargo-tarpaulin` 依赖 `libssl-dev` 与 `pkg-config`，且对某些 feature 组合可能不兼容。
+**原因**：仓库的覆盖率工具是 `cargo-llvm-cov`（CI coverage job 与 `README` / `DEVELOPMENT` 常用命令表同口径），不是 `cargo-tarpaulin`——仓库内没有 tarpaulin 配置。常见报错成因：未安装 `cargo-llvm-cov` 或工具链缺 `llvm-tools` 组件；命令中用了 `--all-features`（db-sqlite 与 db-postgres 互斥，dbnexus 直接 `compile_error!`）；sqlite 文件库 URL 在 llvm-cov 插桩面下触发 `SQLITE_READONLY`。
 
 **解决**：
 
-1. 确认系统依赖已安装：
+1. 安装工具与组件：
 
    ```bash
-   sudo apt install -y libssl-dev pkg-config
+   cargo install cargo-llvm-cov
+   rustup component add llvm-tools-preview
    ```
 
-2. 使用推荐的 feature 组合运行覆盖率：
+2. 用 CI 同口径的 feature 面运行（不要用 `--all-features`）：
 
    ```bash
-   cargo tarpaulin --features "default,db-sqlite" --lib --out Lcov
+   cargo llvm-cov --features "full" --fail-under-lines 85
    ```
 
-3. 若 `full` feature 下 tarpaulin 失败，降级为仅测试核心模块：
+3. 若遇 `SQLITE_READONLY`（llvm-cov 插桩面下 sqlite 文件库 URL 触发，CI coverage job 同样注明），按 CI 的方式回退内存库：
 
    ```bash
-   cargo tarpaulin --features "cache-memory,db-sqlite,web-axum" --lib --out Lcov
+   GARRISON_TEST_SQLITE_MEMORY=1 cargo llvm-cov --features "full" --fail-under-lines 85 --lcov --output-path coverage/lcov.info
    ```
 
 ---

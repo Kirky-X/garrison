@@ -183,7 +183,7 @@ garrison = { version = "0.9.0-rc.3", features = ["tls-cert-watch", "auth-server"
 | 数据库已初始化 | ✅ | 迁移 SQL 已执行或 auto-migrate 已启用 |
 | `is_share` / `is_concurrent` 已按业务需求设置 | ✅ | 默认 `false` / `true` |
 | TLS 已启用（或反向代理终止） | ✅ | 禁止明文传输 token |
-| `cargo audit` 无告警 | ✅ | CI 自动检查 |
+| `cargo audit` 无告警 | ✅ | 本地发布脚本 precheck（`scripts/release.sh`，要求 0 CRITICAL）；CI 侧由 `cargo deny check` 的 advisory 检查覆盖同等口径 |
 | `cargo deny check` 通过 | ✅ | 许可证与依赖安全 |
 | 日志级别设为 `info` 或 `warn` | ⚠️ | 避免 `debug`/`trace` 输出敏感信息 |
 | 环境变量中的敏感值使用密钥管理 | ⚠️ | 建议使用 Vault / K8s Secret |

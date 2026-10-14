@@ -3,7 +3,7 @@
 
 <img src="docs/assets/logo.png" alt="Garrison Logo" width="200">
 
-[![CI Status](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml/badge.svg)](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml) [![Version](https://img.shields.io/crates/v/garrison.svg)](https://crates.io/crates/garrison) [![Docs.rs](https://docs.rs/garrison/badge.svg)](https://docs.rs/garrison) [![Downloads](https://img.shields.io/crates/d/garrison.svg)](https://crates.io/crates/garrison) [![License](https://img.shields.io/crates/l/garrison.svg)](LICENSE) [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/) [![Coverage](https://img.shields.io/badge/coverage-95%25%2B-brightgreen.svg)](https://github.com/Kirky-X/garrison)
+[![CI Status](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml/badge.svg)](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml) [![Version](https://img.shields.io/crates/v/garrison.svg)](https://crates.io/crates/garrison) [![Docs.rs](https://docs.rs/garrison/badge.svg)](https://docs.rs/garrison) [![Downloads](https://img.shields.io/crates/d/garrison.svg)](https://crates.io/crates/garrison) [![License](https://img.shields.io/crates/l/garrison.svg)](LICENSE) [![Rust](https://img.shields.io/badge/rust-1.97.1%2B-orange.svg)](https://www.rust-lang.org/) [![Coverage](https://img.shields.io/badge/coverage-95%25%2B-brightgreen.svg)](https://github.com/Kirky-X/garrison)
 
 [中文](README.md) | **English**
 
@@ -93,7 +93,7 @@ async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
 
-Requires Rust 1.85 or later (MSRV, see `rust-version` in `Cargo.toml`).
+Requires Rust **1.97.1 or later** (`rust-version = "1.97.1"` in `Cargo.toml`): the sibling-ecosystem crates in the dependency set (the rc line of confers / oxcache / dbnexus / sdforge / limiteron / inklog / trait-kit) each declare `rust-version = "1.97.1"`, which is the lowest toolchain the dependency graph accepts — `cargo check` under an older toolchain fails outright (`rustc ... is not supported by the following packages`); `rust-toolchain.toml` pins the `stable` channel (no specific version), so keep stable ≥ 1.97.1.
 
 > Pre-release versions require the full version number; `"0.9"` will not match prerelease. To enable all protocol and security modules: `features = ["full"]`.
 
@@ -363,7 +363,7 @@ cargo bench --bench garrison_benchmark --features full --locked -- --quick
 
 ### 📊 Test Scale
 
-About 5901 tests (5361 lib unit + 416 acceptance / integration + 116 example-level + 8 proc macros; lib and acceptance counts measured via `cargo test --list`, examples and proc macros counted statically by attribute) and 6 Criterion benchmark scenarios; the coverage gate is line coverage no lower than 85% (currently about 95.8%). For the counting methodology and details, see [🧪 Test Scenarios · Test Scale](docs/TEST_SCENARIOS.md#-测试规模统计).
+About 5971 tests (5431 lib unit + 416 acceptance / integration + 116 example-level + 8 proc macros; lib and acceptance counts measured via `cargo test --list`, examples and proc macros counted statically by attribute, as of 2026-10-13) and 6 Criterion benchmark scenarios; the coverage gate is line coverage no lower than 85% (currently about 95.8%). For the counting methodology and details, see [🧪 Test Scenarios · Test Scale](docs/TEST_SCENARIOS.md#-测试规模统计).
 
 ---
 
@@ -381,7 +381,7 @@ Garrison applies defense-in-depth across the identity lifecycle: Argon2id / Bcry
 
 ### ⛓️ Supply Chain and Gates
 
-The CI and release pipelines enforce three supply-chain gates: `cargo deny check` (vulnerabilities / licenses / banned dependencies), `cargo audit` (RustSec advisory scanning), and pre-commit secret scanning with gitleaks. For gate criteria and handling details, see the [Security doc · Supply Chain and Gates](SECURITY.md).
+The CI and release pipelines enforce two supply-chain gates: `cargo deny check` (RustSec advisories / licenses / banned dependencies / source verification, run by both `ci.yml` and `release.yml`) and gitleaks secret scanning (pre-commit covers staged changes; CI scans the full git history). `cargo audit` is not part of CI - cargo-deny already covers the equivalent advisory checks, avoiding two ignore lists - it only runs as the local pre-release precheck in `scripts/release.sh`. For gate criteria and handling details, see the [Security doc · Supply Chain and Gates](SECURITY.md).
 
 ### 🚨 Reporting Security Issues
 
@@ -412,7 +412,7 @@ For the detailed contribution workflow and code standards, see the [🤝 Contrib
 
 ### 🛠️ Development Environment
 
-The toolchain is Rust 1.85+ (pinned in `rust-toolchain.toml`); run `cargo fmt --all -- --check` and `cargo clippy --all-targets --all-features -- -D warnings` before committing; commit messages follow Conventional Commits (`feat`, `fix`, `docs`, etc.). For the full environment setup, see the [🤝 Contributing Guide · Development Environment](docs/CONTRIBUTING.md#-开发环境搭建).
+The toolchain is Rust 1.97.1+ (`rust-toolchain.toml` pins the `stable` channel, not a specific version; the sibling-ecosystem rc dependencies require ≥ 1.97.1); run `cargo fmt --all -- --check` and `cargo clippy --features full --lib --tests -- -D warnings` before committing (do not use `--all-features`: it enables both db-sqlite and db-postgres, and dbnexus rejects mixing embedded with server-side drivers via compile_error); commit messages follow Conventional Commits (`feat`, `fix`, `docs`, etc.). For the full environment setup, see the [🤝 Contributing Guide · Development Environment](docs/CONTRIBUTING.md#-开发环境搭建).
 
 ### 💖 Ways to Contribute
 
@@ -453,7 +453,7 @@ For the full version history, see the [📋 Changelog](docs/CHANGELOG.md) (follo
 
 | Version | Date | Highlights |
 |---------|------|------------|
-| 0.9.0-rc.3 | In development | Security-audit remediation R01–R18: unified error model (request-id / Retry-After) / at-rest field encryption / WebAuthn / password reset / MFA orchestration / back-channel logout / multi-tenant hardening / garrison-cli |
+| 0.9.0-rc.3 | 2026-10-14 | Security-audit remediation R01–R18: unified error model (request-id / Retry-After) / at-rest field encryption / WebAuthn / password reset / MFA orchestration / back-channel logout / multi-tenant hardening / garrison-cli |
 | 0.9.0-rc.2 | 2026-08-26 | Fail-closed security hardening (check_api_key / check_abac) |
 | 0.9.0-rc.1 | 2026-08-25 | Acceptance test system + DAO atomic contract + gRPC async auth layer |
 | 0.8.1 | 2026-07-24 | Audit log token leakage fix (CWE-532) |

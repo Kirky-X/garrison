@@ -21,7 +21,7 @@ A: 认证授权领域边界清晰、职责单一才能做到可组合、可裁�
 
 ### Q: 为什么使用全局单例 `GarrisonManager` 而非依赖注入？
 
-A: 这是 Garrison 在工程便利性与架构纯净之间做出的权衡。全局单例允许我们提供 `GarrisonUtil` 这类静态 API，业务代码无需层层传递 `Arc<Manager>` 即可调用 `login`、`checkPermission` 等方法，大幅降低使用心智成本。同时我们保留了 `GarrisonInterface` trait 抽象，配合 `GarrisonManager::reset_for_test()`（仅在 `cfg(test)` 下编译），可以在单元测试中注入 mock 实现而无需引入任何 DI 容器依赖。换言之：**生产用单例取便利，测试用 trait 取可替换**。
+A: 这是 Garrison 在工程便利性与架构纯净之间做出的权衡。全局单例允许我们提供 `GarrisonUtil` 这类静态 API，业务代码无需层层传递 `Arc<Manager>` 即可调用 `login`、`checkPermission` 等方法，大幅降低使用心智成本。同时我们保留了 `GarrisonInterface` trait 抽象，配合 `GarrisonManager::reset_for_test()`（`#[cfg(any(test, feature = "testing"))]` 门控），可以在单元测试中注入 mock 实现而无需引入任何 DI 容器依赖。换言之：**生产用单例取便利，测试用 trait 取可替换**。
 
 ### Q: 为什么使用 `inventory` 编译期注册而非运行时反射？
 
@@ -49,7 +49,7 @@ A: 直接使用 `jsonwebtoken` 有三个痛点：
 2. 错误类型是 `jsonwebtoken::errors::Error`，与 `GarrisonError` 体系不互通，业务侧需要 `map_err` 转译；
 3. 多算法支持、密钥轮换、kid 头部等生产级需求，`jsonwebtoken` 不提供高层 API。
 
-`JwtHandler` 包装层在 `GarrisonJwtClaims` 中预置了框架标准字段，统一错误转换为 `GarrisonError::Jwt`，并提供 `sign`/`verify`/`refresh` 一站式 API。业务侧通过自定义自己的 claims 结构并调用 `sign`/`verify` 传入即可扩展自定义字段，无需关心底层算法细节（框架未提供 `GarrisonJwtClaimsExt` 之类的扩展 trait——`GarrisonJwtClaims` 是固定结构体）。
+`JwtHandler` 包装层在 `GarrisonJwtClaims` 中预置了框架标准字段，统一错误转换为 `GarrisonError` 的既有变体（无独立的 `Jwt` 变体：验签/解析失败 → `InvalidToken`、过期 → `ExpiredToken`、密钥与算法配置问题 → `Config`、PEM/系统时钟等内部错误 → `Internal`，见 `src/protocol/jwt/handler.rs`），并提供 `sign`/`verify`/`refresh` 一站式 API。业务侧通过自定义自己的 claims 结构并调用 `sign`/`verify` 传入即可扩展自定义字段，无需关心底层算法细节（框架未提供 `GarrisonJwtClaimsExt` 之类的扩展 trait——`GarrisonJwtClaims` 是固定结构体）。
 
 ---
 
@@ -160,7 +160,7 @@ config.throw_on_not_login = false;
 
 ### Q: 如何在测试中重置全局单例 `GarrisonManager`？
 
-A: 调用 `GarrisonManager::reset_for_test()`。该方法仅在 `cfg(test)` 下编译，会清空内部 `OnceLock` 并重新初始化为默认状态，便于每个测试用例从干净的初始状态开始：
+A: 调用 `GarrisonManager::reset_for_test()`。该方法经 `#[cfg(any(test, feature = "testing"))]` 门控（`src/manager/impls.rs:89`）——测试构建与启用公开 `testing` feature 的构建中均存在，会中止后台清理任务并清空全局 logic / strategy 引用，使管理器回到未初始化状态（后续需重新 `builder().build()`），便于每个测试用例从干净的初始状态开始：
 
 ```rust
 #[cfg(test)]
@@ -187,7 +187,7 @@ mod tests {
 }
 ```
 
-切勿在生产代码中调用此方法——它会无条件清空所有在线会话。为防止误用，方法被 `#[cfg(test)]` 门控，release 构建中根本不存在该符号。
+切勿在生产代码中调用此方法——它会无条件清空所有在线会话。该方法由 `#[cfg(any(test, feature = "testing"))]` 门控，因此并非「release 构建中不存在」：显式启用公开 `testing` feature（`Cargo.toml`）的 release 构建同样会编译出该符号。
 
 ---
 
@@ -293,7 +293,7 @@ GarrisonManager::builder()
 随后：
 
 - **Listener**：实现 `GarrisonListener` trait，在唯一的 `async fn on_event(&self, event: &GarrisonEvent)` 回调中按 `GarrisonEvent` 变体（31 个，如 `Login` / `Logout` / `Kickout` / `PermissionCheck`）分支处理，打日志或上报到 ELK；
-- **Prometheus metrics**：框架自动暴露 `/metrics` endpoint（axum 集成下），包含：
+- **Prometheus metrics**：库层不自动挂载任何抓取端点——业务方需自行把 `GarrisonMetrics::gather()`（`metrics-prometheus` feature）暴露为路由（如 axum 下 `Router::new().route("/metrics", get(handler))`，见 mdbook《可观测性 · 指标》）。参考部署 `auth_server` 的指标端点为 `/api/v1/metrics`（`auth-server-sdforge` 的 `#[forge]` 路由 `path = "/metrics"` + `version = "v1"`，经宏自动前缀为 `/api/{version}{path}`），且该端点返回 JSON 序列化字符串而非标准 Prometheus `text/plain`，标准 scraper 无法直接解析。指标集合包含：
   - `garrison_login_total{result}`
   - `garrison_token_validation_duration_seconds`
   - `garrison_permission_query_total`

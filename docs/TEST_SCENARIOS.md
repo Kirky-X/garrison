@@ -1,6 +1,6 @@
 # 🧪 Garrison 测试场景矩阵
 
-> 适用版本：Garrison **0.9.0-rc.3**（MSRV 1.85；`rust-toolchain.toml` 锁定的是 `stable` 通道，1.85.1 仅在 CI workflow 侧 pin）
+> 适用版本：Garrison **0.9.0-rc.3**（MSRV 1.97.1——`Cargo.toml` 的 `rust-version`，见下表硬约束；`rust-toolchain.toml` 锁定的是 `stable` 通道，版本仅在 CI 测试矩阵的 MSRV 腿钉）
 > 编写依据（只读核对）：`Cargo.toml [features]` 与 `[[test]]` 注册、`tests/acceptance.rs` 域入口、`tests/acceptance/*.rs`、`tests/acceptance/migrated/*.rs`、`examples/tests/`、`.github/workflows/ci.yml`、`.github/workflows/feature-matrix.yml`、`scripts/e2e_matrix.sh`、`scripts/e2e_run.sh`、`benches/garrison_benchmark.rs`。
 > 本文合并自原《E2E 特性组合测试套件》文档（`E2E_TESTING.md` 已删除），并补入基于真实测试套件的场景穷举。
 > 规模数字均为 `#[test]` / `#[tokio::test]` 属性的 grep 统计（含 `#[tokio::test(flavor = ...)]` 形态），截至 2026-09-15。
@@ -61,19 +61,19 @@
 
 ## 📊 测试规模统计
 
-> 单元与验收两列为 `cargo test -- --list` 在 CI 特性面（full / full+testing）下的实测计数，示例与过程宏为 `#[test]` / `#[tokio::test]` 属性静态计数；截至 2026-10-09（v0.9.0-rc.3 开发验证态工作区）。
+> 单元与验收两列为 `cargo test -- --list` 在 CI 特性面（full / full+testing）下的实测计数，示例与过程宏为 `#[test]` / `#[tokio::test]` 属性静态计数；截至 2026-10-13（v0.9.0-rc.3 开发验证态工作区）。
 
 | 类别 | 位置 | 数量 |
 |------|------|------|
-| 单元测试 | `src/` 内联（`cargo test --features full --lib -- --list`） | 5361 |
+| 单元测试 | `src/` 内联（`cargo test --features full --lib -- --list`） | 5431 |
 | 验收 / 集成 / UI 测试 | `tests/`（`cargo test --test acceptance --features "full testing" -- --list`） | 416 |
 | 示例级集成测试 | `examples/tests/`（65 个文件，与示例 bin 一一对应） | 约 116 |
 | 过程宏测试 | `macros/` | 8 |
-| 合计 | — | **约 5901** |
+| 合计 | — | **约 5971** |
 | Criterion 基准 | `benches/garrison_benchmark.rs` | 6 场景 |
 | 行覆盖率门禁 | `ci.yml` coverage job | `--fail-under-lines 85`（当前行覆盖率约 95.8%） |
 
-> 覆盖率沿用既有记录值；本轮已实测刷新测试计数（full 面 5361 / acceptance 面 416），行覆盖率未重测。
+> 覆盖率沿用既有记录值；本轮已实测刷新测试计数（full 面 5431 / acceptance 面 416），行覆盖率未重测。
 
 ---
 
@@ -157,7 +157,7 @@ dbnexus 以 `compile_error!` 禁止 embedded（sqlite）与 server-side（postgr
                    session / config / context / json / exception / manager / plugin
 
 核心扩展 ── core-advanced ← authorize-api ← manager-explicit
-         └─ tenant-isolation ⇒ limiteron/multi-tenant + limiteron/ban-manager（伴随 feature，修复上游 Identifier 导入门控断点，理由见 Cargo.toml）
+         └─ tenant-isolation ⇒ limiteron/multi-tenant（limiteron rc.7 已把 Identifier 导入门控改为 any(parallel-checker, ban-manager, multi-tenant)，无需伴随 feature 载体）
 
 配置增强 ── config-{encryption,validation,hot-reload,interpolation,dynamic,
              toggle,yaml,audit,consul,etcd,distributed,schema} → confers/* 透传
@@ -246,7 +246,7 @@ i18n ── i18n（基础层无条件编译，feature 仅门控测试）⇒ i18n
 | `protocol-sso` ⇒ `protocol-jwt` | OIDC `exchange_code` 必须验签 `id_token`（安全审计 fail-open → fail-closed 修复） |
 | `http` 桥接 feature 不可改名 | sdforge `#[forge]` 宏硬编码 `#[cfg(feature = "http")]`，改名 = 全部动态路由 404 |
 | `security-alert` 必须落地 `security-extra` | 历史上为零依赖死 feature，导致 device-binding 单独启用编译失败 |
-| MSRV | Cargo.toml 声明 1.85，但兄弟生态 crate（oxcache / dbnexus / confers / sdforge / limiteron / inklog / trait-kit 的 rc 线，rc.7–rc.10）要求 rustc ≥1.97.1——实际开发工具链需按后者 |
+| MSRV | 1.97.1（`Cargo.toml` 的 `rust-version`）——兄弟生态 crate（oxcache / dbnexus / confers / sdforge / limiteron / inklog / trait-kit 的 rc 线，rc.7–rc.10）要求 rustc ≥1.97.1，声明取该值；CI 矩阵 MSRV 腿与 `clippy.toml` 的 `msrv` 同值，由 `msrv_guard` 守卫测试断言 |
 
 ---
 
@@ -404,7 +404,9 @@ EXAMPLE_INTERNAL_API_KEY=$(openssl rand -hex 16) bash scripts/e2e_run.sh
   （`cfg!(debug_assertions)`）下为软警告（login 涉及 argon2/bcrypt，debug 下
   P99 ~1.1s 不达标属预期），release 构建下为硬 panic。release 硬判定需
   外部启动 release 服务并经 `GARRISON_E2E_EXTERNAL_URL/INTERNAL_URL/API_KEY`
-  注入（`RemoteContext::connect_env` 路径）。
+  注入（`RemoteContext::connect_env` 路径）。报告侧同口径：
+  `profile=debug` 的未达标项在 `logs/e2e_final_report.md` 中标 ⚠️ 软警告
+  （`scripts/e2e_analyze.py`），不再与测试判定（通过）矛盾。
 - **perf_login 基线重校准（2026-09-11）**：原测试用单一账号 `perf_user` 以
   并发 100 压测，撞上登录路径的 per-login_id 互斥锁
   （`GarrisonSession::with_login_lock`，TOCTOU 修复，**设计如此**——保护
@@ -414,6 +416,23 @@ EXAMPLE_INTERNAL_API_KEY=$(openssl rand -hex 16) bash scripts/e2e_run.sh
   覆盖。排障方法论存档：wchan 快照定位 futex 群等待 → gdb 符号化调用栈
   锁定 `with_login_lock` → 特性消除实验（minimal vs full 差 90 倍）排除
   中间件嫌疑 → 多用户对照实验证实。
+- **e2e_run.sh 冷构建误报未就绪（2026-10-13）**：就绪预算 30×1s 只覆盖进程
+  启动；首次运行（`target/` 无 `auth_server_serve` 二进制）时 `cargo run`
+  的全量编译超出预算，脚本以「30s 内未就绪」退出，而 `.cargo/config.toml`
+  的 `[term] quiet = true` 抑制 cargo 进度输出、诊断块 stderr 为空，指向
+  错误方向。已拆分为独立 `cargo build` 步骤（失败显式报错）+ 启动/就绪探测；
+  预编译后同一脚本全流程通过。
+- **chaos_redis.sh Sentinel 冷拓扑必失败（2026-10-13）**：Sentinel 只经主库
+  `INFO` 学得副本（默认刷新周期 10s）；compose 全新拉起后立即演练时脚本已
+  暂停主库，Sentinel 以 `-failover-abort-no-good-slave` 中止（副本在旧主
+  unpause 后才出现）。已增注入前 `num-slaves ≥ 1` 等待（≤60s，断言不满足即
+  拒绝注入并显性 fail）；失败/中断分支经 EXIT trap 回收 `garrison-chaos-*`
+  拓扑（移除前采集 Sentinel 日志），不再遗留容器。同日第二处硬化：宿主机
+  事件循环停顿会触发 Sentinel TILT（只收集信息不动作，实测 90s+），而副本
+  提升资格窗口仅 `down_after_period × 10`（`sentinelSelectSlave`，
+  `src/sentinel.c`）——3s 档位的 30s 窗口被检测延迟耗尽后每轮 failover 均
+  abort；compose 的 `down-after-milliseconds` 放宽到 30s（窗口 300s），
+  提升等待 120s → 240s。
 
 ---
 

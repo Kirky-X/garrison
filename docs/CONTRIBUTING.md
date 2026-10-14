@@ -55,7 +55,7 @@ Garrison 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 T
 
 ### 2. 安装 Rust 工具链
 
-Garrison 的 MSRV（Minimum Supported Rust Version）为 **Rust 1.85+**。部分依赖（如 `inventory 0.3`）要求 `edition2024`，需 Rust 1.85+。项目根目录已包含 `rust-toolchain.toml`，执行任何 `cargo` 命令时 rustup 会自动安装对应版本。
+Garrison 需要 **Rust 1.97.1+**：`Cargo.toml` 声明 `rust-version = "1.97.1"`，取自兄弟生态依赖的 rc 线（confers / oxcache / dbnexus / sdforge / limiteron / inklog / trait-kit）各自声明的 `rust-version = "1.97.1"`——即依赖图可满足的最低工具链；低于该版本 `cargo check --locked` 直接报 `rustc ... is not supported by the following packages`。项目根目录的 `rust-toolchain.toml` 只锁 `channel = "stable"`（不锁具体版本），执行 `cargo` 命令时 rustup 按该文件安装 **最新 stable**——因此请用 `rustup update stable` 确保 stable ≥ 1.97.1；CI 的 MSRV 腿另行钉 1.97.1（与 `rust-version` 同值，见 `.github/workflows/ci.yml`）。
 
 如需手动安装/升级：
 
@@ -96,7 +96,7 @@ cargo test --features full
 | 依赖 | 用途 | Debian/Ubuntu 安装命令 |
 |------|------|------------------------|
 | `libssl-dev` | OpenSSL 头文件，供 reqwest / 部分 TLS 后端使用 | `sudo apt-get install libssl-dev` |
-| `pkg-config` | 编译期定位系统库路径，`cargo tarpaulin` 必需 | `sudo apt-get install pkg-config` |
+| `pkg-config` | 编译期定位系统库路径（构建链需要） | `sudo apt-get install pkg-config` |
 
 > **macOS 用户**：通常预装 OpenSSL，如遇问题可执行 `brew install openssl pkg-config`。
 > **Windows 用户**：建议使用 MSYS2 或 vcpkg 安装对应库。
@@ -299,14 +299,17 @@ cargo doc --no-deps --features full
 
 Garrison 要求测试覆盖率 **≥ 85% 行覆盖率**（CI 门禁 `cargo llvm-cov --features "full" --fail-under-lines 85`；当前约 95.8%）。新增代码不得使总覆盖率下降。分模块的期望值见下表。
 
-使用 `cargo-tarpaulin` 生成覆盖率报告：
+使用 `cargo-llvm-cov` 生成覆盖率报告（与 CI 同一工具，口径一致）：
 
 ```bash
-# 安装 tarpaulin（仅需一次）
-cargo install cargo-tarpaulin
+# 安装（仅需一次；llvm-cov 依赖工具链的 llvm-tools 组件）
+cargo install cargo-llvm-cov
+rustup component add llvm-tools-preview
 
-# 生成 Lcov 格式覆盖率报告
-cargo tarpaulin --features "default,db-sqlite" --lib --out Lcov
+# 生成本地覆盖率报告并复用 CI 门禁阈值（行覆盖率 < 85% 时非零退出）
+cargo llvm-cov --features "full" --fail-under-lines 85
+
+# 需要 Lcov 报告（如上传 Codecov）时：追加 --lcov --output-path lcov.info
 ```
 
 覆盖率要求细则：

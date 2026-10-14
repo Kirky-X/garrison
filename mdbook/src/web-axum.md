@@ -6,10 +6,10 @@ axum 是 Garrison 的首选 Web 框架适配（0.1.0 起支持），通过 `web-
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.2", features = ["web-axum"] }
+garrison = { version = "0.9.0-rc.3", features = ["web-axum"] }
 ```
 
-> 注：当前版本为 pre-release（0.9.0-rc.2），`version = "0.9"` 不会匹配它——Cargo 要求显式写出完整 pre-release 版本号；待 0.9.0 正式发布后可再改为 `"0.9"`。
+> 注：当前版本为 pre-release（0.9.0-rc.3），`version = "0.9"` 不会匹配它——Cargo 要求显式写出完整 pre-release 版本号；待 0.9.0 正式发布后可再改为 `"0.9"`。
 
 `web-axum` 启用 `axum`（`tokio` + `http1` feature），不引入 default features 以减少依赖。
 

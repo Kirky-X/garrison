@@ -2,10 +2,10 @@
 
 > Garrison 是面向 Rust 生态的身份认证鉴权框架。
 >
-> - 版本：0.9.0-rc.3（发布候选，开发验证中：统一错误模型 request-id/Retry-After + 字段静态加密 + WebAuthn/Passkey + 密码找回 + MFA/step-up 编排 + OIDC back-channel logout + 多租户强化 + 参考部署安全基线收紧）
+> - 版本：0.9.0-rc.3（发布候选，2026-10-14：统一错误模型 request-id/Retry-After + 字段静态加密 + WebAuthn/Passkey + 密码找回 + MFA/step-up 编排 + OIDC back-channel logout + 多租户强化 + 参考部署安全基线收紧）
 > - 运行时：tokio 1.x
 > - Web 适配：axum 0.8 / actix-web 4 / warp 0.4
-> - 存储：dbnexus 0.6（SQLite / PostgreSQL / MySQL / DuckDB + auto-migrate）+ Repository 层（13 trait + `Dbnexus*Repository` 实现，tenant_id 隔离）。例外与补口：`app_user_identifier`（登录标识防重）以 `(id_type, id_value)` 为全局主键，租户维度经 `find_owner_in_tenant` 租户作用域回查——注册唯一约束冲突时同租户返回 `Taken { by_user_id }`、命中他租户行返回中性 `Registered`（不泄露他租户 user_id）；找回密码（`account-password-reset`）签发 token 时写入 code-tenant 绑定，reset 校验请求租户与签发租户一致（绑定缺失 fail-closed 拒绝）
+> - 存储：dbnexus 0.6（SQLite / PostgreSQL / MySQL + auto-migrate；`migrations/duckdb/` 保留四方言迁移文件，但 garrison 无 `db-duckdb` feature，`src/` 内不存在 DuckDB 代码路径，用户无法选择该后端）+ Repository 层（13 trait + `Dbnexus*Repository` 实现，tenant_id 隔离）。例外与补口：`app_user_identifier`（登录标识防重）以 `(id_type, id_value)` 为全局主键，租户维度经 `find_owner_in_tenant` 租户作用域回查——注册唯一约束冲突时同租户返回 `Taken { by_user_id }`、命中他租户行返回中性 `Registered`（不泄露他租户 user_id）；找回密码（`account-password-reset`）签发 token 时写入 code-tenant 绑定，reset 校验请求租户与签发租户一致（绑定缺失 fail-closed 拒绝）
 > - 缓存：oxcache 0.5（L1 内存 + L2 redis，per-entry TTL + ttl_sync 查询）
 > - License：Apache-2.0
 > 配置相关字段说明详见 [⚙️ 配置指南](./CONFIGURATION.md)；开发规范详见 [🛠️ 开发规范](./DEVELOPMENT.md)。
@@ -117,7 +117,7 @@ graph TB
 
     subgraph InfraLayer["基础设施"]
         oxcache[oxcache 0.5<br/>L1 内存 + L2 redis]
-        dbnexus[dbnexus 0.6<br/>SQLite / PostgreSQL / MySQL / DuckDB + auto-migrate]
+        dbnexus[dbnexus 0.6<br/>SQLite / PostgreSQL / MySQL + auto-migrate]
         sdforge[sdforge 0.5<br/>声明式路由]
         trait-kit[trait-kit 0.5<br/>typestate DI]
     end
@@ -274,7 +274,7 @@ graph LR
     BS --> BD
     BLD --> BI
     BD --> oxcache[oxcache 0.5<br/>L1 内存 + L2 redis]
-    BD --> dbnexus[dbnexus 0.6<br/>SQLite / PostgreSQL / MySQL / DuckDB]
+    BD --> dbnexus[dbnexus 0.6<br/>SQLite / PostgreSQL / MySQL]
 ```
 
 ### trait 职责说明

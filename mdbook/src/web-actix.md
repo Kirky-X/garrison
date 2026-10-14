@@ -6,11 +6,11 @@ actix-web 适配在 0.3.0 新增，与 axum 适配对齐，通过 `web-actix` fe
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.2", features = ["web-actix"] }
+garrison = { version = "0.9.0-rc.3", features = ["web-actix"] }
 actix-web = "4"
 ```
 
-> 注：当前版本为 pre-release（0.9.0-rc.2），`version = "0.8"` 不会匹配它——Cargo 要求显式写出完整 pre-release 版本号；待 0.9.0 正式发布后可再改为 `"0.9"`。
+> 注：当前版本为 pre-release（0.9.0-rc.3），`version = "0.9"` 不会匹配它——Cargo 要求显式写出完整 pre-release 版本号；待 0.9.0 正式发布后可再改为 `"0.9"`。
 
 `web-actix` 启用 `actix-web`（default-features = false），不引入额外默认依赖。
 

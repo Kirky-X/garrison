@@ -182,7 +182,7 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 | `passwordless.enabled` | `bool` | `false` | Passwordless 用途准入；关闭时该用途的注册/认证显性拒绝 |
 | `second_factor.enabled` | `bool` | `false` | 2FA 二次认证用途准入（完整 MFA 编排归 R09）；2FA 接线点经 `stp::mfa::webauthn_factor::register_webauthn_factor` 注册 |
 
-**Cargo feature**：`protocol-webauthn`（依赖 webauthn-rs 0.5，构建需 rustc ≥ 1.88）。
+**Cargo feature**：`protocol-webauthn`（依赖 webauthn-rs 0.5；其 rustc ≥ 1.88 要求已低于本仓 MSRV 1.97.1，工具链口径见 [DEVELOPMENT.md](DEVELOPMENT.md)）。
 
 ### 2.11 MFA/step-up 编排配置（mfa，R09）
 
@@ -223,7 +223,7 @@ recovery_misuse_tolerance = 0       # 恢复码误用豁免额度（默认 0，�
 |--------|------|--------|----------|------|
 | `enable_jwt_revocation` | `bool` | `false` | `GARRISON_ENABLE_JWT_REVOCATION` | 启用 JWT 撤销黑名单：`logout` / `kickout` 时将 `jti` 写入 DAO（TTL = 剩余有效期），`check_login_stateless` 验签后前置检查，已撤销返回 `TokenRevoked`；仅 `protocol-jwt` + `token_style="jwt"` 时生效 |
 | `allow_stateless_jwt_no_revocation` | `bool` | `false` | `GARRISON_ALLOW_STATELESS_JWT_NO_REVOCATION` | 显式风险接受：允许 `token_style="jwt"` + `JwtMode::Stateless` + 不启用撤销的组合（不可吊销的永久 JWT 凭证；`jwt_mode` 为代码注入的 `JwtMode` 枚举，非配置字段）；正常部署应使用 `enable_jwt_revocation=true` 或 `JwtMode::Mixin` |
-| `rate_limit_backend` | `String` | `"memory"` | `GARRISON_RATE_LIMIT_BACKEND` | 限流后端（`memory` / `redis`）；`redis` 需 `rate-limit-redis` Cargo feature，连接 URL 取 `GARRISON_REDIS_URL`，未知值配置报错（fail-closed） |
+| `rate_limit_backend` | `String` | `"memory"` | `GARRISON_RATE_LIMIT_BACKEND` | 限流后端选择（`memory` / `redis`）；`redis` 需 `rate-limit-redis` Cargo feature，连接 URL 取 `GARRISON_REDIS_URL`（缺失/空值拒绝启动），未知值拒绝启动（fail-closed）。**语义边界（如实说明）**：该字段当前仅作配置占位与可观测性标记，不驱动实现切换——限流实现统一跟随 `GarrisonDao` 后端（`GarrisonDaoDistributedLimiter`）；分布式限流需部署方自备 Redis 后端 DAO（oxcache 的 `with_redis_config` 当前仅存储配置，见 `src/dao/oxcache_impl.rs` 的 M4 注记），参考部署（auth_server）的 KV 为进程内 oxcache，多实例限流计数不共享 |
 
 ---
 
@@ -565,15 +565,26 @@ GARRISON_REDIS_URL=redis://127.0.0.1:6379/0
 
 ## 六点五、auth_server 二进制环境变量（src/bin/auth_server.rs）
 
+经 confers 派生宏从 `GARRISON_*` 读取（`#[config(env_prefix = "GARRISON_")]`，字段名大写映射）。容器部署的逐项注意见 [🚀 部署指南 · 运行环境变量（容器）](./DEPLOYMENT.md#运行环境变量容器)。
+
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
 | `GARRISON_EXTERNAL_PORT` / `GARRISON_INTERNAL_PORT` | 8080 / 8081 | 外网 / 内网监听端口 |
+| `GARRISON_EXTERNAL_BIND` / `GARRISON_INTERNAL_BIND` | **127.0.0.1** | 外网 / 内网绑定地址（secure-by-default，仅本机可达；容器内须设 `0.0.0.0` 才能被端口映射，镜像已内置该 ENV）。仅接受 IPv4/IPv6 字面量，非法值拒绝启动（fail-closed）。缺省回环由 bin 提供——库层 `AuthServerConfig::default()` 仍为 `0.0.0.0` |
+| `GARRISON_TRUSTED_PROXIES` | 空（不信任任何 XFF） | 可信代理 IP 列表（逗号分隔）。仅部署在可信反代之后才配置；配置后 XFF 解析（限速键 / 客户端 IP）才启用。仅接受回环 / RFC 1918 / link-local / IPv6 ULA，非法或公网值拒绝启动 |
 | `GARRISON_RATE_LIMIT` | 100 | 外网每 IP 限速（必须 > 0，0 拒绝启动） |
-| `GARRISON_INTERNAL_API_KEY` | 无（必填） | 内网 API Key，缺失或为空时 fail-closed 拒绝启动 |
-| `GARRISON_EXTERNAL_LOGIN_ENABLED` | **false** | **是否启用外网登录端点**。框架 login 不校验凭证（Sa-Token 模型：业务层先验密码、框架只签发会话），默认对 `POST /api/v1/auth/login` 返回 404（secure-by-default）。业务方注入凭证校验后才设为 `true`；开启时启动输出 warn 提醒 |
+| `GARRISON_INTERNAL_API_KEY` | 无（必填） | 内网 API Key，缺失或为空时 fail-closed 拒绝启动；长度下限由库层 `MIN_INTERNAL_API_KEY_LEN`（32 字节）统一强制 |
+| `GARRISON_MAX_LOGIN_COUNT` | **10** | 同账号最大并发会话数（超出踢出最早登录的会话）；显式传 `0` = 不限制（覆盖框架 `default_config()` 的 `0`） |
+| `GARRISON_SEED_PRIMARY_AMR` | **true** | 登录是否向会话播种主认证因子（`amr=["pwd"]` / AAL 1 / `auth_time`）。安全敏感部署建议显式 `false`——参考部署 login 不校验凭证，默认播种会断言一次从未发生的密码认证，误导下游 step-up 判定 |
+| `GARRISON_EXTERNAL_LOGIN_ENABLED` | **false** | **是否启用外网登录端点**。框架 login 不校验凭证（Sa-Token 模型：业务层先验密码、框架只签发会话），默认对 `POST /api/v1/auth/login` 返回 404（secure-by-default）。业务方注入凭证校验后才设为 `true`；仅接受 `true`/`false`（大小写不敏感），非法值拒绝启动 |
+| `GARRISON_EXTERNAL_LOGIN_ACK` | 无（条件必填） | 开启外网登录且外网绑定为非回环地址时的显式风险确认：取值必须精确为 `i-understand-no-credential-check`，缺失或不匹配拒绝启动（fail-closed） |
 | `GARRISON_STRICT_SECURITY` | **true** | 严格安全档：内网 API Key 长度下限（库层 `MIN_INTERNAL_API_KEY_LEN` = 32 字节）与外网登录暴露未 ACK 均在启动期由库层 `AuthServerConfig::validate()` 拒绝（早于建库与迁移）。`false` 仅作为密钥尚未轮换时的一次性逃生阀，同条件降级为库层告警。本路径经 confers 只接受 `true`/`false`（大小写不敏感），非法值拒绝启动（库层 `AuthServerConfig::default()` 读同名变量时语义不同：非法值告警后回退缺省 `false`） |
+| `GARRISON_FIELD_ENCRYPTION_KEYS` | 无（`field-encryption` feature 启用时必填） | 落库敏感字段静态加密密钥表（逗号分隔 `key_id:hex64`，hex64 = 32 字节 AES-256 钥材，首项为主钥）；feature 启用但未配置即拒绝启动（fail-closed）。garrison-cli 的同名变量用作 `change-key` / `check-key` 的密钥来源 |
+| `GARRISON_FIELD_ENCRYPTION_TENANT` | `default` | 字段加密 AAD 租户段 |
+| `GARRISON_WORKER_THREADS` | CPU 核数 | Tokio worker 线程数 |
+| `GARRISON_MAX_BLOCKING_THREADS` | 512 | Tokio blocking 线程上限 |
 
-对应库级配置：`AuthServerConfig::external_login_enabled`（`with_external_login_enabled(bool)`）。
+对应库级配置：`AuthServerConfig::external_login_enabled`（`with_external_login_enabled(bool)`）。另有库层（`AuthServerConfig` / `GarrisonAuthServer`）读取的 `GARRISON_HEALTH_DETAILS`、`GARRISON_API_KEY_LOCKOUT_THRESHOLD` / `GARRISON_API_KEY_LOCKOUT_WINDOW_SECS`、`GARRISON_RATE_LIMIT_BACKEND`，同样列入上述部署指南表格。
 
 ---
 

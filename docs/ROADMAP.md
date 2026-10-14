@@ -51,7 +51,7 @@
 | 0.8.1 | ✅ 已完成 | 2026-07-24 | 审计日志 token 泄漏修复（CWE-532）：6 类事件 live token 截断 + TokenRefresh 内置黑名单 + TempCredential 仅记 value_len + SAML 64KB 输入上限 |
 | 0.9.0-rc.1 | ✅ 已完成 | 2026-08-25 | 自研库特性吸收 + 依赖批量升级（oxcache 0.5 / dbnexus 0.6 / sdforge 0.5 / trait-kit 0.5 / confers 0.6 / limiteron 0.3）+ 配置增强特性（config-yaml/audit/consul/etcd/distributed/schema）+ 数据库增强（db-sharding/replica/saga）+ 防火墙增强（gcra/tower/quota/admission/event/monitoring/parallel）+ 协议域统一重命名（secure-httpbasic/httpdigest → protocol-*）+ i18n 硬编码修复 + 函数覆盖率 89.87% → 92.77% |
 | 0.9.0-rc.2 | ✅ 已完成 | 2026-08-26 | fail-closed 安全加固：`check_api_key` / `check_abac_with_policy` 缺依赖时拒绝放行而非默认放行；防火墙自动装配；`session::dao` crate 内可见性扩展；`firewall_hook_injected` 标记 |
-| 0.9.0-rc.3 | 🚧 开发验证 | 未发布（2026-10） | 安全审计整改批次 R01–R18：统一错误模型（request-id / Retry-After / 模块前缀码）+ Argon2 并发令牌池 + 字段静态加密（AES-256-GCM）+ WebAuthn/Passkey + 密码找回 + MFA/step-up 编排基座 + OIDC back-channel logout + OIDC discovery/JWKS 多 kid 轮换 + Refresh 重用三级分类 + 多租户强化（会话-租户绑定/标识符注册表/设备接口）+ Set-Cookie 单一构建点 + garrison-cli 运维面 + 参考部署安全基线收紧 |
+| 0.9.0-rc.3 | ✅ 已完成 | 2026-10-14 | 安全审计整改批次 R01–R18：统一错误模型（request-id / Retry-After / 模块前缀码）+ Argon2 并发令牌池 + 字段静态加密（AES-256-GCM）+ WebAuthn/Passkey + 密码找回 + MFA/step-up 编排基座 + OIDC back-channel logout + OIDC discovery/JWKS 多 kid 轮换 + Refresh 重用三级分类 + 多租户强化（会话-租户绑定/标识符注册表/设备接口）+ Set-Cookie 单一构建点 + garrison-cli 运维面 + 参考部署安全基线收紧 |
 | 1.0.0 | 📋 待规划 | 2027 Q2 | 稳定版 |
 
 ---
@@ -169,7 +169,7 @@ PATCH 版本，聚焦于 0.2.0 的 bug 修复与协议层稳定性优化，不�
 
 - ✅ OpenTelemetry OTLP 分布式追踪（`otlp` feature，OTLP gRPC 导出）
 - ✅ gRPC 鉴权拦截器（`grpc` feature，`tonic::Interceptor` 实现）
-- ✅ 异常消息国际化（`i18n` feature，fluent-rs 中英文切换）
+- ✅ 异常消息国际化（fluent-rs 中英文切换，基础层无条件编译）
 - ✅ Prometheus 指标（`metrics-prometheus` feature）
 
 #### 已知限制（0.3.0）
@@ -383,7 +383,7 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 | E-002 | PasswordPolicyEngine | `PasswordPolicyRule` trait + `PasswordPolicyEngine` + `PasswordPolicyContext`；6 个核心规则（长度/复杂度/历史/字典/用户名相似/序列）+ 6 个扩展规则（重复字符/键盘模式/日期/常见密码/上下文敏感/唯一字符数） | ✅ 已完成 | `19dd442` `92edce5` `b00c2c2` |
 | E-003 | UserLockoutStrategy + GarrisonFirewallStrategy | `UserLockoutConfig` + `WaitStrategy` + `LockoutState`；`UserLockoutStrategy` 基于用户的登录锁定；`GarrisonFirewallStrategy` 整合到 GarrisonFirewall 框架；**破坏性**：`FirewallContext.login_id` `i64`→`String` | ✅ 已完成 | `644e78d` `09d1556` `527a19b` |
 | E-004 | AuthenticationFlow DSL | `AuthStep` enum + `AuthenticationFlow` + `AuthContext` + `AuthResult`；`FlowBuilder` 流式构建；`FlowRegistry` inventory 编译期注册；`AuthExecutor` 核心执行器（5 字段约束）；`SocialProvider` + `SsoServer` 步骤扩展；内置 5 个 flow | ✅ 已完成 | `cad6560` `d5c5c90` `a9b28c8` `4e0f67c` `dae13c2` `31cdfd1` |
-| C-001 | 社交登录异常消息 fluent i18n | `loc!` 宏（`#[cfg(feature = "i18n")]` 分支）；`translate_detail` 函数；38 个 ftl key（wechat 12 + alipay 8 + keycloak 18）中英文双语；46 个错误构造点接入 | ✅ 已完成 | `cda9338` |
+| C-001 | 社交登录异常消息 fluent i18n | `loc!` 宏（i18n 基础层无条件编译）；`translate_detail` 函数；38 个 ftl key（wechat 12 + alipay 8 + keycloak 18）中英文双语；46 个错误构造点接入 | ✅ 已完成 | `cda9338` |
 | D-001 | AccountMetrics Prometheus 指标 | `AccountMetrics` struct（4 个指标：credential_verify_duration / policy_validate_duration / lockout_triggered_total / authflow_execute_duration）；feature 未启用时 `type = ()` | ✅ 已完成 | `f1dac15` |
 
 #### 技术债清理
@@ -530,9 +530,9 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 
 ---
 
-### v0.9.0-rc.3 安全审计整改批次（🚧 开发验证中）
+### v0.9.0-rc.3 安全审计整改批次（✅ 已完成，2026-10-14）
 
-发布日期：未发布（2026-10 开发验证中）
+发布日期：2026-10-14（随 0.9.0-rc.3 发布）
 
 以外部安全审计结论驱动的大规模加固批次 R01–R18，已合入 main、待随 rc.3 发布：
 
@@ -553,6 +553,12 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 - ✅ 常量时间比较统一原语收口（ADR-0003 决策 2）
 
 **里程碑意义**：聚焦 fail-closed 语义、静态加密、多租户隔离、协议完整运维面与参考部署基线收紧。逐项细节见 [docs/CHANGELOG.md](CHANGELOG.md) · 0.9.0-rc.3。
+
+#### 已知限制（0.9.0-rc.3）
+
+- `rate_limit_backend` 配置（`GARRISON_RATE_LIMIT_BACKEND`）当前仅作配置占位 + 启动期 fail-closed 校验（未知值 / `redis` 缺 `GARRISON_REDIS_URL` 拒绝启动），**不驱动限流实现切换**——限流实现统一跟随 `GarrisonDao` 后端（`GarrisonDaoDistributedLimiter`），参考部署（auth_server）的 KV 为进程内 oxcache，多实例限流计数不共享。分布式限流候选方向（产品决策项，未排期）：
+  - **A）auth_server 整 DAO 切 oxcache Redis 后端**：会话 / token / 锁定键随迁 Redis（多实例会话共享随之可用），需产品决策数据落点 + `_sync` 原子方法迁移（oxcache `with_redis_config` 当前仅存储配置，见 `src/dao/oxcache_impl.rs` M4 注记）；
+  - **B）限流器单独接 Redis 存储**：limiteron `Storage` 适配 + `RateLimitStrategy` 构造接线 + 多实例语义专项验证，会话数据落点不变。
 
 ---
 

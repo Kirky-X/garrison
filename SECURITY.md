@@ -24,7 +24,7 @@ Garrison 仅对已发布版本提供安全修复，开发分支（`main`）不�
 
 | 版本 | 支持状态 | 说明 |
 |------|---------|------|
-| 0.9.x（当前 `0.9.0-rc.3`） | 🚧 pre-release | rc 阶段，接受安全反馈与修复 |
+| 0.9.x（当前 `0.9.0-rc.3`） | 🚧 pre-release | 发布候选（2026-10-14），接受安全反馈与修复 |
 | 0.8.x | ✅ 维护中 | 当前稳定版本，接受安全修复 |
 | 0.7.x | 🔶 有限维护 | 仅修复严重漏洞 |
 | < 0.7 | ❌ 不支持 | 不提供安全修复 |
@@ -170,7 +170,7 @@ Garrison 在 CI 与发布流程中内置多层供应链与安全门禁（发布�
 **依赖与发布门禁**：
 
 - **`cargo deny check`**（`deny.toml`）：安全公告、许可证、禁用依赖与来源校验，CI 每次 PR 执行（`ci.yml` deny 步骤），发布门禁要求 0 failures。
-- **`cargo audit`**：RustSec 安全公告扫描，发布门禁要求 0 CRITICAL；`deny.toml` 中的忽略项均注明理由（如 RUSTSEC-2023-0071，见下文[已知安全考量](#️-已知安全考量)）。
+- **`cargo audit`**：RustSec 安全公告扫描，**本地发布 precheck**（`scripts/release.sh`，要求 0 CRITICAL），不在 CI 中——CI 侧同等漏洞检查由上面的 `cargo-deny` advisory 覆盖（`.cargo/audit.toml` 与 `deny.toml` 的忽略项保持一致）；`deny.toml` 中的忽略项均注明理由（如 RUSTSEC-2023-0071，见下文[已知安全考量](#️-已知安全考量)）。
 - **`cargo vet`**（`supply-chain/`）：供应商依赖人工审核记录——自研库（CodeNexus 系）已建立 `safe-to-deploy` 审核条目，第三方依赖豁免清单渐进收紧；审核记录公开可复核（众包审计背书）。
 - **SBOM（CycloneDX）**：`security.yml` 全特性面生成 `garrison.cdx.json`（覆盖 optional 依赖），并作为 Release 资产附加（`release.yml`），下游可审计依赖构成。
 - **Artifact Attestations**：Release 资产生成 SLSA 构建溯源（`actions/attest-build-provenance`），可用 `gh attestation verify` 验证产物来自本仓库 CI。

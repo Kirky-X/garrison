@@ -56,6 +56,12 @@ scripts/chaos_redis.sh sentinel   # 仅场景 4（自动拉起 chaos profile 演
 
 脚本在注入前预置**金丝雀值**并在恢复后断言（场景 3 验证 `/data` 卷持久化
 ——重启不丢数据）；中断时经 `trap` 兜底解除暂停，不留 paused 遗留状态。
+场景 4 额外在注入前等待 Sentinel 学得副本（`num-slaves ≥ 1`）：Sentinel 只能
+经主库 `INFO` 发现副本（默认刷新周期 10s），冷拓扑（compose 刚拉起）下不等候
+即注入故障，会把「无副本可提升」的竞态记成演练失败
+（`-failover-abort-no-good-slave`）。演练拓扑（`garrison-chaos-*`）在成功、
+失败与中断三种路径下均由脚本回收；失败/中断时先采集 Sentinel 日志（最后 30 行）
+再移除容器，既不留遗留容器、也保留排障证据。
 
 ### 2.3 输出与退出码
 
@@ -79,7 +85,7 @@ scripts/chaos_redis.sh sentinel   # 仅场景 4（自动拉起 chaos profile 演
 | 判读项 | 标准 |
 |--------|------|
 | 容器健康 | 60 秒内回到 `health=healthy`（脚本自动断言，2 秒轮询） |
-| 故障切换（场景 4） | 复本在 120 秒内被 Sentinel 提升为主（sdown→选举→提升全链路）；提升节点可写；**切换前经复制确认的金丝雀值可读**（脚本先等复制到达再注入故障，消除异步复制竞态）；旧主库恢复后 60 秒内被降级为副本重新入列 |
+| 故障切换（场景 4） | 复本在 240 秒内被 Sentinel 提升为主（sdown→选举→提升全链路；`down-after-milliseconds` 取 30s，宿主机停顿触发的 TILT 会推迟检测）；提升节点可写；**切换前经复制确认的金丝雀值可读**（脚本先等复制到达再注入故障，消除异步复制竞态）；注入前另经 `num-slaves ≥ 1` 断言确认 Sentinel 已学得副本（冷拓扑竞态）；旧主库恢复后 60 秒内被降级为副本重新入列 |
 | 协议可用 | `PING → PONG`；`SET`/`GET` 往返成功（脚本自动断言） |
 | 数据持久化 | 场景 3 金丝雀值跨重启保留（`/data` 卷生效；脚本自动断言） |
 | 应用侧重连 | 缓存/限速客户端自动重建连接池，无需应用重启；日志中出现重连成功记录，命中率回升 |
@@ -93,8 +99,12 @@ scripts/chaos_redis.sh sentinel   # 仅场景 4（自动拉起 chaos profile 演
 需独立演练环境。
 
 > **演练拓扑与生产差异**：场景 4 使用单 Sentinel + quorum 1（compose
-> `chaos` profile，提速与资源考虑）。生产部署至少 3 Sentinel + quorum 2——
-> 单 Sentinel 无法形成选举多数派的安全性，生产判读时应按生产拓扑重演。
+> `chaos` profile，提速与资源考虑），`down-after-milliseconds` 放宽到 30s
+> 以吸收宿主机事件循环停顿（Sentinel TILT 模式下只收集信息不动作，实测
+> 停顿 90s+ 会把 3s 档位的提升资格窗口 `down_after × 10 = 30s` 耗尽，使
+> failover 以 `-failover-abort-no-good-slave` 中止）。生产部署至少 3 Sentinel
+> 配 quorum 2——单 Sentinel 无法形成选举多数派的安全性，生产判读时应按
+> 生产拓扑重演。
 
 ## 4. 环境适配
 

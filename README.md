@@ -3,7 +3,7 @@
 
 <img src="docs/assets/logo.png" alt="Garrison Logo" width="200">
 
-[![CI Status](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml/badge.svg)](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml) [![Version](https://img.shields.io/crates/v/garrison.svg)](https://crates.io/crates/garrison) [![Docs.rs](https://docs.rs/garrison/badge.svg)](https://docs.rs/garrison) [![Downloads](https://img.shields.io/crates/d/garrison.svg)](https://crates.io/crates/garrison) [![License](https://img.shields.io/crates/l/garrison.svg)](LICENSE) [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/) [![Coverage](https://img.shields.io/badge/coverage-95%25%2B-brightgreen.svg)](https://github.com/Kirky-X/garrison)
+[![CI Status](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml/badge.svg)](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml) [![Version](https://img.shields.io/crates/v/garrison.svg)](https://crates.io/crates/garrison) [![Docs.rs](https://docs.rs/garrison/badge.svg)](https://docs.rs/garrison) [![Downloads](https://img.shields.io/crates/d/garrison.svg)](https://crates.io/crates/garrison) [![License](https://img.shields.io/crates/l/garrison.svg)](LICENSE) [![Rust](https://img.shields.io/badge/rust-1.97.1%2B-orange.svg)](https://www.rust-lang.org/) [![Coverage](https://img.shields.io/badge/coverage-95%25%2B-brightgreen.svg)](https://github.com/Kirky-X/garrison)
 
 **中文** | [English](README_EN.md)
 
@@ -93,7 +93,7 @@ async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
 
-要求 Rust 1.85 及以上（MSRV，见 `Cargo.toml` 的 `rust-version`）。
+要求 Rust **1.97.1 及以上**（`Cargo.toml` 的 `rust-version = "1.97.1"`）：依赖面中的兄弟生态 crate（confers / oxcache / dbnexus / sdforge / limiteron / inklog / trait-kit 的 rc 线）各自声明 `rust-version = "1.97.1"`，这是依赖图可满足的最低工具链，低于该版本 `cargo check` 直接拒绝构建（`rustc ... is not supported by the following packages`）；`rust-toolchain.toml` 锁的是 `stable` 通道（不锁具体版本），请确保 stable ≥ 1.97.1。
 
 > 预发布版本需显式写完整版本号，`"0.9"` 无法匹配 prerelease。如需启用全部协议层与安全模块：`features = ["full"]`。
 
@@ -363,7 +363,7 @@ cargo bench --bench garrison_benchmark --features full --locked -- --quick
 
 ### 📊 测试规模
 
-约 5901 个测试（lib 单元 5361 + 验收 / 集成 416 + 示例级 116 + 过程宏 8；lib 与验收数为 `cargo test --list` 实测，示例与过程宏为属性静态计数）与 6 个 Criterion 基准场景；覆盖率门禁为行覆盖率不低于 85%（当前约 95.8%）。统计口径与明细见 [🧪 测试场景矩阵 · 测试规模统计](docs/TEST_SCENARIOS.md#-测试规模统计)。
+约 5971 个测试（lib 单元 5431 + 验收 / 集成 416 + 示例级 116 + 过程宏 8；lib 与验收数为 `cargo test --list` 实测，示例与过程宏为属性静态计数，截至 2026-10-13）与 6 个 Criterion 基准场景；覆盖率门禁为行覆盖率不低于 85%（当前约 95.8%）。统计口径与明细见 [🧪 测试场景矩阵 · 测试规模统计](docs/TEST_SCENARIOS.md#-测试规模统计)。
 
 ---
 
@@ -381,7 +381,7 @@ Garrison 围绕身份认证全生命周期做纵深防护：Argon2id / Bcrypt �
 
 ### ⛓️ 供应链与门禁
 
-CI 与发布流程内置三道供应链门禁：`cargo deny check`（漏洞 / 许可证 / 禁用依赖）、`cargo audit`（RustSec 公告扫描）与 pre-commit gitleaks 私钥扫描；门禁标准与处置细节见 [🔒 安全文档 · 供应链与门禁](SECURITY.md)。
+CI 与发布流程内置两道供应链门禁：`cargo deny check`（RustSec 公告 / 许可证 / 禁用依赖 / 来源校验，`ci.yml` 与 `release.yml` 均执行）与 gitleaks 私钥扫描（pre-commit 覆盖 staged，CI 全量 git history）。`cargo audit` 不在 CI 中——cargo-deny 已覆盖同等漏洞检查，避免维护两份忽略列表；它仅作为本地发布 precheck 由 `scripts/release.sh` 执行。门禁标准与处置细节见 [🔒 安全文档 · 供应链与门禁](SECURITY.md)。
 
 ### 🚨 报告安全漏洞
 
@@ -412,7 +412,7 @@ CI 与发布流程内置三道供应链门禁：`cargo deny check`（漏洞 / �
 
 ### 🛠️ 开发环境
 
-工具链为 Rust 1.85+（`rust-toolchain.toml` 锁定）；提交前运行 `cargo fmt --all -- --check` 与 `cargo clippy --all-targets --all-features -- -D warnings`；提交信息遵循 Conventional Commits（`feat`、`fix`、`docs` 等）。完整环境搭建步骤见 [🤝 贡献指南 · 开发环境搭建](docs/CONTRIBUTING.md#-开发环境搭建)。
+工具链为 Rust 1.97.1+（`rust-toolchain.toml` 锁 `stable` 通道，不锁具体版本；兄弟生态依赖 rc 线要求 ≥ 1.97.1）；提交前运行 `cargo fmt --all -- --check` 与 `cargo clippy --features full --lib --tests -- -D warnings`（不可用 `--all-features`：它同时启用 db-sqlite 与 db-postgres，而 dbnexus 禁止 embedded×server-side 驱动共存，必然 compile_error）；提交信息遵循 Conventional Commits（`feat`、`fix`、`docs` 等）。完整环境搭建步骤见 [🤝 贡献指南 · 开发环境搭建](docs/CONTRIBUTING.md#-开发环境搭建)。
 
 ### 💖 贡献方式
 
@@ -453,7 +453,7 @@ CI 与发布流程内置三道供应链门禁：`cargo deny check`（漏洞 / �
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
-| 0.9.0-rc.3 | 开发验证中 | 安全审计整改 R01–R18：统一错误模型（request-id / Retry-After）/ 字段静态加密 / WebAuthn / 密码找回 / MFA 编排 / back-channel logout / 多租户强化 / garrison-cli |
+| 0.9.0-rc.3 | 2026-10-14 | 安全审计整改 R01–R18：统一错误模型（request-id / Retry-After）/ 字段静态加密 / WebAuthn / 密码找回 / MFA 编排 / back-channel logout / 多租户强化 / garrison-cli |
 | 0.9.0-rc.2 | 2026-08-26 | fail-closed 安全加固（check_api_key / check_abac） |
 | 0.9.0-rc.1 | 2026-08-25 | 验收测试体系 + DAO 原子契约收严 + gRPC async 鉴权层 |
 | 0.8.1 | 2026-07-24 | 审计日志 token 泄漏修复（CWE-532） |

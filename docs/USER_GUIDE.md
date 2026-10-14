@@ -2,7 +2,7 @@
 
 **Garrison** 是面向 Rust 生态的一站式身份认证鉴权框架：登录认证 → 权限校验 → 会话管理 → 路由拦截开箱即用。业务方实现一个 `GarrisonInterface` 回调、注入一个 `GarrisonDao` 存储后端，即可获得完整的认证鉴权能力；全部可选能力（协议层、防火墙、账号安全等）均以独立 feature 门控，编译产物只包含启用的部分。
 
-> 适用版本：0.9.0-rc.3（MSRV 1.85）。本文只讲「怎么用」；架构设计见 [🏗️ 架构文档](ARCHITECTURE.md)，配置项全表见 [⚙️ 配置指南](CONFIGURATION.md)。
+> 适用版本：0.9.0-rc.3（MSRV 1.97.1，`Cargo.toml` 的 `rust-version`）。本文只讲「怎么用」；架构设计见 [🏗️ 架构文档](ARCHITECTURE.md)，配置项全表见 [⚙️ 配置指南](CONFIGURATION.md)。
 
 ## 📋 目录
 
@@ -185,7 +185,7 @@ async fn admin_write() -> &'static str { "ok" }
 
 **统一路由抽象**：`GarrisonRouter` 汇聚路由 → `GarrisonInterceptor` 拦截器 → `GarrisonUtil` 静态 API，三个框架共享同一条链路。
 
-完整可运行示例：[`axum_integration.rs`](../examples/src/web/axum_integration.rs)（258 行完整 Web 应用；`examples/src/bin/axum_integration.rs` 是调用它的 9 行 shim）、[`macro_annotations.rs`](../examples/src/bin/macro_annotations.rs)、[`web_actix_example.rs`](../examples/src/bin/web_actix_example.rs)、[`web_warp_example.rs`](../examples/src/bin/web_warp_example.rs)。
+完整可运行示例：[`axum_integration.rs`](../examples/src/web/axum_integration.rs)（213 行完整 Web 应用；`examples/src/bin/axum_integration.rs` 是调用它的 9 行 shim）、[`macro_annotations.rs`](../examples/src/bin/macro_annotations.rs)、[`web_actix_example.rs`](../examples/src/bin/web_actix_example.rs)、[`web_warp_example.rs`](../examples/src/bin/web_warp_example.rs)。
 
 ---
 
