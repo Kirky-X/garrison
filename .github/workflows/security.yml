@@ -189,9 +189,11 @@ jobs:
                 continue
                 ;;
             esac
-            if gh api -X PUT "repos/$repo/code-scanning/alerts/$num" \
+            # 注意：该端点的可用语义是 PATCH + 空格形 reason（"used in tests"）；
+            # REST 文档的 PUT/JSON 形（dismissal_reason=used_in_tests）实测一律 404。
+            if gh api -X PATCH "repos/$repo/code-scanning/alerts/$num" \
               -f state=dismissed \
-              -f dismissal_reason=used_in_tests \
+              -f dismissed_reason="used in tests" \
               -f dismissal_comment="[$rule] 测试夹具/测试代码（$path:$line，已逐条人工核实）：固定占位密钥与本地化错误文案断言，非真实凭证泄漏；生产路径敏感值由 mask_metadata 与 inklog secret-scan 出站门控覆盖。" \
               --silent; then
               count=$((count + 1))
