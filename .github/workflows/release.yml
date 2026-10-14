@@ -210,17 +210,31 @@ jobs:
       # garrison 依赖 garrison-macros "0.9.0-rc.3"（optional，annotation-macros feature），
       # crates.io 必须先有 garrison-macros 0.9.0-rc.3，否则 cargo publish --package garrison
       # 会因依赖版本约束无法解析而失败。
-      - name: Publish garrison-macros to crates.io
+      - name: Publish garrison-macros to crates.io（幂等：已发布则跳过）
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --package garrison-macros --locked
+        run: |
+          VERSION=$(grep -E '^version = ' Cargo.toml | head -1 | sed -E 's/version = "([^"]+)".*/\1/')
+          # 幂等：crates.io 已有该版本（发布重跑，如后续阶段失败后修复重跑）则跳过，
+          # 避免 "already uploaded" 中断流水线、卡在半发布状态
+          if [ "$(curl -sS -o /dev/null -w '%{http_code}' -H 'User-Agent: garrison-release-publish' "https://crates.io/api/v1/crates/garrison-macros/${VERSION}")" = "200" ]; then
+            echo "garrison-macros ${VERSION} 已在 crates.io，跳过发布"
+          else
+            cargo publish --package garrison-macros --locked
+          fi
       # 等待 crates.io 索引传播（通常几秒，保险起见 sleep 15s 避免 garrison publish 找不到依赖）
       - name: Wait for crates.io index propagation
         run: sleep 15
-      - name: Publish garrison to crates.io
+      - name: Publish garrison to crates.io（幂等：已发布则跳过）
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --package garrison --locked
+        run: |
+          VERSION=$(grep -E '^version = ' Cargo.toml | head -1 | sed -E 's/version = "([^"]+)".*/\1/')
+          if [ "$(curl -sS -o /dev/null -w '%{http_code}' -H 'User-Agent: garrison-release-publish' "https://crates.io/api/v1/crates/garrison/${VERSION}")" = "200" ]; then
+            echo "garrison ${VERSION} 已在 crates.io，跳过发布"
+          else
+            cargo publish --package garrison --locked
+          fi
 
   # 阶段 4：创建 GitHub Release（依赖 crates.io 发布成功，避免半发布不一致）
 
@@ -230,7 +244,10 @@ jobs:
     timeout-minutes: 20
     needs: [version-consistency, publish-crates-io]
     permissions:
-      contents: write # 创建 Release 与 Build Provenance 需要
+      contents: write # 创建 Release（SBOM 资产）需要
+      id-token: write # Attest build provenance：OIDC 换取 Sigstore 签名证书
+      attestations: write # 持久化 attestation 记录
+      artifact-metadata: write # 创建 artifact 存储记录（actions/attest v4 要求）
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
