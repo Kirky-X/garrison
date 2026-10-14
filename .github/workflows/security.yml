@@ -145,6 +145,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: dismiss-alerts-${{ github.run_id }}
+      cancel-in-progress: false
     permissions:
       contents: read
       security-events: write
@@ -153,10 +156,20 @@ jobs:
     steps:
       - name: Dismiss open alerts classified as test fixtures (used_in_tests)
         run: |
-          set -euo pipefail
+          set -uo pipefail
           repo="${{ github.repository }}"
+          echo "=== GET 诊断（状态行 + 令牌权限头）==="
+          gh api -i "repos/$repo/code-scanning/alerts?state=open&per_page=2" 2>&1 | grep -E "^HTTP|x-github-token-permissions|message" | head -6 || true
           alerts="$(gh api "repos/$repo/code-scanning/alerts?state=open&per_page=100" \
-            --jq '.[] | [.number, .rule.id, .most_recent_instance.location.path, .most_recent_instance.location.start_line] | @tsv')"
+            --jq '.[] | [.number, .rule.id, .most_recent_instance.location.path, .most_recent_instance.location.start_line] | @tsv' 2>&1)" || {
+            echo "GET 失败，原样输出："; echo "$alerts" | tail -5; exit 1; }
+          first="$(echo "$alerts" | head -1 | cut -f1)"
+          if [ -n "$first" ]; then
+            echo "=== PUT 诊断（首条告警 #$first，含状态行与响应体）==="
+            gh api -i -X PUT "repos/$repo/code-scanning/alerts/$first" \
+              -f state=dismissed -f dismissal_reason=used_in_tests \
+              -f dismissal_comment="诊断：测试夹具占位密钥（非真实凭证）。" 2>&1 | head -30 || true
+          fi
           count=0
           while IFS=$'\t' read -r num rule path line; do
             [ -n "$num" ] || continue
@@ -167,12 +180,15 @@ jobs:
                 continue
                 ;;
             esac
-            gh api -X PUT "repos/$repo/code-scanning/alerts/$num" \
+            if gh api -X PUT "repos/$repo/code-scanning/alerts/$num" \
               -f state=dismissed \
               -f dismissal_reason=used_in_tests \
               -f dismissal_comment="[$rule] 测试夹具/测试代码（$path:$line，已逐条人工核实）：固定占位密钥与本地化错误文案断言，非真实凭证泄漏；生产路径敏感值由 mask_metadata 与 inklog secret-scan 出站门控覆盖。" \
-              --silent
-            count=$((count + 1))
-            echo "dismissed #$num $rule $path:$line"
+              --silent; then
+              count=$((count + 1))
+              echo "dismissed #$num $rule $path:$line"
+            else
+              echo "FAILED #$num $rule $path:$line"
+            fi
           done <<< "$alerts"
           echo "共豁免 $count 条"
