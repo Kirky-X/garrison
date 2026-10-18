@@ -207,7 +207,7 @@ async fn bw_ac_006_oxcache_memory_backend_works() {
             .await
             .expect("logout 应成功");
         assert!(
-            dao.get(&token_key).await.unwrap().is_none(),
+            dao.get(&key).await.unwrap().is_none(),
             "logout 后 Token-Session 应删除"
         );
     })
