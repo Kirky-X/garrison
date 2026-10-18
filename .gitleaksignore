@@ -22,3 +22,6 @@ e395763cec4dcad25a26ef359512412862e11a57:src/account/credential/totp.rs:generic-
 src/protocol/jwt/handler.rs:private-key:359
 src/oauth2_server/jwks.rs:private-key:139
 src/server/oauth2_routes.rs:private-key:1066
+
+# 2026-10-18 gitleaks 8.30.1 全历史复扫增量补充(src内联夹具/占位，逐条已核实非真实凭据)
+7cfc93f21fbc04492d2c95c09c072fab58b85a07:Cargo.toml:generic-api-key:363
