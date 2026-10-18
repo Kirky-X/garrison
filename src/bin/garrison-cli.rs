@@ -13,6 +13,7 @@
 //! - `user-hash`：生成 Argon2id 密码哈希并输出 env/CLI/YAML 三种配置片段
 //! - `one-time-access-token`：为指定用户签发短时效一次性登录凭据
 //! - `change-key` / `check-key`：字段静态加密的主钥重加密与可解密性校验
+//! - `vacuum-kv`：清理 garrison_kv 表中已过期行（含升级遗留 raw key 行收敛）
 //!
 //! # 用法
 //!
@@ -23,6 +24,7 @@
 use clap::{Parser, Subcommand};
 use garrison::error::{GarrisonError, GarrisonResult};
 use garrison::i18n::translate_detail;
+use garrison::GarrisonDao;
 
 /// garrison-cli 命令行入口。
 #[derive(Parser, Debug)]
@@ -120,6 +122,12 @@ enum Command {
         #[arg(long, default_value = "*")]
         pattern: String,
     },
+    /// 清理 garrison_kv 表中已过期的行（vacuum-kv，不触碰未过期行）
+    VacuumKv {
+        /// 数据库连接 URL（sqlite 文件必须已存在）
+        #[arg(long)]
+        db_url: String,
+    },
 }
 
 fn main() -> GarrisonResult<()> {
@@ -173,6 +181,7 @@ async fn dispatch(command: Command) -> GarrisonResult<()> {
             keys,
             pattern,
         } => run_check_key(db_url, tenant, keys, pattern).await,
+        Command::VacuumKv { db_url } => run_vacuum_kv(db_url).await,
     }
 }
 
@@ -342,6 +351,21 @@ async fn run_check_key(
             report.corrupt.len()
         )));
     }
+    Ok(())
+}
+
+/// vacuum-kv：清理 garrison_kv 表中已过期行（幂等，仅删 `expire_at <= now` 的行，
+/// `expire_at IS NULL` 永久行不动）；亦是会话 key 摘要化升级后遗留 raw key 行的官方收敛工具。
+async fn run_vacuum_kv(db_url: String) -> GarrisonResult<()> {
+    let pool = garrison::dao::init_dbnexus(&db_url).await?;
+    let kv = garrison::dao::DbnexusKvDao::new(pool);
+    kv.ensure_table().await?;
+    let deleted = kv.vacuum_expired().await?;
+    let count = deleted.to_string();
+    println!(
+        "{}",
+        translate_detail("cli-vacuum-kv-report", &[("count", count.as_str())])
+    );
     Ok(())
 }
 
@@ -697,7 +721,8 @@ mod tests {
                 "user-hash",
                 "one-time-access-token",
                 "change-key",
-                "check-key"
+                "check-key",
+                "vacuum-kv"
             ],
             "子命令面必须与运维需求一一对应（help 为 clap 自动附加，不计入）"
         );

@@ -1491,6 +1491,8 @@ cli-check-key-corrupt-row = corrupt-row: {$row}
 cli-check-key-empty-scan-hint =
     scanned = 0 likely means this deployment's KV data is not addressable via --db-url
     (production default keeps KV in process-local oxcache); see module docs.
+cli-vacuum-kv-report = Vacuumed expired KV rows: {$count}
+
 cli-one-time-access-token-issued =
     Issued one-time access token for user '{$user}' (tenant {$tenant}).
 
