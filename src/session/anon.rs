@@ -1,16 +1,20 @@
 //! 匿名 Session 模块（启用 `anonymous-session` feature 后编译）。
 //!
-//! 为未登录用户提供匿名会话支持（购物车、访客浏览等），使用独立 key 空间 `token:session:anon:{token}`
+//! 为未登录用户提供匿名会话支持（购物车、访客浏览等），使用独立 key 空间 `token:session:anon:{sha256(token)}`
 //! 与登录 Session 隔离：login_id 为空字符串，不参与 `login_token_map`。
+use super::sha256_hex;
 use super::{GarrisonSession, TokenSession};
 use crate::constants::DaoKeyPrefix;
 use crate::error::{GarrisonError, GarrisonResult};
 use chrono::Utc;
 use std::collections::HashMap;
 
-/// 生成匿名 Token-Session 的存储 key（格式 `token:session:anon:{token}`）。
+/// 生成匿名 Token-Session 的存储 key（格式 `token:session:anon:{sha256(token)}`）。
+///
+/// 余段为 token 的 SHA-256 摘要：裸 bearer 凭据不得留在落库 key 名（与登录会话同一原则）；
+/// 升级即存量匿名会话一次性失效（旧 raw key 行不再被寻址，客户端重新获取匿名 token）。
 fn anon_token_key(token: &str) -> String {
-    format!("{}session:anon:{}", DaoKeyPrefix::Token, token)
+    format!("{}session:anon:{}", DaoKeyPrefix::Token, sha256_hex(token))
 }
 
 /// 校验匿名 token 输入：拒绝空字符串和超长 token（>128 字节），防止 DoS 和语义混淆。

@@ -17,6 +17,7 @@ use crate::context::tenant::with_default_tenant;
 use crate::core::token::Token;
 use crate::dao::GarrisonDao;
 use crate::manager::GarrisonManager;
+use crate::session::token_key;
 use async_trait::async_trait;
 #[cfg(feature = "listener")]
 use parking_lot::Mutex;
@@ -3176,7 +3177,7 @@ async fn check_and_renew_renews_non_jwt_when_threshold_reached() {
         .await
         .unwrap();
     // 手动将 TTL 缩短到 1 秒（remaining_pct = 10% < 90%）
-    let key = format!("token:session:{}", token);
+    let key = token_key(&token);
     dao.expire(&key, 1).await.unwrap();
     let result = logic.check_and_renew(&token).await.unwrap();
     assert!(result.is_some(), "remaining_pct < threshold 时应触发续签");
@@ -3222,7 +3223,7 @@ async fn check_and_renew_renews_jwt_when_threshold_reached() {
         .await
         .unwrap();
     // 手动将 TTL 缩短到 1 秒（remaining_pct = 10% < 90%）
-    let key = format!("token:session:{}", token);
+    let key = token_key(&token);
     dao.expire(&key, 1).await.unwrap();
     let result = logic.check_and_renew(&token).await.unwrap();
     assert!(
@@ -3242,7 +3243,7 @@ async fn check_login_renews_token_when_threshold_reached() {
         .await
         .unwrap();
     // 手动将 TTL 缩短到 1 秒（remaining_pct = 10% < 90%）
-    let key = format!("token:session:{}", token);
+    let key = token_key(&token);
     dao.expire(&key, 1).await.unwrap();
     let renewed = with_current_token(token.clone(), async {
         with_renewed_token_scope(async {
@@ -3401,9 +3402,7 @@ async fn login_new_device_mode_allows_when_old_session_expired() {
         .unwrap();
 
     // 仅删除 DAO 中的 Token-Session，模拟会话过期（保留 login_token_map 条目）
-    dao.delete(&format!("token:session:{}", token1))
-        .await
-        .unwrap();
+    dao.delete(&token_key(&token1)).await.unwrap();
 
     // 验证前置条件：get_token_by_login_id 仍返回 Some，但 get_token_session 返回 None
     assert_eq!(
@@ -3900,7 +3899,7 @@ async fn check_and_renew_returns_none_for_old_token_after_renewal() {
         .unwrap();
 
     // 缩短 TTL 触发续签
-    let key = format!("token:session:{}", token);
+    let key = token_key(&token);
     dao.expire(&key, 1).await.unwrap();
 
     let result1 = logic.check_and_renew(&token).await.unwrap();
@@ -4118,7 +4117,7 @@ async fn per_token_active_timeout_none_falls_back_to_global() {
     // 不设置 per-token active_timeout（保持 None）
 
     // 手动将 TokenSession 的 last_active_at 设为 5 秒前（超过全局 active_timeout=2）
-    let token_dao_key = format!("token:session:{}", token);
+    let token_dao_key = token_key(&token);
     let json = dao.get(&token_dao_key).await.unwrap().unwrap();
     let mut ts: TokenSession = serde_json::from_str(&json).unwrap();
     ts.last_active_at = Utc::now().timestamp() - 5;

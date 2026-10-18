@@ -210,8 +210,23 @@ pub(crate) fn account_key(login_id: &str) -> String {
 }
 
 /// 生成 Token-Session 的存储 key。
-fn token_key(token: &str) -> String {
-    format!("{}session:{}", DaoKeyPrefix::Token, token)
+///
+/// 余段为 token 的 SHA-256 摘要（64 位小写 hex）：裸 bearer 凭据不得留在落库 key 名
+/// （DB 泄露面下 key 名直读即泄露活跃凭据，CWE 存储凭据面）；升级即存量会话一次性失效
+/// （旧 raw key 行不再被寻址，用户重登录；遗留行由 `vacuum_expired` / `vacuum-kv` 收敛）。
+///
+/// `pub`：跨模块测试与下游集成（含 tests/acceptance 公共 API 用例）经此构造同一 key 格式（键格式单点维护）。
+pub fn token_key(token: &str) -> String {
+    format!("{}session:{}", DaoKeyPrefix::Token, sha256_hex(token))
+}
+
+/// SHA-256 摘要的 64 位小写 hex 编码（不引入 hex crate）。
+fn sha256_hex(input: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(input.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 mod r#impl;
@@ -265,8 +280,27 @@ mod tests {
         let account: AccountSession = serde_json::from_str(&account_json.unwrap()).unwrap();
         assert_eq!(account.login_id, "1001");
 
-        // GarrisonDao::get("token:session:T1") 返回 Token-Session 数据
-        let token_json = dao.get("token:session:T1").await.unwrap();
+        // key 余段为 token 的 SHA-256 摘要：`token:session:` + 64 位小写 hex（裸凭据不落 key 名）
+        let key = token_key("T1");
+        assert!(
+            key.starts_with("token:session:"),
+            "Token-Session key 应以 `token:session:` 为前缀，实际: {key}"
+        );
+        let digest = &key["token:session:".len()..];
+        assert_eq!(digest.len(), 64, "摘要余段应为 64 位 hex");
+        assert!(
+            digest
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "摘要余段应为小写 hex，实际: {digest}"
+        );
+        // 确定性：同一 token 两次构造同 key
+        assert_eq!(key, token_key("T1"), "同一 token 的 key 构造应确定");
+        // 区分度：不同 token 摘要不同
+        assert_ne!(key, token_key("T2"), "不同 token 的 key 不应碰撞");
+
+        // GarrisonDao::get(token_key("T1")) 返回 Token-Session 数据
+        let token_json = dao.get(&key).await.unwrap();
         assert!(token_json.is_some());
         let ts: TokenSession = serde_json::from_str(&token_json.unwrap()).unwrap();
         assert_eq!(ts.login_id, "1001");
