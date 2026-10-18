@@ -7,11 +7,10 @@
 //! 全部场景基于独立 `GarrisonSession` / `GarrisonLogicDefault` 实例构造，不触碰
 //! `GarrisonManager` 全局单例，故不加 `#[serial]`；并发场景统一使用 `multi_thread` flavor。
 
-use garrison::constants::DaoKeyPrefix;
 use garrison::dao::{GarrisonDao, InMemoryDao};
 use garrison::error::{GarrisonError, GarrisonResult};
 use garrison::session::{
-    GarrisonSession, SessionExpiryListener, SessionSecurityListener, TokenSession,
+    token_key, GarrisonSession, SessionExpiryListener, SessionSecurityListener, TokenSession,
 };
 use garrison::stp::{GarrisonInterface, GarrisonLogicDefault, LoginParams, SessionLogic};
 use garrison::strategy::{GarrisonPermissionStrategy, GarrisonPermissionStrategyDefault};
@@ -296,7 +295,7 @@ async fn acc_sess_004_expiry_listener_fires_on_expired_session() {
     session.create("1001", "T1").await.unwrap();
 
     // 改写 DAO 中 Token-Session 的 last_active_at 到过去 → 模拟 session 级过期
-    let key = format!("{}session:T1", DaoKeyPrefix::Token);
+    let key = token_key("T1");
     let json = dao
         .get(&key)
         .await
@@ -689,7 +688,7 @@ async fn acc_sess_018_bw_ac_001_login_creates_account_and_token_keys() {
         "Account-Session 应存在 (key={account_key})"
     );
 
-    let token_key = format!("token:session:{}", token);
+    let token_key = token_key(&token);
     assert!(
         token_key.starts_with("token:session:"),
         "Token key 应带 E-001 前缀"

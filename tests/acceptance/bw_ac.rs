@@ -8,7 +8,7 @@
 
 use garrison::dao::InMemoryDao;
 use garrison::error::{GarrisonError, GarrisonResult};
-use garrison::session::GarrisonSession;
+use garrison::session::{token_key, GarrisonSession};
 use garrison::stp::{with_current_token, GarrisonInterface, GarrisonUtil};
 use garrison::{GarrisonConfig, GarrisonDao, GarrisonManager};
 use serial_test::serial;
@@ -190,9 +190,9 @@ async fn bw_ac_006_oxcache_memory_backend_works() {
             dao.get(&account_key).await.unwrap().is_some(),
             "Account-Session 应写入 oxcache"
         );
-        let token_key = format!("token:session:{}", token);
+        let key = token_key(&token);
         assert!(
-            dao.get(&token_key).await.unwrap().is_some(),
+            dao.get(&key).await.unwrap().is_some(),
             "Token-Session 应写入 oxcache"
         );
 
@@ -340,8 +340,8 @@ async fn bw_ac_009_logout_invalidates_token() {
         .await
         .expect("logout 应成功");
 
-    let token_key = format!("token:session:{}", token);
-    let token_session = dao.get(&token_key).await.expect("DAO get 应成功");
+    let key = token_key(&token);
+    let token_session = dao.get(&key).await.expect("DAO get 应成功");
     assert!(token_session.is_none(), "logout 后 Token-Session 应已删除");
 
     let check_result = with_current_token(token, async { GarrisonUtil::check_login().await }).await;

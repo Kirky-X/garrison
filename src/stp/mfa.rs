@@ -2702,9 +2702,9 @@ mod tests {
     #[cfg(feature = "secure-totp")]
     #[tokio::test]
     async fn totp_provider_process_upgrades_ledger() {
-        use crate::constants::DaoKeyPrefix;
         use crate::dao::tests::MockDao;
         use crate::dao::GarrisonDao;
+        use crate::session::token_key;
         use crate::session::GarrisonSession;
         use crate::session::TokenSession;
         use crate::stp::mfa::{complete_required_action, TotpRequiredActionProvider};
@@ -2714,7 +2714,7 @@ mod tests {
         let session = GarrisonSession::new(dao.clone() as Arc<dyn GarrisonDao>, 3600, 86400, 0);
         session.create("user-ta", "TOK").await.unwrap();
         // 人为老化 auth_time 使会话过期（走 DAO 直写，模拟时间流逝）
-        let key = format!("{}session:{}", DaoKeyPrefix::Token, "TOK");
+        let key = token_key("TOK");
         let raw = dao.get(&key).await.unwrap().unwrap();
         let mut ts: TokenSession = serde_json::from_str(&raw).unwrap();
         ts.auth_time = Some(chrono::Utc::now().timestamp() - 3600);

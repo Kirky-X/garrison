@@ -5,6 +5,7 @@ use super::mock::MockDao;
 use super::*;
 use crate::core::token::UuidTokenStyle;
 use crate::dao::GarrisonDao;
+use crate::session::token_key;
 use async_trait::async_trait;
 use std::time::Duration;
 
@@ -625,7 +626,7 @@ async fn renew_to_equivalent_preserves_remaining_ttl() {
     let old_token = auth.login("1001", None).await.unwrap();
 
     // 手动缩短旧 token 的 TTL 到 100s（模拟部分过期）
-    let token_session_key = format!("token:session:{}", old_token);
+    let token_session_key = token_key(&old_token);
     dao.expire(&token_session_key, 100).await.unwrap();
 
     let old_ttl = auth.session.get_token_timeout(&old_token).await.unwrap();
@@ -756,7 +757,7 @@ impl GarrisonDao for OrderTrackingDao {
             let mut state = self.tracking_state.lock().unwrap();
             if state.enabled
                 && key.starts_with("token:session:")
-                && key != format!("token:session:{}", state.old_token)
+                && key != token_key(&state.old_token)
             {
                 state.new_token_created = true;
             }
@@ -776,7 +777,7 @@ impl GarrisonDao for OrderTrackingDao {
         // 标记旧 token 已 delete；delete(old) 早于 set(new) 即 DoS gap 违规。
         {
             let mut state = self.tracking_state.lock().unwrap();
-            if state.enabled && key == format!("token:session:{}", state.old_token) {
+            if state.enabled && key == token_key(&state.old_token) {
                 if !state.new_token_created {
                     // 旧 token 被删除时，新 token 尚未创建 → DoS gap 违规
                     state.dos_gap_violation = true;

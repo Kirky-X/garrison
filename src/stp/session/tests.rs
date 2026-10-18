@@ -3897,6 +3897,7 @@ mod session_token_security_tests {
     #[cfg(feature = "protocol-jwt")]
     use crate::dao::GarrisonDao;
     use crate::error::GarrisonError;
+    use crate::session::token_key;
     use crate::session::GarrisonSession;
     use crate::stp::core::GarrisonCore;
     use crate::stp::mock::{MockDao, MockFirewall};
@@ -4273,11 +4274,7 @@ mod session_token_security_tests {
             kick_task.await.unwrap().expect("kickout 应成功");
 
             // 判据：session 已被 kickout 删除时，check_login 必须不通过（已拉黑）
-            let session_alive = dao
-                .get(&format!("token:session:{}", token))
-                .await
-                .unwrap()
-                .is_some();
+            let session_alive = dao.get(&token_key(&token)).await.unwrap().is_some();
             let check =
                 with_current_token(token.clone(), async { logic.check_login().await }).await;
             if !session_alive {

@@ -266,6 +266,7 @@ mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
     use crate::dao::GarrisonDao;
+    use crate::session::token_key;
     use crate::session::TokenSession;
     use crate::stp::LoginParams;
 
@@ -295,7 +296,7 @@ mod tests {
 
     /// 辅助函数：直接修改 DAO 中 token session 的 last_active_at。
     async fn set_last_active_at(dao: &MockDao, token: &str, last_active_at: i64) {
-        let key = format!("token:session:{}", token);
+        let key = token_key(token);
         let json = dao.get(&key).await.unwrap().unwrap();
         let mut ts: TokenSession = serde_json::from_str(&json).unwrap();
         ts.last_active_at = last_active_at;

@@ -76,7 +76,8 @@ warp = { optional = true, default-features = false, workspace = true }
 jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto", "use_pem"], optional = true }
 reqwest = { optional = true, default-features = false, features = ["json", "rustls", "form"], workspace = true }
 totp-rs = { version = "6.0", optional = true, default-features = false, features = ["alloc"] }
-sha2 = { version = "0.11", optional = true, default-features = false }
+# 核心依赖：session key 摘要化（CWE 存储凭据面），feature 不再重复声明
+sha2 = { version = "0.11", default-features = false }
 hmac = { version = "0.13", optional = true, default-features = false }
 # 审计链盐/链哈希的 hex 编解码（经 limiteron/audit-log 传递引入，非新增 crate）
 hex = { version = "0.4", optional = true, default-features = false, features = ["alloc"] }
@@ -284,23 +285,23 @@ db-saga = ["db-sharding", "dbnexus/saga"]
 embedded-migrations = ["dep:include_dir", "dep:tempfile"]
 
 # 协议层插件
-protocol-oauth2 = ["dep:reqwest", "dep:sha2", "dep:base64", "dep:percent-encoding"]
+protocol-oauth2 = ["dep:reqwest", "dep:base64", "dep:percent-encoding"]
 # protocol-sso 隐含 protocol-jwt：OIDC exchange_code 必须验签 id_token（fail-closed）。
-protocol-sso = ["dep:reqwest", "dep:quick-xml", "dep:sha2", "dep:hmac", "dep:base64", "dep:percent-encoding", "protocol-jwt"]
+protocol-sso = ["dep:reqwest", "dep:quick-xml", "dep:hmac", "dep:base64", "dep:percent-encoding", "protocol-jwt"]
 # protocol-jwt：JWT 签发/校验/刷新。dep:pkcs1/pkcs8：RS 系验证路径从私钥 PEM 提取公钥组件（n,e）（jsonwebtoken 仅接受公钥 PEM），纯 DER 解析无 RSA 运算、与 RUSTSEC-2023-0071 无关，本为 rsa 传递依赖；dep:p256/p384/sec1：ES 系从私钥标量计算 SEC1 公钥点，均为 jsonwebtoken rust_crypto 传递依赖，零新增体积且无 RustSec 通告
-protocol-jwt = ["dep:jsonwebtoken", "dep:sha2", "dep:hkdf", "dep:pkcs1", "dep:pkcs8", "dep:base64", "dep:p256", "dep:p384", "dep:sec1", "dep:ed25519-dalek"]
-protocol-sign = ["dep:sha2", "dep:hmac", "dep:base64", "dep:hkdf"]
+protocol-jwt = ["dep:jsonwebtoken", "dep:hkdf", "dep:pkcs1", "dep:pkcs8", "dep:base64", "dep:p256", "dep:p384", "dep:sec1", "dep:ed25519-dalek"]
+protocol-sign = ["dep:hmac", "dep:base64", "dep:hkdf"]
 # protocol-apikey：API Key 生成/校验/吊销/轮换；secret sha256 哈希存储（CWE-916）+ 公共常量时间比较原语；dao-key-index 启用 keys() 生产实现使 list_by_namespace 可用
-protocol-apikey = ["dep:sha2", "secure-ct-eq", "dao-key-index"]
+protocol-apikey = ["secure-ct-eq", "dao-key-index"]
 protocol-temp = []
-# protocol-qrlogin：第一方扫码登录（两票分离状态机 + HMAC 签名票据，Web 端扫码 App 确认）。dep:hmac+base64：qr_ticket HMAC-SHA256 签名；dep:sha2：confirm_token SHA-256 存储摘要（DAO 泄露不可反推 token）
-protocol-qrlogin = ["dep:sha2", "dep:hmac", "dep:base64", "dep:subtle"]
+# protocol-qrlogin：第一方扫码登录（两票分离状态机 + HMAC 签名票据，Web 端扫码 App 确认）。dep:hmac+base64：qr_ticket HMAC-SHA256 签名；sha2：confirm_token SHA-256 存储摘要（DAO 泄露不可反推 token）
+protocol-qrlogin = ["dep:hmac", "dep:base64", "dep:subtle"]
 # loom-test：一次性凭证原子消费的 loom 交错穷举测试（默认关，不进 CI 常规链）；触发：cargo test --lib --features protocol-temp,loom-test protocol::temp
 loom-test = ["dep:loom"]
 # data-erasure：数据主体擦除编排（GDPR/个保法删除权的框架侧能力，compliance 模块）
 data-erasure = []
-# protocol-invitation：邀请码定向注册（一次性/N 次、TTL、吊销、防爆破、注册编排钩子）；dep:rand 短码随机、dep:sha2 防爆破计数键 source 摘要
-protocol-invitation = ["dep:rand", "dep:sha2"]
+# protocol-invitation：邀请码定向注册（一次性/N 次、TTL、吊销、防爆破、注册编排钩子）；dep:rand 短码随机、sha2 防爆破计数键 source 摘要
+protocol-invitation = ["dep:rand"]
 # protocol-zeroize：协议层密钥零化（Drop 清零 secret 字段防内存残留）；rsa/zeroize 让 RsaPrivateKey 实现 Zeroize（AlipayProvider Drop 清零私钥大数）
 protocol-zeroize = ["dep:zeroize"]
 # OIDC 扩展（id_token 签发/验证 + discovery endpoint），依赖 protocol-jwt + protocol-oauth2
@@ -318,12 +319,12 @@ protocol-webauthn = ["dep:webauthn-rs", "dep:webauthn-rs-core"]
 # 安全模块
 secure-totp = ["dep:totp-rs", "dep:base32"]
 # secure-ct-eq：签名校验常量时间比较统一走公共原语（ADR-0003 决策 2）
-secure-sign = ["dep:sha2", "dep:hmac", "dep:base64", "secure-ct-eq"]
+secure-sign = ["dep:hmac", "dep:base64", "secure-ct-eq"]
 # 域统一到协议层（原 secure-httpbasic）
 protocol-httpbasic = ["dep:base64"]
 # 域统一到协议层（原 secure-httpdigest）
 # secure-ct-eq：Digest response/uri/nonce-mac 校验常量时间比较统一走公共原语（ADR-0003 决策 2/3；URI/response/nonce 签名比较）
-protocol-httpdigest = ["dep:sha2", "dep:base64", "dep:md5", "secure-ct-eq", "dep:hkdf", "dep:hmac"]
+protocol-httpdigest = ["dep:base64", "dep:md5", "secure-ct-eq", "dep:hkdf", "dep:hmac"]
 # Unicode 同形异义字检测
 secure-confusable = ["dep:unicode-security"]
 # 依赖 regex：Custom mask 真实脱敏（原 placeholder 实现静默泄露敏感数据）
@@ -337,14 +338,14 @@ sms-rate-limit = ["dep:rand", "secure-ct-eq"]
 email-verification = ["dep:rand", "secure-ct-eq"]
 # 邮箱验证码 SMTP 内置实现（lettre，含 SmtpEmailSender）
 email-verification-smtp = ["email-verification", "dep:lettre"]
-# field-encryption：落库敏感字段 AES-256-GCM 静态加密（CryptoValue 编解码 + AAD 租户/表/键绑定 + 迁移期双读）。dep:getrandom 每值 12 字节 nonce 直读 OS CSPRNG（不启用 aes-gcm/getrandom 避免再引一套版本）；dep:base64 载荷 base64(nonce|ciphertext)；dep:sha2 token 类命名空间 key 名 SHA-256 摘要化（裸 bearer token 不得留在落库 key 名）
-# mfa-recovery：MFA 恢复码管理器（SHA-256 哈希落库；独立 feature 门控使 default 不拉入 sha2——与 protocol-qrlogin 先例一致）
-field-encryption = ["dep:aes-gcm", "dep:getrandom", "dep:base64", "dep:sha2"]
-mfa-recovery = ["dep:sha2"]
+# field-encryption：落库敏感字段 AES-256-GCM 静态加密（CryptoValue 编解码 + AAD 租户/表/键绑定 + 迁移期双读）。dep:getrandom 每值 12 字节 nonce 直读 OS CSPRNG（不启用 aes-gcm/getrandom 避免再引一套版本）；dep:base64 载荷 base64(nonce|ciphertext)；sha2 token 类命名空间 key 名 SHA-256 摘要化（裸 bearer token 不得留在落库 key 名）
+# mfa-recovery：MFA 恢复码管理器（SHA-256 哈希落库）
+field-encryption = ["dep:aes-gcm", "dep:getrandom", "dep:base64"]
+mfa-recovery = []
 
 # 账号安全引擎
 # secure-ct-eq：备份码哈希比对统一走常量时间比较原语（消除本地 ct_eq_hex）
-account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand", "dep:getrandom", "dep:sha2", "dep:base32", "secure-ct-eq"]
+account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand", "dep:getrandom", "dep:base32", "secure-ct-eq"]
 credential-zeroize = ["account-credential", "dep:zeroize"]
 account-policy = ["account-credential", "dep:regex"]
 account-lockout = ["firewall"]
@@ -395,7 +396,7 @@ cli-ops = ["dep:clap"]
 
 # 审计日志
 # audit-log：AuditEventChain 链首随机盐（防换盐重放）+ limiteron 审计链 HMAC 内核（chain_onto/verify_chain）；透传 telemetry+hmac+sha2+hex 均为既有依赖，无新增第三方
-audit-log = ["listener", "dep:sha2", "dep:hmac", "dep:hex", "dep:getrandom", "secure-masking", "secure-ct-eq", "limiteron/audit-log"]
+audit-log = ["listener", "dep:hmac", "dep:hex", "dep:getrandom", "secure-masking", "secure-ct-eq", "limiteron/audit-log"]
 
 # 常量时间比较原语（CWE-208 防御）：secure::ct_eq::constant_time_eq（subtle::ConstantTimeEq）。需要它的 feature（audit-log/oauth2-server/protocol-apikey/protocol-httpdigest/secure-sign/web-csrf 等）一律依赖此 feature，禁止复制本地实现或直连 dep:subtle（ADR-0003 决策 2）
 secure-ct-eq = ["dep:subtle"]
@@ -461,10 +462,10 @@ backchannel-logout = ["oauth2-server"]
 backend-embedded = []
 backend-remote = ["dep:reqwest", "limiteron/circuit-breaker", "limiteron/fallback"]
 # secure-simple-token：SimpleTokenStyle 启用 HMAC-SHA256 签名（格式 <login_id>-<uuid>.<hmac_sha256(secret, login_id|uuid)>；未启用时 generate 返回 Err，fail-closed 杜绝无签名伪造）+ secure-ct-eq 常量时间比较（ADR-0003 决策 2/3）
-secure-simple-token = ["dep:sha2", "dep:hmac", "secure-ct-eq"]
+secure-simple-token = ["dep:hmac", "secure-ct-eq"]
 auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "secure-ct-eq", "secure-simple-token", "dep:mimalloc", "server-graceful-shutdown", "web-security-headers"]
-# dep:sha2：决策缓存 key 的 context_json 摘要成分（SHA-256 前 16 字节）
-abac = ["dep:cedar-policy", "cache-memory", "dep:sha2"]
+# sha2：决策缓存 key 的 context_json 摘要成分（SHA-256 前 16 字节）
+abac = ["dep:cedar-policy", "cache-memory"]
 # db-sqlite 下的 RefreshTokenRotation 依赖 protocol::jwt，因此传递启用 protocol-jwt。
 oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "dep:getrandom", "dep:percent-encoding", "protocol-jwt", "secure-ct-eq"]
 
