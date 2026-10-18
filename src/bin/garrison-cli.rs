@@ -127,6 +127,9 @@ enum Command {
         /// 数据库连接 URL（sqlite 文件必须已存在）
         #[arg(long)]
         db_url: String,
+        /// 额外清扫会话 key 摘要化升级后遗留的 raw key 行（`token:session:` 前缀下余段非 64 位小写 hex 的行）
+        #[arg(long)]
+        sweep_legacy_session_keys: bool,
     },
 }
 
@@ -181,7 +184,10 @@ async fn dispatch(command: Command) -> GarrisonResult<()> {
             keys,
             pattern,
         } => run_check_key(db_url, tenant, keys, pattern).await,
-        Command::VacuumKv { db_url } => run_vacuum_kv(db_url).await,
+        Command::VacuumKv {
+            db_url,
+            sweep_legacy_session_keys,
+        } => run_vacuum_kv(db_url, sweep_legacy_session_keys).await,
     }
 }
 
@@ -355,8 +361,9 @@ async fn run_check_key(
 }
 
 /// vacuum-kv：清理 garrison_kv 表中已过期行（幂等，仅删 `expire_at <= now` 的行，
-/// `expire_at IS NULL` 永久行不动）；亦是会话 key 摘要化升级后遗留 raw key 行的官方收敛工具。
-async fn run_vacuum_kv(db_url: String) -> GarrisonResult<()> {
+/// `expire_at IS NULL` 永久行不动）；`--sweep-legacy-session-keys` 额外清除会话 key 摘要化
+/// 升级后遗留的 raw key 行（永久驻留的遗留行不会被过期清理收敛，须显性清扫）。
+async fn run_vacuum_kv(db_url: String, sweep_legacy: bool) -> GarrisonResult<()> {
     let pool = garrison::dao::init_dbnexus(&db_url).await?;
     let kv = garrison::dao::DbnexusKvDao::new(pool);
     kv.ensure_table().await?;
@@ -366,7 +373,40 @@ async fn run_vacuum_kv(db_url: String) -> GarrisonResult<()> {
         "{}",
         translate_detail("cli-vacuum-kv-report", &[("count", count.as_str())])
     );
+    if sweep_legacy {
+        let swept = sweep_legacy_session_keys(&kv).await?;
+        let count = swept.to_string();
+        println!(
+            "{}",
+            translate_detail("cli-vacuum-kv-swept", &[("count", count.as_str())])
+        );
+    }
     Ok(())
+}
+
+/// 扫描 `token:session:` 前缀的落库 key，删除余段非「64 位小写 hex」的遗留 raw key 行
+/// （会话 key 摘要化升级前写入；`timeout=0` 的永久遗留行不会被 [`GarrisonDao::vacuum_expired`]
+/// 过期收敛，须显性清扫）。余段形如 64 hex 的历史 token 不被启发式识别，留待过期收敛（保守方向，
+/// 误删面为零：摘要行必然形如 64 hex，不会被命中）。返回删除行数。
+async fn sweep_legacy_session_keys(dao: &dyn GarrisonDao) -> GarrisonResult<u64> {
+    const TOKEN_SESSION_PREFIX: &str = "token:session:";
+    let keys = dao.keys(&format!("{TOKEN_SESSION_PREFIX}*")).await?;
+    let mut removed = 0u64;
+    for key in keys {
+        let Some(rest) = key.strip_prefix(TOKEN_SESSION_PREFIX) else {
+            continue;
+        };
+        let is_digest = rest.len() == 64
+            && rest
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        if is_digest {
+            continue;
+        }
+        dao.delete(&key).await?;
+        removed += 1;
+    }
+    Ok(removed)
 }
 
 /// 密钥来源解析：`--key` 显式传参优先；否则回退 GARRISON_FIELD_ENCRYPTION_KEYS 环境变量（与服务端同格式）——主钥不应走 argv（CWE-214：shell history / /proc cmdline 泄露面），argv 仅留低敏场景。
@@ -1421,5 +1461,53 @@ mod tests {
                 "实际: {err:?}"
             );
         }
+    }
+
+    /// `sweep_legacy_session_keys`：遗留 raw key 行被清除，摘要形态行与 account 命名空间行不动（sqlite e2e）。
+    #[tokio::test]
+    async fn sweep_legacy_session_keys_removes_only_raw_token_rows() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("sweep_legacy.db");
+        // sqlite 文件必须已存在（驱动不自动建库），先创建空文件
+        std::fs::File::create(&db_path).expect("create sqlite file");
+        let db_url = format!("sqlite://{}", db_path.display());
+        let pool = init_dbnexus(&db_url).await.expect("init_dbnexus 应成功");
+        let kv = garrison::dao::DbnexusKvDao::new(pool);
+        kv.ensure_table().await.expect("ensure_table 应成功");
+        // 预置：遗留 raw 永久行、摘要形态永久行、account 命名空间永久行（ttl=0 永久驻留）
+        kv.set("token:session:legacy-raw-token", "x", 0)
+            .await
+            .unwrap();
+        kv.set(&format!("token:session:{}", "a".repeat(64)), "x", 0)
+            .await
+            .unwrap();
+        kv.set("account:session:legacy-user", "x", 0).await.unwrap();
+
+        let swept = sweep_legacy_session_keys(&kv).await.unwrap();
+        assert_eq!(swept, 1, "只应清除余段非 64 hex 的遗留 raw 行");
+        assert!(
+            kv.get("token:session:legacy-raw-token")
+                .await
+                .unwrap()
+                .is_none(),
+            "遗留 raw 行应被删除"
+        );
+        assert!(
+            kv.get(&format!("token:session:{}", "a".repeat(64)))
+                .await
+                .unwrap()
+                .is_some(),
+            "摘要形态行不得被误删（余段 64 hex 即保留）"
+        );
+        assert!(
+            kv.get("account:session:legacy-user")
+                .await
+                .unwrap()
+                .is_some(),
+            "account 命名空间行不在清扫范围"
+        );
+        // 幂等：二次清扫计数为 0
+        let swept_again = sweep_legacy_session_keys(&kv).await.unwrap();
+        assert_eq!(swept_again, 0, "二次清扫应幂等");
     }
 }

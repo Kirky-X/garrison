@@ -755,3 +755,52 @@ async fn acc_env_008_mysql_user_repository_crud() {
         "delete 后 find_by_id 应返回 None"
     );
 }
+
+/// （正常）：pg 可达 → `DbnexusKvDao` 过 conformance 契约（原子接管 / 并发争抢 / vacuum）：
+/// 单语句条件 upsert 与 vacuum 语义在真实 Postgres 方言上的运行时验证（sqlite conformance 之外的方言面）。
+#[cfg(feature = "db-postgres")]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn acc_env_009_kv_conformance_postgres() {
+    if !pg_available() {
+        eprintln!("[SKIP] ACC-ENV-009: postgres 不可达（TCP 探活失败），跳过 KV 契约场景");
+        return;
+    }
+    use garrison::dao::testing::conformance;
+    use garrison::dao::{init_dbnexus, DbnexusKvDao, GarrisonDao};
+
+    let pool = init_dbnexus(&postgres_url())
+        .await
+        .expect("init_dbnexus(postgres) 应成功");
+    let kv = DbnexusKvDao::new(pool);
+    kv.ensure_table().await.expect("ensure_table 应成功");
+    let dao: std::sync::Arc<dyn GarrisonDao> = std::sync::Arc::new(kv);
+    // 不跑 `run_concurrent`：其 get_and_delete/incr/decr 恰一赢家断言针对锁内实现，
+    // SQL KV 的读-改-写方法属模块契约 Non-Goal（见 instances.rs dbnexus_kv_sqlite caps 说明）。
+    conformance::run_atomic(&dao, "pgkv:").await;
+    conformance::run_expired_key_takeover_contention(&dao, "pgkv:").await;
+    conformance::run_vacuum_expired(&dao, "pgkv:").await;
+}
+
+/// （正常）：docker 可用 → testcontainers MySQL 8.0 上 `DbnexusKvDao` 过 conformance 契约
+/// （原子接管 / 并发争抢 / vacuum）：MySQL 臂（行别名 + 双 IF 条件 upsert）的运行时验证。
+#[cfg(feature = "db-mysql")]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn acc_env_010_kv_conformance_mysql() {
+    if !docker_available() {
+        eprintln!("[SKIP] ACC-ENV-010: docker 不可用（docker info 失败），跳过 MySQL KV 契约场景");
+        return;
+    }
+    use garrison::dao::testing::conformance;
+    use garrison::dao::{DbnexusKvDao, GarrisonDao};
+
+    let (pool, _container) = setup_mysql_pool().await;
+    let kv = DbnexusKvDao::new(pool);
+    kv.ensure_table().await.expect("ensure_table 应成功");
+    let dao: std::sync::Arc<dyn GarrisonDao> = std::sync::Arc::new(kv);
+    // 不跑 `run_concurrent`：同 acc_env_009 注释（读-改-写两步方法属 Non-Goal，不适用 SQL KV）。
+    conformance::run_atomic(&dao, "mykv:").await;
+    conformance::run_expired_key_takeover_contention(&dao, "mykv:").await;
+    conformance::run_vacuum_expired(&dao, "mykv:").await;
+}

@@ -27,7 +27,7 @@
 
 ### Added
 
-- **`vacuum_expired` 过期行清理原语 + `garrison-cli vacuum-kv`**：`GarrisonDao` 新增 `vacuum_expired()`（trait 默认 no-op：原生 TTL 后端由引擎自清理；`DbnexusKvDao` 覆写为 `DELETE ... WHERE expire_at <= now` 全表清理，`GarrisonDaoDbnexus` 委托透传，`GarrisonSession` 同名转发），仅删过期行、`expire_at IS NULL` 永久行不动、幂等返回删除计数；`garrison-cli` 新增 `vacuum-kv --db-url` 离线命令（zh/en 文案键齐备）。库内不内置后台调度——清理触发节奏（cron / 进程内周期）由部署方决定。
+- **`vacuum_expired` 过期行清理原语 + `garrison-cli vacuum-kv`**：`GarrisonDao` 新增 `vacuum_expired()`（trait 默认 no-op：原生 TTL 后端由引擎自清理；`DbnexusKvDao` 覆写为 `DELETE ... WHERE expire_at <= now` 全表清理，`GarrisonDaoDbnexus` 委托透传，`GarrisonSession` 同名转发），仅删过期行、`expire_at IS NULL` 永久行不动、幂等返回删除计数；`garrison-cli` 新增 `vacuum-kv --db-url` 离线命令（zh/en 文案键齐备），`--sweep-legacy-session-keys` 显性清扫升级后遗留 raw key 行（`token:session:` 前缀下余段非 64 位小写 hex 的行，含 `timeout=0` 永久遗留行——按过期收敛其永不消亡；启发式保守方向，摘要形态行零误删面）。库内不内置后台调度——清理触发节奏（cron / 进程内周期）由部署方决定。
 - **`DbnexusKvDao` 纳入 DAO conformance 契约网**：`dbnexus_kv_sqlite` conformance 实例落地（此前 `dbnexus_sqlite` 实例 KV 委托为进程内 `InMemoryDao`，SQL KV 零契约覆盖，set_if_absent 竞态因此漏网）；conformance 新增过期接管（set_if_absent / CAS(None)）、8 写者并发争抢、vacuum 计数契约用例，对全部后端生效。
 
 ## [0.9.0-rc.3] - 2026-10-14

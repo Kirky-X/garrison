@@ -12,7 +12,7 @@
 //! 运行（scripts/e2e_matrix.sh S3 自动执行）：
 //! ```bash
 //! cargo test --test acceptance_db_mysql \
-//! --no-default-features --features db-mysql -- --test-threads=1
+//! --no-default-features --features db-mysql,testing -- --test-threads=1
 //! ```
 
 #[cfg(feature = "db-mysql")]

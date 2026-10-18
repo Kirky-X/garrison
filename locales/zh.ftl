@@ -1490,6 +1490,7 @@ cli-check-key-empty-scan-hint =
     scanned = 0 通常说明本部署的 KV 数据无法通过 --db-url 访问
     （生产默认把 KV 存放在进程内 oxcache）；详见模块文档。
 cli-vacuum-kv-report = 已清理过期 KV 行：{$count}
+cli-vacuum-kv-swept = 已清扫遗留 raw 会话 key 行：{$count}
 
 cli-one-time-access-token-issued =
     已为用户 '{$user}'（租户 {$tenant}）签发一次性访问令牌。

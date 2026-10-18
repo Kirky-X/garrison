@@ -13,7 +13,7 @@
 //! 运行（scripts/e2e_matrix.sh S3 自动执行）：
 //! ```bash
 //! cargo test --test acceptance_db_postgres \
-//! --no-default-features --features db-postgres -- --test-threads=1
+//! --no-default-features --features db-postgres,testing -- --test-threads=1
 //! ```
 //!
 //! 地址覆盖：`GARRISON_TEST_POSTGRES_ADDR` / `GARRISON_TEST_POSTGRES_URL`

@@ -217,7 +217,10 @@ pub(crate) fn account_key(login_id: &str) -> String {
 ///
 /// 余段为 token 的 SHA-256 摘要（64 位小写 hex）：裸 bearer 凭据不得留在落库 key 名
 /// （DB 泄露面下 key 名直读即泄露活跃凭据，CWE 存储凭据面）；升级即存量会话一次性失效
-/// （旧 raw key 行不再被寻址，用户重登录；遗留行由 `vacuum_expired` / `vacuum-kv` 收敛）。
+/// （旧 raw key 行不再被寻址，用户重登录；遗留行由 `vacuum_expired` / `vacuum-kv` 收敛，或以
+/// `vacuum-kv --sweep-legacy-session-keys` 主动清除）。摘要为无盐 SHA-256：token 须为框架生成的
+/// 高熵随机串（uuid/random 64 等默认样式均满足）；下游若注入低熵自定义 token，摘要可被字典预计算，
+/// 该场景应改用带密钥的 HMAC 方案（见 specmark design Alternatives 与 Deferred 登记）。
 ///
 /// `pub`：跨模块测试与下游集成（含 tests/acceptance 公共 API 用例）经此构造同一 key 格式（键格式单点维护）。
 pub fn token_key(token: &str) -> String {
