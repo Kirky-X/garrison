@@ -343,7 +343,7 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
 
 // atomic 层：原子原语单线程语义
 
-/// atomic 层契约：set_if_absent / get_and_delete / compare_and_swap 的单线程原子语义（并发竞态见 `run_concurrent`）。
+/// atomic 层契约：set_if_absent / get_and_delete / compare_and_swap 的单线程原子语义（含过期键接管；并发竞态见 `run_concurrent`）。
 pub async fn run_atomic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     let k = format!("{prefix}atomic:sia");
     assert!(
@@ -470,6 +470,41 @@ pub async fn run_atomic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
             dao.compare_and_swap(&kmissing, Some("v"), "n", 60).await
         ),
         "[{prefix}] 缺键 expected=Some 的 CAS 应返回 false"
+    );
+
+    // 过期键接管（过期视为不存在）：set(ttl=1) + 一次 sleep(3s) 窗口，对齐 run_ttl「每测试仅 1 次 sleep」惯例
+    let k = format!("{prefix}atomic:sia_expired");
+    expect_ok(prefix, "set", dao.set(&k, "stale", 1).await);
+    let k_cas = format!("{prefix}atomic:cas_expired_none");
+    expect_ok(prefix, "set", dao.set(&k_cas, "stale", 1).await);
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    assert!(
+        expect_ok(
+            prefix,
+            "set_if_absent 过期键接管",
+            dao.set_if_absent(&k, "fresh", 60).await
+        ),
+        "[{prefix}] 过期键 set_if_absent 应返回 true（过期视为不存在）"
+    );
+    assert_eq!(
+        expect_ok(prefix, "get", dao.get(&k).await).as_deref(),
+        Some("fresh"),
+        "[{prefix}] 过期键 set_if_absent 接管后应写入新值"
+    );
+
+    assert!(
+        expect_ok(
+            prefix,
+            "cas(None) 过期键接管",
+            dao.compare_and_swap(&k_cas, None, "created", 60).await
+        ),
+        "[{prefix}] compare_and_swap(None) 对过期键应接管返回 true"
+    );
+    assert_eq!(
+        expect_ok(prefix, "get", dao.get(&k_cas).await).as_deref(),
+        Some("created"),
+        "[{prefix}] CAS 过期键接管后应写入新值"
     );
 }
 
@@ -727,6 +762,66 @@ pub async fn run_concurrent(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
         Some(format!("cas_winner_{}", winners[0]).as_str()),
         "[{prefix}] 终值应等于唯一 CAS 赢家写入的值"
     );
+}
+
+// 独立契约组：过期键接管并发争抢（不进 caps 矩阵——SQL KV 的 concurrent 层含模块契约内的读-改-写方法，见 instances.rs caps 说明）
+
+/// 过期键接管并发争抢契约（独立契约函数，与 `run_refresh_token_rotation` 同构，不经 `caps` 矩阵）：
+/// 同一过期键 8 写者并发 `set_if_absent` 不同值，断言「恰一个 true，且终值为唯一赢家写入的值」；30 轮循环放大调度窗口。
+/// 预置 30 个 ttl=1 键共用一次 sleep(3s)（对齐套件「每测试仅 1 次 sleep」惯例；逐轮真实等待会放大 30× 墙钟）。
+/// 调用方须提供无并行干扰的库（专属命名内存库 / acceptance 单线程目标），否则「恰 1 个赢家」可被外力污染。
+pub async fn run_expired_key_takeover_contention(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
+    let mut expired_keys = Vec::with_capacity(30);
+    for round in 0..30u32 {
+        let k = format!("{prefix}takeover:expired_{round}");
+        expect_ok(prefix, "set", dao.set(&k, "stale", 1).await);
+        expired_keys.push(k);
+    }
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    for (round, k) in expired_keys.iter().enumerate() {
+        let mut handles = Vec::with_capacity(8);
+        for i in 0..8u32 {
+            let d = Arc::clone(dao);
+            let k = k.clone();
+            handles.push(tokio::spawn(async move {
+                d.set_if_absent(&k, &format!("taker_{round}_{i}"), 3600)
+                    .await
+                    .map(|ok| (ok, i))
+            }));
+        }
+        let mut winners = Vec::new();
+        for h in handles {
+            match h.await.unwrap_or_else(|e| {
+                panic!(
+                    "{}: {e}",
+                    crate::i18n::translate_detail(
+                        "dao-conformance-concurrent-sia-join-failed",
+                        &[("prefix", prefix)],
+                    )
+                )
+            }) {
+                Ok((true, i)) => winners.push(i),
+                Ok((false, _)) => {},
+                Err(e) => panic!(
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "dao-conformance-concurrent-sia-error",
+                        &[("prefix", prefix), ("error", e.to_string().as_str())]
+                    )
+                ),
+            }
+        }
+        assert_eq!(
+            winners.len(),
+            1,
+            "[{prefix}] 第 {round} 轮：过期键并发 set_if_absent 应恰 1 个赢家，实际: {winners:?}"
+        );
+        assert_eq!(
+            expect_ok(prefix, "get", dao.get(k).await).as_deref(),
+            Some(format!("taker_{round}_{}", winners[0]).as_str()),
+            "[{prefix}] 第 {round} 轮：终值应等于唯一赢家写入的值"
+        );
+    }
 }
 
 // ttl 层：墙钟过期契约（每测试仅 1 次 sleep，沿用既有惯例 set(ttl=2)+sleep(3s)）

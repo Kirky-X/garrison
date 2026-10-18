@@ -7,6 +7,7 @@
 //! - `in_memory`：[basic, atomic, concurrent, ttl, keys]（无 feature 依赖）
 //! - `oxcache_memory`：[basic, atomic, concurrent, ttl]（`cache-memory`）；`oxcache_memory_keys` 独立块挂 keys（`dao-key-index`）
 //! - `dbnexus_sqlite`：[basic, atomic, concurrent, ttl]（KV 委托进程内 `InMemoryDao`，不触 SQL 表故不跑迁移）
+//! - `dbnexus_kv_sqlite`：[atomic, ttl]（`DbnexusKvDao` 直连真实 SQL 表；并发争抢由独立测试 `expired_key_takeover_contention_dbnexus_kv_sqlite` 承载）
 //! - `dbnexus_postgres`：同 caps（`#[ignore]` + `DATABASE_URL`，`#[serial]`）
 //! - `alone_cache`：[basic, atomic]（装饰器纯委托，concurrent/ttl 由内层 InMemoryDao 证明）
 
@@ -56,6 +57,44 @@ crate::dao_conformance_tests! {
         )) as ::std::sync::Arc<dyn crate::dao::GarrisonDao>)
     },
     caps: [basic, atomic, concurrent, ttl],
+}
+
+// SQL 持久化 KV 契约（dbnexus sqlite）：`GarrisonDaoDbnexus` 的 KV 委托为进程内实例（见上），
+// 本实例以 `DbnexusKvDao` 直连 `garrison_kv` 表补齐 SQL KV 行为（含 `set_if_absent` 过期接管语义）的契约覆盖。
+// caps 仅 [atomic, ttl]：basic 要求 `compare_and_update_if_greater`（trait 默认 fail-closed NotImplemented，未实现）；
+// concurrent 要求 get_and_delete/incr/decr 恰一赢家/无丢失更新，而它们是模块契约内的「读-改-写」两步（Non-Goal 不修）
+// ——SQL KV 并发争抢由独立契约函数 `run_expired_key_takeover_contention` 另行承载，见下方独立测试。
+#[cfg(feature = "db-sqlite")]
+crate::dao_conformance_tests! {
+    backend: dbnexus_kv_sqlite,
+    make: || async {
+        let pool = // cache=shared 命名内存库：池内多连接共享同一库（`sqlite::memory:` Windows 下开新连接得到空库，迁移建表后查询报 no such table，2026-10-08 Windows CI 实证）
+            crate::dao::init_dbnexus("sqlite:file:garrison_dao_kv_conformance_mem?mode=memory&cache=shared").await?;
+        let kv = crate::dao::DbnexusKvDao::new(pool);
+        kv.ensure_table().await?;
+        Ok(::std::sync::Arc::new(kv) as ::std::sync::Arc<dyn crate::dao::GarrisonDao>)
+    },
+    caps: [atomic, ttl],
+}
+
+/// 过期键接管并发争抢契约（dbnexus sqlite）：caps 矩阵不含 concurrent（get_and_delete/incr/decr 属模块契约内的读-改-写），
+/// 本独立测试以 `DbnexusKvDao` 直连 SQL 表承载 `set_if_absent` 单语句原子性的并发回归（30 轮 × 8 写者）。
+/// 专属命名内存库与 caps 实例隔离——「恰 1 个赢家」的计数断言不容并行用例的过期行干扰。
+#[cfg(all(test, feature = "db-sqlite"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn expired_key_takeover_contention_dbnexus_kv_sqlite() {
+    let pool = // cache=shared 命名内存库：池内多连接共享同一库（`sqlite::memory:` Windows 下开新连接得到空库，迁移建表后查询报 no such table，2026-10-08 Windows CI 实证）
+        crate::dao::init_dbnexus("sqlite:file:garrison_dao_kv_takeover_mem?mode=memory&cache=shared")
+            .await
+            .expect("init_dbnexus 应成功");
+    let kv = crate::dao::DbnexusKvDao::new(pool);
+    kv.ensure_table().await.expect("ensure_table 应成功");
+    let dao: ::std::sync::Arc<dyn crate::dao::GarrisonDao> = ::std::sync::Arc::new(kv);
+    crate::dao::testing::conformance::run_expired_key_takeover_contention(
+        &dao,
+        "dbnexus_kv_sqlite_takeover:",
+    )
+    .await;
 }
 
 #[cfg(all(test, feature = "db-postgres"))]

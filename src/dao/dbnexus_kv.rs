@@ -12,8 +12,13 @@
 //! 行为镜像 [`InMemoryDao`](crate::dao::InMemoryDao)：glob `keys`（`*`/`?`）、TTL 过期行在读路径
 //! 视为不存在（`update`/`expire` 对其显性 `dao-key-missing`，不复活）、`incr`/`decr` 计数器
 //! （`incr` 保留原 TTL、`decr` 到 0 删键）、`compare_and_swap` 的 `expected=None` 语义为键不存在。
-//! 差异仅在介质：时间基准为 UTC unix 秒（跨进程可比），非原子方法为单语句或「读-改-写」两步
-//! （调用面为离线 CLI，无并发写者； trait 文档要求的临界区原子性由单语句路径保证）。
+//! 差异仅在介质：时间基准为 UTC unix 秒（跨进程可比）。`set_if_absent`（含 `compare_and_swap(None)`
+//! 委托）为单语句条件 upsert、过期行接管原子：MySQL 臂以行别名 + 双 `IF` 承载（需 MySQL 8.0.19+，
+//! 唯一已知良性边缘为过期行与新 `(v, expire_at)` 完全同值同秒判无变化返回 false，下一秒重试即成功）；
+//! SQLite/PG 臂以 `ON CONFLICT (k) DO UPDATE ... WHERE` 过期谓词承载（实际生效即计数，无同值边缘；
+//! 旧 `INSERT OR IGNORE` 臂为 SQLite 专属语法、PostgreSQL 不可解析的缺陷随本重写闭合）。
+//! 其余读-改-写方法（`incr`/`decr`/`rename`/`get_and_delete`）为两步（调用面为离线 CLI，无并发写者；
+//! trait 文档要求的临界区原子性由单语句路径保证）。
 //!
 //! 结构化表操作与 `eval_lua` 走 trait 默认 `NotImplemented`：前者由
 //! [`GarrisonDaoDbnexus`](super::dbnexus_dao) 的 SQL 方法承载，后者属 Redis 后端能力。
@@ -266,46 +271,41 @@ impl GarrisonDao for DbnexusKvDao {
         ttl_seconds: u64,
     ) -> GarrisonResult<bool> {
         kv_session!(self, "set-if-absent", session, conn);
-        let sql = match conn.get_database_backend() {
-            DbBackend::MySql => "INSERT IGNORE INTO garrison_kv (k, v, expire_at) VALUES (?, ?, ?)",
-            _ => "INSERT OR IGNORE INTO garrison_kv (k, v, expire_at) VALUES (?, ?, ?)",
+        let now = Self::now_secs();
+        // 单语句条件 upsert（过期接管原子）：键不存在或已过期（expired 谓词成立）才写入，存活行拒绝且不动。
+        // MySQL 臂以行别名 + 双 IF 承载谓词（需 8.0.19+）；SQLite/PG 臂以 ON CONFLICT ... WHERE 承载。
+        let (sql, values) = match conn.get_database_backend() {
+            DbBackend::MySql => (
+                "INSERT INTO garrison_kv (k, v, expire_at) VALUES (?, ?, ?) AS new_row \
+                 ON DUPLICATE KEY UPDATE \
+                 v = IF(garrison_kv.expire_at IS NOT NULL AND garrison_kv.expire_at <= ?, new_row.v, garrison_kv.v), \
+                 expire_at = IF(garrison_kv.expire_at IS NOT NULL AND garrison_kv.expire_at <= ?, new_row.expire_at, garrison_kv.expire_at)",
+                vec![
+                    Value::String(Some(key.to_string())),
+                    Value::String(Some(value.to_string())),
+                    Value::BigInt(Self::expire_at_from_ttl(ttl_seconds)),
+                    Value::BigInt(Some(now)),
+                    Value::BigInt(Some(now)),
+                ],
+            ),
+            _ => (
+                "INSERT INTO garrison_kv (k, v, expire_at) VALUES (?, ?, ?) \
+                 ON CONFLICT (k) DO UPDATE SET v = excluded.v, expire_at = excluded.expire_at \
+                 WHERE (garrison_kv.expire_at IS NOT NULL AND garrison_kv.expire_at <= ?)",
+                vec![
+                    Value::String(Some(key.to_string())),
+                    Value::String(Some(value.to_string())),
+                    Value::BigInt(Self::expire_at_from_ttl(ttl_seconds)),
+                    Value::BigInt(Some(now)),
+                ],
+            ),
         };
-        let stmt = make_statement(
-            conn,
-            sql,
-            vec![
-                Value::String(Some(key.to_string())),
-                Value::String(Some(value.to_string())),
-                Value::BigInt(Self::expire_at_from_ttl(ttl_seconds)),
-            ],
-        );
+        let stmt = make_statement(conn, sql, values);
         let result = conn
             .execute_raw(stmt)
             .await
             .map_err(|e| GarrisonError::Dao(format!("dao-kv-set-if-absent-execute::{e}")))?;
-        if result.rows_affected() > 0 {
-            return Ok(true);
-        }
-        // 冲突：仅当既有行已过期时清理重写（过期视为不存在语义）；否则写入失败
-        let now = Self::now_secs();
-        let cleaned = self
-            .execute(
-                "set-if-absent-cleanup",
-                &format!(
-                    "DELETE FROM garrison_kv WHERE k = ? AND {}",
-                    Self::expired_cond()
-                ),
-                vec![
-                    Value::String(Some(key.to_string())),
-                    Value::BigInt(Some(now)),
-                ],
-            )
-            .await?;
-        if cleaned == 0 {
-            return Ok(false);
-        }
-        self.set(key, value, ttl_seconds).await?;
-        Ok(true)
+        Ok(result.rows_affected() > 0)
     }
 
     async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<Duration>> {
