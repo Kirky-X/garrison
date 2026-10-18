@@ -7,6 +7,9 @@
 //!
 //! Token-Session 落库 key 的余段是 token 的 SHA-256 摘要（裸凭据不留 key 名），故 keyword 匹配与返回的
 //! token 均取自反序列化 `TokenSession` 的内嵌 `token` 字段——value 侧摘要化时搜索匹配源须同步重设计。
+//!
+//! 带 keyword 的搜索逐行读 value 做过滤（key 余段已摘要化，无值前无法匹配）——这是摘要化的必然代价；
+//! 每行仍恰一次 `dao.get`，扫描量级受 `MAX_SCAN` 截断约束，无额外往返。
 use super::{AccountSession, GarrisonSession, TokenSession};
 use crate::error::{GarrisonError, GarrisonResult};
 use serde::{Deserialize, Serialize};
