@@ -520,6 +520,7 @@ cargo doc --no-deps --features full --open
 | `one-time-access-token` | 为指定用户签发短时效登录凭据（写入 `app_user_ext` 登记行；**一次性消费语义需业务方在登录路径接线登记行原子删除**，未接线时为 TTL 内可重放的 bearer 凭据） | `--db-url` `--user` `--tenant-id` `--ttl-seconds`（≤ 86400） `--secret` `--migrate` `--migrations-dir` |
 | `change-key` | 字段静态加密（R17）全量重加密到新主钥：事务批处理，报告 scanned/reencrypted/legacy 计数；KV 数据面为部署库 `garrison_kv` 表（`DbnexusKvDao`，`018_kv_store.sql`，`ensure_table` 幂等建表） | `--db-url` `--tenant` `--key key_id:hex`（首把为主钥，可重复；存量行解密须携旧钥） `--batch-size` |
 | `check-key` | 字段静态加密可解密性校验（不改动任何行）；非零 legacy 计数 = 迁移未收敛，跑 change-key 收敛；KV 数据面同 change-key（`garrison_kv` 表） | `--db-url` `--tenant` `--key` `--pattern` |
+| `vacuum-kv` | 清理部署库 `garrison_kv` 表中已过期行（仅删 `expire_at <= now`，NULL 永久行不动，幂等返回计数）；亦是会话 key 摘要化升级后遗留 raw key 行的官方收敛工具 | `--db-url` |
 
 构建与运行：
 

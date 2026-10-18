@@ -16,6 +16,20 @@
 
 ## [Unreleased]
 
+### Security
+
+- **会话凭据落库 key 名 SHA-256 摘要化（升级注意：存量会话一次性失效）**：`Token-Session` 与匿名 Session 的落库 key 余段由原始 token 改为 SHA-256 小写 hex 摘要（`token:session:{sha256(token)}` / `token:session:anon:{sha256(token)}`，`session::token_key` 单点构造；对齐 `field-encryption`「裸 bearer token 不得留在落库 key 名」既有原则）——数据库/备份泄露面下 key 名直读不再回收活跃会话凭据。**升级语义**：旧 raw key 行不再被寻址，升级后全部存量会话一次性失效（用户重登录、匿名 token 重新获取）；遗留 raw key 行按其 `expire_at` 由 `vacuum_expired` / `garrison-cli vacuum-kv` 收敛，不做读取期 legacy 双读（热路径双读代价、摘要/原文形状判别不可靠、会话短生命周期使失效代价低）。`sha2` 由 optional 升为核心依赖（摘要无条件生效，安全修复不依赖 feature 开关）。残留风险如实披露：会话 value 内嵌 token（`TokenSession.token` / `AccountSession.tokens`）本变更加密，多副本会话后端部署应启用 `field-encryption` 全值加密。
+
+### Fixed
+
+- **`DbnexusKvDao::set_if_absent` 过期接管竞态（trait 契约违反）**：原实现在 INSERT 冲突且既有行过期时走 DELETE→set 两步，语句间窗口内并发写者可插入新行被第二步无条件 upsert 覆盖（双 `true` + 静默丢值），违反 `GarrisonDao::set_if_absent` 契约「并发同一 key 仅一个调用写入成功，禁止 get+set 两步组合」。现重写为单语句条件 upsert（MySQL 臂行别名 + 双 `IF`，需 MySQL 8.0.19+；SQLite/PG 臂 `ON CONFLICT (k) DO UPDATE ... WHERE` 过期谓词），`rows_affected > 0` 判成败；`compare_and_swap(None)` 委托路径自动继承原子性。
+- **`DbnexusKvDao` 在 PostgreSQL 下 `set_if_absent` 不可用**：原 `_` 方言臂使用 SQLite 专属语法 `INSERT OR IGNORE`（PostgreSQL 不可解析，运行期报错）；单语句化重写后 SQLite/PG 同源合法，缺陷闭合。
+
+### Added
+
+- **`vacuum_expired` 过期行清理原语 + `garrison-cli vacuum-kv`**：`GarrisonDao` 新增 `vacuum_expired()`（trait 默认 no-op：原生 TTL 后端由引擎自清理；`DbnexusKvDao` 覆写为 `DELETE ... WHERE expire_at <= now` 全表清理，`GarrisonDaoDbnexus` 委托透传，`GarrisonSession` 同名转发），仅删过期行、`expire_at IS NULL` 永久行不动、幂等返回删除计数；`garrison-cli` 新增 `vacuum-kv --db-url` 离线命令（zh/en 文案键齐备）。库内不内置后台调度——清理触发节奏（cron / 进程内周期）由部署方决定。
+- **`DbnexusKvDao` 纳入 DAO conformance 契约网**：`dbnexus_kv_sqlite` conformance 实例落地（此前 `dbnexus_sqlite` 实例 KV 委托为进程内 `InMemoryDao`，SQL KV 零契约覆盖，set_if_absent 竞态因此漏网）；conformance 新增过期接管（set_if_absent / CAS(None)）、8 写者并发争抢、vacuum 计数契约用例，对全部后端生效。
+
 ## [0.9.0-rc.3] - 2026-10-14
 
 > R01–R18 安全审计整改 + 统一错误模型（request-id / Retry-After）+ 字段静态加密 + WebAuthn/Passkey + 密码找回 + MFA/step-up 编排 + OIDC back-channel logout + 多租户强化 + 参考部署安全基线收紧。

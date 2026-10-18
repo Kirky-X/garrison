@@ -20,6 +20,16 @@
 //! 其余读-改-写方法（`incr`/`decr`/`rename`/`get_and_delete`）为两步（调用面为离线 CLI，无并发写者；
 //! trait 文档要求的临界区原子性由单语句路径保证）。
 //!
+//! # vacuum 与升级遗留行
+//!
+//! [`vacuum_expired`](GarrisonDao::vacuum_expired)（trait 默认 no-op，本实现覆写）全表清理
+//! `expire_at` 非空且 ≤ 当前时间的行（`expire_at IS NULL` 永久行不动），幂等返回删除计数；
+//! 会话 key 余段 SHA-256 摘要化（`session::token_key`）升级后遗留的 raw key 行不再被寻址，
+//! 由本方法或 garrison-cli `vacuum-kv` 收敛。`keys()` 返回的 Token-Session key 余段为摘要形态，
+//! 不可反解为 token。本 DAO 的定位仍是「离线 CLI 调用面、无并发写者」——被用作多副本共享会话
+//! 后端属超出契约的用法（除单语句方法外无跨进程原子性），如需该用法应自备写者间协调或选用
+//! Redis 后端。
+//!
 //! 结构化表操作与 `eval_lua` 走 trait 默认 `NotImplemented`：前者由
 //! [`GarrisonDaoDbnexus`](super::dbnexus_dao) 的 SQL 方法承载，后者属 Redis 后端能力。
 

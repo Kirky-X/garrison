@@ -167,7 +167,11 @@ pub trait SessionExpiryListener: Send + Sync {
 
 /// 会话管理器，封装 `GarrisonDao` 提供双模会话操作。
 ///
-/// 存储格式：`account:session:{login_id}` → `AccountSession`（JSON），`token:session:{token}` → `TokenSession`（JSON）。
+/// 存储格式：`account:session:{login_id}` → `AccountSession`（JSON），`token:session:{sha256(token)}` → `TokenSession`（JSON）。
+///
+/// Token-Session 落库 key 的余段是 token 的 SHA-256 摘要（64 位小写 hex）——裸 bearer 凭据不得
+/// 留在落库 key 名（DB 泄露面下 key 名直读即泄露活跃凭据）；升级即存量会话一次性失效，遗留 raw
+/// key 行由 `vacuum_expired` / garrison-cli `vacuum-kv` 收敛。匿名空间 `token:session:anon:{sha256(token)}` 同规则。
 pub struct GarrisonSession {
     /// DAO 引用（oxcache / dbnexus 实现）。
     dao: Arc<dyn GarrisonDao>,
