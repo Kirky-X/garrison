@@ -2,6 +2,11 @@
 //!
 //! 三个方法均支持分页与排序（创建时间 / 最后活跃时间）：`search_token_value` 按 token 值搜 Token-Session、
 //! `search_session_id` 按 login_id 搜 Account-Session、`search_token_session_id` 按 login_id 搜 token（前两者排除匿名 Session）。
+//!
+//! # 匹配源耦合
+//!
+//! Token-Session 落库 key 的余段是 token 的 SHA-256 摘要（裸凭据不留 key 名），故 keyword 匹配与返回的
+//! token 均取自反序列化 `TokenSession` 的内嵌 `token` 字段——value 侧摘要化时搜索匹配源须同步重设计。
 use super::{AccountSession, GarrisonSession, TokenSession};
 use crate::error::{GarrisonError, GarrisonResult};
 use serde::{Deserialize, Serialize};
@@ -68,6 +73,7 @@ fn mask_key(key: &str) -> String {
 ///
 /// 经 `dao.keys()` 全量扫描（最多 `MAX_SCAN` 条，超出截断并 warn）；返回 `(items, truncated)`，
 /// `truncated=true` 表示结果可能不完整。`keyword` 超长或 `size` 超过上限返回 `InvalidParam`。
+/// 匹配源为 value 内嵌 `token` 字段（key 余段为摘要，不再承载 token 值）。
 pub async fn search_token_value(
     session: &GarrisonSession,
     keyword: &str,
@@ -111,15 +117,10 @@ pub async fn search_token_value(
         if key.starts_with(ANON_SESSION_PREFIX) {
             continue;
         }
-        let token = match key.strip_prefix(TOKEN_SESSION_PREFIX) {
-            Some(t) => t,
-            None => continue,
-        };
-        // keyword 过滤（空 keyword 匹配所有）
-        if !keyword.is_empty() && !token.contains(keyword) {
+        if !key.starts_with(TOKEN_SESSION_PREFIX) {
             continue;
         }
-        // 读取 TokenSession 获取排序时间戳
+        // key 余段为 token 的 SHA-256 摘要（非 token 本身）——先读 value，匹配源改从内嵌 token 取
         let json = match session.dao.get(&key).await? {
             Some(j) => j,
             None => continue,
@@ -127,7 +128,7 @@ pub async fn search_token_value(
         let ts: TokenSession = match serde_json::from_str(&json) {
             Ok(ts) => ts,
             Err(e) => {
-                // 脱敏：不输出完整 key（含 token 值）
+                // 脱敏：不输出完整 key（含 token 摘要）
                 tracing::warn!(
                     key = %mask_key(&key),
                     error = %e,
@@ -137,7 +138,11 @@ pub async fn search_token_value(
                 continue;
             },
         };
-        entries.push((token.to_string(), ts.created_at, ts.last_active_at));
+        // keyword 过滤（空 keyword 匹配所有）
+        if !keyword.is_empty() && !ts.token.contains(keyword) {
+            continue;
+        }
+        entries.push((ts.token, ts.created_at, ts.last_active_at));
     }
 
     if skipped > 0 {
@@ -262,6 +267,7 @@ pub async fn search_session_id(
 ///
 /// 经 `dao.keys()` 全量扫描（最多 `MAX_SCAN` 条，超出截断并 warn）；返回 `(items, truncated)`，
 /// `truncated=true` 表示结果可能不完整。`keyword` 超长或 `size` 超过上限返回 `InvalidParam`。
+/// 返回 token 取自 value 内嵌 `token` 字段（key 余段为摘要，不再承载 token 值）。
 pub async fn search_token_session_id(
     session: &GarrisonSession,
     keyword: &str,
@@ -305,11 +311,10 @@ pub async fn search_token_session_id(
         if key.starts_with(ANON_SESSION_PREFIX) {
             continue;
         }
-        let token = match key.strip_prefix(TOKEN_SESSION_PREFIX) {
-            Some(t) => t,
-            None => continue,
-        };
-        // 读取 TokenSession 获取 login_id 与排序时间戳
+        if !key.starts_with(TOKEN_SESSION_PREFIX) {
+            continue;
+        }
+        // key 余段为摘要——先读 value，返回 token 改从内嵌字段取
         let json = match session.dao.get(&key).await? {
             Some(j) => j,
             None => continue,
@@ -317,7 +322,7 @@ pub async fn search_token_session_id(
         let ts: TokenSession = match serde_json::from_str(&json) {
             Ok(ts) => ts,
             Err(e) => {
-                // 脱敏：不输出完整 key（含 token 值）
+                // 脱敏：不输出完整 key（含 token 摘要）
                 tracing::warn!(
                     key = %mask_key(&key),
                     error = %e,
@@ -331,7 +336,7 @@ pub async fn search_token_session_id(
         if !keyword.is_empty() && !ts.login_id.contains(keyword) {
             continue;
         }
-        entries.push((token.to_string(), ts.created_at, ts.last_active_at));
+        entries.push((ts.token, ts.created_at, ts.last_active_at));
     }
 
     if skipped > 0 {
@@ -360,6 +365,7 @@ mod tests {
     use super::*;
     use crate::dao::tests::MockDao;
     use crate::dao::GarrisonDao;
+    use crate::session::{sha256_hex, token_key};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -378,7 +384,8 @@ mod tests {
         created_at: i64,
         last_active_at: i64,
     ) {
-        let key = format!("{}{}", TOKEN_SESSION_PREFIX, token);
+        // key 余段为 token 摘要——与生产 token_key() 同一构造（value 内嵌原始 token 供搜索匹配源）
+        let key = token_key(token);
         let ts = TokenSession {
             token: token.to_string(),
             login_id: login_id.to_string(),
@@ -592,8 +599,8 @@ mod tests {
         // 写入正常 Token-Session
         put_token_session(&dao, "normal-1", "u1", 100, 100).await;
 
-        // 写入匿名 Session（直接操作 DAO，模拟 anon 模块的行为）
-        let anon_key = format!("{}anon:anon-tok", TOKEN_SESSION_PREFIX);
+        // 写入匿名 Session（直接操作 DAO，模拟 anon 模块的行为；anon key 余段同为摘要）
+        let anon_key = format!("{}anon:{}", TOKEN_SESSION_PREFIX, sha256_hex("anon-tok"));
         let anon_ts = TokenSession {
             token: "anon-tok".to_string(),
             login_id: String::new(),
@@ -633,6 +640,27 @@ mod tests {
             vec!["normal-1"],
             "anon Session 不应出现在 login_id 搜索结果"
         );
+    }
+
+    /// key 余段为 token 的 SHA-256 摘要——搜索结果返回 value 内嵌的原始 token（非摘要余段）。
+    #[tokio::test]
+    async fn search_token_value_returns_original_token_not_digest() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("u1", "T1-raw").await.unwrap();
+
+        let (result, _truncated) = session
+            .search_token_value("T1-raw", 0, 100, SearchSortType::CreatedAsc)
+            .await
+            .unwrap();
+        assert_eq!(
+            result,
+            vec!["T1-raw".to_string()],
+            "搜索结果应返回 value 内嵌的原始 token"
+        );
+        // 落库 key 余段为 64 位摘要，不得作为搜索结果返回
+        let digest_suffix = &token_key("T1-raw")["token:session:".len()..];
+        assert_eq!(digest_suffix.len(), 64, "落库 key 余段应为 64 位摘要");
+        assert_ne!(result[0], digest_suffix, "返回值不应是 key 摘要余段");
     }
 
     /// keyword 超过 MAX_KEYWORD_LEN 时返回 InvalidParam 错误。
