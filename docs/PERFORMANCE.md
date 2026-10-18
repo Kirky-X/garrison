@@ -57,8 +57,6 @@ cargo bench --bench garrison_benchmark --features full --locked -- \
 
 通过标准：criterion 无 `Regressed` 判定；基线存于 `target/criterion` 供后续对比。注意：`permission_check` 在 `tenant-isolation`（full 面）下会显式进入默认租户 0 上下文（与 server 中间件行为等价），否则因无 `TENANT.scope` 而 panic。
 
-> 各场景在本机的 criterion 区间估计数据**待补充**——请以上述命令在本机采集，不使用跨机器数字做结论。
-
 ---
 
 ## 📈 验收性能基线（E2E）

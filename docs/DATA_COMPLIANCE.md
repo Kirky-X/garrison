@@ -11,7 +11,7 @@
 | 数据类 | 存储位置（键空间） | 含个人信息 | 保存期限 | 擦除方式 |
 |--------|-------------------|-----------|---------|---------|
 | 会话（Account-Session 索引） | `account:session:{login_id}` | login_id、设备绑定信息 | `timeout` 配置（默认 30 天） | `logout_by_login_id` / 擦除服务 |
-| 会话（Token 明细） | `token:session:{token}` | login_id（记录内）、设备 | 同上，随索引级联 | `logout_by_login_id` 级联删除 |
+| 会话（Token 明细） | `token:session:{sha256(token)}`（key 余段为 SHA-256 摘要，原始 token 不落 key 名；升级前遗留 raw key 行经 `vacuum-kv --sweep-legacy-session-keys` 收敛） | login_id（记录内）、设备 | 同上，随索引级联 | `logout_by_login_id` 级联删除 |
 | OAuth2 access/refresh token | `oauth2:atoken:` / `oauth2:rtoken:`（DAO 路径）或 `refresh_tokens` 表（db-sqlite，仅 SHA-256 哈希） | client_id / user_id | `ACCESS/REFRESH_TOKEN_TTL` | revoke 端点（RFC 7009）/ TTL |
 | API Key | DAO 键 `garrison:apikey:{namespace}:{key_id}`，索引 `garrison:apikey:idx:{key_id}`（secret 仅 SHA-256 哈希） | key_id、owner_id、IP 限速计数 | 生成时强制 `timeout > 0`，以该值为 TTL 落库 | `ApiKeyHandler::revoke` / `rotate` / `list_by_namespace` |
 | 账户锁定状态 | `lockout:{login_id}` | login_id、失败模式画像 | TTL（锁定窗口） | 擦除服务 / TTL |

@@ -174,6 +174,13 @@ flamegraph.svg
 *.orig
 *.rej
 
+# 设计文档（PRD/ADD/TRD/DDD/HUB_PROTOCOL 不入库）
+docs/PRD.md
+docs/ADD.md
+docs/TRD.md
+docs/DDD.md
+docs/HUB_PROTOCOL.md
+
 # 文档生成产物
 /book/
 /book.toml.local
