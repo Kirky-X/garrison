@@ -3897,6 +3897,7 @@ mod session_token_security_tests {
     #[cfg(feature = "protocol-jwt")]
     use crate::dao::GarrisonDao;
     use crate::error::GarrisonError;
+    #[cfg(feature = "protocol-jwt")]
     use crate::session::token_key;
     use crate::session::GarrisonSession;
     use crate::stp::core::GarrisonCore;
