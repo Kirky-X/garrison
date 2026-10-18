@@ -2387,7 +2387,7 @@ mod tests {
 
     /// Login 步骤 — lockout=Some 且 verify=true → record_success 重置失败计数。
     /// 验证：[fail, ok, fail] 后第 4 次 login 仍可成功（count=1 < 2）；
-    /// 若 record_success 未调用，count=3 → 已锁定，第 4 次会返回 Failed。
+    /// 若 record_success 未调用，第 3 次失败即达阈值（count=2）置锁定，第 4 次被 check 拦截返回 Failed。
     #[tokio::test]
     async fn login_with_lockout_success_resets_failure_count() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -2431,8 +2431,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Step 4: correct → 若 record_success 在 step 2 调用，count=1 < 2 → check 通过 → Success
-        // 若未调用，count=3 >= 2 → 已锁定 → Failed
+        // 第 4 次尝试 correct：若 record_success 已在第 2 次尝试调用，count=1 < 2 → check 通过 → Success
+        // 若从未调用，count=2 已达阈值（第 3 次失败即置锁定）→ 第 4 次 check 被拦截 → Failed
         let mut ctx4 = make_context("alice", "correct");
         let result = executor
             .execute_with_builder(&flow, &mut ctx4, &builder_ok)
@@ -2443,7 +2443,7 @@ mod tests {
             AuthResult::Success { login_id, .. } => {
                 assert_eq!(
                     login_id, "alice",
-                    "record_success 应在 step 2 重置失败计数，使 step 4 不被锁定"
+                    "record_success 应在第 2 次尝试重置失败计数，使第 4 次尝试不被锁定"
                 );
             },
             AuthResult::Failed { reason, .. } => {
@@ -2492,7 +2492,7 @@ mod tests {
             .unwrap();
         assert!(
             matches!(r1, AuthResult::Failed { ref reason, .. } if reason.contains("凭证校验失败")),
-            "step 1 应为凭证校验失败: {:?}",
+            "第 1 次尝试应为凭证校验失败: {:?}",
             r1
         );
 
