@@ -81,7 +81,7 @@ async fn bw_ac_002_protected_api_renews_token_session_ttl() {
         .expect("create 应成功");
 
     let initial_ttl = dao
-        .get_timeout("token:session:token-002")
+        .get_timeout(&token_key("token-002"))
         .await
         .expect("get_timeout 应成功");
     assert!(initial_ttl.is_some(), "初始 TTL 应存在");
@@ -90,7 +90,7 @@ async fn bw_ac_002_protected_api_renews_token_session_ttl() {
     session.touch("token-002").await.expect("touch 应成功");
 
     let renewed_ttl = dao
-        .get_timeout("token:session:token-002")
+        .get_timeout(&token_key("token-002"))
         .await
         .expect("get_timeout 应成功");
     assert!(renewed_ttl.is_some(), "续期后 TTL 应存在");

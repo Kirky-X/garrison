@@ -577,7 +577,7 @@ mod tests {
         create_session_with_ip(&session, "1001", "T1", "1.2.3.4").await;
         create_session_with_ip(&session, "1001", "T2", "9.9.9.9").await;
         // 注入损坏 JSON：T2 读取时反序列化失败（get_token_session 返回 Err）
-        dao.set("token:session:T2", "{invalid-json}", 3600)
+        dao.set(&token_key("T2"), "{invalid-json}", 3600)
             .await
             .unwrap();
 
