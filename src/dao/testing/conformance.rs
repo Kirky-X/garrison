@@ -824,6 +824,72 @@ pub async fn run_expired_key_takeover_contention(dao: &Arc<dyn GarrisonDao>, pre
     }
 }
 
+// 独立契约组：vacuum_expired 过期行清理（强断言仅对 SQL KV 成立；trait 默认 no-op 后端返回 0，不入通用 ttl 层）
+
+/// vacuum 契约（独立契约函数，与 `run_expired_key_takeover_contention` 同构，不经 `caps` 矩阵）：
+/// 先调一次 vacuum 排除宿主既有过期行干扰（drain），再混合预置 2 个过期（ttl=1）/ 存活 / 永久行；
+/// 断言单次 vacuum 精确删除 2 行、过期键不可见、存活与永久行原样、二次调用幂等归零。
+/// 强断言（精确计数 / 只删过期）对 trait 默认 no-op 后端不成立，故不入通用 `run_ttl` 层；
+/// 调用方须提供无并行写入干扰的库（专属命名内存库 / acceptance 单线程目标）。
+pub async fn run_vacuum_expired(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
+    // drain：宿主库（共享存储被复用时）可能已有过期行——先清一次，使后续精确计数不受历史行干扰。
+    expect_ok(prefix, "vacuum-drain", dao.vacuum_expired().await);
+
+    let k_expired_a = format!("{prefix}vacuum:expired_a");
+    let k_expired_b = format!("{prefix}vacuum:expired_b");
+    let k_live = format!("{prefix}vacuum:live");
+    let k_permanent = format!("{prefix}vacuum:permanent");
+    expect_ok(
+        prefix,
+        "set expired_a",
+        dao.set(&k_expired_a, "e1", 1).await,
+    );
+    expect_ok(
+        prefix,
+        "set expired_b",
+        dao.set(&k_expired_b, "e2", 1).await,
+    );
+    expect_ok(prefix, "set live", dao.set(&k_live, "alive", 3600).await);
+    expect_ok(
+        prefix,
+        "set permanent",
+        dao.set(&k_permanent, "forever", 0).await,
+    );
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let removed = expect_ok(prefix, "vacuum", dao.vacuum_expired().await);
+    assert_eq!(
+        removed, 2,
+        "[{prefix}] vacuum 应精确删除 2 个过期行，实际: {removed}"
+    );
+    assert_eq!(
+        expect_ok(prefix, "get expired_a", dao.get(&k_expired_a).await),
+        None,
+        "[{prefix}] vacuum 后过期键应不存在"
+    );
+    assert_eq!(
+        expect_ok(prefix, "get expired_b", dao.get(&k_expired_b).await),
+        None,
+        "[{prefix}] vacuum 后过期键应不存在"
+    );
+    assert_eq!(
+        expect_ok(prefix, "get live", dao.get(&k_live).await).as_deref(),
+        Some("alive"),
+        "[{prefix}] 存活行不应被 vacuum 删除"
+    );
+    assert_eq!(
+        expect_ok(prefix, "get permanent", dao.get(&k_permanent).await).as_deref(),
+        Some("forever"),
+        "[{prefix}] 永久行（NULL expire_at）不应被 vacuum 删除"
+    );
+    assert_eq!(
+        expect_ok(prefix, "vacuum 2nd", dao.vacuum_expired().await),
+        0,
+        "[{prefix}] 二次 vacuum 应幂等归零（无剩余过期行）"
+    );
+}
+
 // ttl 层：墙钟过期契约（每测试仅 1 次 sleep，沿用既有惯例 set(ttl=2)+sleep(3s)）
 
 /// ttl 层契约：过期即不存在、update/rename/incr 保留原窗口不重置、`expire(k, 0)` 转永久；

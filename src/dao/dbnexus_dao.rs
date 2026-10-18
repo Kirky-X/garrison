@@ -138,6 +138,10 @@ impl GarrisonDao for GarrisonDaoDbnexus {
             .await
     }
 
+    async fn vacuum_expired(&self) -> GarrisonResult<u64> {
+        self.kv.vacuum_expired().await
+    }
+
     async fn eval_lua(
         &self,
         script: &str,

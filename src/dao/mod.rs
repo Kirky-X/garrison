@@ -244,6 +244,14 @@ pub trait GarrisonDao: Send + Sync {
         ttl_seconds: u64,
     ) -> GarrisonResult<bool>;
 
+    /// 清理全部已过期行（vacuum）：仅删除 `expire_at` 非空且 ≤ 当前时间的行，永久行（`NULL`）不动；
+    /// 幂等，返回物理删除行数。默认 no-op 返回 0——原生 TTL 后端（Redis/oxcache）由存储引擎自清理、
+    /// 进程内后端随实例消亡，均无「永久滞留的过期行」；SQL KV（`DbnexusKvDao`）重写为单语句 DELETE，
+    /// 由部署方以 cron/systemd timer 或进程内周期调用触发（上游不内置调度）。
+    async fn vacuum_expired(&self) -> GarrisonResult<u64> {
+        Ok(0)
+    }
+
     /// 插入 credit 消费流水（`persist_history = true` 时调用）；
     /// 默认返回 `GarrisonError::NotImplemented`，SQL 后端（sqlite/postgres/mysql）重写。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
@@ -450,6 +458,97 @@ pub mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
+
+    /// `vacuum_expired` 计数 mock：包装 [`MockDao`]（委托全部必需方法），以 `AtomicU64` 记录调用次数
+    /// 并返回预置删除计数；用于 session 层委托链路断言（`GarrisonSession::vacuum_expired` → DAO）。
+    pub struct VacuumCountingDao {
+        inner: MockDao,
+        /// `vacuum_expired` 被调用次数。
+        calls: std::sync::atomic::AtomicU64,
+        /// 预置返回的删除行数。
+        result: u64,
+    }
+
+    impl VacuumCountingDao {
+        /// 创建实例；`result` 为 `vacuum_expired` 每次返回的删除计数。
+        pub fn new(result: u64) -> Self {
+            Self {
+                inner: MockDao::new(),
+                calls: std::sync::atomic::AtomicU64::new(0),
+                result,
+            }
+        }
+
+        /// 读取 `vacuum_expired` 被调用次数。
+        pub fn calls(&self) -> u64 {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl GarrisonDao for VacuumCountingDao {
+        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
+            self.inner.get(key).await
+        }
+
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
+            self.inner.set(key, value, ttl_seconds).await
+        }
+
+        async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
+            self.inner.update(key, value).await
+        }
+
+        async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
+            self.inner.expire(key, seconds).await
+        }
+
+        async fn delete(&self, key: &str) -> GarrisonResult<()> {
+            self.inner.delete(key).await
+        }
+
+        async fn set_if_absent(
+            &self,
+            key: &str,
+            value: &str,
+            ttl_seconds: u64,
+        ) -> GarrisonResult<bool> {
+            self.inner.set_if_absent(key, value, ttl_seconds).await
+        }
+
+        async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
+            self.inner.rename(old_key, new_key).await
+        }
+
+        async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>> {
+            self.inner.get_and_delete(key).await
+        }
+
+        async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64> {
+            self.inner.incr(key, ttl_seconds).await
+        }
+
+        async fn decr(&self, key: &str) -> GarrisonResult<u64> {
+            self.inner.decr(key).await
+        }
+
+        async fn compare_and_swap(
+            &self,
+            key: &str,
+            expected: Option<&str>,
+            new_value: &str,
+            ttl_seconds: u64,
+        ) -> GarrisonResult<bool> {
+            self.inner
+                .compare_and_swap(key, expected, new_value, ttl_seconds)
+                .await
+        }
+
+        async fn vacuum_expired(&self) -> GarrisonResult<u64> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(self.result)
+        }
+    }
 
     // GarrisonDaoOxcache keys() 测试（需 dao-key-index + cache-memory/cache-redis）
     #[cfg(all(
@@ -1542,6 +1641,19 @@ pub mod tests {
         dao.set("key1", "v1", 0).await.unwrap();
         let result = dao.keys("*").await;
         assert!(matches!(result, Err(GarrisonError::NotImplemented(_))));
+    }
+
+    /// `vacuum_expired` 默认实现为 no-op：返回 `Ok(0)` 且不触达任何行（原生 TTL / 进程内后端的合法语义）。
+    #[tokio::test]
+    async fn default_vacuum_expired_returns_zero_no_op() {
+        let dao = MinimalDao::new();
+        dao.set("vacuum_default_key", "v", 0).await.unwrap();
+        assert_eq!(dao.vacuum_expired().await.unwrap(), 0);
+        assert_eq!(
+            dao.get("vacuum_default_key").await.unwrap().as_deref(),
+            Some("v"),
+            "no-op 默认实现不应删除任何行"
+        );
     }
 
     /// 测试回退宏的 rename 组合语义：get → set_permanent → delete。

@@ -264,6 +264,18 @@ impl GarrisonDao for DbnexusKvDao {
         Ok(())
     }
 
+    /// 过期行清理（vacuum）：全表单语句 DELETE，作用于共享表全命名空间安全——各子系统行均有 TTL，
+    /// 过期 = 语义已死；`expire_at IS NULL` 永久行不受影响；幂等，返回物理删除行数。
+    async fn vacuum_expired(&self) -> GarrisonResult<u64> {
+        let now = Self::now_secs();
+        self.execute(
+            "vacuum-expired",
+            &format!("DELETE FROM garrison_kv WHERE {}", Self::expired_cond()),
+            vec![Value::BigInt(Some(now))],
+        )
+        .await
+    }
+
     async fn set_if_absent(
         &self,
         key: &str,

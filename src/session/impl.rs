@@ -577,6 +577,13 @@ impl GarrisonSession {
         Ok(removed)
     }
 
+    /// 清理 DAO 中全部已过期行（vacuum）：一行转发 [`GarrisonDao::vacuum_expired`]，返回物理删除行数。
+    /// 下游以 `Arc<GarrisonSession>` 持有时经此触达（dyn trait 不可从具体类型以外路径调用）；
+    /// 触发方式（cron / systemd timer / 进程内周期调用）由部署方决定，上游不内置调度。
+    pub async fn vacuum_expired(&self) -> GarrisonResult<u64> {
+        self.dao.vacuum_expired().await
+    }
+
     /// 从 DAO 重建内存 `login_token_map`：扫描所有 Account-Session，收集 `tokens` 字段重建内存层（重启后恢复索引）。
     ///
     /// 反序列化失败或 key 格式异常的条目记录 `tracing::warn!` 并跳过，不中断重建流程。
@@ -1264,7 +1271,7 @@ impl GarrisonSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao::tests::MockDao;
+    use crate::dao::tests::{MockDao, VacuumCountingDao};
     use chrono::Utc;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -1275,6 +1282,20 @@ mod tests {
         let dao = Arc::new(MockDao::new());
         let session = GarrisonSession::new(dao.clone(), timeout, active_timeout, 0);
         (dao, session)
+    }
+
+    /// `GarrisonSession::vacuum_expired` 一行转发 DAO：返回 DAO 预置删除计数、恰调用一次（委托链路断言）。
+    #[tokio::test]
+    async fn vacuum_expired_forwards_to_dao() {
+        let dao = Arc::new(VacuumCountingDao::new(7));
+        let session = GarrisonSession::new(dao.clone(), 3600, 86400, 0);
+        let removed = session.vacuum_expired().await.unwrap();
+        assert_eq!(removed, 7, "转发应返回 DAO 的 vacuum_expired 删除计数");
+        assert_eq!(
+            dao.calls(),
+            1,
+            "session 转发应恰触发 1 次 DAO vacuum_expired"
+        );
     }
 
     /// remember-me 登录时 effective_timeout 写入 remember_me_timeout，且 `get_token_session` 过期判定以其为权威来源。

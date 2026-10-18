@@ -7,7 +7,7 @@
 //! - `in_memory`：[basic, atomic, concurrent, ttl, keys]（无 feature 依赖）
 //! - `oxcache_memory`：[basic, atomic, concurrent, ttl]（`cache-memory`）；`oxcache_memory_keys` 独立块挂 keys（`dao-key-index`）
 //! - `dbnexus_sqlite`：[basic, atomic, concurrent, ttl]（KV 委托进程内 `InMemoryDao`，不触 SQL 表故不跑迁移）
-//! - `dbnexus_kv_sqlite`：[atomic, ttl]（`DbnexusKvDao` 直连真实 SQL 表；并发争抢由独立测试 `expired_key_takeover_contention_dbnexus_kv_sqlite` 承载）
+//! - `dbnexus_kv_sqlite`：[atomic, ttl]（`DbnexusKvDao` 直连真实 SQL 表；并发争抢与 vacuum 计数由独立测试 `expired_key_takeover_contention_dbnexus_kv_sqlite` / `vacuum_expired_contract_dbnexus_kv_sqlite` 承载）
 //! - `dbnexus_postgres`：同 caps（`#[ignore]` + `DATABASE_URL`，`#[serial]`）
 //! - `alone_cache`：[basic, atomic]（装饰器纯委托，concurrent/ttl 由内层 InMemoryDao 证明）
 
@@ -95,6 +95,22 @@ async fn expired_key_takeover_contention_dbnexus_kv_sqlite() {
         "dbnexus_kv_sqlite_takeover:",
     )
     .await;
+}
+
+/// vacuum 契约（dbnexus sqlite）：caps 矩阵不含 vacuum 层（精确计数 / 只删过期的强断言对 trait 默认 no-op 后端不成立，见 conformance.rs 说明），
+/// 本独立测试以 `DbnexusKvDao` 直连 SQL 表承载精确计数与幂等回归。
+/// 专属命名内存库与 caps 实例隔离——「精确计数」断言不容并行用例的过期行干扰。
+#[cfg(all(test, feature = "db-sqlite"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn vacuum_expired_contract_dbnexus_kv_sqlite() {
+    let pool = // cache=shared 命名内存库：池内多连接共享同一库（`sqlite::memory:` Windows 下开新连接得到空库，迁移建表后查询报 no such table，2026-10-08 Windows CI 实证）
+        crate::dao::init_dbnexus("sqlite:file:garrison_dao_kv_vacuum_mem?mode=memory&cache=shared")
+            .await
+            .expect("init_dbnexus 应成功");
+    let kv = crate::dao::DbnexusKvDao::new(pool);
+    kv.ensure_table().await.expect("ensure_table 应成功");
+    let dao: ::std::sync::Arc<dyn crate::dao::GarrisonDao> = ::std::sync::Arc::new(kv);
+    crate::dao::testing::conformance::run_vacuum_expired(&dao, "dbnexus_kv_sqlite_vacuum:").await;
 }
 
 #[cfg(all(test, feature = "db-postgres"))]
