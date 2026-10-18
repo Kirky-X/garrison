@@ -85,6 +85,11 @@ criteria = "safe-to-deploy"
 version = "0.5.0-rc.6"
 notes = "缓存框架（oxcache 系），多级缓存与 Redis 协同。自审通过（同作者系 CodeNexus 自研库）；rc.6 相对 rc.5 为增量演进。"
 
+[[audits.rustls]]
+who = "Kirky.X <kirky-x@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.23.46"
+
 [[audits.sdforge]]
 who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"

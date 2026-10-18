@@ -2239,10 +2239,6 @@ criteria = "safe-to-deploy"
 version = "1.1.5"
 criteria = "safe-to-deploy"
 
-[[exemptions.rustls]]
-version = "0.23.45"
-criteria = "safe-to-deploy"
-
 [[exemptions.rustls-native-certs]]
 version = "0.8.4"
 criteria = "safe-to-deploy"
