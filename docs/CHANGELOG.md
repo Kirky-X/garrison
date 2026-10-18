@@ -22,8 +22,9 @@
 
 ### Fixed
 
-- **`DbnexusKvDao::set_if_absent` 过期接管竞态（trait 契约违反）**：原实现在 INSERT 冲突且既有行过期时走 DELETE→set 两步，语句间窗口内并发写者可插入新行被第二步无条件 upsert 覆盖（双 `true` + 静默丢值），违反 `GarrisonDao::set_if_absent` 契约「并发同一 key 仅一个调用写入成功，禁止 get+set 两步组合」。现重写为单语句条件 upsert（MySQL 臂行别名 + 双 `IF`，需 MySQL 8.0.19+；SQLite/PG 臂 `ON CONFLICT (k) DO UPDATE ... WHERE` 过期谓词），`rows_affected > 0` 判成败；`compare_and_swap(None)` 委托路径自动继承原子性。
+- **`DbnexusKvDao::set_if_absent` 过期接管竞态（trait 契约违反）**：原实现在 INSERT 冲突且既有行过期时走 DELETE→set 两步，语句间窗口内并发写者可插入新行被第二步无条件 upsert 覆盖（双 `true` + 静默丢值），违反 `GarrisonDao::set_if_absent` 契约「并发同一 key 仅一个调用写入成功，禁止 get+set 两步组合」。现重写为原子接管（SQLite/PG 臂单语句条件 upsert `ON CONFLICT (k) DO UPDATE ... WHERE` 过期谓词；MySQL 臂事务 + `SELECT ... FOR UPDATE` 行锁内判定后写入——ODKU 的 affected 三态在 sqlx 无条件 CLIENT_FOUND_ROWS 握手下塌缩不可判，真库 acceptance 实证），`compare_and_swap(None)` 委托路径自动继承原子性。
 - **`DbnexusKvDao` 在 PostgreSQL 下 `set_if_absent` 不可用**：原 `_` 方言臂使用 SQLite 专属语法 `INSERT OR IGNORE`（PostgreSQL 不可解析，运行期报错）；单语句化重写后 SQLite/PG 同源合法，缺陷闭合。
+- **`DbnexusKvDao::ensure_table` 在 MySQL 下建表失败**：内联 DDL 用裸 `VARCHAR`（MySQL 必须带长度，语法错误 1064），SQLite/PG 合故此前未在真库暴露；现按后端分支（MySQL `VARCHAR(255)`），与 `migrations/mysql/core/018_kv_store.sql` 迁移文件对齐。
 
 ### Added
 

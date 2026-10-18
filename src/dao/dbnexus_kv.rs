@@ -13,10 +13,11 @@
 //! 视为不存在（`update`/`expire` 对其显性 `dao-key-missing`，不复活）、`incr`/`decr` 计数器
 //! （`incr` 保留原 TTL、`decr` 到 0 删键）、`compare_and_swap` 的 `expected=None` 语义为键不存在。
 //! 差异仅在介质：时间基准为 UTC unix 秒（跨进程可比）。`set_if_absent`（含 `compare_and_swap(None)`
-//! 委托）为单语句条件 upsert、过期行接管原子：MySQL 臂以行别名 + 双 `IF` 承载（需 MySQL 8.0.19+，
-//! 唯一已知良性边缘为过期行与新 `(v, expire_at)` 完全同值同秒判无变化返回 false，下一秒重试即成功）；
-//! SQLite/PG 臂以 `ON CONFLICT (k) DO UPDATE ... WHERE` 过期谓词承载（实际生效即计数，无同值边缘；
-//! 旧 `INSERT OR IGNORE` 臂为 SQLite 专属语法、PostgreSQL 不可解析的缺陷随本重写闭合）。
+//! 委托）为过期行接管原子：SQLite/PG 臂以 `ON CONFLICT (k) DO UPDATE ... WHERE` 过期谓词单语句承载
+//! （旧 `INSERT OR IGNORE` 臂为 SQLite 专属语法、PostgreSQL 不可解析的缺陷随本重写闭合）；MySQL 臂以
+//! 事务 + `SELECT ... FOR UPDATE` 行锁内判定后写入——ODKU 的 affected 计数在 sqlx 无条件
+//! CLIENT_FOUND_ROWS 握手下「无变化更新」回报 1，插入/接管/拒绝三态塌缩不可判（MySQL 8.0 真库
+//! acceptance 实证），行锁临界区的原子性与单语句等价。
 //! 其余读-改-写方法（`incr`/`decr`/`rename`/`get_and_delete`）为两步（调用面为离线 CLI，无并发写者；
 //! trait 文档要求的临界区原子性由单语句路径保证）。
 //!
@@ -69,12 +70,20 @@ impl DbnexusKvDao {
     /// 幂等建表（CLI 打开即调；部署库亦可经 `migrate_core` 的 `018_kv_store.sql` 预建）。
     pub async fn ensure_table(&self) -> GarrisonResult<()> {
         kv_session!(self, "ensure-table", session, conn);
+        // MySQL 的 VARCHAR 必须带长度（裸 VARCHAR 是语法错误），与 `018_kv_store.sql` 的
+        // MySQL 迁移文件对齐用 VARCHAR(255)；SQLite/PG 裸 VARCHAR 合法
+        let k_type = match conn.get_database_backend() {
+            DbBackend::MySql => "VARCHAR(255)",
+            _ => "VARCHAR",
+        };
         let stmt = make_statement(
             conn,
-            "CREATE TABLE IF NOT EXISTS garrison_kv (\
-             k VARCHAR PRIMARY KEY, \
-             v TEXT NOT NULL, \
-             expire_at BIGINT)",
+            &format!(
+                "CREATE TABLE IF NOT EXISTS garrison_kv (\
+                 k {k_type} PRIMARY KEY, \
+                 v TEXT NOT NULL, \
+                 expire_at BIGINT)"
+            ),
             vec![],
         );
         conn.execute_raw(stmt)
@@ -294,34 +303,75 @@ impl GarrisonDao for DbnexusKvDao {
     ) -> GarrisonResult<bool> {
         kv_session!(self, "set-if-absent", session, conn);
         let now = Self::now_secs();
-        // 单语句条件 upsert（过期接管原子）：键不存在或已过期（expired 谓词成立）才写入，存活行拒绝且不动。
-        // MySQL 臂以行别名 + 双 IF 承载谓词（需 8.0.19+）；SQLite/PG 臂以 ON CONFLICT ... WHERE 承载。
-        let (sql, values) = match conn.get_database_backend() {
-            DbBackend::MySql => (
-                "INSERT INTO garrison_kv (k, v, expire_at) VALUES (?, ?, ?) AS new_row \
-                 ON DUPLICATE KEY UPDATE \
-                 v = IF(garrison_kv.expire_at IS NOT NULL AND garrison_kv.expire_at <= ?, new_row.v, garrison_kv.v), \
-                 expire_at = IF(garrison_kv.expire_at IS NOT NULL AND garrison_kv.expire_at <= ?, new_row.expire_at, garrison_kv.expire_at)",
-                vec![
-                    Value::String(Some(key.to_string())),
-                    Value::String(Some(value.to_string())),
-                    Value::BigInt(Self::expire_at_from_ttl(ttl_seconds)),
-                    Value::BigInt(Some(now)),
-                    Value::BigInt(Some(now)),
-                ],
-            ),
-            _ => (
-                "INSERT INTO garrison_kv (k, v, expire_at) VALUES (?, ?, ?) \
-                 ON CONFLICT (k) DO UPDATE SET v = excluded.v, expire_at = excluded.expire_at \
-                 WHERE (garrison_kv.expire_at IS NOT NULL AND garrison_kv.expire_at <= ?)",
-                vec![
-                    Value::String(Some(key.to_string())),
-                    Value::String(Some(value.to_string())),
-                    Value::BigInt(Self::expire_at_from_ttl(ttl_seconds)),
-                    Value::BigInt(Some(now)),
-                ],
-            ),
-        };
+        let expire_at = Self::expire_at_from_ttl(ttl_seconds);
+        // 过期接管原子：键不存在或已过期（expired 谓词成立）才写入，存活行拒绝且不动。
+        //
+        // MySQL 臂：事务 + `SELECT ... FOR UPDATE` 行锁内判定后写入——不可用 ODKU 的 affected
+        // 计数承载成败判定：sqlx MySQL 握手无条件置 CLIENT_FOUND_ROWS，ODKU「无变化更新」
+        // 回报 matched（1）而非 0，插入/接管/拒绝三态塌缩不可判（2026-10-18 MySQL 8.0 真库
+        // acceptance 实证）。行锁下 SELECT 读到最新提交，并发争抢串行化，原子性等价单语句。
+        // SQLite/PG 臂：单语句条件 upsert（`ON CONFLICT ... WHERE` 谓词），rows_affected
+        // 反映真实插入/更新/跳过（PG cmdTuples、SQLite changes() 均不受 found-rows 类语义影响）。
+        if conn.get_database_backend() == DbBackend::MySql {
+            use dbnexus::sea_orm::TransactionTrait;
+            let txn = conn
+                .begin()
+                .await
+                .map_err(|e| GarrisonError::Dao(format!("dao-kv-set-if-absent-begin::{e}")))?;
+            let sel = make_statement(
+                &txn,
+                "SELECT v, expire_at FROM garrison_kv WHERE k = ? FOR UPDATE",
+                vec![Value::String(Some(key.to_string()))],
+            );
+            let rows = txn
+                .query_all_raw(sel)
+                .await
+                .map_err(|e| GarrisonError::Dao(format!("dao-kv-set-if-absent-select::{e}")))?;
+            let live = match rows.first() {
+                None => false,
+                Some(row) => {
+                    let expire = row.try_get::<Option<i64>>("", "expire_at").map_err(|e| {
+                        GarrisonError::Dao(format!("dao-kv-set-if-absent-read-expire::{e}"))
+                    })?;
+                    expire.is_none() || expire > Some(now)
+                },
+            };
+            let result = if live {
+                Ok(false)
+            } else {
+                let up = make_statement(
+                    &txn,
+                    "INSERT INTO garrison_kv (k, v, expire_at) VALUES (?, ?, ?) \
+                     ON DUPLICATE KEY UPDATE v = ?, expire_at = ?",
+                    vec![
+                        Value::String(Some(key.to_string())),
+                        Value::String(Some(value.to_string())),
+                        Value::BigInt(expire_at),
+                        Value::String(Some(value.to_string())),
+                        Value::BigInt(expire_at),
+                    ],
+                );
+                txn.execute_raw(up).await.map_err(|e| {
+                    GarrisonError::Dao(format!("dao-kv-set-if-absent-execute::{e}"))
+                })?;
+                Ok(true)
+            };
+            txn.commit()
+                .await
+                .map_err(|e| GarrisonError::Dao(format!("dao-kv-set-if-absent-commit::{e}")))?;
+            return result;
+        }
+        let (sql, values) = (
+            "INSERT INTO garrison_kv (k, v, expire_at) VALUES (?, ?, ?) \
+             ON CONFLICT (k) DO UPDATE SET v = excluded.v, expire_at = excluded.expire_at \
+             WHERE (garrison_kv.expire_at IS NOT NULL AND garrison_kv.expire_at <= ?)",
+            vec![
+                Value::String(Some(key.to_string())),
+                Value::String(Some(value.to_string())),
+                Value::BigInt(expire_at),
+                Value::BigInt(Some(now)),
+            ],
+        );
         let stmt = make_statement(conn, sql, values);
         let result = conn
             .execute_raw(stmt)
