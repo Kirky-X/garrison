@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -60,10 +61,51 @@ def read_baseline(path: Path) -> set[tuple[str, str]]:
     return rows
 
 
+def write_diff_json(
+    path: Path,
+    baseline: set[tuple[str, str]],
+    current: set[tuple[str, str]],
+) -> dict[str, object]:
+    """写出结构化公共 API 差异（report-only）。"""
+    baseline_map = {api_path: kind for kind, api_path in baseline}
+    current_map = {api_path: kind for kind, api_path in current}
+    added = [
+        {"kind": kind, "path": api_path}
+        for kind, api_path in sorted(current - baseline, key=lambda row: row[1])
+    ]
+    removed = [
+        {"kind": kind, "path": api_path}
+        for kind, api_path in sorted(baseline - current, key=lambda row: row[1])
+    ]
+    modified = [
+        {"path": api_path, "from": baseline_map[api_path], "to": current_map[api_path]}
+        for api_path in sorted(baseline_map.keys() & current_map.keys())
+        if baseline_map[api_path] != current_map[api_path]
+    ]
+    payload: dict[str, object] = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "baseline_total": len(baseline),
+        "current_total": len(current),
+        "added": added,
+        "removed": removed,
+        "modified": modified,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return payload
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="garrison 公共 API 面基线")
     parser.add_argument("json", type=Path, help="rustdoc JSON 路径")
     parser.add_argument("--diff", type=Path, help="基线文件；打印新增/移除项")
+    parser.add_argument(
+        "--diff-json",
+        type=Path,
+        help="结构化差异 JSON 输出路径（默认 logs/api-surface-diff.json）",
+    )
     args = parser.parse_args()
 
     if not args.json.is_file():
@@ -83,13 +125,24 @@ def main() -> int:
             return 2
         baseline = read_baseline(args.diff)
         current = set(rows)
-        added = sorted(current - baseline)
-        removed = sorted(baseline - current)
-        print(f"# diff vs {args.diff}: +{len(added)} -{len(removed)}", file=sys.stderr)
+        added = sorted(current - baseline, key=lambda row: row[1])
+        removed = sorted(baseline - current, key=lambda row: row[1])
+        diff_json = args.diff_json or Path("logs/api-surface-diff.json")
+        payload = write_diff_json(diff_json, baseline, current)
+        modified = payload["modified"]
+        print(
+            f"# diff vs {args.diff}: +{len(added)} -{len(removed)} ~{len(modified)} "
+            f"-> {diff_json}",
+            file=sys.stderr,
+        )
         for kind, api_path in added:
             print(f"+{kind}\t{api_path}", file=sys.stderr)
         for kind, api_path in removed:
             print(f"-{kind}\t{api_path}", file=sys.stderr)
+        for item in modified:
+            print(
+                f"~{item['from']}->{item['to']}\t{item['path']}", file=sys.stderr
+            )
 
     return 0
 

@@ -1,0 +1,72 @@
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
+
+# PR 级公共 API 差异（v1.0 API 冻结门禁，report-only）。
+#
+# 设计：
+# - 以 PR base commit 为基线、PR head 为当前，双 checkout 生成两份 rustdoc JSON；
+# - 差异由 scripts/api_surface.py 输出结构化 JSON（logs/api-surface-diff.json）；
+# - 仅上传工件供评审，不设置 required check，不阻断合并。
+name: API Surface Diff
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-surface-diff-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  api-surface-diff:
+    name: Public API diff (report-only)
+    runs-on: ubuntu-latest
+    # report-only：任何失败都不作为合并门禁；真实构建失败仍会在日志中可见。
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: pr
+
+      - name: Checkout PR base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - uses: dtolnay/rust-toolchain@f0d5300ba8908d942c808f4d31c08471d7798ba3 # nightly
+        with:
+          toolchain: nightly
+
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # protoc
+        with:
+          tool: protoc
+
+      - name: Generate base public API
+        working-directory: base
+        run: |
+          cargo +nightly rustdoc --features full --lib -- \
+            -Zunstable-options --output-format json
+          python3 ../pr/scripts/api_surface.py target/doc/garrison.json \
+            > /tmp/api-surface.baseline.txt
+
+      - name: Generate PR public API and diff
+        working-directory: pr
+        run: bash scripts/api_surface.sh --diff /tmp/api-surface.baseline.txt
+
+      - name: Upload API diff artifacts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: api-surface-diff
+          path: |
+            pr/logs/api-surface.txt
+            pr/logs/api-surface-diff.json
+          if-no-files-found: warn
+          retention-days: 30

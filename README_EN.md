@@ -3,7 +3,7 @@
 
 <img src="docs/assets/garrison.png" alt="Garrison Logo" width="240">
 
-[![Rust 2021](https://img.shields.io/badge/Rust-2021-edded?logo=rust&style=for-the-badge)](https://www.rust-lang.org/) [![Rustc 1.97.1+](https://img.shields.io/badge/Rustc-1.97.1+-orange.svg?style=for-the-badge)](https://www.rust-lang.org/) [![crates.io](https://img.shields.io/crates/v/garrison?style=for-the-badge)](https://crates.io/crates/garrison) [![docs.rs](https://img.shields.io/docsrs/garrison?style=for-the-badge)](https://docs.rs/garrison) [![downloads](https://img.shields.io/crates/d/garrison?style=for-the-badge)](https://crates.io/crates/garrison) [![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/garrison/ci.yml?branch=main&label=CI&style=for-the-badge)](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml) [![coverage](https://img.shields.io/badge/coverage-95%25%2B-brightgreen.svg?style=for-the-badge)](https://github.com/Kirky-X/garrison) [![license](https://img.shields.io/crates/l/garrison?style=for-the-badge)](LICENSE)
+[![Rust 2021](https://img.shields.io/badge/Rust-2021-edded?logo=rust&style=for-the-badge)](https://www.rust-lang.org/) [![Rustc 1.97.1+](https://img.shields.io/badge/rust-1.97.1%2B-orange.svg?style=for-the-badge)](https://www.rust-lang.org/) [![crates.io](https://img.shields.io/crates/v/garrison?style=for-the-badge)](https://crates.io/crates/garrison) [![docs.rs](https://img.shields.io/docsrs/garrison?style=for-the-badge)](https://docs.rs/garrison) [![downloads](https://img.shields.io/crates/d/garrison?style=for-the-badge)](https://crates.io/crates/garrison) [![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/garrison/ci.yml?branch=main&label=CI&style=for-the-badge)](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml) [![coverage](https://img.shields.io/badge/coverage-95%25%2B-brightgreen.svg?style=for-the-badge)](https://github.com/Kirky-X/garrison) [![license](https://img.shields.io/crates/l/garrison?style=for-the-badge)](LICENSE)
 
 [中文](README.md) | **English**
 
@@ -96,7 +96,7 @@ Add the following to your `Cargo.toml` (`development` preset = in-memory cache D
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.3", features = ["development"] }
+garrison = { version = "0.9.0-rc.4", features = ["development"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```

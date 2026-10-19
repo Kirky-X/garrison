@@ -7,14 +7,18 @@
 
 ## 📋 目录
 
-- [Unreleased](#unreleased)
+- [0.9.0-rc.4](#090-rc4---2026-10-20)
 - [0.9.0-rc.3](#090-rc3---2026-10-14)
 - [0.9.0-rc.2](#090-rc2---2026-08-26)
 - [0.9.0-rc.1](#090-rc1---2026-08-25)
 
 ---
 
-## [Unreleased]
+## [0.9.0-rc.4] - 2026-10-20
+
+### Changed
+
+- **Cookie 安全默认收紧（破坏性说明）**：非 `development` profile 的 `DEFAULT_COOKIE_SECURE` 保持 `true`；启用 `development` 聚合特性时默认改为 `false` 以支持本地 HTTP 调试。嵌入方若依赖旧行为，需显式设置 `GarrisonConfig::cookie_secure`；`HttpOnly`、`SameSite=Lax` 与 `SameSite=None` 非 Secure 降级保持单一构建点强制。
 
 ### Security
 
@@ -30,7 +34,7 @@
 ### Added
 
 - **限流后端配置真正驱动切换（候选 B：限流器单独接 Redis）**：`rate_limit_backend=redis` 时，登录防火墙 hook 与 `RateLimitStrategy` 使用独立 Redis 限流运行时（oxcache `RedisBackend` + limiteron `RedisDistributedLimiter` Lua 原子计数/滑窗），会话 / token / geo / device 数据仍走原 DAO。新增 `LimiterBackend` / `LimiterRuntime` 抽象、`RateLimitStrategy::from_garrison_config` / `with_runtime`、`GarrisonFirewallCheckHookDefault::with_limiter_backend`；manager 在 `BUILD_LOCK` 之前建立连接（启动失败 fail-closed），`auth_server` 将 `GARRISON_RATE_LIMIT_BACKEND` 写入 `GarrisonConfig`（此前只校验不生效）。`reset()` 改经 `LimiterBackend::reset_prefix`，Redis 后端可清理跨实例计数。真 Redis 双实例验收见 `tests/redis_limiter_backend.rs`。覆盖面与未覆盖面见 `docs/ROADMAP.md` · rc.4 已知限制。
-- **v1.0 门禁启动文档与脚本**：新增 `docs/API_STABILITY.md`、`docs/PRODUCTION_CASES.md`、`docs/SECURITY_AUDIT.md` 与 `scripts/api_surface.sh` / `scripts/perf_baseline.sh` / `scripts/security_evidence.sh`；ROADMAP 四项 1.0 门禁由「待规划」改为「门禁启动」。
+- **v1.0 门禁仓库侧产物完成**：新增 `docs/API_FREEZE_CANDIDATES.md`、`.github/workflows/api-surface-diff.yml`（PR 级 report-only 结构化 API diff）、`docs/benchmarks/v1.0-baseline.md` 与 `scripts/perf_compare.sh`（回归阈值判定）；`scripts/api_surface.py --diff` 输出新增/删除/修改公共项 JSON；Cookie safe-by-default 与 `loom-test` RefreshTokenRotation 并发用例落地。ROADMAP 将 1.0 门禁标注为「仓库侧产物完成 / 第三方审计待外部」，本轮发布 **0.9.0-rc.4**，不发布 1.0.0。
 - **`vacuum_expired` 过期行清理原语 + `garrison-cli vacuum-kv`**：`GarrisonDao` 新增 `vacuum_expired()`（trait 默认 no-op：原生 TTL 后端由引擎自清理；`DbnexusKvDao` 覆写为 `DELETE ... WHERE expire_at <= now` 全表清理，`GarrisonDaoDbnexus` 委托透传，`GarrisonSession` 同名转发），仅删过期行、`expire_at IS NULL` 永久行不动、幂等返回删除计数；`garrison-cli` 新增 `vacuum-kv --db-url` 离线命令（zh/en 文案键齐备），`--sweep-legacy-session-keys` 显性清扫升级后遗留 raw key 行（`token:session:` 前缀下余段非 64 位小写 hex 的行，含 `timeout=0` 永久遗留行——按过期收敛其永不消亡；启发式保守方向，摘要形态行零误删面）。库内不内置后台调度——清理触发节奏（cron / 进程内周期）由部署方决定。
 - **`DbnexusKvDao` 纳入 DAO conformance 契约网**：`dbnexus_kv_sqlite` conformance 实例落地（此前 `dbnexus_sqlite` 实例 KV 委托为进程内 `InMemoryDao`，SQL KV 零契约覆盖，set_if_absent 竞态因此漏网）；conformance 新增过期接管（set_if_absent / CAS(None)）、8 写者并发争抢、vacuum 计数契约用例，对全部后端生效。
 

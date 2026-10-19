@@ -1101,6 +1101,20 @@ mod db_sqlite_tests {
         pool
     }
 
+    /// 创建并初始化多连接共享的 SQLite 命名内存库（cache=shared）。
+    ///
+    /// `sqlite::memory:` 每个连接是独立空库，并发测试第二个连接会报
+    /// `no such table: refresh_tokens`；命名共享缓存保证池内连接看到同一库。
+    #[cfg(feature = "loom-test")]
+    async fn setup_shared_db(name: &str) -> DbPool {
+        let url = format!("sqlite:file:{name}?mode=memory&cache=shared");
+        let pool = init_dbnexus(&url).await.expect("init_dbnexus 应成功");
+        let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
+        let applied = migration.migrate_core().await.expect("migrate_core 应成功");
+        assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
+        pool
+    }
+
     // _tokens 表迁移验证
 
     /// 验证 SQLite 迁移加载 `003_refresh_tokens.sql` 后 `refresh_tokens` 表存在。
@@ -2333,5 +2347,57 @@ mod db_sqlite_tests {
             .await
             .expect("cleanup_expired 应成功");
         assert_eq!(deleted, 0, "空表应返回 0");
+    }
+
+    /// loom-test：同一 refresh token 双线程并发轮换，恰一成功，另一命中
+    /// 已消费/重用检测（CAS 原子消费或 RecentPrev 处置），不得双成功。
+    #[cfg(feature = "loom-test")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_rotate_same_token_exactly_one_succeeds() {
+        let name = format!("garrison_refresh_concurrent_{}", std::process::id());
+        let pool = setup_shared_db(&name).await;
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
+        let rotation = Arc::new(RefreshTokenRotation::new(
+            pool.clone(),
+            jwt_handler,
+            Arc::new(RwLock::new(1)),
+        ));
+        let token = rotation
+            .issue("client", Some(1), &[], None, 1, 0, 9999)
+            .await
+            .expect("issue 应成功");
+
+        let left = {
+            let rotation = Arc::clone(&rotation);
+            let token = token.clone();
+            tokio::spawn(async move { rotation.rotate(&token).await })
+        };
+        let right = {
+            let rotation = Arc::clone(&rotation);
+            let token = token.clone();
+            tokio::spawn(async move { rotation.rotate(&token).await })
+        };
+
+        let (left, right) = tokio::join!(left, right);
+        let left = left.expect("左任务不应 panic");
+        let right = right.expect("右任务不应 panic");
+        let successes = [left.is_ok(), right.is_ok()]
+            .into_iter()
+            .filter(|ok| *ok)
+            .count();
+        assert_eq!(
+            successes, 1,
+            "同一 token 并发轮换必须恰一成功: {left:?} / {right:?}"
+        );
+
+        let loser = if left.is_err() { left } else { right };
+        match loser {
+            Err(GarrisonError::InvalidToken(message)) => assert!(
+                message.starts_with("jwt-refresh-token-consumed"),
+                "CAS 落败方应返回已消费错误，实际: {message}"
+            ),
+            Err(GarrisonError::TokenRevoked(_)) => {},
+            other => panic!("落败方应为已消费或重用检测错误，实际: {other:?}"),
+        }
     }
 }

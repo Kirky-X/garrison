@@ -303,6 +303,7 @@ impl GarrisonManagerBuilder {
     /// 构造 logic + 启动 cleanup_task 与 anomalous_analyzer_task。
     /// 此方法不触碰全局单例，由 `build` / `build_explicit` 决定注入目标。
     #[allow(unused_variables)]
+    #[cfg_attr(not(feature = "firewall"), allow(unused_mut))]
     fn build_logic(mut self) -> GarrisonResult<(Arc<GarrisonLogicDefault>, TaskHandles)> {
         #[cfg(feature = "firewall")]
         let limiter_runtime = self.limiter_runtime.take();

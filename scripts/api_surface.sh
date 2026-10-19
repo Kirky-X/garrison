@@ -38,9 +38,13 @@ fi
 
 echo "==> 解析公共面 -> ${OUT}"
 if [[ -n "${DIFF_BASELINE}" ]]; then
-  python3 scripts/api_surface.py "${JSON}" --diff "${DIFF_BASELINE}" > "${OUT}"
+  python3 scripts/api_surface.py "${JSON}" --diff "${DIFF_BASELINE}" \
+    --diff-json logs/api-surface-diff.json > "${OUT}"
 else
   python3 scripts/api_surface.py "${JSON}" > "${OUT}"
 fi
 
 echo "==> 完成：${OUT}（共 $(grep -vc '^#' "${OUT}" || true) 项）"
+if [[ -n "${DIFF_BASELINE}" ]]; then
+  echo "==> 结构化差异：logs/api-surface-diff.json"
+fi

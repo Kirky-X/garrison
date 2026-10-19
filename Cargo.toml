@@ -1,6 +1,6 @@
 [package]
 name = "garrison"
-version = "0.9.0-rc.3"
+version = "0.9.0-rc.4"
 edition = "2021"
 rust-version = "1.97.1"  # MSRV: 依赖面兄弟生态 rc 线（confers/oxcache/dbnexus/sdforge/limiteron/inklog/trait-kit）各自声明 rust-version = "1.97.1"，此为依赖图可满足的最低工具链；CI 测试矩阵 MSRV 腿同版验证
 authors = ["Kirky-X <Kirky-X@outlook.com>"]
@@ -17,7 +17,7 @@ members = [".", "examples", "macros"]
 resolver = "2"
 
 [workspace.package]
-version = "0.9.0-rc.3"
+version = "0.9.0-rc.4"
 edition = "2021"
 rust-version = "1.97.1"
 authors = ["Kirky-X <Kirky-X@outlook.com>"]
@@ -27,7 +27,7 @@ documentation = "https://docs.rs/garrison"
 
 [workspace.dependencies]
 garrison = { path = ".", default-features = false }
-garrison-macros = { version = "0.9.0-rc.3", path = "macros", default-features = false }
+garrison-macros = { version = "0.9.0-rc.4", path = "macros", default-features = false }
 axum = { version = "0.8", default-features = false, features = ["json"] }
 actix-web = { version = "4.12", default-features = false }
 warp = { version = "0.4", default-features = false }

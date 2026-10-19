@@ -39,7 +39,16 @@ pub const DEFAULT_TIMEOUT: i64 = 2_592_000;
 /// 默认活动超时检测值（-1 = 不启用）。
 pub const DEFAULT_ACTIVE_TIMEOUT: i64 = -1;
 
-/// 默认 Cookie Secure 标志（生产环境应为 true，dev 环境可设为 false 以支持 HTTP 调试）。
+/// 默认 Cookie Secure 标志。
+///
+/// 非 `development` profile（未启用 `development` 聚合特性）默认 `true`，
+/// 避免嵌入方忘记开启 Secure；`development` profile 默认 `false`，支持本地 HTTP 调试。
+/// 两种 profile 均可经 `GarrisonConfig::cookie_secure` 显式覆盖。
+#[cfg(feature = "development")]
+pub const DEFAULT_COOKIE_SECURE: bool = false;
+
+/// 默认 Cookie Secure 标志（非 `development` profile 强制安全默认）。
+#[cfg(not(feature = "development"))]
 pub const DEFAULT_COOKIE_SECURE: bool = true;
 
 /// 默认 Cookie SameSite 策略（"Lax" 平衡安全与可用性）。

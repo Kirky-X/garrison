@@ -52,8 +52,8 @@
 | 0.9.0-rc.1 | ✅ 已完成 | 2026-08-25 | 自研库特性吸收 + 依赖批量升级（oxcache 0.5 / dbnexus 0.6 / sdforge 0.5 / trait-kit 0.5 / confers 0.6 / limiteron 0.3）+ 配置增强特性（config-yaml/audit/consul/etcd/distributed/schema）+ 数据库增强（db-sharding/replica/saga）+ 防火墙增强（gcra/tower/quota/admission/event/monitoring/parallel）+ 协议域统一重命名（secure-httpbasic/httpdigest → protocol-*）+ i18n 硬编码修复 + 函数覆盖率 89.87% → 92.77% |
 | 0.9.0-rc.2 | ✅ 已完成 | 2026-08-26 | fail-closed 安全加固：`check_api_key` / `check_abac_with_policy` 缺依赖时拒绝放行而非默认放行；防火墙自动装配；`session::dao` crate 内可见性扩展；`firewall_hook_injected` 标记 |
 | 0.9.0-rc.3 | ✅ 已完成 | 2026-10-14 | 安全审计整改批次 R01–R18：统一错误模型（request-id / Retry-After / 模块前缀码）+ Argon2 并发令牌池 + 字段静态加密（AES-256-GCM）+ WebAuthn/Passkey + 密码找回 + MFA/step-up 编排基座 + OIDC back-channel logout + OIDC discovery/JWKS 多 kid 轮换 + Refresh 重用三级分类 + 多租户强化（会话-租户绑定/标识符注册表/设备接口）+ Set-Cookie 单一构建点 + garrison-cli 运维面 + 参考部署安全基线收紧 |
-| 0.9.0-rc.4 | 🚧 进行中（Unreleased） | 待定 | 会话 key SHA-256 摘要化 + DAO 原子契约修复（set_if_absent 过期接管 / MySQL ensure_table）+ vacuum_expired 原语 + 发布流水线收敛 + 限流后端 Redis 落地（候选 B） |
-| 1.0.0 | 🚧 门禁启动 | 2027 Q2 | 稳定版（API 冻结 / 性能基准 / 生产案例 / 安全审计四项门禁启动） |
+| 0.9.0-rc.4 | ✅ 已完成 | 2026-10-20 | 会话 key SHA-256 摘要化 + DAO 原子契约修复（set_if_absent 过期接管 / MySQL ensure_table）+ vacuum_expired 原语 + 发布流水线收敛 + 限流后端 Redis 落地（候选 B）+ v1.0 门禁仓库侧产物（API 冻结候选清单 / API diff 工作流 / 性能基线入库 / Cookie 安全默认 / RefreshTokenRotation 并发验证） |
+| 1.0.0 | 📋 外部待办（仓库侧产物完成） | 2027 Q2 | 稳定版：API 冻结 / 性能基准 / 生产案例 / 安全审计四项门禁中，仓库侧产物已完成，第三方安全审计待外部；**本轮发布 0.9.0-rc.4，不发布 1.0.0** |
 
 ---
 
@@ -564,9 +564,9 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 
 ---
 
-### v0.9.0-rc.4 安全修复与限流后端落地（🚧 进行中，Unreleased）
+### v0.9.0-rc.4 安全修复与限流后端落地（✅ 已完成，2026-10-20）
 
-完成时间：待定（`[Unreleased]` 已累计，未发布）
+完成时间：2026-10-20（`0.9.0-rc.4`）
 
 #### 已完成（[Unreleased] 累计）
 
@@ -586,6 +586,14 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 - ✅ `auth_server` 环境变量写入 `GarrisonConfig`（此前只校验不生效）
 - ✅ `reset()` 改经 `LimiterBackend::reset_prefix`，Redis 后端可清理跨实例计数
 - ✅ 真 Redis 双实例验收（`tests/redis_limiter_backend.rs`：共享计数/滑窗/TTL/验证码答案/前缀清理/不可达 fail-closed）
+
+#### v1.0 门禁仓库侧产物（rc.4）
+
+- ✅ API 冻结候选清单：`docs/API_FREEZE_CANDIDATES.md`（Stable / Stable-with-feature / Experimental / Internal 分级）
+- ✅ PR 级 API diff：`.github/workflows/api-surface-diff.yml`（report-only，结构化 JSON 工件）
+- ✅ 性能基线入库：`docs/benchmarks/v1.0-baseline.md` + `scripts/perf_compare.sh`（回归阈值判定）
+- ✅ Cookie 安全默认：非 `development` profile 默认 `Secure=true`、`HttpOnly`、`SameSite=Lax`，配置可覆盖
+- ✅ RefreshTokenRotation 并发验证：`loom-test` feature 下同 token 双线程轮换恰一成功
 
 #### 已知限制（0.9.0-rc.4）
 
@@ -610,19 +618,21 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 - **分布式限流候选 A（auth_server 整 DAO 切 Redis）**：未采纳，保持 backlog——`_sync` 原子方法迁移 + 会话数据落点决策成本高；rc.4 采用候选 B。
 - **分布式限流候选 B（限流器单独接 Redis）**：已落地（rc.4，见「v0.9.0-rc.4」节），覆盖登录防火墙 hook 与 `RateLimitStrategy`；其余限流面仍为后续批次。
 
-> 最近复核：2026-10-19（rc.4 Unreleased）。
+> 最近复核：2026-10-20（rc.4 发布）。
 
-### v1.0.0 稳定版（🚧 门禁启动）
+### v1.0.0 稳定版（📋 仓库侧完成 / 外部待办）
 
 计划完成：2027 Q2
 
 | 门禁 | 状态 | 本轮启动产物 |
 |------|------|-------------|
-| API 冻结（semver 稳定承诺） | 🚧 启动 | [API 稳定性分级](API_STABILITY.md) · `scripts/api_surface.sh` · 周度公共面基线工件 |
-| 性能基准测试 | 🚧 启动 | `scripts/perf_baseline.sh` · [性能指南 · v1.0 基线采集](PERFORMANCE.md#-v10-性能基线采集) |
-| 生产案例文档 | 🚧 启动 | [参考生产案例](PRODUCTION_CASES.md)（自托管验证，非客户案例） |
-| 安全审计 | 🚧 启动 | [安全审计就绪包](SECURITY_AUDIT.md) · `scripts/security_evidence.sh` |
+| API 冻结（semver 稳定承诺） | ✅ 仓库侧产物完成 | [API 稳定性分级](API_STABILITY.md) · [API 冻结候选清单](API_FREEZE_CANDIDATES.md) · `scripts/api_surface.sh` · PR diff workflow（report-only） |
+| 性能基准测试 | ✅ 仓库侧基线入库 | `docs/benchmarks/v1.0-baseline.md` · `scripts/perf_compare.sh` · [性能指南 · v1.0 基线采集](PERFORMANCE.md#-v10-性能基线采集) |
+| 生产案例文档 | 📋 自托管参考（非客户案例） | [参考生产案例](PRODUCTION_CASES.md) |
+| 安全审计 | 📋 第三方审计待外部 | [安全审计就绪包](SECURITY_AUDIT.md) · `scripts/security_evidence.sh` |
 
+> 本轮发布 **0.9.0-rc.4**；1.0.0 仅在第三方审计与外部条件完成后另行发布。
+>
 > 门禁口径：本轮交付「可复现的基线 / 模板 / 证据包」，不宣称已完成 1.0 API 冻结或第三方安全审计。
 
 **里程碑意义**：发布 1.0 稳定版，给出向后兼容承诺与生产可用性证据，进入长期维护期。
