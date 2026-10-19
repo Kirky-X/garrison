@@ -16,10 +16,11 @@
 //! 仍存在 TOCTOU（各进程独立持锁，RMW 互相不可见，各自可能在自己的写入可见前通过阈值检查），运行时无跨进程强制；
 //! 缓解手段：启用 `rate-limit-redis` feature 切换 Redis 后端（支持 Lua），或改用 `BruteForceStrategy`（固定窗口，原子计数）。
 
+#[cfg(feature = "rate-limit-redis")]
+use crate::config::GarrisonConfig;
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
-use crate::limiteron::distributed::GarrisonDaoDistributedLimiter;
-use crate::limiteron::GarrisonDaoStorage;
+use crate::limiteron::{LimiterBackend, LimiterRuntime};
 use crate::strategy::firewall::{CaptchaChallenge, FirewallContext, GarrisonFirewallStrategy};
 use async_trait::async_trait;
 use limiteron::error::LimiteronError;
@@ -116,7 +117,7 @@ pub struct RateLimitStrategy {
     storage: Arc<dyn Storage>,
     /// 滑窗判定桥接（limiteron `DistributedLimiter` 适配器的 `allow_sliding_window`）：Lua 主路径的脚本契约
     /// （KEYS/ARGV 形状、hash-tag seq 键、响应解析）收敛在此，策略层不再直连裸 `eval_lua`。
-    limiter: Arc<GarrisonDaoDistributedLimiter>,
+    limiter: Arc<dyn LimiterBackend>,
     /// 动态阈值内核（limiteron `AdaptiveThresholdLimiter`，AIMD）：`dynamic_threshold=Some` 时构造并承载阈值观测环与调整，
     /// `None` 时为 None、阈值恒为 `max_requests`；进程内语义（per-instance 本地视图）。
     adaptive: Option<AdaptiveThresholdLimiter>,
@@ -130,10 +131,16 @@ pub struct RateLimitStrategy {
 }
 
 impl RateLimitStrategy {
-    /// 创建速率限制策略实例：内部创建 [`GarrisonDaoStorage`] 适配器（get/set/delete）与 [`GarrisonDaoDistributedLimiter`] 桥接（滑窗 Lua 判定）；
-    /// `config` 为配置（阈值 + 窗口 + 作用域 + 动态阈值上限），`dao` 用于时间戳列表存储。
+    /// 创建速率限制策略实例：内部创建 [`GarrisonDaoStorage`](crate::limiteron::GarrisonDaoStorage) 适配器（get/set/delete）
+    /// 与 DAO 限流后端（滑窗 Lua 判定）；`config` 为配置（阈值 + 窗口 + 作用域 + 动态阈值上限），`dao` 用于时间戳列表存储。
     pub fn new(config: RateLimitConfig, dao: Arc<dyn GarrisonDao>) -> Self {
-        let storage = Arc::new(GarrisonDaoStorage::new(dao.clone()));
+        Self::with_runtime(config, LimiterRuntime::dao(dao))
+    }
+
+    /// 以显式限流运行时构造：运行时决定计数器与 KV 存储落在 DAO 还是独立 Redis
+    /// （`rate_limit_backend=redis` 时由 [`Self::from_garrison_config`] 构造）。
+    pub fn with_runtime(config: RateLimitConfig, runtime: LimiterRuntime) -> Self {
+        let storage = runtime.storage();
         let adaptive = config.dynamic_threshold.map(|upper| {
             AdaptiveThresholdConfig {
                 base_limit: u64::from(config.max_requests),
@@ -157,7 +164,7 @@ impl RateLimitStrategy {
         Self {
             config,
             storage,
-            limiter: Arc::new(GarrisonDaoDistributedLimiter::new(dao)),
+            limiter: runtime.limiter(),
             adaptive: adaptive
                 .map(AdaptiveThresholdLimiter::with_validation)
                 .transpose()
@@ -174,6 +181,20 @@ impl RateLimitStrategy {
                 }),
             atomic_lock: Mutex::new(()),
         }
+    }
+
+    /// 按应用配置构造：`rate_limit_backend=memory` 跟随 DAO；`redis` 使用独立 Redis 限流运行时。
+    ///
+    /// 连接失败返回 `GarrisonError::Config`（fail-closed）；会话/token/geo/device 数据仍走 `dao`。
+    #[cfg(feature = "rate-limit-redis")]
+    pub async fn from_garrison_config(
+        config: RateLimitConfig,
+        dao: Arc<dyn GarrisonDao>,
+        app: &GarrisonConfig,
+    ) -> GarrisonResult<Self> {
+        app.validate()?;
+        let runtime = LimiterRuntime::from_config(app, dao).await?;
+        Ok(Self::with_runtime(config, runtime))
     }
 
     /// 设置期望的验证码答案，供后续 [`CaptchaChallenge::verify_challenge`] 比对：存储在 DAO（key 由 scope+id 派生，与计数 key 同前缀并追加

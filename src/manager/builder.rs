@@ -84,6 +84,9 @@ pub struct GarrisonManagerBuilder {
     auth_logic: Option<Arc<dyn AuthLogic>>,
     permission_checker: Option<Arc<dyn PermissionChecker>>,
     disable_repository: Option<Arc<dyn DisableRepository>>,
+    /// 限流运行时（`rate-limit-redis` 下按配置构造；`None` 沿用 DAO 自适应路径）。
+    #[cfg(feature = "firewall")]
+    limiter_runtime: Option<crate::limiteron::LimiterRuntime>,
     // three-tier-cache feature 下的用户缓存服务（None 时若 feature 启用则自动构造）
     #[cfg(feature = "three-tier-cache")]
     user_cache_service: Option<Arc<crate::cache::UserCacheService>>,
@@ -118,9 +121,40 @@ impl GarrisonManagerBuilder {
             auth_logic: None,
             permission_checker: None,
             disable_repository: None,
+            #[cfg(feature = "firewall")]
+            limiter_runtime: None,
             #[cfg(feature = "three-tier-cache")]
             user_cache_service: None,
             factory: None,
+        }
+    }
+
+    /// 按配置构造限流运行时（`firewall` + `rate-limit-redis` 构建面）。
+    ///
+    /// `Memory` 保持 `None`（沿用 DAO 自适应路径）；`Redis` 建立连接，失败 fail-closed。
+    /// 调用点在 [`Self::build`] / [`Self::build_explicit`] 的 `BUILD_LOCK` 之前
+    /// （网络 I/O 不得进锁）。
+    #[cfg(all(feature = "firewall", feature = "rate-limit-redis"))]
+    async fn prepare_limiter_runtime(&mut self) -> GarrisonResult<()> {
+        use crate::strategy::rate_limiter_backend::RateLimitBackend;
+
+        let (Some(dao), Some(config)) = (self.dao.clone(), self.config.clone()) else {
+            return Ok(());
+        };
+        match &config.rate_limit_backend {
+            // Memory 不在预装配阶段 validate，避免与 build_logic 的 validate 重复输出部署警示。
+            RateLimitBackend::Memory => Ok(()),
+            RateLimitBackend::Redis { .. } => {
+                config.validate()?;
+                let runtime = crate::limiteron::LimiterRuntime::from_config(&config, dao).await?;
+                self.limiter_runtime = Some(runtime);
+                tracing::info!(
+                    backend = "redis",
+                    "{}",
+                    crate::i18n::translate_detail("logs-config-rate-limit-redis-active", &[])
+                );
+                Ok(())
+            },
         }
     }
 
@@ -199,7 +233,13 @@ impl GarrisonManagerBuilder {
     ///
     /// 错误：必填字段缺失（dao/config/interface 任一为 None）→ `GarrisonError::Config`；
     /// 配置非法透传 `config.validate()` 错误；factory 构造失败透传 factory 错误。
-    pub async fn build(self) -> GarrisonResult<()> {
+    #[allow(unused_mut)]
+    pub async fn build(mut self) -> GarrisonResult<()> {
+        // Redis 限流连接属网络 I/O，必须在 BUILD_LOCK 之外完成（锁内禁止 await）；
+        // Memory / 未启用 rate-limit-redis 时保持 None，沿既有 DAO 自适应路径。
+        #[cfg(all(feature = "firewall", feature = "rate-limit-redis"))]
+        self.prepare_limiter_runtime().await?;
+
         // 串行化对全局单例的写入段（锁内无 await，不跨 .await 持锁）
         let _build_guard = BUILD_LOCK.lock();
         let (logic, task_handles) = self.build_logic()?;
@@ -249,7 +289,10 @@ impl GarrisonManagerBuilder {
     /// 错误：必填字段缺失 → `GarrisonError::Config`；配置非法透传 `config.validate()`
     /// 错误；factory 构造失败透传 factory 错误。
     #[cfg(feature = "manager-explicit")]
-    pub async fn build_explicit(self) -> GarrisonResult<Manager> {
+    #[allow(unused_mut)]
+    pub async fn build_explicit(mut self) -> GarrisonResult<Manager> {
+        #[cfg(all(feature = "firewall", feature = "rate-limit-redis"))]
+        self.prepare_limiter_runtime().await?;
         let (logic, task_handles) = self.build_logic()?;
         Ok(Manager::with_task_handles(logic, task_handles))
     }
@@ -259,7 +302,10 @@ impl GarrisonManagerBuilder {
     /// 校验 config + 构造 session + 装配 5 个内部 manager + 通过 factory 或 builder 链
     /// 构造 logic + 启动 cleanup_task 与 anomalous_analyzer_task。
     /// 此方法不触碰全局单例，由 `build` / `build_explicit` 决定注入目标。
-    fn build_logic(self) -> GarrisonResult<(Arc<GarrisonLogicDefault>, TaskHandles)> {
+    #[allow(unused_variables)]
+    fn build_logic(mut self) -> GarrisonResult<(Arc<GarrisonLogicDefault>, TaskHandles)> {
+        #[cfg(feature = "firewall")]
+        let limiter_runtime = self.limiter_runtime.take();
         // fail-closed：必填字段缺失即返回，不构造任何 manager 或 task
         let dao = self
             .dao
@@ -340,9 +386,13 @@ impl GarrisonManagerBuilder {
         #[cfg(feature = "firewall")]
         let firewall_builder = {
             use crate::strategy::hooks::GarrisonFirewallCheckHookDefault;
-            let hook =
-                std::sync::Arc::new(GarrisonFirewallCheckHookDefault::new().with_dao(dao.clone()));
-            firewall_builder.with_firewall_hook(hook)
+            let hook = GarrisonFirewallCheckHookDefault::new().with_dao(dao.clone());
+            #[cfg(feature = "rate-limit-redis")]
+            let hook = match limiter_runtime {
+                Some(runtime) => hook.with_limiter_backend(runtime.limiter()),
+                None => hook,
+            };
+            firewall_builder.with_firewall_hook(std::sync::Arc::new(hook))
         };
 
         let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(firewall_builder);
@@ -556,6 +606,20 @@ mod tests {
 
     fn make_dao() -> Arc<dyn GarrisonDao> {
         Arc::new(MockDao::new())
+    }
+
+    /// `rate_limit_backend=memory`（默认）不构造 Redis 运行时，沿 DAO 自适应路径。
+    #[cfg(all(feature = "firewall", feature = "rate-limit-redis"))]
+    #[tokio::test]
+    async fn prepare_limiter_runtime_memory_returns_none() {
+        let mut builder = GarrisonManagerBuilder::new()
+            .dao(make_dao())
+            .config(Arc::new(make_config()));
+        builder.prepare_limiter_runtime().await.unwrap();
+        assert!(
+            builder.limiter_runtime.is_none(),
+            "Memory 配置不应建立 Redis 限流连接"
+        );
     }
 
     fn make_interface() -> Arc<dyn GarrisonInterface> {

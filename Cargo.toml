@@ -408,6 +408,7 @@ firewall = []
 firewall-bruteforce = ["firewall", "firewall-ddos", "limiteron/ban-manager"]
 # lua-script：滑动窗口 Lua 脚本取自 limiteron oxcache_lua（Sorted Set 版，替代手写逗号时间戳串脚本）；adaptive-threshold：动态阈值内核（limiteron AdaptiveThresholdLimiter，AIMD）
 firewall-ratelimit = ["firewall", "dep:rand", "limiteron/lua-script", "limiteron/adaptive-threshold"]
+# 驱动登录防火墙 hook 与 RateLimitStrategy 的 Redis 限流运行时（独立于会话 DAO）；
 # 启用后可在配置中选择 Memory/Redis 限流后端（RateLimitBackend enum）
 rate-limit-redis = ["firewall-ratelimit", "cache-redis"]
 firewall-anomalous = ["firewall"]
@@ -567,6 +568,8 @@ production = [
     "config-yaml", "config-distributed", "config-audit",
     "db-sharding", "db-replica",
     "firewall-gcra", "firewall-tower", "firewall-monitoring", "firewall-parallel",
+    # 生产多实例限流：默认仍为 Memory；显式 GARRISON_RATE_LIMIT_BACKEND=redis 切换
+    "rate-limit-redis",
     "cache-batch", "cache-audit",
 ]
 
@@ -606,6 +609,13 @@ required-features = ["db-postgres"]
 name = "acceptance_db_mysql"
 path = "tests/acceptance_db_mysql.rs"
 required-features = ["db-mysql"]
+
+# 分布式限流后端（候选 B）：真 Redis 双实例共享计数 / 滑动窗口 / TTL / reset_prefix 验收。
+# 依赖 `GARRISON_TEST_REDIS_URL`（默认 redis://127.0.0.1:6379）；Redis 不可达时用例显式跳过。
+[[test]]
+name = "redis_limiter_backend"
+path = "tests/redis_limiter_backend.rs"
+required-features = ["rate-limit-redis"]
 
 # 二进制目标
 [[bin]]

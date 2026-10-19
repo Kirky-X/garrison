@@ -1372,6 +1372,8 @@ config-deprecation-guidance-delete = 请从配置中删除该键
 config-deprecation-guidance-rename = 请手动重命名该键
 logs-config-rate-limit-redis-feature-disabled = rate-limit-redis 特性未启用：限流仅按进程计数；多实例部署必须启用 rate-limit-redis 才能获得全局限额
 logs-config-rate-limit-memory-backend = rate_limit_backend=Memory：限流仅按进程计数；多实例部署必须切换 Redis 获得全局限额
+logs-config-rate-limit-redis-active = 限流后端已切换为 Redis：登录 hook 与 RateLimitStrategy 使用独立限流存储（会话/token 数据仍在原 DAO）
+config-rate-limit-redis-connect = Redis 限流后端连接失败（阶段: {$stage}，端点: {$endpoint}，错误码: {$code}）
 config-deprecation-slot-lock-poisoned = deprecation 槽位锁应可用
 logs-cookie-same-site-none-without-secure = cookie SameSite=None 需要 Secure 上下文（cookie_secure=false）；已降级为 SameSite=Lax
 

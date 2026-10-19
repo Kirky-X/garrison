@@ -1373,6 +1373,8 @@ config-deprecation-guidance-delete = delete it from your configuration
 config-deprecation-guidance-rename = rename it manually
 logs-config-rate-limit-redis-feature-disabled = rate-limit-redis feature disabled: rate limiting is per-process counting only; multi-instance deployments MUST enable rate-limit-redis for global limits
 logs-config-rate-limit-memory-backend = rate_limit_backend=Memory: per-process counting only; multi-instance deployments MUST switch to Redis for global limits
+logs-config-rate-limit-redis-active = rate-limit backend switched to Redis: login hook and RateLimitStrategy use dedicated limiter storage (session/token data stays in the original DAO)
+config-rate-limit-redis-connect = Redis rate-limit backend connection failed (stage: {$stage}, endpoint: {$endpoint}, code: {$code})
 config-deprecation-slot-lock-poisoned = deprecation slot lock must be available
 logs-cookie-same-site-none-without-secure = cookie SameSite=None requires a Secure context (cookie_secure=false); downgraded to SameSite=Lax
 

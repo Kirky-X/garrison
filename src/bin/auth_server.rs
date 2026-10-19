@@ -228,11 +228,22 @@ fn resolve_bootstrap_security(
 /// 参考部署的会话策略收口：框架 `default_config()` 的 `max_login_count=0`
 /// （不互踢）在 bin 层覆盖为 bootstrap 值（默认 10，超出踢最早会话），显式传 0
 /// 仍表示不限制（保留运维出口）；`seed_primary_amr` 从 bootstrap 接入配置，
-/// 安全敏感部署可关闭主认证 amr 播种。
-fn assemble_garrison_config(max_login_count: u32, seed_primary_amr: bool) -> GarrisonConfig {
+/// 安全敏感部署可关闭主认证 amr 播种。`rate_limit_backend`（rc.4）从环境变量
+/// 写入配置，使 manager 的限流运行时切换真正生效（此前仅校验不落地）。
+fn assemble_garrison_config(
+    max_login_count: u32,
+    seed_primary_amr: bool,
+    #[cfg(feature = "rate-limit-redis")] rate_limit_backend: Option<
+        garrison::strategy::rate_limiter_backend::RateLimitBackend,
+    >,
+) -> GarrisonConfig {
     let mut config = GarrisonConfig::default_config();
     config.max_login_count = max_login_count;
     config.seed_primary_amr = seed_primary_amr;
+    #[cfg(feature = "rate-limit-redis")]
+    if let Some(backend) = rate_limit_backend {
+        config.rate_limit_backend = backend;
+    }
     config
 }
 
@@ -273,6 +284,9 @@ async fn setup_garrison_manager(
     #[allow(unused_variables)] field_encryption_tenant: &str,
     max_login_count: u32,
     seed_primary_amr: bool,
+    #[cfg(feature = "rate-limit-redis")] rate_limit_backend: Option<
+        garrison::strategy::rate_limiter_backend::RateLimitBackend,
+    >,
 ) -> GarrisonResult<()> {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
     #[cfg(feature = "field-encryption")]
@@ -298,7 +312,12 @@ async fn setup_garrison_manager(
             garrison::i18n::translate_detail("cli-field-encryption-feature-disabled", &[])
         );
     }
-    let config = Arc::new(assemble_garrison_config(max_login_count, seed_primary_amr));
+    let config = Arc::new(assemble_garrison_config(
+        max_login_count,
+        seed_primary_amr,
+        #[cfg(feature = "rate-limit-redis")]
+        rate_limit_backend,
+    ));
     let interface: Arc<dyn GarrisonInterface> = Arc::new(SimpleInterface);
     GarrisonManager::builder()
         .dao(dao)
@@ -358,7 +377,7 @@ async fn async_main() -> GarrisonResult<()> {
     // 保持在 setup_garrison_manager 之前——DAO / 迁移不因配置错误被触碰）：
     // 未知值拒绝启动；backend=redis 须配非空 GARRISON_REDIS_URL（对齐 validate_rate_limit_redis）。
     #[cfg(feature = "rate-limit-redis")]
-    match garrison::config::impls::parse_rate_limit_backend_env() {
+    let rate_limit_backend = match garrison::config::impls::parse_rate_limit_backend_env() {
         Ok(Some(garrison::strategy::rate_limiter_backend::RateLimitBackend::Redis {
             redis_url,
         })) if redis_url.trim().is_empty() => {
@@ -368,12 +387,12 @@ async fn async_main() -> GarrisonResult<()> {
             );
             std::process::exit(1);
         },
-        Ok(_) => {},
+        Ok(backend) => backend,
         Err(e) => {
             eprintln!("FATAL: {e}; refusing to start");
             std::process::exit(1);
         },
-    }
+    };
     // 绑定地址 / 可信代理 / 密钥强度 / 外网登录暴露确认统一交由库层
     // `validate()` 判定，且保持在 `setup_garrison_manager` 之前——任何一项
     // 不满足即拒绝启动，不触碰 DAO 与迁移。
@@ -440,6 +459,8 @@ async fn async_main() -> GarrisonResult<()> {
             .unwrap_or("default"),
         bootstrap.max_login_count,
         bootstrap.seed_primary_amr,
+        #[cfg(feature = "rate-limit-redis")]
+        rate_limit_backend,
     )
     .await
     {
@@ -621,16 +642,54 @@ mod bootstrap_tests {
 
     #[test]
     fn max_login_count_override_and_zero_passthrough() {
-        assert_eq!(assemble_garrison_config(10, true).max_login_count, 10);
         assert_eq!(
-            assemble_garrison_config(0, true).max_login_count,
+            assemble_garrison_config(
+                10,
+                true,
+                #[cfg(feature = "rate-limit-redis")]
+                None
+            )
+            .max_login_count,
+            10
+        );
+        assert_eq!(
+            assemble_garrison_config(
+                0,
+                true,
+                #[cfg(feature = "rate-limit-redis")]
+                None
+            )
+            .max_login_count,
             0,
             "显式 0 透传 = 不限制（保留运维出口）"
         );
         assert_eq!(
-            assemble_garrison_config(3, true).max_login_count,
+            assemble_garrison_config(
+                3,
+                true,
+                #[cfg(feature = "rate-limit-redis")]
+                None
+            )
+            .max_login_count,
             3,
             "env 覆盖值应生效"
+        );
+    }
+
+    /// `rate_limit_backend` 环境变量值写入 GarrisonConfig（None 保持默认 Memory）。
+    #[cfg(feature = "rate-limit-redis")]
+    #[test]
+    fn rate_limit_backend_applied_to_config() {
+        use garrison::strategy::rate_limiter_backend::RateLimitBackend;
+
+        let backend = RateLimitBackend::Redis {
+            redis_url: "rediss://redis.example:6380/0".to_string(),
+        };
+        let config = assemble_garrison_config(10, true, Some(backend.clone()));
+        assert_eq!(config.rate_limit_backend, backend);
+        assert_eq!(
+            assemble_garrison_config(10, true, None).rate_limit_backend,
+            RateLimitBackend::Memory
         );
     }
 
@@ -638,11 +697,23 @@ mod bootstrap_tests {
     #[test]
     fn seed_primary_amr_assembled_into_config() {
         assert!(
-            assemble_garrison_config(10, true).seed_primary_amr,
+            assemble_garrison_config(
+                10,
+                true,
+                #[cfg(feature = "rate-limit-redis")]
+                None
+            )
+            .seed_primary_amr,
             "默认（true）应保持框架现状播种"
         );
         assert!(
-            !assemble_garrison_config(10, false).seed_primary_amr,
+            !assemble_garrison_config(
+                10,
+                false,
+                #[cfg(feature = "rate-limit-redis")]
+                None
+            )
+            .seed_primary_amr,
             "GARRISON_SEED_PRIMARY_AMR=false 应关闭播种"
         );
     }

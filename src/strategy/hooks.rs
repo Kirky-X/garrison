@@ -12,12 +12,11 @@
 use crate::constants::DaoKeyPrefix;
 use crate::dao::{GarrisonDao, InMemoryDao};
 use crate::error::{GarrisonError, GarrisonResult};
-use crate::limiteron::GarrisonDaoDistributedLimiter;
+use crate::limiteron::{LimiterBackend, LimiterRuntime};
 // listener_manager 注入（feature-gated）
 #[cfg(feature = "listener")]
 use crate::listener::{GarrisonEvent, GarrisonListenerManager};
 use async_trait::async_trait;
-use limiteron::limiters::DistributedLimiter;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -115,18 +114,19 @@ const FW_IP_KEY_PREFIX: &str = "fw:ip:";
 /// 账号维度失败计数器 key 前缀。
 const FW_ACCT_KEY_PREFIX: &str = "fw:acct:";
 
-/// `GarrisonFirewallCheckHook` 的默认实现，统一基于 `GarrisonDaoDistributedLimiter` 计数器
-/// （limiteron 适配器，原子计数 + TTL，禁止手写限流实现）。
+/// `GarrisonFirewallCheckHook` 的默认实现，统一基于 [`LimiterBackend`] 计数器
+/// （DAO 或独立 Redis 限流后端，原子计数 + TTL，禁止手写限流实现）。
 ///
 /// 内存模式（`new()`）内部创建 `InMemoryDao` 作后端（开发/CI 场景）；分布式模式（`with_dao(dao)`）用注入的
-/// `GarrisonDao`（oxcache/redis）实现跨实例计数。检测项与 key：IP 计数器 `fw:ip:{ip}`、账号计数器
+/// `GarrisonDao`（oxcache/redis）实现跨实例计数；`rate-limit-redis` 下可经 [`Self::with_limiter_backend`]
+/// 注入独立 Redis 限流运行时（会话/token/geo/device 数据仍走 `dao`）。检测项与 key：IP 计数器 `fw:ip:{ip}`、账号计数器
 /// `fw:acct:{login_id}` 超阈值阻断；geo 记录 `fw:geo:{login_id}`、设备列表 `fw:device:{login_id}`、token 黑名单
 /// `token:blacklist:{login_id}` 读 DAO KV 判定（无数据时通过）。计数器窗口由后端 TTL 语义自动重置，无需手动
 /// 时间窗口判断；实现均线程安全（`Send + Sync`），经 `Arc` 共享。
 pub struct GarrisonFirewallCheckHookDefault {
-    /// 限流器（基于 `GarrisonDaoDistributedLimiter`，原子计数 + TTL）；内部 dao 为 `InMemoryDao`（`new()` 模式）或注入的 dao（`with_dao` 模式）。
-    limiter: GarrisonDaoDistributedLimiter,
-    /// 保留 DAO 引用以支持 geo/token/device anomaly 检查（KV 读取）；与 `limiter` 内部 dao 共享同一 `Arc<dyn GarrisonDao>`，确保数据一致。
+    /// 限流执行后端（DAO 适配器或 Redis 限流运行时，原子计数 + TTL）。
+    limiter: Arc<dyn LimiterBackend>,
+    /// 保留 DAO 引用以支持 geo/token/device anomaly 检查（KV 读取）；DAO 模式下与 `limiter` 共享同一 `Arc<dyn GarrisonDao>`，确保数据一致。
     dao: Arc<dyn GarrisonDao>,
     /// 可选监听器管理器，注入后 check_brute_force 阻断时广播 AccountLocked 事件。
     #[cfg(feature = "listener")]
@@ -143,7 +143,7 @@ impl GarrisonFirewallCheckHookDefault {
     /// 显式选择进程内内存后端（单实例部署/测试；多实例生产务必 `with_dao`）。
     pub fn with_memory_default() -> Self {
         let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
-        let limiter = GarrisonDaoDistributedLimiter::new(dao.clone());
+        let limiter = LimiterRuntime::dao(dao.clone()).limiter();
         Self {
             limiter,
             dao,
@@ -155,8 +155,16 @@ impl GarrisonFirewallCheckHookDefault {
     /// 注入 DAO，切换到分布式计数模式（builder 方法）：`record_failure` / 各 `check_*` 方法走 DAO 路径（oxcache/redis），
     /// 内部 `limiter` 与 `dao` 字段均替换为注入的 DAO，确保计数器与 KV 检查共享同一后端。
     pub fn with_dao(mut self, dao: Arc<dyn GarrisonDao>) -> Self {
-        self.limiter = GarrisonDaoDistributedLimiter::new(dao.clone());
+        self.limiter = LimiterRuntime::dao(dao.clone()).limiter();
         self.dao = dao;
+        self
+    }
+
+    /// 注入独立限流后端（builder 方法）：`rate-limit-redis` 下由 manager 按
+    /// `rate_limit_backend=redis` 注入 Redis 运行时；`dao`（经 [`Self::with_dao`] 注入）
+    /// 仍用于 geo/token/device 检查。
+    pub fn with_limiter_backend(mut self, limiter: Arc<dyn LimiterBackend>) -> Self {
+        self.limiter = limiter;
         self
     }
 
@@ -186,13 +194,17 @@ impl GarrisonFirewallCheckHookDefault {
         Ok(())
     }
 
-    /// 清空所有 IP / 账号计数器（测试辅助方法）：扫描 `fw:ip:*` 与 `fw:acct:*` 并逐个删除；生产环境慎用（大规模 key 扫描可能影响 DAO 性能）。
+    /// 清空所有 IP / 账号计数器（测试辅助方法）：经 [`LimiterBackend::reset_prefix`] 扫描 `fw:ip:*` 与 `fw:acct:*` 并逐个删除；
+    /// 生产环境慎用（DAO 后端可能全表扫描、Redis 后端为 SCAN，大规模 key 扫描可能影响存储性能）。
     pub async fn reset(&self) -> GarrisonResult<()> {
-        let ip_keys = self.dao.keys(&format!("{}*", FW_IP_KEY_PREFIX)).await?;
-        let acct_keys = self.dao.keys(&format!("{}*", FW_ACCT_KEY_PREFIX)).await?;
-        for k in ip_keys.iter().chain(acct_keys.iter()) {
-            self.dao.delete(k).await?;
-        }
+        self.limiter
+            .reset_prefix(FW_IP_KEY_PREFIX)
+            .await
+            .map_err(map_limiteron_err)?;
+        self.limiter
+            .reset_prefix(FW_ACCT_KEY_PREFIX)
+            .await
+            .map_err(map_limiteron_err)?;
         Ok(())
     }
 
@@ -557,6 +569,30 @@ mod tests {
             Some("1")
         );
         assert_eq!(dao.get("fw:acct:1001").await.unwrap().as_deref(), Some("1"));
+    }
+
+    /// `with_limiter_backend` 覆盖 `with_dao` 的默认 limiter：计数写入注入后端而非 DAO。
+    #[tokio::test]
+    async fn with_limiter_backend_overrides_dao_limiter() {
+        let dao = Arc::new(InMemoryDao::new());
+        let limiter_dao = Arc::new(InMemoryDao::new());
+        let hook = GarrisonFirewallCheckHookDefault::new()
+            .with_dao(dao.clone())
+            .with_limiter_backend(LimiterRuntime::dao(limiter_dao.clone()).limiter());
+
+        let ctx = LoginContext::new("2002").with_ip("8.8.8.8");
+        hook.record_failure(&ctx).await.unwrap();
+
+        assert!(
+            dao.get("fw:ip:8.8.8.8").await.unwrap().is_none(),
+            "默认 DAO 不应收到计数写入"
+        );
+        assert_eq!(
+            limiter_dao.get("fw:ip:8.8.8.8").await.unwrap().as_deref(),
+            Some("1"),
+            "计数应写入注入的限流后端"
+        );
+        assert_eq!(hook.ip_failure_count("8.8.8.8").await, 1);
     }
 
     /// DAO 模式下 record_failure 递增 DAO 计数（`fw:ip:{ip}` / `fw:acct:{login_id}` 持久化到 DAO）。

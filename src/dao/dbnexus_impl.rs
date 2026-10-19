@@ -122,7 +122,7 @@ impl GarrisonMigration {
     /// # 子目录遍历
     ///
     /// dbnexus `scan_migrations` 只扫指定目录顶层 `.sql`、**不递归子目录**；本方法遍历 `temp_dir` 的每个子目录
-    /// 独立调 [`GarrisonMigration::run_dir`]（`copy_embedded_dir` 保留 `core/` 等结构），未来新增子目录无需改动。
+    /// 独立调 `GarrisonMigration::run_dir`（`copy_embedded_dir` 保留 `core/` 等结构），未来新增子目录无需改动。
     ///
     /// # Errors
     ///
