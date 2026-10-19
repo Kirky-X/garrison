@@ -266,6 +266,9 @@ i18n ── i18n（基础层无条件编译，feature 仅门控测试）⇒ i18n
 
 - **Redis**（compose :16379）：DAO 读写/TTL/原子方法防护（ACC-ENV-001..004）、
   分布式限流、cache-redis 后端。
+- **Redis 限流后端（`rate-limit-redis`）**：`tests/redis_limiter_backend.rs` 覆盖双实例
+  共享登录失败计数 / 滑动窗口 / TTL 过期 / 验证码答案跨实例 / `reset_prefix` /
+  不可达 fail-closed；`GARRISON_TEST_REDIS_URL` 默认 DB 15，Redis 不可达自动 [SKIP]。
 - **PostgreSQL**（compose :15432，凭据与测试默认一致）：连接 + 10 张核心表迁移 +
   UserRepository CRUD（ACC-ENV-005..006）。
 - **MySQL**（compose :13306 供手动验证；自动化经 testcontainers 动态拉起，

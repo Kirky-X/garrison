@@ -3,7 +3,7 @@
 
 <img src="docs/assets/garrison.png" alt="Garrison Logo" width="240">
 
-[![CI Status](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml/badge.svg)](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml) [![Version](https://img.shields.io/crates/v/garrison.svg)](https://crates.io/crates/garrison) [![Docs.rs](https://docs.rs/garrison/badge.svg)](https://docs.rs/garrison) [![Downloads](https://img.shields.io/crates/d/garrison.svg)](https://crates.io/crates/garrison) [![License](https://img.shields.io/crates/l/garrison.svg)](LICENSE) [![Rust](https://img.shields.io/badge/rust-1.97.1%2B-orange.svg)](https://www.rust-lang.org/) [![Coverage](https://img.shields.io/badge/coverage-95%25%2B-brightgreen.svg)](https://github.com/Kirky-X/garrison)
+[![Rust 2021](https://img.shields.io/badge/Rust-2021-edded?logo=rust&style=for-the-badge)](https://www.rust-lang.org/) [![Rustc 1.97.1+](https://img.shields.io/badge/Rustc-1.97.1+-orange.svg?style=for-the-badge)](https://www.rust-lang.org/) [![crates.io](https://img.shields.io/crates/v/garrison?style=for-the-badge)](https://crates.io/crates/garrison) [![docs.rs](https://img.shields.io/docsrs/garrison?style=for-the-badge)](https://docs.rs/garrison) [![downloads](https://img.shields.io/crates/d/garrison?style=for-the-badge)](https://crates.io/crates/garrison) [![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/garrison/ci.yml?branch=main&label=CI&style=for-the-badge)](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml) [![coverage](https://img.shields.io/badge/coverage-95%25%2B-brightgreen.svg?style=for-the-badge)](https://github.com/Kirky-X/garrison) [![license](https://img.shields.io/crates/l/garrison?style=for-the-badge)](LICENSE)
 
 **中文** | [English](README_EN.md)
 
@@ -275,6 +275,9 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 | [🏗️ 架构文档](docs/ARCHITECTURE.md) | 设计原则、模块划分与数据流 |
 | [⚙️ 配置指南](docs/CONFIGURATION.md) | 三级配置源、完整配置项与热更新 |
 | [⚡ 性能指南](docs/PERFORMANCE.md) | 性能目标、基准测试与优化建议 |
+| [🧱 API 稳定性分级](docs/API_STABILITY.md) | v1.0 稳定性层级、冻结清单与公共面基线 |
+| [🏭 参考生产案例](docs/PRODUCTION_CASES.md) | 自托管参考部署案例与提交模板 |
+| [🔎 安全审计就绪包](docs/SECURITY_AUDIT.md) | 审计范围、证据矩阵与第三方 RFP 清单 |
 | [🧪 测试场景矩阵](docs/TEST_SCENARIOS.md) | 验收场景穷举、特性组合矩阵与质量门禁 |
 | [🔒 安全文档](SECURITY.md) | 安全策略、漏洞报告流程 |
 | [🛡️ 威胁模型](docs/THREAT.md) | STRIDE 分析、框架防御与业务方责任边界 |

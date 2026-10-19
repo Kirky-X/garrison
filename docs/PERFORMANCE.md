@@ -2,7 +2,7 @@
 
 本指南汇总 Garrison 的性能设计要点、基准测试方法与优化建议。Garrison 的性能目标以认证鉴权框架的热路径为口径：登录链路（含密码哈希）与每请求的无状态校验（token 验证、权限检查）。
 
-> 适用版本：0.9.0-rc.3。本文不发布绝对耗时数字（criterion 区间估计随机器而异）；基准以本机运行 `cargo bench` 复现，验收性能基线以 `scripts/e2e_run.sh` 产出的 `logs/perf.jsonl` 为准。
+> 适用版本：0.9.0-rc.3（rc.4 Unreleased 新增 Redis 限流后端）。本文不发布绝对耗时数字（criterion 区间估计随机器而异）；基准以本机运行 `cargo bench` 复现，验收性能基线以 `scripts/e2e_run.sh` 产出的 `logs/perf.jsonl` 为准。
 
 ## 📋 目录
 
@@ -11,6 +11,7 @@
 - [验收性能基线（E2E）](#-验收性能基线e2e)
 - [性能设计要点](#️-性能设计要点)
 - [优化建议](#️-优化建议)
+- [v1.0 性能基线采集](#-v10-性能基线采集)
 - [相关文档](#-相关文档)
 
 ---
@@ -105,6 +106,7 @@ python3 scripts/e2e_analyze.py --log-dir logs
 | L1 容量可配 | `l1_cache_capacity` | `UserCacheService::new_with_capacity` 接线 `GarrisonConfig::l1_cache_capacity`（曾静默无效，已修复） |
 | 全量 feature 门控 | `Cargo.toml [features]` | 未启用的协议 / 防火墙 / Web 适配不参与编译，控制编译时间与二进制体积 |
 | 分布式限流 | `limiteron` 透传 | 滑动窗口 Redis Sorted Set（Lua 脚本，每条目 O(1) 内存）；GCRA / 配额等经 limiteron 子特性 |
+| Redis 限流后端（`rate-limit-redis`） | `RedisLimiterBackend` | 登录 hook 与 `RateLimitStrategy` 可切换到独立 Redis 限流运行时：计数器走 Lua 原子 EVAL，滑窗走 Sorted Set；每次登录最多 4 次 Redis EVAL（记录 2 + 检查 2），eval 超时 1s，故障 fail-closed。与进程内计数相比以网络 RTT 换多实例一致性；高吞吐部署应将限流 Redis 与业务缓存分实例/分 DB |
 
 ---
 
@@ -118,6 +120,20 @@ python3 scripts/e2e_analyze.py --log-dir logs
 6. **压测遵循多账号轮转**：对登录接口压测时不要用单一账号并发（会被 per-login_id 锁串行化，见上文方法论记录）；用 100 账号轮转模拟真实流量。
 7. **按内存预算调 Argon2 池**：`argon2_pool_size` 增大可提高登录风暴吞吐，代价是内存驻留上界线性增长（`pool_size × m_cost`）；先定内存预算再反推池大小，勿盲目调大（区间 `[1, 256]`，256 × 19 MiB ≈ 4.8 GiB）。
 8. **建立基线对比**：提交可能影响热路径的改动前 `--save-baseline` 保存基线，改动后 criterion 自动对比 `Regressed`。
+9. **多实例限流选型**：多实例部署启用 `rate-limit-redis` 换取全局计数一致性；单实例/边缘节点对登录延迟极敏感时保留 `memory`（默认），避免为未被放大的限额付出网络 RTT。
+
+---
+
+## 📈 v1.0 性能基线采集
+
+v1.0 性能门禁采用「同机相对基线」，不发布绝对耗时数字：
+
+```bash
+bash scripts/perf_baseline.sh                 # 采集 v1.0-pre 基线
+BASELINE=v1.0-pre bash scripts/perf_baseline.sh --quick
+```
+
+脚本记录 git SHA / rustc / cargo / CPU 型号，运行 `cargo bench --features full --bench garrison_benchmark -- --save-baseline <name>`，输出 `logs/perf-baseline.md`；criterion HTML 报告留在 `target/criterion`（不入库）。验收时用同机复跑并与基线对比，关注回归方向而非绝对值。
 
 ---
 

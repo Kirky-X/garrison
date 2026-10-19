@@ -18,6 +18,7 @@
 
 ### Security
 
+- **Redis 限流连接错误不泄露凭据**：连接 / 缓存构建失败错误仅携带脱敏 endpoint（复用 `RateLimitBackend` 的 `Debug`）与 oxcache 稳定错误码，不落原始 URL 文本。
 - **会话凭据落库 key 名 SHA-256 摘要化（升级注意：存量会话一次性失效）**：`Token-Session` 与匿名 Session 的落库 key 余段由原始 token 改为 SHA-256 小写 hex 摘要（`token:session:{sha256(token)}` / `token:session:anon:{sha256(token)}`，`session::token_key` 单点构造；对齐 `field-encryption`「裸 bearer token 不得留在落库 key 名」既有原则）——数据库/备份泄露面下 key 名直读不再回收活跃会话凭据。**升级语义**：旧 raw key 行不再被寻址，升级后全部存量会话一次性失效（用户重登录、匿名 token 重新获取）；遗留 raw key 行按其 `expire_at` 由 `vacuum_expired` / `garrison-cli vacuum-kv` 收敛，不做读取期 legacy 双读（热路径双读代价、摘要/原文形状判别不可靠、会话短生命周期使失效代价低）。`sha2` 由 optional 升为核心依赖（摘要无条件生效，安全修复不依赖 feature 开关）。残留风险如实披露：会话 value 内嵌 token（`TokenSession.token` / `AccountSession.tokens`）本变更加密，多副本会话后端部署应启用 `field-encryption` 全值加密。
 
 ### Fixed
@@ -28,8 +29,15 @@
 
 ### Added
 
+- **限流后端配置真正驱动切换（候选 B：限流器单独接 Redis）**：`rate_limit_backend=redis` 时，登录防火墙 hook 与 `RateLimitStrategy` 使用独立 Redis 限流运行时（oxcache `RedisBackend` + limiteron `RedisDistributedLimiter` Lua 原子计数/滑窗），会话 / token / geo / device 数据仍走原 DAO。新增 `LimiterBackend` / `LimiterRuntime` 抽象、`RateLimitStrategy::from_garrison_config` / `with_runtime`、`GarrisonFirewallCheckHookDefault::with_limiter_backend`；manager 在 `BUILD_LOCK` 之前建立连接（启动失败 fail-closed），`auth_server` 将 `GARRISON_RATE_LIMIT_BACKEND` 写入 `GarrisonConfig`（此前只校验不生效）。`reset()` 改经 `LimiterBackend::reset_prefix`，Redis 后端可清理跨实例计数。真 Redis 双实例验收见 `tests/redis_limiter_backend.rs`。覆盖面与未覆盖面见 `docs/ROADMAP.md` · rc.4 已知限制。
+- **v1.0 门禁启动文档与脚本**：新增 `docs/API_STABILITY.md`、`docs/PRODUCTION_CASES.md`、`docs/SECURITY_AUDIT.md` 与 `scripts/api_surface.sh` / `scripts/perf_baseline.sh` / `scripts/security_evidence.sh`；ROADMAP 四项 1.0 门禁由「待规划」改为「门禁启动」。
 - **`vacuum_expired` 过期行清理原语 + `garrison-cli vacuum-kv`**：`GarrisonDao` 新增 `vacuum_expired()`（trait 默认 no-op：原生 TTL 后端由引擎自清理；`DbnexusKvDao` 覆写为 `DELETE ... WHERE expire_at <= now` 全表清理，`GarrisonDaoDbnexus` 委托透传，`GarrisonSession` 同名转发），仅删过期行、`expire_at IS NULL` 永久行不动、幂等返回删除计数；`garrison-cli` 新增 `vacuum-kv --db-url` 离线命令（zh/en 文案键齐备），`--sweep-legacy-session-keys` 显性清扫升级后遗留 raw key 行（`token:session:` 前缀下余段非 64 位小写 hex 的行，含 `timeout=0` 永久遗留行——按过期收敛其永不消亡；启发式保守方向，摘要形态行零误删面）。库内不内置后台调度——清理触发节奏（cron / 进程内周期）由部署方决定。
 - **`DbnexusKvDao` 纳入 DAO conformance 契约网**：`dbnexus_kv_sqlite` conformance 实例落地（此前 `dbnexus_sqlite` 实例 KV 委托为进程内 `InMemoryDao`，SQL KV 零契约覆盖，set_if_absent 竞态因此漏网）；conformance 新增过期接管（set_if_absent / CAS(None)）、8 写者并发争抢、vacuum 计数契约用例，对全部后端生效。
+
+### Changed
+
+- **`rate-limit-redis` / `production` 预设包含 Redis 限流后端**：`rate-limit-redis` 由「仅配置选择」改为真正驱动登录 hook + `RateLimitStrategy` 的运行时切换；`production` 预设加入 `rate-limit-redis`（默认值仍为 Memory，行为不变）。
+- **`GarrisonConfig::rate_limit_backend` 语义更新**：`redis` 需 `rate-limit-redis` + `GARRISON_REDIS_URL`；非 TLS `redis://` 受 oxcache 策略约束（生产 `rediss://`，开发/测试 `OXCACHE_ALLOW_INSECURE_REDIS=I_UNDERSTAND_THE_RISKS`）。详见 `docs/CONFIGURATION.md`。
 
 ## [0.9.0-rc.3] - 2026-10-14
 

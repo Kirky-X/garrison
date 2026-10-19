@@ -2,7 +2,7 @@
 
 > Garrison 配置由 `GarrisonConfig` 统一管理，支持三级配置源合并与 `tokio::sync::watch` 热更新能力。
 >
-> - 适用版本：0.9.0-rc.3（核心配置 + JWT / 签名 / SSO / remember-me / Redis 部署模式 / 多租户 / 账号安全引擎 / 微服务架构 / ABAC / OAuth2 Server 等扩展配置）
+> - 适用版本：0.9.0-rc.3（rc.4 Unreleased 更新 `rate_limit_backend` 语义；核心配置 + JWT / 签名 / SSO / remember-me / Redis 部署模式 / 多租户 / 账号安全引擎 / 微服务架构 / ABAC / OAuth2 Server 等扩展配置）
 > - 配置类型：`GarrisonConfig`，实现 `serde::Serialize / Deserialize`
 > 架构设计详见 [🏗️ 架构文档](./ARCHITECTURE.md)；部署配置详见 [🚀 部署指南](./DEPLOYMENT.md)。
 
@@ -223,7 +223,7 @@ recovery_misuse_tolerance = 0       # 恢复码误用豁免额度（默认 0，�
 |--------|------|--------|----------|------|
 | `enable_jwt_revocation` | `bool` | `false` | `GARRISON_ENABLE_JWT_REVOCATION` | 启用 JWT 撤销黑名单：`logout` / `kickout` 时将 `jti` 写入 DAO（TTL = 剩余有效期），`check_login_stateless` 验签后前置检查，已撤销返回 `TokenRevoked`；仅 `protocol-jwt` + `token_style="jwt"` 时生效 |
 | `allow_stateless_jwt_no_revocation` | `bool` | `false` | `GARRISON_ALLOW_STATELESS_JWT_NO_REVOCATION` | 显式风险接受：允许 `token_style="jwt"` + `JwtMode::Stateless` + 不启用撤销的组合（不可吊销的永久 JWT 凭证；`jwt_mode` 为代码注入的 `JwtMode` 枚举，非配置字段）；正常部署应使用 `enable_jwt_revocation=true` 或 `JwtMode::Mixin` |
-| `rate_limit_backend` | `String` | `"memory"` | `GARRISON_RATE_LIMIT_BACKEND` | 限流后端选择（`memory` / `redis`）；`redis` 需 `rate-limit-redis` Cargo feature，连接 URL 取 `GARRISON_REDIS_URL`（缺失/空值拒绝启动），未知值拒绝启动（fail-closed）。**语义边界（如实说明）**：该字段当前仅作配置占位与可观测性标记，不驱动实现切换——限流实现统一跟随 `GarrisonDao` 后端（`GarrisonDaoDistributedLimiter`）；分布式限流需部署方自备 Redis 后端 DAO（oxcache 的 `with_redis_config` 当前仅存储配置，见 `src/dao/oxcache_impl.rs` 的 M4 注记），参考部署（auth_server）的 KV 为进程内 oxcache，多实例限流计数不共享 |
+| `rate_limit_backend` | `String` | `"memory"` | `GARRISON_RATE_LIMIT_BACKEND` | 限流后端选择（`memory` / `redis`）。**生效面**：登录防火墙 hook（`fw:ip:*` / `fw:acct:*` 计数）与 `RateLimitStrategy`（含 `from_garrison_config` / `with_runtime`）；`memory` 跟随主 DAO（进程内 oxcache），`redis` 使用独立 Redis 限流运行时（oxcache `RedisBackend` + limiteron `RedisDistributedLimiter`），会话 / token / geo / device 数据仍走主 DAO。`redis` 需 `rate-limit-redis` feature 与 `GARRISON_REDIS_URL`；启动连接失败拒绝启动（fail-closed），运行期错误向上传播。非 TLS `redis://` 受 oxcache 策略约束：生产用 `rediss://`，开发/测试可设 `OXCACHE_ALLOW_INSECURE_REDIS=I_UNDERSTAND_THE_RISKS`。**未覆盖**：`BruteForceStrategy` 封禁账本、`DDoSStrategy`、OAuth2 `/token` 限流、邀请码防爆破、SMS/email 配额、API Key 锁定、账号锁定、auth_server 边缘 `rate_limit_middleware`（进程内令牌桶）仍按各自后端独立运作 |
 
 ---
 

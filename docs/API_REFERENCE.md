@@ -2,7 +2,7 @@
 
 本参考文档收录 Garrison 的公开 API：全局管理器与静态门面、业务回调 trait、存储层 trait、注解宏、错误类型以及特性门控模块。文档假设启用了相应 feature；未启用时对应 API 不参与编译。在线文档（docs.rs 自动生成）：<https://docs.rs/garrison>。
 
-> 适用版本：0.9.0-rc.3。完整签名以 rustdoc 为准，本文按「模块 → trait/类型 → 方法表」组织，供快速定位。
+> 适用版本：0.9.0-rc.3（rc.4 Unreleased 新增限流后端 API 见文末）。完整签名以 rustdoc 为准，本文按「模块 → trait/类型 → 方法表」组织，供快速定位。
 
 ## 📋 目录
 
@@ -563,6 +563,17 @@ Display 行为：i18n 基础层无条件编译，`to_string()` 按线程本地 l
 `Deprecation`（`key` / `since_version` / `new_key` / `auto_map` / `map_fn`）· `apply_deprecations`（加载期迁移/告警，`current_version ≥ 1.0.0` 起 fail-closed）· `is_mappable`。
 
 ---
+
+## 🆕 rc.4 限流后端切换新增 API（`rate-limit-redis`）
+
+| 项 | 说明 |
+|----|------|
+| `limiteron::LimiterBackend` | 限流执行面 trait（`DistributedLimiter` 超集）：`atomic_check_and_incr` / `reset_prefix` / `allow_sliding_window`（`firewall-ratelimit` 门控） |
+| `limiteron::LimiterRuntime` | 限流运行时（`limiter()` / `storage()`）；`dao(dao)` 为默认 DAO 后端；`from_config(&GarrisonConfig, dao).await` 按 `rate_limit_backend` 选择 Memory/Redis |
+| `limiteron::RedisLimiterBackend` | Redis 运行时（`rate-limit-redis` 门控）：oxcache `RedisBackend` + limiteron `RedisDistributedLimiter`；实现 `LimiterBackend` + `Storage` |
+| `strategy::firewall::RateLimitStrategy::with_runtime` | 以显式运行时构造策略 |
+| `strategy::firewall::RateLimitStrategy::from_garrison_config` | 按应用配置构造（`rate-limit-redis` 门控）；连接失败 fail-closed |
+| `strategy::hooks::GarrisonFirewallCheckHookDefault::with_limiter_backend` | 为登录防火墙 hook 注入独立限流后端 |
 
 ## 📚 相关文档
 

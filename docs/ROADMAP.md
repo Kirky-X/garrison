@@ -52,7 +52,8 @@
 | 0.9.0-rc.1 | ✅ 已完成 | 2026-08-25 | 自研库特性吸收 + 依赖批量升级（oxcache 0.5 / dbnexus 0.6 / sdforge 0.5 / trait-kit 0.5 / confers 0.6 / limiteron 0.3）+ 配置增强特性（config-yaml/audit/consul/etcd/distributed/schema）+ 数据库增强（db-sharding/replica/saga）+ 防火墙增强（gcra/tower/quota/admission/event/monitoring/parallel）+ 协议域统一重命名（secure-httpbasic/httpdigest → protocol-*）+ i18n 硬编码修复 + 函数覆盖率 89.87% → 92.77% |
 | 0.9.0-rc.2 | ✅ 已完成 | 2026-08-26 | fail-closed 安全加固：`check_api_key` / `check_abac_with_policy` 缺依赖时拒绝放行而非默认放行；防火墙自动装配；`session::dao` crate 内可见性扩展；`firewall_hook_injected` 标记 |
 | 0.9.0-rc.3 | ✅ 已完成 | 2026-10-14 | 安全审计整改批次 R01–R18：统一错误模型（request-id / Retry-After / 模块前缀码）+ Argon2 并发令牌池 + 字段静态加密（AES-256-GCM）+ WebAuthn/Passkey + 密码找回 + MFA/step-up 编排基座 + OIDC back-channel logout + OIDC discovery/JWKS 多 kid 轮换 + Refresh 重用三级分类 + 多租户强化（会话-租户绑定/标识符注册表/设备接口）+ Set-Cookie 单一构建点 + garrison-cli 运维面 + 参考部署安全基线收紧 |
-| 1.0.0 | 📋 待规划 | 2027 Q2 | 稳定版 |
+| 0.9.0-rc.4 | 🚧 进行中（Unreleased） | 待定 | 会话 key SHA-256 摘要化 + DAO 原子契约修复（set_if_absent 过期接管 / MySQL ensure_table）+ vacuum_expired 原语 + 发布流水线收敛 + 限流后端 Redis 落地（候选 B） |
+| 1.0.0 | 🚧 门禁启动 | 2027 Q2 | 稳定版（API 冻结 / 性能基准 / 生产案例 / 安全审计四项门禁启动） |
 
 ---
 
@@ -556,13 +557,47 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 
 #### 已知限制（0.9.0-rc.3）
 
-- `rate_limit_backend` 配置（`GARRISON_RATE_LIMIT_BACKEND`）当前仅作配置占位 + 启动期 fail-closed 校验（未知值 / `redis` 缺 `GARRISON_REDIS_URL` 拒绝启动），**不驱动限流实现切换**——限流实现统一跟随 `GarrisonDao` 后端（`GarrisonDaoDistributedLimiter`），参考部署（auth_server）的 KV 为进程内 oxcache，多实例限流计数不共享。分布式限流候选方向（产品决策项，未排期）：
+- `rate_limit_backend` 配置（`GARRISON_RATE_LIMIT_BACKEND`）在 rc.3 发布时仅作配置占位 + 启动期 fail-closed 校验（未知值 / `redis` 缺 `GARRISON_REDIS_URL` 拒绝启动），**不驱动限流实现切换**——限流实现统一跟随 `GarrisonDao` 后端（`GarrisonDaoDistributedLimiter`），参考部署（auth_server）的 KV 为进程内 oxcache，多实例限流计数不共享。rc.3 时的分布式限流候选方向（rc.4 已选 B）：
   - **A）auth_server 整 DAO 切 oxcache Redis 后端**：会话 / token / 锁定键随迁 Redis（多实例会话共享随之可用），需产品决策数据落点 + `_sync` 原子方法迁移（oxcache `with_redis_config` 当前仅存储配置，见 `src/dao/oxcache_impl.rs` M4 注记）；
   - **B）限流器单独接 Redis 存储**：limiteron `Storage` 适配 + `RateLimitStrategy` 构造接线 + 多实例语义专项验证，会话数据落点不变。
+  > → rc.4 已以候选 B 部分闭合（见下节 v0.9.0-rc.4）；未覆盖面仍见 rc.4 已知限制。
 
 ---
 
-### 候选池（Backlog，未排期）
+### v0.9.0-rc.4 安全修复与限流后端落地（🚧 进行中，Unreleased）
+
+完成时间：待定（`[Unreleased]` 已累计，未发布）
+
+#### 已完成（[Unreleased] 累计）
+
+- ✅ 会话凭据落库 key SHA-256 摘要化（`session::token_key` 单点；存量会话一次性失效，旧 raw key 由 `vacuum_expired` / `garrison-cli vacuum-kv` 收敛）
+- ✅ `DbnexusKvDao::set_if_absent` 过期接管原子化（SQLite/PG 单语句条件 upsert，MySQL 事务 + 行锁），闭合 trait 契约竞态
+- ✅ `DbnexusKvDao::ensure_table` MySQL `VARCHAR(255)` 分支修复
+- ✅ `GarrisonDao::vacuum_expired` 原语 + `garrison-cli vacuum-kv`（含 `--sweep-legacy-session-keys`）
+- ✅ 发布流水线收敛与幂等化（rc prerelease 派生 / tag 级并发 / `cargo publish --locked` 幂等）
+- ✅ DAO conformance 契约网新增 `dbnexus_kv_sqlite` 实例（过期接管 / 8 写者并发 / vacuum 计数）
+
+#### 新增：限流后端切换（候选 B）
+
+- ✅ `LimiterBackend` / `LimiterRuntime`：限流执行面从 `GarrisonDaoDistributedLimiter` 具体类型抽象为可切换后端
+- ✅ `RedisLimiterBackend`（`rate-limit-redis`）：oxcache `RedisBackend` 连接管理 + limiteron `RedisDistributedLimiter` Lua 原子计数/滑窗；1s eval 超时；启动连接失败 fail-closed
+- ✅ 登录防火墙 hook（`GarrisonFirewallCheckHookDefault`）自动接线：manager 按 `rate_limit_backend=redis` 注入 Redis 运行时；`Memory` 行为零变化
+- ✅ `RateLimitStrategy::from_garrison_config` / `with_runtime`：手动构造策略时同样可按配置切换
+- ✅ `auth_server` 环境变量写入 `GarrisonConfig`（此前只校验不生效）
+- ✅ `reset()` 改经 `LimiterBackend::reset_prefix`，Redis 后端可清理跨实例计数
+- ✅ 真 Redis 双实例验收（`tests/redis_limiter_backend.rs`：共享计数/滑窗/TTL/验证码答案/前缀清理/不可达 fail-closed）
+
+#### 已知限制（0.9.0-rc.4）
+
+- **覆盖面**：仅登录防火墙 hook 与 `RateLimitStrategy`；以下仍为独立计数器，不随 `rate_limit_backend` 切换——`BruteForceStrategy` 的封禁账本、`DDoSStrategy`、OAuth2 `/token` 限流、邀请码防爆破、SMS/email 配额、API Key 锁定、账号锁定、auth_server 边缘 `rate_limit_middleware`（进程内令牌桶）
+- **Redis 故障语义**：启动连接失败拒绝启动；运行期 Lua/网络错误向上传播（登录拒绝），不静默降级到内存
+- **TLS**：非 TLS `redis://` 受 oxcache 策略约束，生产须 `rediss://`；开发/测试可设 `OXCACHE_ALLOW_INSECURE_REDIS=I_UNDERSTAND_THE_RISKS`
+- **延迟**：每次登录最多 4 次 Redis EVAL（记录 2 次 + 检查 2 次）；P99 影响需按部署压测
+- **键空间**：`fw:*` / `rl:*` 不额外加前缀，建议独立 Redis DB/实例，避免与 oxcache 缓存键混用
+
+---
+
+### 候选池（Backlog，滚动评估）
 
 以下条目来自安全自评与审计结论，作为后续变更候选记录：
 
@@ -572,15 +607,23 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 - **OIDC discovery 端点**：已交付——`/oauth2/jwks.json` 与 `/.well-known/openid-configuration` 元数据端点均已注册路由（`src/server/oauth2_routes.rs`，后者由 `enable_openid_configuration` 开关控制）。
 - **JWKS 多 kid 轮换**：已交付——`JwksKeystore`（`src/oauth2_server/jwks.rs`）提供多 kid 密钥库账本，注入后 JWKS 端点优先从库发布（单密钥 `jwks_source` 为退化路径）。
 - **loom 竞态验证扩展**：一次性凭证消费路径已验证（`loom-test` feature），扩展至 RefreshTokenRotation 竞态。
+- **分布式限流候选 A（auth_server 整 DAO 切 Redis）**：未采纳，保持 backlog——`_sync` 原子方法迁移 + 会话数据落点决策成本高；rc.4 采用候选 B。
+- **分布式限流候选 B（限流器单独接 Redis）**：已落地（rc.4，见「v0.9.0-rc.4」节），覆盖登录防火墙 hook 与 `RateLimitStrategy`；其余限流面仍为后续批次。
 
-### v1.0.0 稳定版（待规划）
+> 最近复核：2026-10-19（rc.4 Unreleased）。
+
+### v1.0.0 稳定版（🚧 门禁启动）
 
 计划完成：2027 Q2
 
-- 📋 API 冻结（semver 稳定承诺）
-- 📋 性能基准测试
-- 📋 生产案例文档
-- 📋 安全审计
+| 门禁 | 状态 | 本轮启动产物 |
+|------|------|-------------|
+| API 冻结（semver 稳定承诺） | 🚧 启动 | [API 稳定性分级](API_STABILITY.md) · `scripts/api_surface.sh` · 周度公共面基线工件 |
+| 性能基准测试 | 🚧 启动 | `scripts/perf_baseline.sh` · [性能指南 · v1.0 基线采集](PERFORMANCE.md#-v10-性能基线采集) |
+| 生产案例文档 | 🚧 启动 | [参考生产案例](PRODUCTION_CASES.md)（自托管验证，非客户案例） |
+| 安全审计 | 🚧 启动 | [安全审计就绪包](SECURITY_AUDIT.md) · `scripts/security_evidence.sh` |
+
+> 门禁口径：本轮交付「可复现的基线 / 模板 / 证据包」，不宣称已完成 1.0 API 冻结或第三方安全审计。
 
 **里程碑意义**：发布 1.0 稳定版，给出向后兼容承诺与生产可用性证据，进入长期维护期。
 
@@ -659,3 +702,4 @@ explore → propose → apply → archive
 ---
 
 > 本路线图为持续滚动更新文档，实际发布时间与内容可能随社区反馈调整。最新进展请关注 [GitHub Releases](https://github.com/Kirky-X/garrison/releases)。
+> 最近同步：2026-10-19（rc.4 Unreleased）。

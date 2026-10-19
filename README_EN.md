@@ -3,7 +3,7 @@
 
 <img src="docs/assets/garrison.png" alt="Garrison Logo" width="240">
 
-[![CI Status](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml/badge.svg)](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml) [![Version](https://img.shields.io/crates/v/garrison.svg)](https://crates.io/crates/garrison) [![Docs.rs](https://docs.rs/garrison/badge.svg)](https://docs.rs/garrison) [![Downloads](https://img.shields.io/crates/d/garrison.svg)](https://crates.io/crates/garrison) [![License](https://img.shields.io/crates/l/garrison.svg)](LICENSE) [![Rust](https://img.shields.io/badge/rust-1.97.1%2B-orange.svg)](https://www.rust-lang.org/) [![Coverage](https://img.shields.io/badge/coverage-95%25%2B-brightgreen.svg)](https://github.com/Kirky-X/garrison)
+[![Rust 2021](https://img.shields.io/badge/Rust-2021-edded?logo=rust&style=for-the-badge)](https://www.rust-lang.org/) [![Rustc 1.97.1+](https://img.shields.io/badge/Rustc-1.97.1+-orange.svg?style=for-the-badge)](https://www.rust-lang.org/) [![crates.io](https://img.shields.io/crates/v/garrison?style=for-the-badge)](https://crates.io/crates/garrison) [![docs.rs](https://img.shields.io/docsrs/garrison?style=for-the-badge)](https://docs.rs/garrison) [![downloads](https://img.shields.io/crates/d/garrison?style=for-the-badge)](https://crates.io/crates/garrison) [![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/garrison/ci.yml?branch=main&label=CI&style=for-the-badge)](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml) [![coverage](https://img.shields.io/badge/coverage-95%25%2B-brightgreen.svg?style=for-the-badge)](https://github.com/Kirky-X/garrison) [![license](https://img.shields.io/crates/l/garrison?style=for-the-badge)](LICENSE)
 
 [中文](README.md) | **English**
 
@@ -275,6 +275,9 @@ The table below summarizes the main `[features]` of `Cargo.toml` grouped by capa
 | [🏗️ Architecture](docs/ARCHITECTURE.md) | Design principles, module layout, and data flow |
 | [⚙️ Configuration](docs/CONFIGURATION.md) | Three-tier config sources, full field reference, and hot-reload |
 | [⚡ Performance](docs/PERFORMANCE.md) | Performance targets, benchmarks, and optimization advice |
+| [🧱 API Stability](docs/API_STABILITY.md) | v1.0 stability tiers, freeze checklist, and public API baseline |
+| [🏭 Reference Deployments](docs/PRODUCTION_CASES.md) | Self-hosted reference cases and submission template |
+| [🔎 Security Audit Readiness](docs/SECURITY_AUDIT.md) | Audit scope, evidence matrix, and third-party RFP checklist |
 | [🧪 Test Scenarios](docs/TEST_SCENARIOS.md) | Acceptance scenario matrix, feature combination matrix, and quality gates |
 | [🔒 Security](SECURITY.md) | Security policy and vulnerability reporting process |
 | [🛡️ Threat Model](docs/THREAT.md) | STRIDE analysis, framework defenses vs. operator responsibilities |

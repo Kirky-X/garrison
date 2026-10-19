@@ -251,11 +251,26 @@ docker build -f docker/Dockerfile.distroless \
 | `GARRISON_STRICT_SECURITY` | — | `true` | 严格安全档。参考部署**始终 fail-closed**：密钥不足下限、外网登录暴露未 ACK 均在初始化 DAO 与迁移之前由库层 `AuthServerConfig::validate()` 拒绝启动。`false` 仅作为密钥尚未轮换时的一次性逃生阀（同条件降级为库层告警）。本变量经 bin 的 bootstrap 只接受 `true`/`false`（大小写不敏感），非法值拒绝启动；库层读取同名变量时语义不同（非法值告警后回退缺省 `false`） |
 | `GARRISON_HEALTH_DETAILS` | — | `false` | 内网 `/readyz` 是否透传 `checks[].details`（可能含内部依赖拓扑，默认剥离仅保留 name/healthy）。接受 `1`/`true`/`yes`/`on` 与 `0`/`false`/`no`/`off`（大小写不敏感），无法识别取值告警并按默认处理 |
 | `GARRISON_API_KEY_LOCKOUT_THRESHOLD` / `GARRISON_API_KEY_LOCKOUT_WINDOW_SECS` | — | `10` / `300` | 内网 API Key 认证失败锁定：同源 IP 连续失败（缺失/错误/重复 `X-API-Key`）达阈值后窗口期内一律 429 + `Retry-After`，成功认证即清零；threshold `0` = 禁用锁定 |
-| `GARRISON_RATE_LIMIT_BACKEND` | — | 未设置（配置默认 Memory） | 限流后端覆盖：需 `rate-limit-redis` feature 才生效，`redis` 须同时配 `GARRISON_REDIS_URL`，未知值拒绝启动 |
+| `GARRISON_RATE_LIMIT_BACKEND` | — | 未设置（配置默认 Memory） | 驱动登录防火墙 hook 与 `RateLimitStrategy` 的限流存储：需 `rate-limit-redis` feature；`redis` 须同时配 `GARRISON_REDIS_URL`（生产用 `rediss://`；开发/测试可 `redis://` + `OXCACHE_ALLOW_INSECURE_REDIS=I_UNDERSTAND_THE_RISKS`），未知值 / 空 URL 拒绝启动 |
 | `GARRISON_WORKER_THREADS` | — | CPU 核数 | Tokio worker 线程数 |
 | `GARRISON_MAX_BLOCKING_THREADS` | — | `512` | Tokio blocking 线程上限 |
 
 完整 `GARRISON_*` 配置见 [⚙️ 配置指南](./CONFIGURATION.md)。
+
+### 多实例限流（rate-limit-redis）
+
+多实例部署下，进程内限流计数会按实例数放大。启用 `rate-limit-redis` 后，登录防火墙 hook 与 `RateLimitStrategy` 可切换到独立 Redis 限流运行时（会话 / token 数据不迁移）：
+
+```bash
+GARRISON_RATE_LIMIT_BACKEND=redis
+# 生产必须 TLS；开发可用 redis:// 并显式设 OXCACHE_ALLOW_INSECURE_REDIS=I_UNDERSTAND_THE_RISKS
+GARRISON_REDIS_URL=rediss://redis.example:6380/0
+```
+
+- **覆盖范围**：登录频率 / 账号失败计数（`fw:ip:*` / `fw:acct:*`）与 `RateLimitStrategy` 滑动窗口；`BruteForceStrategy` 封禁账本、`DDoSStrategy`、OAuth2 `/token`、邀请码、SMS/email 配额、API Key / 账号锁定、边缘 `rate_limit_middleware` 仍按各自后端独立运作（见 [ROADMAP · rc.4 已知限制](./ROADMAP.md)）。
+- **会话数据**：仍留在实例本地 DAO；需要跨实例会话共享时使用 sticky session、stateless JWT，或评估候选 A（整 DAO 切 Redis，未采纳）。
+- **故障语义**：启动连接失败拒绝启动；运行期 Redis 错误向上传播（登录 fail-closed），不会静默回退到内存。
+- **键空间**：建议独立 Redis DB 或实例，`fw:*` / `rl:*` 与 oxcache 缓存键不混用。
 
 ### Docker Compose 示例
 

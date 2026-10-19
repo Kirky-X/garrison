@@ -39,7 +39,7 @@
 
 | # | 控制点 | 评级 | 证据 |
 |---|--------|------|------|
-| 2.5.1 | 系统须抵抗暴力破解攻击 | ✅ | `firewall-bruteforce` + `account-lockout` + `firewall-ratelimit`（GCRA/滑动窗口，分布式后端 `rate-limit-redis`） |
+| 2.5.1 | 系统须抵抗暴力破解攻击 | ✅ | `firewall-bruteforce` + `account-lockout` + `firewall-ratelimit`（GCRA/滑动窗口）；`rate-limit-redis` 已接线登录 hook + `RateLimitStrategy` 的跨实例计数（rc.4，候选 B） |
 | 2.5.2 | 安全验证码（OTP）须经系统安全生成 | ✅ | 备份码/验证码走 `getrandom::fill`（OS CSPRNG，ADR-0002）；邮箱验证码 `email-verification` 同源 |
 
 ### V2.7 单点登录 / MFA
