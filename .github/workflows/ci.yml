@@ -451,8 +451,11 @@ jobs:
         uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # cargo-llvm-cov
         with:
           tool: cargo-llvm-cov
-      - name: Run coverage (fail under 85% lines)
-        run: cargo llvm-cov --features "full" --fail-under-lines 85 --lcov --output-path lcov.info
+      - name: Run coverage (fail under 95% lines)
+        run: cargo llvm-cov --features "full" --fail-under-lines 95 --lcov --output-path lcov.info
+      - name: Coverage summary
+        if: always()
+        run: cargo llvm-cov report --summary-only
       - name: Upload coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
