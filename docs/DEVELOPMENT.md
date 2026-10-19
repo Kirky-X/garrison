@@ -333,7 +333,7 @@ garrison::dao_conformance_tests! {
 
 Garrison 的覆盖率门禁为**行覆盖率 ≥ 85%**（CI 门禁 `cargo llvm-cov --features "full" --fail-under-lines 85`；当前约 95.8%）。新增代码不得使总覆盖率下降。
 
-以下分模块数值为目标线（团队内期望值），**非 CI 门禁**：
+以下分模块数值为目标线（Kirky.X 设定的期望值），**非 CI 门禁**：
 
 | 模块类型 | 目标线（非 CI 门禁） |
 |---------|-------------------|

@@ -43,8 +43,8 @@ Garrison 仅对已发布版本提供安全修复，开发分支（`main`）不�
 
 请通过以下私密渠道报告：
 
-1. **首选 — 邮箱**：发送邮件至 <Kirky-X@outlook.com>
-2. **次选 — GitHub Security Advisory**：通过 [GitHub Security Advisory](https://github.com/Kirky-X/garrison/security/advisories/new) 提交（建议使用，支持加密通信与 CVE 申请）
+1. **首选 — GitHub Security Advisory**：通过 [GitHub Security Advisory](https://github.com/Kirky-X/garrison/security/policy) 提交（仓库页 **Security → Report a vulnerability**，支持加密通信与 CVE 申请）
+2. **备选 — 邮箱**：仅当首选通道不可用时，发送邮件至 <Kirky-X@outlook.com>（受理人：Kirky.X）
 
 ### 报告内容要求
 

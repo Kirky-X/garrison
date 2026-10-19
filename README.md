@@ -385,7 +385,7 @@ CI 与发布流程内置两道供应链门禁：`cargo deny check`（RustSec 公
 
 ### 🚨 报告安全漏洞
 
-请勿通过公开 issue 报告安全漏洞。请使用 GitHub [Security Advisories](https://github.com/Kirky-X/garrison/security/advisories/new) 私密披露通道或发送邮件至 <Kirky-X@outlook.com>。项目承诺 48 小时内确认、7 天内给出初步评估。完整政策见 [SECURITY.md](SECURITY.md)。
+请勿通过公开 issue 报告安全漏洞。请优先使用 GitHub [Security Advisories](https://github.com/Kirky-X/garrison/security/policy) 私密披露通道提交报告（不可用时再发送邮件至 <Kirky-X@outlook.com>，受理人 Kirky.X）。项目承诺 48 小时内确认、7 天内给出初步评估。完整政策见 [SECURITY.md](SECURITY.md)。
 
 ---
 

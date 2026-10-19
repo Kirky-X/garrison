@@ -385,7 +385,7 @@ The CI and release pipelines enforce two supply-chain gates: `cargo deny check` 
 
 ### 🚨 Reporting Security Issues
 
-Please do not report security vulnerabilities through public issues. Use the GitHub [Security Advisories](https://github.com/Kirky-X/garrison/security/advisories/new) private disclosure channel or email <Kirky-X@outlook.com>. The project commits to acknowledging reports within 48 hours and providing an initial assessment within 7 days. See the full policy in [SECURITY.md](SECURITY.md).
+Please do not report security vulnerabilities through public issues. Use the GitHub [Security Advisories](https://github.com/Kirky-X/garrison/security/policy) private disclosure channel as the primary route (fall back to email <Kirky-X@outlook.com>, handled by Kirky.X, only if that channel is unavailable). The project commits to acknowledging reports within 48 hours and providing an initial assessment within 7 days. See the full policy in [SECURITY.md](SECURITY.md).
 
 ---
 
