@@ -16,7 +16,9 @@ repos:
       - id: check-json
       - id: check-merge-conflict
       - id: check-added-large-files
-        args: [--maxkb=500]
+        # 项目 logo（docs/assets/garrison.png，1254×1254 PNG）约 1.4 MB，原 500 KB 上限会拦下
+        # 该资产的新增；上限提到 2000 KB 与 CodeNexus 仓对齐，其余超大二进制仍会被拦。
+        args: [--maxkb=2000]
       - id: check-case-conflict
       - id: check-symlinks
       # 官方 detect-private-key 是朴素 grep、无指纹机制；src/ 下 5 个文件内嵌

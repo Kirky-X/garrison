@@ -1,6 +1,6 @@
 # 🤝 Garrison 贡献指南
 
-<img src="assets/logo.png" alt="Garrison Logo" width="150">
+<img src="assets/garrison.png" alt="Garrison Logo" width="150">
 
 首先，感谢你对 Garrison 项目的关注与支持！本文档将引导你完成从环境搭建到提交 Pull Request 的完整贡献流程。
 
