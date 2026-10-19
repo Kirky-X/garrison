@@ -36,6 +36,9 @@
 
 ## 📋 目录
 
+<details open>
+<summary>📑 目录</summary>
+
 - [✨ 功能特性](#-功能特性)
 - [🚀 快速开始](#-快速开始)
 - [🎨 特性标志](#-特性标志)
@@ -52,6 +55,8 @@
 - [🙏 致谢](#-致谢)
 - [📞 联系与支持](#-联系与支持)
 - [⭐ Star 历史](#-star-历史)
+
+</details>
 
 ---
 
@@ -86,6 +91,9 @@
 
 在 `Cargo.toml` 中添加依赖（`development` 聚合 = 内存缓存 DAO + SQLite + axum 适配）：
 
+<details>
+<summary>📄 代码 · toml</summary>
+
 ```toml
 [dependencies]
 garrison = { version = "0.9.0-rc.3", features = ["development"] }
@@ -93,9 +101,14 @@ async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
 
+</details>
+
 要求 Rust **1.97.1 及以上**（`Cargo.toml` 的 `rust-version = "1.97.1"`）：依赖面中的兄弟生态 crate（confers / oxcache / dbnexus / sdforge / limiteron / inklog / trait-kit 的 rc 线）各自声明 `rust-version = "1.97.1"`，这是依赖图可满足的最低工具链，低于该版本 `cargo check` 直接拒绝构建（`rustc ... is not supported by the following packages`）；CI 测试矩阵按 `1.97.1`（MSRV 下限）/ `stable` / `beta` 三档显式验证。
 
 > 预发布版本需显式写完整版本号，`"0.9"` 无法匹配 prerelease。如需启用全部协议层与安全模块：`features = ["full"]`。
+
+<details>
+<summary>📋 表格</summary>
 
 | 预设 | 安装方式 | 适用场景 |
 |------|----------|----------|
@@ -103,9 +116,14 @@ tokio = { version = "1", features = ["full"] }
 | 生产 | `features = ["production"]` | 生产环境推荐组合 |
 | 完整 | `features = ["full"]` | 全部能力 |
 
+</details>
+
 ### 💡 最小示例
 
 以下示例改编自 [`examples/src/bin/readme_quickstart.rs`](examples/src/bin/readme_quickstart.rs)（完整业务场景：初始化管理器 → 执行登录 → 校验登录状态 → 登出）：
+
+<details>
+<summary>📄 代码 · rust</summary>
 
 ```rust
 use std::sync::Arc;
@@ -156,10 +174,17 @@ async fn main() -> GarrisonResult<()> {
 }
 ```
 
+</details>
+
+<details>
+<summary>📄 代码 · bash</summary>
+
 ```bash
 cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 # 输出: 登录成功，token = <8 位随机 token 前缀>
 ```
+
+</details>
 
 > 本示例已由 [examples/tests/readme_quickstart.rs](./examples/tests/readme_quickstart.rs) 持续验证（随 CI 运行），业务代码与 [`examples/src/web/readme_quickstart.rs`](examples/src/web/readme_quickstart.rs) 逐字对应。
 
@@ -179,6 +204,9 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 ### 📋 功能矩阵
 
 下表按能力域汇总 `Cargo.toml` 的 `[features]` 主要特性（100+ 个 flag，完整清单以 `Cargo.toml` 的 `[features]` 为准），`default = ["backend-embedded"]`。
+
+<details>
+<summary>📋 表格</summary>
 
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:left">特性</th><th style="text-align:center">默认</th><th style="text-align:left">说明</th></tr>
@@ -253,6 +281,8 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 <tr><td><code>full</code> / <code>production</code> / <code>development</code></td><td align="center">❌</td><td>聚合特性</td></tr>
 </table>
 
+</details>
+
 > **v0.9.0 Feature 改名映射**：
 >
 > | 旧名称 (≤0.8.x) | 新名称 (≥0.9.0) | 说明 |
@@ -267,6 +297,9 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 ---
 
 ## 📚 文档
+
+<details>
+<summary>📋 表格</summary>
 
 | 文档 | 说明 |
 |------|------|
@@ -292,11 +325,16 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 | [📦 在线 API 文档](https://docs.rs/garrison) | docs.rs 自动生成的最新文档 |
 | [📦 crates.io](https://crates.io/crates/garrison) | 发布页面 |
 
+</details>
+
 ---
 
 ## 💻 示例
 
 全部 65 个可运行示例位于 [`examples/`](examples/) 目录（独立 workspace member，`garrison-examples` crate），每个示例配套 1:1 独立测试，按「登录 / 会话 / Token 基础、注解与 Web 集成、认证协议、安全防护、可观测性与基础设施」等主题分组，完整清单与各示例所需 feature 见 [examples/README.md](examples/README.md)。
+
+<details>
+<summary>📄 代码 · bash</summary>
 
 ```bash
 # 运行单个示例
@@ -305,6 +343,8 @@ cargo run -p garrison-examples --bin basic_login --features full
 # 验证全部示例可编译
 cargo build -p garrison-examples --features full
 ```
+
+</details>
 
 ---
 
@@ -323,6 +363,9 @@ Garrison 采用**双抽象层 + 全局单例**架构：`GarrisonDao` trait 统�
 测试按「单元（`src/` 内联 `#[cfg(test)]`）→ 验收 / 集成（`tests/acceptance/` 按域组织 + db 专用 target + trybuild UI 测试）→ 示例级集成（`examples/tests/` 与示例 bin 一一对应）」三层组织，另有 Criterion 基准、文档测试与特性组合编译矩阵（`ci.yml` test-compile-guard + 每周 `feature-matrix.yml`）。场景穷举、真实服务矩阵（Redis / PostgreSQL / MySQL / Keycloak 26 / HIBP）与特性依赖分析见 [🧪 测试场景矩阵](docs/TEST_SCENARIOS.md)。
 
 ### ▶️ 运行命令（与 CI 一致）
+
+<details>
+<summary>📄 代码 · bash</summary>
 
 ```bash
 # 单元测试（CI test job 的两种特性面）
@@ -362,6 +405,8 @@ cargo deny --all-features --locked check
 cargo bench --bench garrison_benchmark --features full --locked -- --quick
 ```
 
+</details>
+
 > 构建依赖：`protoc`（sdforge build script 需要，CI 经 taiki-e/install-action 安装）。
 
 ### 📊 测试规模
@@ -394,6 +439,9 @@ CI 与发布流程内置两道供应链门禁：`cargo deny check`（RustSec 公
 
 ## 🗺️ 开发路线图
 
+<details>
+<summary>📋 表格</summary>
+
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:center">状态</th><th style="text-align:left">方向</th><th style="text-align:left">条目</th></tr>
 <tr><td align="center">✅</td><td>核心引擎</td><td>登录认证 + 权限校验 + 双模会话 + axum/actix/warp 适配</td></tr>
@@ -404,6 +452,8 @@ CI 与发布流程内置两道供应链门禁：`cargo deny check`（RustSec 公
 <tr><td align="center">✅</td><td>安全加固（已落地，随下一版本发布）</td><td>外网登录端点暴露确认 fail-closed、密码登录时序侧信道对齐、OAuth2 password grant 限流 fail-closed、JWT 黑名单写失败重试、SAML Destination/Audience 缺省 strict、SSO secret ≥32 字节 + pub/sub 消息 HMAC 信封、check_safe/check_disable 会话前置校验、多租户隔离强化（会话-租户绑定 / 标识符注册表 / 设备接口）。作用域提示：绑定地址缺省收敛 127.0.0.1 与内网 API Key 强制 ≥32 字节仅约束参考部署 <code>auth_server</code> bin，库层 <code>AuthServerConfig</code> 默认仍为 0.0.0.0 且只拒绝空 Key，须自行显式收口（见 [docs/CHANGELOG.md](docs/CHANGELOG.md) · 0.9.0-rc.3）</td></tr>
 <tr><td align="center">📋</td><td>v1.0.0 稳定版</td><td>API 冻结 + 性能基准 + 生产案例</td></tr>
 </table>
+
+</details>
 
 完整规划见 [docs/ROADMAP.md](./docs/ROADMAP.md)。
 
@@ -454,12 +504,17 @@ CI 与发布流程内置两道供应链门禁：`cargo deny check`（RustSec 公
 
 完整版本历史见 [📋 更新日志](docs/CHANGELOG.md)（遵循 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 格式，语义化版本）。
 
+<details>
+<summary>📋 表格</summary>
+
 | 版本 | 日期 | 要点 |
 |------|------|------|
 | 0.9.0-rc.3 | 2026-10-14 | 安全审计整改 R01–R18：统一错误模型（request-id / Retry-After）/ 字段静态加密 / WebAuthn / 密码找回 / MFA 编排 / back-channel logout / 多租户强化 / garrison-cli |
 | 0.9.0-rc.2 | 2026-08-26 | fail-closed 安全加固（check_api_key / check_abac） |
 | 0.9.0-rc.1 | 2026-08-25 | 验收测试体系 + DAO 原子契约收严 + gRPC async 鉴权层 |
 | 0.8.1 | 2026-07-24 | 审计日志 token 泄漏修复（CWE-532） |
+
+</details>
 
 ---
 
@@ -475,6 +530,9 @@ CI 与发布流程内置两道供应链门禁：`cargo deny check`（RustSec 公
 
 Garrison 站在以下优秀开源项目的肩膀上：
 
+<details>
+<summary>📋 表格</summary>
+
 | 依赖 | 用途 |
 |------|------|
 | [axum](https://github.com/tokio-rs/axum) | tokio 团队出品的 Rust Web 框架 |
@@ -484,6 +542,8 @@ Garrison 站在以下优秀开源项目的肩膀上：
 | [confers](https://github.com/Kirky-X/confers) | Rust 配置管理库（零样板代码） |
 | [sdforge](https://github.com/Kirky-X/sdforge) | 声明式 Web 框架 |
 | [trait-kit](https://github.com/Kirky-X/trait-kit) | trait 工具集 |
+
+</details>
 
 ### 💝 特别感谢
 

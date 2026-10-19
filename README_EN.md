@@ -36,6 +36,9 @@ Inject your dependencies into `GarrisonManager` once at startup — from login t
 
 ## 📋 Table of Contents
 
+<details open>
+<summary>📑 目录</summary>
+
 - [✨ Features](#-features)
 - [🚀 Quick Start](#-quick-start)
 - [🎨 Feature Flags](#-feature-flags)
@@ -52,6 +55,8 @@ Inject your dependencies into `GarrisonManager` once at startup — from login t
 - [🙏 Acknowledgments](#-acknowledgments)
 - [📞 Contact & Support](#-contact--support)
 - [⭐ Star History](#-star-history)
+
+</details>
 
 ---
 
@@ -86,6 +91,9 @@ Beyond the core capabilities above, everything else (auth protocols, firewall, a
 
 Add the following to your `Cargo.toml` (`development` preset = in-memory cache DAO + SQLite + axum adapter):
 
+<details>
+<summary>📄 代码 · toml</summary>
+
 ```toml
 [dependencies]
 garrison = { version = "0.9.0-rc.3", features = ["development"] }
@@ -93,9 +101,14 @@ async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
 
+</details>
+
 Requires Rust **1.97.1 or later** (`rust-version = "1.97.1"` in `Cargo.toml`): the sibling-ecosystem crates in the dependency set (the rc line of confers / oxcache / dbnexus / sdforge / limiteron / inklog / trait-kit) each declare `rust-version = "1.97.1"`, which is the lowest toolchain the dependency graph accepts — `cargo check` under an older toolchain fails outright (`rustc ... is not supported by the following packages`); the CI test matrix verifies `1.97.1` (MSRV floor) / `stable` / `beta` explicitly.
 
 > Pre-release versions require the full version number; `"0.9"` will not match prerelease. To enable all protocol and security modules: `features = ["full"]`.
+
+<details>
+<summary>📋 表格</summary>
 
 | Preset | Installation | Use Case |
 |--------|-------------|----------|
@@ -103,9 +116,14 @@ Requires Rust **1.97.1 or later** (`rust-version = "1.97.1"` in `Cargo.toml`): t
 | Production | `features = ["production"]` | Recommended production combination |
 | Full | `features = ["full"]` | All capabilities |
 
+</details>
+
 ### 💡 Minimal Example
 
 The following example is adapted from [`examples/src/bin/readme_quickstart.rs`](examples/src/bin/readme_quickstart.rs) (complete business flow: initialize manager → log in → verify login state → log out):
+
+<details>
+<summary>📄 代码 · rust</summary>
 
 ```rust
 use std::sync::Arc;
@@ -156,10 +174,17 @@ async fn main() -> GarrisonResult<()> {
 }
 ```
 
+</details>
+
+<details>
+<summary>📄 代码 · bash</summary>
+
 ```bash
 cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 # Output: Login successful, token = <8-char random token prefix>
 ```
+
+</details>
 
 > This example is continuously validated by [examples/tests/readme_quickstart.rs](./examples/tests/readme_quickstart.rs) (runs with CI); its business code mirrors [`examples/src/web/readme_quickstart.rs`](examples/src/web/readme_quickstart.rs) verbatim.
 
@@ -179,6 +204,9 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 ### 📋 Feature Matrix
 
 The table below summarizes the main `[features]` of `Cargo.toml` grouped by capability domain (100+ flags; the full list is authoritative in `Cargo.toml`'s `[features]`), where `default = ["backend-embedded"]`.
+
+<details>
+<summary>📋 表格</summary>
 
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:left">Feature</th><th style="text-align:center">Default</th><th style="text-align:left">Description</th></tr>
@@ -253,6 +281,8 @@ The table below summarizes the main `[features]` of `Cargo.toml` grouped by capa
 <tr><td><code>full</code> / <code>production</code> / <code>development</code></td><td align="center">❌</td><td>Aggregate features</td></tr>
 </table>
 
+</details>
+
 > **v0.9.0 Feature Rename Mapping**:
 >
 > | Old Name (≤0.8.x) | New Name (≥0.9.0) | Description |
@@ -267,6 +297,9 @@ The table below summarizes the main `[features]` of `Cargo.toml` grouped by capa
 ---
 
 ## 📚 Documentation
+
+<details>
+<summary>📋 表格</summary>
 
 | Document | Description |
 |----------|-------------|
@@ -292,11 +325,16 @@ The table below summarizes the main `[features]` of `Cargo.toml` grouped by capa
 | [📦 Online API Docs](https://docs.rs/garrison) | Latest documentation auto-generated on docs.rs |
 | [📦 crates.io](https://crates.io/crates/garrison) | Release page |
 
+</details>
+
 ---
 
 ## 💻 Examples
 
 All 65 runnable examples live in the [`examples/`](examples/) directory (a standalone workspace member, the `garrison-examples` crate), each paired with a 1:1 dedicated test and grouped by theme (login / session / token basics, annotations and web integration, auth protocols, protection suites, observability and infrastructure). See [examples/README.md](examples/README.md) for the complete list and per-example feature requirements.
+
+<details>
+<summary>📄 代码 · bash</summary>
 
 ```bash
 # Run a single example
@@ -305,6 +343,8 @@ cargo run -p garrison-examples --bin basic_login --features full
 # Verify all examples compile
 cargo build -p garrison-examples --features full
 ```
+
+</details>
 
 ---
 
@@ -323,6 +363,9 @@ For the full module layering, trait relationships, and request-handling data flo
 Tests are organized in three layers — unit (inline `#[cfg(test)]` in `src/`), acceptance / integration (`tests/acceptance/` organized by domain + dedicated db targets + trybuild UI tests), and example-level integration (`examples/tests/`, one file per example binary) — plus Criterion benchmarks, doc tests, and a feature-combination compile matrix (`ci.yml` test-compile-guard + weekly `feature-matrix.yml`). For the full scenario inventory, real-service matrix (Redis / PostgreSQL / MySQL / Keycloak 26 / HIBP), and feature dependency analysis, see the [🧪 Test Scenarios doc](docs/TEST_SCENARIOS.md).
 
 ### ▶️ Commands (matching CI)
+
+<details>
+<summary>📄 代码 · bash</summary>
 
 ```bash
 # Unit tests (the two feature faces of the CI test job)
@@ -362,6 +405,8 @@ cargo deny --all-features --locked check
 cargo bench --bench garrison_benchmark --features full --locked -- --quick
 ```
 
+</details>
+
 > Build dependency: `protoc` (required by the sdforge build script; CI installs it via taiki-e/install-action).
 
 ### 📊 Test Scale
@@ -394,6 +439,9 @@ Please do not report security vulnerabilities through public issues. Use the Git
 
 ## 🗺️ Roadmap
 
+<details>
+<summary>📋 表格</summary>
+
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:center">Status</th><th style="text-align:left">Area</th><th style="text-align:left">Items</th></tr>
 <tr><td align="center">✅</td><td>Core engine</td><td>Login auth + permission check + dual-mode session + axum/actix/warp adapters</td></tr>
@@ -404,6 +452,8 @@ Please do not report security vulnerabilities through public issues. Use the Git
 <tr><td align="center">✅</td><td>Security hardening (landed, shipping with next release)</td><td>Fail-closed acknowledgement for external login endpoints, password-login timing side-channel alignment, OAuth2 password grant rate-limit fail-closed, JWT blacklist write retry, SAML Destination/Audience strict by default, SSO secret ≥32 bytes + HMAC message envelope for pub/sub, check_safe/check_disable session precondition, multi-tenant isolation hardening (session-tenant binding / identifier registry / device APIs). Scope note: the 127.0.0.1 default bind address and the ≥32-byte internal API key only constrain the reference <code>auth_server</code> binary - the library-level <code>AuthServerConfig</code> still defaults to 0.0.0.0 and only rejects an empty key, so tighten it explicitly (see [docs/CHANGELOG.md](docs/CHANGELOG.md) · 0.9.0-rc.3)</td></tr>
 <tr><td align="center">📋</td><td>v1.0.0 Stable</td><td>API freeze + performance benchmarks + production case studies</td></tr>
 </table>
+
+</details>
 
 Full roadmap at [docs/ROADMAP.md](./docs/ROADMAP.md).
 
@@ -454,12 +504,17 @@ Want to contribute code?<br>
 
 For the full version history, see the [📋 Changelog](docs/CHANGELOG.md) (following the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format and semantic versioning).
 
+<details>
+<summary>📋 表格</summary>
+
 | Version | Date | Highlights |
 |---------|------|------------|
 | 0.9.0-rc.3 | 2026-10-14 | Security-audit remediation R01–R18: unified error model (request-id / Retry-After) / at-rest field encryption / WebAuthn / password reset / MFA orchestration / back-channel logout / multi-tenant hardening / garrison-cli |
 | 0.9.0-rc.2 | 2026-08-26 | Fail-closed security hardening (check_api_key / check_abac) |
 | 0.9.0-rc.1 | 2026-08-25 | Acceptance test system + DAO atomic contract + gRPC async auth layer |
 | 0.8.1 | 2026-07-24 | Audit log token leakage fix (CWE-532) |
+
+</details>
 
 ---
 
@@ -475,6 +530,9 @@ This project is licensed under [Apache-2.0](LICENSE). Why Apache-2.0 instead of 
 
 Garrison stands on the shoulders of these excellent open source projects:
 
+<details>
+<summary>📋 表格</summary>
+
 | Dependency | Purpose |
 |------------|---------|
 | [axum](https://github.com/tokio-rs/axum) | tokio team's Rust web framework |
@@ -484,6 +542,8 @@ Garrison stands on the shoulders of these excellent open source projects:
 | [confers](https://github.com/Kirky-X/confers) | Rust configuration management library (zero boilerplate) |
 | [sdforge](https://github.com/Kirky-X/sdforge) | Declarative web framework |
 | [trait-kit](https://github.com/Kirky-X/trait-kit) | Trait utility toolkit |
+
+</details>
 
 ### 💝 Special Thanks
 
