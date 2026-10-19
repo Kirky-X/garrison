@@ -37,7 +37,7 @@ Inject your dependencies into `GarrisonManager` once at startup — from login t
 ## 📋 Table of Contents
 
 <details open>
-<summary>📑 目录</summary>
+<summary>📑 Table of Contents</summary>
 
 - [✨ Features](#-features)
 - [🚀 Quick Start](#-quick-start)
@@ -92,7 +92,7 @@ Beyond the core capabilities above, everything else (auth protocols, firewall, a
 Add the following to your `Cargo.toml` (`development` preset = in-memory cache DAO + SQLite + axum adapter):
 
 <details>
-<summary>📄 代码 · toml</summary>
+<summary>📄 Code · toml</summary>
 
 ```toml
 [dependencies]
@@ -108,7 +108,7 @@ Requires Rust **1.97.1 or later** (`rust-version = "1.97.1"` in `Cargo.toml`): t
 > Pre-release versions require the full version number; `"0.9"` will not match prerelease. To enable all protocol and security modules: `features = ["full"]`.
 
 <details>
-<summary>📋 表格</summary>
+<summary>📋 Table</summary>
 
 | Preset | Installation | Use Case |
 |--------|-------------|----------|
@@ -123,7 +123,7 @@ Requires Rust **1.97.1 or later** (`rust-version = "1.97.1"` in `Cargo.toml`): t
 The following example is adapted from [`examples/src/bin/readme_quickstart.rs`](examples/src/bin/readme_quickstart.rs) (complete business flow: initialize manager → log in → verify login state → log out):
 
 <details>
-<summary>📄 代码 · rust</summary>
+<summary>📄 Code · rust</summary>
 
 ```rust
 use std::sync::Arc;
@@ -177,7 +177,7 @@ async fn main() -> GarrisonResult<()> {
 </details>
 
 <details>
-<summary>📄 代码 · bash</summary>
+<summary>📄 Code · bash</summary>
 
 ```bash
 cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
@@ -206,7 +206,7 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 The table below summarizes the main `[features]` of `Cargo.toml` grouped by capability domain (100+ flags; the full list is authoritative in `Cargo.toml`'s `[features]`), where `default = ["backend-embedded"]`.
 
 <details>
-<summary>📋 表格</summary>
+<summary>📋 Table</summary>
 
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:left">Feature</th><th style="text-align:center">Default</th><th style="text-align:left">Description</th></tr>
@@ -299,7 +299,7 @@ The table below summarizes the main `[features]` of `Cargo.toml` grouped by capa
 ## 📚 Documentation
 
 <details>
-<summary>📋 表格</summary>
+<summary>📋 Table</summary>
 
 | Document | Description |
 |----------|-------------|
@@ -334,7 +334,7 @@ The table below summarizes the main `[features]` of `Cargo.toml` grouped by capa
 All 65 runnable examples live in the [`examples/`](examples/) directory (a standalone workspace member, the `garrison-examples` crate), each paired with a 1:1 dedicated test and grouped by theme (login / session / token basics, annotations and web integration, auth protocols, protection suites, observability and infrastructure). See [examples/README.md](examples/README.md) for the complete list and per-example feature requirements.
 
 <details>
-<summary>📄 代码 · bash</summary>
+<summary>📄 Code · bash</summary>
 
 ```bash
 # Run a single example
@@ -365,7 +365,7 @@ Tests are organized in three layers — unit (inline `#[cfg(test)]` in `src/`), 
 ### ▶️ Commands (matching CI)
 
 <details>
-<summary>📄 代码 · bash</summary>
+<summary>📄 Code · bash</summary>
 
 ```bash
 # Unit tests (the two feature faces of the CI test job)
@@ -440,7 +440,7 @@ Please do not report security vulnerabilities through public issues. Use the Git
 ## 🗺️ Roadmap
 
 <details>
-<summary>📋 表格</summary>
+<summary>📋 Table</summary>
 
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:center">Status</th><th style="text-align:left">Area</th><th style="text-align:left">Items</th></tr>
@@ -505,7 +505,7 @@ Want to contribute code?<br>
 For the full version history, see the [📋 Changelog](docs/CHANGELOG.md) (following the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format and semantic versioning).
 
 <details>
-<summary>📋 表格</summary>
+<summary>📋 Table</summary>
 
 | Version | Date | Highlights |
 |---------|------|------------|
@@ -531,7 +531,7 @@ This project is licensed under [Apache-2.0](LICENSE). Why Apache-2.0 instead of 
 Garrison stands on the shoulders of these excellent open source projects:
 
 <details>
-<summary>📋 表格</summary>
+<summary>📋 Table</summary>
 
 | Dependency | Purpose |
 |------------|---------|
