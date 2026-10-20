@@ -69,7 +69,7 @@ unicode-normalization = { version = "0.1", default-features = false, features = 
 # Optional dependencies (feature-gated)
 axum = { optional = true, default-features = false, features = ["json"], workspace = true }
 axum-server = { version = "0.8", optional = true, default-features = false }
-# axum-server 不 re-export rustls，而 tls 路径必须在构造 ServerConfig 前显式安装进程级 CryptoProvider：db 系 feature（sqlx tls-rustls → rustls/ring）与 tls（axum-server tls-rustls → rustls/aws-lc-rs）在同一构建图共存时 rustls 拒绝自动判定并 panic。optional：仅 tls 门控的 src/server 使用
+# axum-server 不 re-export rustls：tls 路径须先安装进程级 CryptoProvider（ring 与 aws-lc-rs 并存会 panic）
 rustls = { version = "0.23", optional = true, default-features = false, features = ["aws-lc-rs"] }
 actix-web = { optional = true, default-features = false, workspace = true }
 warp = { optional = true, default-features = false, workspace = true }
@@ -89,7 +89,7 @@ argon2 = { version = "0.6", optional = true, default-features = false, features 
 # zeroize：bcrypt 计算后对内部 72 字节密码栈缓冲清零（bcrypt 默认特性之一，关闭则静默失去该安全属性）
 bcrypt = { version = "0.19", optional = true, default-features = false, features = ["std", "zeroize"] }
 rand = { optional = true, workspace = true }
-# rand 0.10 移除 OsRng（rand_core 0.10 改由 getrandom 提供系统熵），令牌/备份码/CSRF 等纯字节随机路径直接用 getrandom::fill 读 OS CSPRNG；用 0.4 稳定线，与 rand_core 0.10 内部的 getrandom 0.3 双版本共存
+# rand 0.10 移除 OsRng：字节随机路径改用 getrandom::fill 读 OS CSPRNG
 getrandom = { version = "0.4", optional = true, default-features = false }
 zeroize = { version = "1.9", optional = true, default-features = false, features = ["derive", "serde"] }
 regex = { version = "1.13", optional = true, default-features = false }
@@ -97,7 +97,7 @@ regex = { version = "1.13", optional = true, default-features = false }
 oxcache = { version = "0.5.0-rc.10", default-features = false, optional = true }
 # dbnexus 0.4+ 在 src/lib.rs 设 compile_error! 强制至少启用一个数据库驱动 feature，故必须 optional，由 db-base 透传 dbnexus/<driver>（API 硬性约束，非手写绕过）
 dbnexus = { optional = true, default-features = false, workspace = true }
-# loom 竞态模型验证（loom-test）：一次性凭证原子消费的交错穷举测试。用 feature 门控而非 loom 官方 RUSTFLAGS="--cfg loom"：后者全图编译期 cfg 泄漏会令 tokio 剔除 net 模块，依赖图中无条件 `use tokio::net` 的 crate（hyper-util/redis）必然编译失败。触发：`cargo test --lib --features protocol-temp,loom-test protocol::temp`；futures feature 提供 block_on（驱动零 await 点的 async DAO 方法）
+# loom 竞态验证：用 feature 门控而非 RUSTFLAGS --cfg loom，避免 cfg 泄漏令 tokio 剔除 net
 loom = { version = "0.7", default-features = false, features = ["futures"], optional = true }
 prometheus = { version = "0.14", optional = true, default-features = false }
 tracing-subscriber = { optional = true, default-features = false, features = ["fmt", "json", "env-filter"], workspace = true }
@@ -106,7 +106,7 @@ opentelemetry_sdk = { version = "0.33", optional = true, default-features = fals
 opentelemetry-otlp = { version = "0.33", optional = true, default-features = false, features = ["trace", "grpc-tonic"] }
 tonic = { optional = true, default-features = false, features = ["transport"], workspace = true }
 tonic-health = { version = "0.14", optional = true, default-features = false }
-# grpc：GarrisonGrpcAuthLayer 的 tower Layer/Service（核心 trait，无 util）；启用后 #[forge] 宏生成的 gRPC 路由注册在 garrison 上下文编译进来，共用 tonic 栈（prost/tonic-prost 由 sdforge 引入）
+# grpc：GarrisonGrpcAuthLayer 的 tower Layer/Service；#[forge] 路由共用 tonic 栈
 tower = { version = "0.5", optional = true, default-features = false }
 fluent = { version = "0.17", default-features = false }
 unic-langid = { version = "0.9", default-features = false }
@@ -131,7 +131,7 @@ mimalloc = { version = "0.1", optional = true, default-features = false }
 inklog = { version = "0.3.0-rc.10", default-features = false, optional = true }
 # retry 供 stp 会话 JWT 黑名单退避调度（delay_for_attempt，空 feature 零依赖）；distributed 供防火墙限流/双窗口限速的分布式滑窗桥接
 limiteron = { version = "0.3.0-rc.8", default-features = false, features = ["distributed", "retry"] }
-# sdforge 运行时：features=["http"] 让 sdforge::http::build()/RouteRegistration 始终可用（server_impl.rs 无条件调用）；#[forge] 宏的 inventory::submit! 被 cfg(feature="http") 保护且该 cfg 在 garrison 上下文求值，故 garrison 必须暴露同名 http feature（见 [features] 段桥接说明）。optional：仅 auth-server 门控的 src/server 使用，由 auth-server-sdforge 与 api-docs 按需激活，default 构建不白编译 axum/tower 栈
+# sdforge 运行时：必须暴露同名 http feature（#[forge] 宏在 garrison 上下文求值 cfg）；仅 auth-server 启用
 sdforge = { version = "0.5.0-rc.9", default-features = false, features = ["http"], optional = true }
 trait-kit = { version = "0.5.0-rc.10", default-features = false, features = ["async"] }
 cedar-policy = { version = "4.13", default-features = false, optional = true }
@@ -159,13 +159,13 @@ tempfile = { version = "3.27", optional = true, default-features = false, featur
 # 邮件发送（email-verification-smtp feature）：内置 SMTP 实现，业务方也可仅启用 email-verification 自行实现 EmailSender trait
 lettre = { version = "0.11", optional = true, default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls-tls", "hostname"] }
 # WebAuthn/Passkey（protocol-webauthn）：注册/认证仪式、attestation 解析、ExcludeCredentials 防重复绑定。0.5 稳定线锁 0.5.5（wrapper 与 core 严格同版）。
-# attestation：attestation 对象解析；conditional-ui：passkey 条件式 UI；danger-allow-state-serialisation：仪式态可序列化仅用于服务端 DAO/SQL 暂存（challenge TTL），严禁写入 cookie 等客户端可读位置（否则重放防御失效）；danger-credential-internals：Passkey↔Credential 互转（凭据字段与 SQL 行映射，不改内部字段值）
+# passkey 子特性：attestation 解析 / 条件式 UI / 仪式态序列化仅限服务端 / Credential 互转
 webauthn-rs = { version = "0.5", optional = true, default-features = false, features = ["attestation", "conditional-ui", "danger-allow-state-serialisation", "danger-credential-internals"] }
 # webauthn-rs-core：webauthn-rs 同版本核心（UserVerificationPolicy/RegisteredExtensions 等协议类型经此引用），锁定 =0.5.5 与 wrapper 严格同版
 webauthn-rs-core = { version = "=0.5.5", optional = true, default-features = false }
 # garrison-cli 运维子命令（cli-ops）：derive API + 人类可读输出；独立运维 bin 门控，不进 auth_server/healthcheck
 clap = { version = "4.6", optional = true, default-features = false, features = ["std", "help", "usage", "error-context", "suggestions", "derive"] }
-# 落库敏感字段 AES-256-GCM 静态加密（field-encryption）：CryptoValue 编解码 + AAD 租户绑定；aes 软件后端 + alloc Vec API，nonce 由 garrison 侧 getrandom 自产（不启用 aes-gcm/getrandom，避免再引一套版本）
+# field-encryption：AES-256-GCM + AAD 租户绑定；nonce 由 getrandom 自产
 aes-gcm = { version = "0.11", optional = true, default-features = false, features = ["aes", "alloc"] }
 
 [dev-dependencies]
@@ -183,14 +183,14 @@ tower = { version = "0.5", default-features = false, features = ["util"] }
 http-body-util = { workspace = true }
 wiremock = { workspace = true }
 warp = { default-features = false, features = ["test"], workspace = true }
-# 测试用 rsa::rand_core::OsRng（rand 0.10 已无 OsRng，rsa 0.9 keygen 基于 rand_core 0.6 与 rand 0.10 RNG 不兼容）；dev-deps 声明使 keycloak-oidc 等未启用可选 rsa 的测试面也能解析 OsRng
+# 测试用 OsRng：rand 0.10 已移除，rsa 0.9 keygen 基于 rand_core 0.6
 rsa = { version = "0.9", features = ["getrandom"] }
 rand = { workspace = true }
 testcontainers = "0.28"
 criterion = { version = "0.8", features = ["html_reports"] }
 # rcgen 用于 BackendRemote mTLS 测试中生成自签名证书
 rcgen = "0.14"
-# tls-cert-watch 测试需显式安装进程级 rustls CryptoProvider：lib 测试图同时启用 aws-lc-rs（axum-server/reqwest）与 ring（testcontainers→bollard/ssl 透传），rustls 拒绝自动判定并 panic（生产图的同一歧义由 listen() 内的 install_default 消化，测试直接构造 RustlsConfig 故仍须自行安装）；dev-deps 声明使测试能调用 install_default 选定与生产一致的 aws-lc-rs
+# tls-cert-watch 测试需显式安装 rustls CryptoProvider（aws-lc-rs 与 ring 并存会 panic）
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 # 集成测试直接发送 HTTP 请求故无条件引入；cookies 供 keycloak_fixture 以 cookie jar 驱动真实登录表单流
 reqwest = { default-features = false, features = ["json", "rustls", "cookies"], workspace = true }
@@ -201,9 +201,7 @@ axum = { version = "0.8", default-features = false }
 [features]
 default = ["backend-embedded"]
 
-# 核心模块（always on，无开关）
-# core / stp / annotation / router / dao / strategy / session / config / context / json / exception / manager / plugin
-# 这些模块无 feature flag，总是编译
+# 核心模块（always on，无开关）：core/stp/annotation/router/dao/session/manager/plugin 等
 
 # 核心扩展：决策溯源 / 权限注册表 / forbid 优先语义
 # 合并 decision-trace + permission-registry + safe-defaults → core-advanced
@@ -288,16 +286,16 @@ embedded-migrations = ["dep:include_dir", "dep:tempfile"]
 protocol-oauth2 = ["dep:reqwest", "dep:base64", "dep:percent-encoding"]
 # protocol-sso 隐含 protocol-jwt：OIDC exchange_code 必须验签 id_token（fail-closed）。
 protocol-sso = ["dep:reqwest", "dep:quick-xml", "dep:hmac", "dep:base64", "dep:percent-encoding", "protocol-jwt"]
-# protocol-jwt：JWT 签发/校验/刷新。dep:pkcs1/pkcs8：RS 系验证路径从私钥 PEM 提取公钥组件（n,e）（jsonwebtoken 仅接受公钥 PEM），纯 DER 解析无 RSA 运算、与 RUSTSEC-2023-0071 无关，本为 rsa 传递依赖；dep:p256/p384/sec1：ES 系从私钥标量计算 SEC1 公钥点，均为 jsonwebtoken rust_crypto 传递依赖，零新增体积且无 RustSec 通告
+# protocol-jwt：签发/校验/刷新；pkcs1/pkcs8/p256 均为 jsonwebtoken 传递依赖，无新增体积
 protocol-jwt = ["dep:jsonwebtoken", "dep:hkdf", "dep:pkcs1", "dep:pkcs8", "dep:base64", "dep:p256", "dep:p384", "dep:sec1", "dep:ed25519-dalek"]
 protocol-sign = ["dep:hmac", "dep:base64", "dep:hkdf"]
 # protocol-apikey：API Key 生成/校验/吊销/轮换；secret sha256 哈希存储（CWE-916）+ 公共常量时间比较原语；dao-key-index 启用 keys() 生产实现使 list_by_namespace 可用
 protocol-apikey = ["secure-ct-eq", "dao-key-index"]
 protocol-temp = []
-# protocol-qrlogin：第一方扫码登录（两票分离状态机 + HMAC 签名票据，Web 端扫码 App 确认）。dep:hmac+base64：qr_ticket HMAC-SHA256 签名；sha2：confirm_token SHA-256 存储摘要（DAO 泄露不可反推 token）
+# protocol-qrlogin：两票分离状态机 + HMAC 票据；confirm_token 存 SHA-256 摘要
 protocol-qrlogin = ["dep:hmac", "dep:base64", "dep:subtle"]
-# loom-test：一次性凭证原子消费的 loom 交错穷举测试（默认关，不进 CI 常规链）；触发：cargo test --lib --features protocol-temp,loom-test protocol::temp
-loom-test = ["dep:loom"]
+# loom-test：竞态测试集（默认关）；传递 protocol-temp/protocol-jwt/db-sqlite，否则编译不到用例
+loom-test = ["dep:loom", "protocol-temp", "protocol-jwt", "db-sqlite"]
 # data-erasure：数据主体擦除编排（GDPR/个保法删除权的框架侧能力，compliance 模块）
 data-erasure = []
 # protocol-invitation：邀请码定向注册（一次性/N 次、TTL、吊销、防爆破、注册编排钩子）；dep:rand 短码随机、sha2 防爆破计数键 source 摘要
@@ -338,7 +336,7 @@ sms-rate-limit = ["dep:rand", "secure-ct-eq"]
 email-verification = ["dep:rand", "secure-ct-eq"]
 # 邮箱验证码 SMTP 内置实现（lettre，含 SmtpEmailSender）
 email-verification-smtp = ["email-verification", "dep:lettre"]
-# field-encryption：落库敏感字段 AES-256-GCM 静态加密（CryptoValue 编解码 + AAD 租户/表/键绑定 + 迁移期双读）。dep:getrandom 每值 12 字节 nonce 直读 OS CSPRNG（不启用 aes-gcm/getrandom 避免再引一套版本）；dep:base64 载荷 base64(nonce|ciphertext)；sha2 token 类命名空间 key 名 SHA-256 摘要化（裸 bearer token 不得留在落库 key 名）
+# field-encryption：AES-256-GCM 静态加密 + AAD 租户绑定；nonce 直读 OS CSPRNG，key 名 SHA-256 摘要
 # mfa-recovery：MFA 恢复码管理器（SHA-256 哈希落库）
 field-encryption = ["dep:aes-gcm", "dep:getrandom", "dep:base64"]
 mfa-recovery = []
@@ -350,7 +348,7 @@ credential-zeroize = ["account-credential", "dep:zeroize"]
 account-policy = ["account-credential", "dep:regex"]
 account-lockout = ["firewall"]
 account-authflow = ["account-credential", "account-policy", "account-lockout", "dep:ipnetwork"]
-# account-password-reset：找回密码流程（ActionToken 一次性消费/防枚举/防竞态，挂 authflow DSL）；依赖均为 crate 内既有 feature（protocol-jwt/account-credential/account-policy/email-verification），不引入新外部依赖
+# account-password-reset：一次性 ActionToken + 防枚举/防竞态，依赖均为既有 feature
 account-password-reset = ["protocol-jwt", "account-credential", "account-policy", "email-verification"]
 # HIBP 泄露密码检查（k-anonymity range search，网络调用；关闭时返回显性错误）
 policy-hibp = ["dep:reqwest", "dep:sha1"]
@@ -363,11 +361,11 @@ web-warp = ["dep:warp", "dep:http-body-util"]
 # HTTPS/TLS 终止（axum-server rustls）
 # 依赖 auth-server（server 模块门控）
 tls = ["dep:axum-server", "axum-server/tls-rustls", "dep:rustls", "auth-server"]
-# TLS 证书进程内热重载（tls-cert-watch）：confers/watch 的 MultiFsWatcher 监视证书文件，变更后经 axum-server RustlsConfig::reload_from_pem_file 换入（每连接握手读最新配置，无需重启进程）
+# tls-cert-watch：confers MultiFsWatcher 监听证书变更并热重载，无需重启
 tls-cert-watch = ["tls", "confers/watch"]
 
 # Server 增强
-# server-health-check：接线 sdforge/health 的 /healthz /readyz 探针（merge 在路由最外层，天然绕过 path_filter/rate_limit/audit/api_key_auth，符合 K8s 探针语义）；业务方可经 sdforge::health::register_readiness_check_fn 注册下游就绪检查
+# server-health-check：接线 /healthz /readyz 探针（路由最外层，绕过限流/审计）
 server-health-check = ["auth-server", "sdforge/health"]
 # graceful shutdown：SIGTERM/SIGINT 后停止接收新连接并 drain 在途请求；auth-server 聚合默认包含
 server-graceful-shutdown = []
@@ -398,7 +396,7 @@ cli-ops = ["dep:clap"]
 # audit-log：AuditEventChain 链首随机盐（防换盐重放）+ limiteron 审计链 HMAC 内核（chain_onto/verify_chain）；透传 telemetry+hmac+sha2+hex 均为既有依赖，无新增第三方
 audit-log = ["listener", "dep:hmac", "dep:hex", "dep:getrandom", "secure-masking", "secure-ct-eq", "limiteron/audit-log"]
 
-# 常量时间比较原语（CWE-208 防御）：secure::ct_eq::constant_time_eq（subtle::ConstantTimeEq）。需要它的 feature（audit-log/oauth2-server/protocol-apikey/protocol-httpdigest/secure-sign/web-csrf 等）一律依赖此 feature，禁止复制本地实现或直连 dep:subtle（ADR-0003 决策 2）
+# 常量时间比较原语（CWE-208）：ct_eq 统一入口，禁止本地实现或直连 dep:subtle
 secure-ct-eq = ["dep:subtle"]
 
 # 安全防护套件
@@ -406,14 +404,14 @@ secure-ct-eq = ["dep:subtle"]
 firewall = []
 # bruteforce 依赖封禁存储（GarrisonDaoBanStorage 经 firewall-ddos 导出），故隐含 firewall-ddos 保证 feature 自洽
 firewall-bruteforce = ["firewall", "firewall-ddos", "limiteron/ban-manager"]
-# lua-script：滑动窗口 Lua 脚本取自 limiteron oxcache_lua（Sorted Set 版，替代手写逗号时间戳串脚本）；adaptive-threshold：动态阈值内核（limiteron AdaptiveThresholdLimiter，AIMD）
+# lua-script：滑动窗口 Lua 取自 limiteron；adaptive-threshold 为 AIMD 内核
 firewall-ratelimit = ["firewall", "dep:rand", "limiteron/lua-script", "limiteron/adaptive-threshold"]
 # 驱动登录防火墙 hook 与 RateLimitStrategy 的 Redis 限流运行时（独立于会话 DAO）；
 # 启用后可在配置中选择 Memory/Redis 限流后端（RateLimitBackend enum）
 rate-limit-redis = ["firewall-ratelimit", "cache-redis"]
 firewall-anomalous = ["firewall"]
 firewall-geoip = ["firewall", "limiteron/geo-matching"]
-# limiteron rc.6 起 adaptive-limiting/priority-queue/admission-control 均已恢复真实实现；adaptive-limiting 与 priority-queue 为可用原语（接线评估见 CHANGELOG 2026-10 吸收轮记录）
+# limiteron rc.6 起 adaptive-limiting/priority-queue 恢复真实实现
 firewall-ddos = ["firewall"]
 firewall-waf = ["firewall", "web-axum"]
 # 后端已迁移至 limiteron GeoMatcher（geo-matching），feature 名保持不变以兼容下游
@@ -462,7 +460,7 @@ backchannel-logout = ["oauth2-server"]
 # 微服务架构
 backend-embedded = []
 backend-remote = ["dep:reqwest", "limiteron/circuit-breaker", "limiteron/fallback"]
-# secure-simple-token：SimpleTokenStyle 启用 HMAC-SHA256 签名（格式 <login_id>-<uuid>.<hmac_sha256(secret, login_id|uuid)>；未启用时 generate 返回 Err，fail-closed 杜绝无签名伪造）+ secure-ct-eq 常量时间比较（ADR-0003 决策 2/3）
+# secure-simple-token：HMAC-SHA256 签名 + 常量时间比较；未启用时 generate 返回 Err
 secure-simple-token = ["dep:hmac", "secure-ct-eq"]
 auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "secure-ct-eq", "secure-simple-token", "dep:mimalloc", "server-graceful-shutdown", "web-security-headers"]
 # sha2：决策缓存 key 的 context_json 摘要成分（SHA-256 前 16 字节）
@@ -482,7 +480,7 @@ backend-kit = ["backend-embedded", "trait-kit/lifecycle", "trait-kit/health", "t
 backend-shutdown = ["backend-kit", "trait-kit/shutdown"]
 
 # sdforge 声明式路由
-# [INTERNAL] http 是 garrison 与 sdforge 的桥接 feature（仅 cfg 开关）：#[forge] 宏生成的 inventory::submit!(RouteRegistration) 被 #[cfg(feature="http")] 保护且该 cfg 在 garrison 上下文求值；garrison 不暴露 http feature 则 submit 被剥离、sdforge::http::build() 收集不到路由 → 所有 POST 请求 404。命名必须为 http（sdforge 宏硬编码 feature = "http"），不可改名；sdforge/http 由依赖声明无条件启用
+# [INTERNAL] http 是 garrison↔sdforge 桥接开关：缺则 inventory 注册被剥离，所有 POST 404
 http = []
 # dep:sdforge：auth-server 的 sdforge 面在此激活（http 为宏镜像 marker）
 auth-server-sdforge = ["http", "dep:sdforge"]
@@ -581,7 +579,7 @@ development = [
 
 [profile.dev]
 opt-level = 0
-# 只保留行号表（-Cdebuginfo=1）不再生成完整 DWARF：全量 debuginfo 使单个 rlib 达 ~300MB，--no-run 测试二进制并发链接峰值内存吃满 RAM+swap 被内核 OOM kill；行号表保留 backtrace file:line（符号名来自 symtab），体积与峰值内存下降一个数量级。需完整 DWARF 时 `cargo build --config 'profile.dev.debug=true' ...`
+# dev profile 仅保留行号表（-Cdebuginfo=1），避免全量 DWARF 链接峰值内存被 OOM kill
 debug = "line-tables-only"
 
 [profile.release]
@@ -589,7 +587,7 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = true
-# panic 改 unwind（原 abort）：src/listener（插件广播隔离）、src/protocol/sso/channel.rs（SSO 订阅 handler）依赖 catch_unwind 隔离单任务 panic，abort 下单 listener panic 即全服务下线；unwind 恢复隔离语义，fat LTO 下体积/性能代价可接受，认证基础设施可用性优先
+# panic 改 unwind：listener 与 SSO channel 依赖 catch_unwind 隔离单任务 panic
 panic = "unwind"
 
 # 测试目标
@@ -599,7 +597,7 @@ name = "acceptance"
 path = "tests/acceptance.rs"
 required-features = ["full"]
 
-# 数据库后端专用验收（embedded/server-side 互斥的覆盖补齐）：full 只含 db-sqlite（embedded），Postgres/MySQL 真实服务路径在 full 面被 cfg 剥离；经独立 target 以单 db 特性面执行（required-features 为 AND 语义，单 target 无法表达「二选一」），由 scripts/e2e_matrix.sh S3 配合 compose/testcontainers 执行
+# 数据库后端验收：full 仅含 db-sqlite；Postgres/MySQL 经独立 target + e2e_matrix.sh 执行
 [[test]]
 name = "acceptance_db_postgres"
 path = "tests/acceptance_db_postgres.rs"
@@ -624,7 +622,7 @@ path = "src/bin/auth_server.rs"
 # cache-memory：bin 使用 GarrisonDaoOxcache（门控于 cache-memory），缺失导致 --features auth-server 单独面编译失败（E0432）
 required-features = ["auth-server", "cache-memory"]
 
-# garrison-cli 独立运维 bin：不进默认容器镜像（Dockerfile 目标只有 auth_server 与 garrison-healthcheck）；「主镜像零依赖」决策限定 auth_server 与 healthcheck 探针，运维 bin 门控独立 feature 后不受约束。required-features 为子命令运行时依赖并集：cli-ops（clap 解析）、account-credential（user-hash 的 Argon2Hasher）、protocol-zeroize（key-rotate 的 Zeroizing 包裹）、db-sqlite + protocol-jwt（one-time-access-token 查询/落库/JWT）、config-yaml（user-hash 的 YAML 加载）、field-encryption（change-key/check-key 的加解密）、dao-key-index（change-key/check-key 扫描 garrison_kv 表）
+# garrison-cli 独立运维 bin：不进默认镜像；required-features 为子命令依赖并集（cli-ops/account-credential/protocol-zeroize/db-sqlite/protocol-jwt/config-yaml/field-encryption/dao-key-index）
 [[bin]]
 name = "garrison-cli"
 path = "src/bin/garrison-cli.rs"
@@ -639,7 +637,7 @@ harness = false
 required-features = ["full"]
 
 # Lint 配置
-# sdforge #[forge] 宏展开生成 #[cfg(feature="mcp")]/"cli"/"openapi" 等 garrison 不具备的 cfg，经 check-cfg 显式登记这些外部 cfg 值，将 unexpected_cfgs 保持 warn（而非 allow）以便发现真正的意外 cfg
+# sdforge 宏会 emit mcp/cli/openapi 等外部 cfg，经 check-cfg 登记以保持 warn
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(feature, values("abac", "account-authflow", "account-credential", "account-lockout", "account-password-reset", "account-policy", "alone-cache", "annotation-macros", "anomalous-detector-dual", "audit-inklog", "audit-inklog-http", "audit-inklog-siem", "audit-log", "authorize-api", "auth-server", "auth-server-sdforge", "backchannel-logout", "backend-embedded", "backend-kit", "backend-remote", "ban-sync", "cache-audit", "cache-batch", "cache-hotkey", "cache-invalidation", "cache-memory", "cache-redis", "cli", "cli-ops", "config-audit", "config-consul", "config-distributed", "config-etcd", "config-schema", "config-security-rules", "config-yaml", "core-advanced", "credential-zeroize", "credit-metering", "dao-key-index", "db-mysql", "db-postgres", "db-replica", "db-saga", "db-sharding", "db-sqlite", "device-binding", "embedded-migrations", "field-encryption", "firewall", "firewall-admission", "firewall-anomalous", "firewall-bruteforce", "firewall-ddos", "firewall-event", "firewall-geoip", "firewall-gcra", "firewall-maxminddb", "firewall-monitoring", "firewall-parallel", "firewall-ratelimit", "firewall-tower", "firewall-waf", "full", "garrison-testing", "grpc", "i18n-icu", "keycloak-oidc", "listener", "manager-explicit", "mcp", "mfa-recovery", "metrics-prometheus", "miette", "oauth2-scope-handler", "oauth2-server", "openapi", "otlp", "parameter-query", "policy-hibp", "protocol-apikey", "protocol-httpbasic", "protocol-httpdigest", "protocol-jwt", "protocol-oauth2", "protocol-oidc", "protocol-qrlogin", "protocol-saml", "protocol-sign", "protocol-sso", "protocol-sso-server", "protocol-temp", "protocol-webauthn", "protocol-zeroize", "rate-limit-redis", "secure-confusable", "secure-ct-eq", "secure-masking", "secure-sanitize", "secure-sign", "secure-simple-token", "secure-totp", "secure-xss", "security-extra", "session-extra", "session-hijack-detection", "sms-rate-limit", "social-alipay", "social-wechat", "tenant-isolation", "testing", "three-tier-cache", "tls", "tracing-log", "web-actix", "web-axum", "web-cors", "web-csrf", "web-security-headers", "web-warp"))',
