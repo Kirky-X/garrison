@@ -6,10 +6,17 @@
 //! ## 运行方式
 //!
 //! ```bash
-//! cargo bench --no-run                     # 编译检查
-//! cargo bench -- --quick                   # 快速运行（减少采样数）
-//! cargo bench --features protocol-jwt      # 启用 JWT 真实验证
-//! cargo bench --features full              # 完整特性运行
+//! # 编译检查（不运行）
+//! cargo bench --no-run
+//!
+//! # 快速运行（减少采样数）
+//! cargo bench -- --quick
+//!
+//! # 启用 JWT 真实验证
+//! cargo bench --features protocol-jwt
+//!
+//! # 完整特性运行
+//! cargo bench --features full
 //! ```
 
 use async_trait::async_trait;

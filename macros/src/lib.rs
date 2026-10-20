@@ -35,11 +35,33 @@ pub fn check_login(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// 命名参数形式叠加 ABAC：`#[check_permission(permission = "order:read", resource = "Resource::\"order\"", abac = "resource.user_id == principal.id")]`。`permission` 必填，`resource`/`abac` 可选（`resource` 默认 `Resource::"default"`）；`abac` 存在且 RBAC 通过后调用 `garrison::abac::check_abac_with_policy`，ABAC 拒绝返回 `GarrisonError::NotPermission`，`abac` feature 关闭时 ABAC 调用为 no-op。位置参数与命名参数两种形式不可混用。
 ///
 /// ```ignore
-/// #[check_permission("user:read")]
-/// async fn handler() -> impl IntoResponse { "ok" }
+/// // 输入（async fn）
+/// #[check_login]
+/// async fn handler() -> &'static str { "ok" }
 ///
-/// #[check_permission(permission = "order:read", abac = "resource.user_id == principal.id")]
-/// async fn get_order() -> impl IntoResponse { "order" }
+/// // 展开（async）
+/// async fn __garrison_inner_handler() -> &'static str { "ok" }
+///
+/// async fn handler() -> axum::response::Response {
+/// // check_login().await ...
+/// ::axum::response::IntoResponse::into_response(
+/// __garrison_inner_handler().await
+/// )
+/// }
+///
+/// // 输入（sync fn）
+/// #[check_login]
+/// fn sync_handler() -> &'static str { "ok" }
+///
+/// // 展开（sync）
+/// fn __garrison_inner_sync_handler() -> &'static str { "ok" }
+///
+/// fn sync_handler() -> axum::response::Response {
+/// // check_login_sync() ...
+/// ::axum::response::IntoResponse::into_response(
+/// __garrison_inner_sync_handler()
+/// )
+/// }
 /// ```
 #[proc_macro_attribute]
 pub fn check_permission(attr: TokenStream, item: TokenStream) -> TokenStream {

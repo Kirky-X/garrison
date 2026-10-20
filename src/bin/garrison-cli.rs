@@ -18,7 +18,7 @@
 //! # 用法
 //!
 //! ```sh
-//! cargo build --bins --features cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption,dao-key-index
+//! cargo build --bins --features cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption
 //! ./target/debug/garrison-cli --help
 //! ```
 use clap::{Parser, Subcommand};

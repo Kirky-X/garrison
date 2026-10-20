@@ -7,7 +7,7 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p garrison-examples --bin i18n_usage
+//! cargo run -p garrison-examples --bin i18n_usage --features i18n
 //! ```
 use garrison::error::GarrisonError;
 use garrison::exception::GarrisonException;

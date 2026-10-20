@@ -18,9 +18,11 @@
 //! ```text
 //! begin ──→ on_commit / execute（可重复） ──→ commit(mut self)   → 派发缓冲事件
 //!                                        └─→ rollback(mut self) → 丢弃缓冲事件
-//! 未 commit / rollback 即 drop ──→ 缓冲丢弃 + tracing::warn（uncommitted）+ dbnexus 级联回滚
-//! commit 失败 ──→ Err + 缓冲丢弃 + warn（commit-failed）
-//! commit 成功后派发中途被取消 ──→ 剩余丢弃 + warn（dispatch-cancelled，携带已派发/总数）
+//! 未 commit / rollback 即 drop ──→ 缓冲丢弃 + tracing::warn（uncommitted 原因）
+//!                                  + 依赖 dbnexus 级联回滚（Session Drop 归还连接）
+//! commit 失败 ──→ 返回 Err + 缓冲丢弃 + tracing::warn（commit-failed 原因）
+//! commit 成功后派发中途被取消 ──→ 剩余丢弃 + tracing::warn（dispatch-cancelled
+//!                                  原因，携带已派发/总数）
 //! ```
 //!
 //! # 并发 guard 的锁等待语义（生产后端）

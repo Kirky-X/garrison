@@ -14,15 +14,15 @@
 //! use garrison::i18n::{set_locale, GarrisonLocale};
 //! use garrison::error::GarrisonError;
 //!
-//! // 默认英文
+//! // 默认中文
 //! let err = GarrisonError::NotLogin("请先登录".to_string());
-//! assert_eq!(err.to_string(), "Not logged in: 请先登录");
-//!
-//! // 切换中文
-//! let _guard = set_locale(GarrisonLocale::Zh);
 //! assert_eq!(err.to_string(), "未登录: 请先登录");
 //!
-//! // guard drop 后自动恢复英文
+//! // 切换英文
+//! let _guard = set_locale(GarrisonLocale::En);
+//! assert_eq!(err.to_string(), "Not logged in: 请先登录");
+//!
+//! // guard drop 后自动恢复中文
 //! ```
 use crate::error::GarrisonError;
 use fluent::concurrent::FluentBundle;
