@@ -17,7 +17,7 @@ publish = true
 proc-macro = true
 
 [dependencies]
-# 过程宏 crate：proc-macro2/quote 的 proc-macro 特性为宏展开必需；syn 取 default 集（derive/parsing/printing/clone-impls/proc-macro）+ full
+# 过程宏：proc-macro2/quote 的 proc-macro 特性必需；syn 取 default + full
 syn = { version = "3.0", default-features = false, features = ["full", "derive", "parsing", "printing", "clone-impls", "proc-macro"] }
 quote = { version = "1.0", default-features = false, features = ["proc-macro"] }
 proc-macro2 = { version = "1.0", default-features = false, features = ["proc-macro"] }
