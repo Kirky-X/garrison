@@ -1,9 +1,9 @@
 #![no_main]
 // Fuzz target：HTTP 认证头解析（Basic base64 解码 + Digest 参数解析与验证），覆盖 RFC 7617 / RFC 7616 Authorization header 畸形输入路径。
 
-use libfuzzer_sys::fuzz_target;
 use garrison::secure::httpbasic::HttpBasicAuth;
 use garrison::secure::httpdigest::HttpDigestAuth;
+use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(header) = std::str::from_utf8(data) else {

@@ -1,8 +1,8 @@
 #![no_main]
 // Fuzz target：OIDC Discovery 配置反序列化，覆盖 serde_json 对不受信任响应的解析（未知字段、类型混淆、超深嵌套）；JWKS 网络拉取不在无网络 fuzz 范围。
 
-use libfuzzer_sys::fuzz_target;
 use garrison::protocol::sso::OidcDiscoveryConfig;
+use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(s) = std::str::from_utf8(data) else {

@@ -1,8 +1,8 @@
 #![no_main]
 // Fuzz target：SAML Response XML 解析（quick-xml 手写解析链），覆盖 parse_response 全链路：XML 结构/签名算法提取、状态校验、base64 解码；崩溃 = 解析器存在 panic 路径。
 
-use libfuzzer_sys::fuzz_target;
 use garrison::protocol::sso::saml::{DefaultSamlProvider, SamlProvider};
+use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(xml) = std::str::from_utf8(data) else {
