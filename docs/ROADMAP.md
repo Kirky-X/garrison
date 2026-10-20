@@ -591,9 +591,9 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 
 - ✅ API 冻结候选清单：`docs/API_FREEZE_CANDIDATES.md`（Stable / Stable-with-feature / Experimental / Internal 分级）
 - ✅ PR 级 API diff：`.github/workflows/api-surface-diff.yml`（report-only，结构化 JSON 工件）
-- ✅ 性能基线入库：`docs/benchmarks/v1.0-baseline.md` + `scripts/perf_compare.sh`（回归阈值判定）
+- ✅ 性能基线入库：`docs/benchmarks/v1.0-baseline.md` + `scripts/perf_compare.sh`（回归阈值判定；支持直接读归档 markdown 基线，无需本地 criterion 基线目录）
 - ✅ Cookie 安全默认：非 `development` profile 默认 `Secure=true`、`HttpOnly`、`SameSite=Lax`，配置可覆盖
-- ✅ RefreshTokenRotation 并发验证：`loom-test` feature 下同 token 双线程轮换恰一成功
+- ✅ RefreshTokenRotation 并发验证：`loom-test` feature 下同 token 并发轮换恰一成功（16 轮双线程 + 4 方并发；**验证手段为真实 tokio 线程 + 真实 SQLite 的竞态采样，非 `loom::model` 交错穷举**——本路径原子性由数据库条件 UPDATE + rows_affected 判定保证，属存储层 CAS，`loom::model` 无法建模真实数据库的写事务串行化；纯进程内原子消费路径仍由 `loom::model` 用例穷举覆盖）
 
 #### 已知限制（0.9.0-rc.4）
 
@@ -609,12 +609,12 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 
 以下条目来自安全自评与审计结论，作为后续变更候选记录：
 
-- **Web 适配层 Cookie safe-by-default**：`cookie_same_site` / HttpOnly / Secure 提供更完整的安全默认组合（OWASP ASVS 自评 V3.4 待增强项，见 `docs/SECURITY_ASVS.md`）。
+- **Web 适配层 Cookie safe-by-default**：已交付——Cookie 安全默认收进单一构建点 `src/context/cookie.rs`（`build_set_cookie_value` 恒定 `HttpOnly`；`Secure` 取 `config.cookie_secure`，非 `development` profile 默认 `true`、`development` profile 默认 `false`；`SameSite=None` 在非 Secure 上下文降级为 `Lax`；`production` + Secure 上下文解析 `__Host-` / `__Secure-` 前缀）；回归覆盖 `tests/web_security.rs`（默认档位、显式覆盖、None→Lax 降级）。OWASP ASVS 自评 V3.4 已同步（见 `docs/SECURITY_ASVS.md`）。
 - **MFA 编排基座抽象**：已交付（R09，`stp::mfa` 因子账本 + per-client chain + RequiredActionProvider + 恢复码），TOTP/WebAuthn provider 已接线；剩余为更多认证因子 provider 扩展。
 - **FIDO2/WebAuthn（Passkey）正式认证**：`protocol-webauthn` 已合入（`src/protocol/webauthn/`，challenge / credential / service 齐备）；剩余工作是 FIDO Alliance 认可实验室的正式认证（企业采购高频问项）。
 - **OIDC discovery 端点**：已交付——`/oauth2/jwks.json` 与 `/.well-known/openid-configuration` 元数据端点均已注册路由（`src/server/oauth2_routes.rs`，后者由 `enable_openid_configuration` 开关控制）。
 - **JWKS 多 kid 轮换**：已交付——`JwksKeystore`（`src/oauth2_server/jwks.rs`）提供多 kid 密钥库账本，注入后 JWKS 端点优先从库发布（单密钥 `jwks_source` 为退化路径）。
-- **loom 竞态验证扩展**：一次性凭证消费路径已验证（`loom-test` feature），扩展至 RefreshTokenRotation 竞态。
+- **loom 竞态验证扩展**：已交付——一次性凭证消费路径由 `loom::model` 交错穷举覆盖（`src/protocol/temp/tests.rs`）；RefreshTokenRotation 竞态以 `loom-test` feature 下的真实并发轮换用例覆盖（`src/protocol/jwt/refresh.rs`：16 轮双线程 + 4 方并发，同 token 恰一成功、其余命中已消费/重用检测）。**验证边界如实说明**：RefreshTokenRotation 的原子消费由数据库条件 UPDATE（`WHERE token_hash = ? AND revoked = 0`）+ `rows_affected` 判定保证，属存储层 CAS，`loom::model` 只能穷举进程内同步原语的交错、无法建模真实数据库写事务串行化，故该路径**不是 loom 交错穷举**（不以 loom 覆盖率口径宣传）。
 - **分布式限流候选 A（auth_server 整 DAO 切 Redis）**：未采纳，保持 backlog——`_sync` 原子方法迁移 + 会话数据落点决策成本高；rc.4 采用候选 B。
 - **分布式限流候选 B（限流器单独接 Redis）**：已落地（rc.4，见「v0.9.0-rc.4」节），覆盖登录防火墙 hook 与 `RateLimitStrategy`；其余限流面仍为后续批次。
 

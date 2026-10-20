@@ -1,6 +1,6 @@
-# 🧱 Garrison API 稳定性分级（v1.0 门禁启动）
+# 🧱 Garrison API 稳定性分级（v1.0 门禁产物完成）
 
-> **定位声明**：本文是 v1.0「API 冻结」门禁的**启动材料**，不是冻结完成的宣告。当前版本仍为 `0.9.0-rc.x`，0.x 阶段按 [SemVer 策略](./ROADMAP.md) 允许破坏性变更；本文先把「哪些面在 1.0 后受 semver 保护、哪些仍是实验面」写成可评审清单，并给出公共面基线的采集方法。
+> **定位声明**：本文是 v1.0「API 冻结」门禁的**仓库侧产物**（稳定层级分级、冻结检查清单、公共面基线采集方法与 PR 级 report-only diff），已完成；**不等于 1.0 API 冻结已宣告**——当前版本仍为 `0.9.0-rc.x`，0.x 阶段按 [SemVer 策略](./ROADMAP.md) 允许破坏性变更；1.0.0 须待第三方审计等外部条件完成后另行发布（见 ROADMAP「v1.0.0 稳定版」门禁表）。本文先把「哪些面在 1.0 后受 semver 保护、哪些仍是实验面」写成可评审清单，并给出公共面基线的采集方法。
 
 ## 📋 目录
 
@@ -72,9 +72,11 @@
 cargo +nightly rustdoc --features full --lib -- -Zunstable-options --output-format json
 bash scripts/api_surface.sh                 # 输出 logs/api-surface.txt
 bash scripts/api_surface.sh --diff <baseline>
+bash scripts/api_surface.sh --help          # 用法与退出码语义（不触发 rustdoc 构建）
 ```
 
-- `scripts/api_surface.sh` 调用 `scripts/api_surface.py` 解析 rustdoc JSON，输出「kind + 公共路径」排序清单与计数。
+- `scripts/api_surface.sh` 调用 `scripts/api_surface.py` 解析 rustdoc JSON，输出「kind + 公共路径 + 签名指纹」排序清单与计数。签名指纹覆盖函数参数/返回类型、结构体公开字段与固有方法、trait 方法签名、type alias / 常量 / 静态项类型——**签名级变更可被 diff 识别**（只看 kind 会漏判既有公共项的破坏性签名变更）。
+- `--diff` 输出的结构化 JSON（`logs/api-surface-diff.json`，可用 `API_SURFACE_DIFF_JSON` 覆盖路径）含 `added` / `removed` / `modified` 三类；`modified` 同时标注 `kind_changed` 与 `signature_changed`。**report-only**，不阻断 CI。
 - `.github/workflows/api-surface.yml` 每周 + 手动触发，上传 `api-surface.txt` 工件；**report-only**，不阻断 CI。
 - 基线文件不提交仓库（`logs/` 已在 `.gitignore`）；发布前将当次工件归档到 release 资产或内部制品库。
 

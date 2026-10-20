@@ -23,6 +23,21 @@
 - **YAML 解析后端换代后的死豁免清理（RUSTSEC-2024-0449）**：自研 crate 换用 `serde-saphyr` 后，`serde_yaml_ng` / `unsafe-libyaml` 已不在依赖图内，原「可达依赖的风险接受」论证与忽略项全部失效——保留会成为 cargo-deny 的 `advisory-not-detected` 死豁免警告。`deny.toml` [advisories] 与 `.cargo/audit.toml` 同步移除 `RUSTSEC-2024-0449` 忽略项及旧链路论证；`supply-chain/config.toml` 清理 `serde_yaml_ng` / `unsafe-libyaml` / `untrusted 0.7.1` 三条不在 `Cargo.lock` 中的过期豁免；`SECURITY.md` §6 改写为「旧链路已出图 + 新 YAML 栈（serde-saphyr / granit-parser，第三方且**未经源码审计**）的风险接受」——可达性论述按实测修正：`serde-saphyr` 经 `limiteron` 的**非 optional** 依赖链进入**所有** feature 组合的产物，故风险接受不建立在「不在依赖图内」之上，而建立在**运行时调用点与输入来源**上（`config-yaml` 面解析部署方本地配置；`full` / `config-full` 面的 `config-consul` / `config-etcd` 远程源会嗅探后按 YAML 解析，属部署方自管基础设施输入），并补记新栈自带的解析预算（`max_depth` 64 / `max_nodes` 250 000 / 别名比值守卫）；同时保留「引入不可信 YAML 解析能力须重新评估」「新栈完成审计后把 backlog 豁免换成真实审计条目」两条回归锚定。`SECURITY.md` 供应链段补注本仓 crate（`garrison` / `garrison-macros`）以豁免条目记录而非自审条目。`docs/SECURITY_AUDIT.md` 与 `scripts/security_evidence.sh` 的供应链审计命令口径由 `cargo vet --locked` 对齐 CI 实际执行的 `cargo vet check --locked`；脚本「豁免项需有复核日期」一句与全仓实际状态（795 条豁免均无复核日期）不符，改为「豁免项需有理由」。
 - 验证：本机 `cargo vet check --locked` 通过（Vetting Succeeded — 12 fully audited, 795 exempted）、`cargo deny --all-features --locked check` 无 `advisory-not-detected` 警告。
 
+### Fixed
+
+- **`loom-test` 门禁命令编译不到竞态用例（门禁形同虚设）**：`loom-test` feature 原仅 `dep:loom`，feature 传递是 AND 语义、不隐含 `protocol-jwt` / `db-sqlite`，故 `cargo test --features loom-test` **不编译** RefreshTokenRotation 并发用例（实测 `--list` 命中 0），门禁命令绿灯并不代表用例被跑过。现 `loom-test = ["dep:loom", "protocol-temp", "protocol-jwt", "db-sqlite"]`，`cargo test --features loom-test` 真正编译并执行 `protocol::jwt::refresh::db_sqlite_tests::concurrent_rotate_same_token_*` 与 `protocol::temp::tests::loom_consume_same_key_exactly_once`。
+- **RefreshTokenRotation 并发用例覆盖强度不足**：原用例单轮双线程采样，撞不上 CAS 窄窗口时「恰一成功」只是偶然成立。现改为屏障同步起跑 + 16 轮双线程竞态 + 4 方并发竞态，每轮用全新 token（避免上一轮重用处置 `revoke_chain` 污染判定），逐轮断言恰一成功、其余全部命中已消费（`jwt-refresh-token-consumed`）或重用检测（`TokenRevoked` / `jwt-refresh-reuse-rejected`）。
+
+### Added
+
+- **`scripts/perf_compare.sh` 支持已归档 markdown 基线**：原实现只认本地 `target/criterion/**/<基线名>/estimates.json`（不入库），导致版本库内归档的 `docs/benchmarks/v1.0-baseline.md` **无法驱动对比**、基线刷新无 SOP。现脚本按「`BASELINE_MD` 显式指定 → 本地 criterion 基线 → `docs/benchmarks/` 按「基线名称」自动匹配归档 markdown」三级判定基线来源，解析归档 md 的 criterion 输出得到基线值（未知类型形态显性报错退出 2，不静默当作通过）；新增 `--help` / `--baseline` / `--threshold` / `--baseline-md` 参数与基线刷新归档 SOP（`docs/PERFORMANCE.md`）。
+- **API diff 识别签名级变更**：`scripts/api_surface.py` 的 `modified` 此前只识别同一路径的 kind 变化，既有公共项的**签名/类型变更完全不可见**。现为每个公共项计算签名指纹（函数参数与返回类型、结构体公开字段与固有方法、trait 方法签名、type alias / 常量 / 静态项类型），`modified` 同时覆盖 kind 变化与签名指纹变化，结构化 JSON 增列 `kind_changed` / `signature_changed` 与两侧签名原文。
+- **`scripts/api_surface.sh` 新增 `--help` 与结构化差异路径覆盖**：新增 `--help`（参数解析阶段直接输出用法并退出 0，不再误触发完整 rustdoc 构建）、`--diff` / `--diff-json` 显式参数；`--diff-json` 输出路径可用环境变量 `API_SURFACE_DIFF_JSON` 覆盖，默认值不变（`logs/api-surface-diff.json`）。
+
+### Changed
+
+- **公共面基线文件格式增列签名指纹（工件格式变更）**：`logs/api-surface.txt` 由「kind + 公共路径」两列改为「kind + 公共路径 + 签名指纹」三列（`scripts/api_surface.py` 同步更新）。PR 级 diff 两侧同版本脚本生成，行为不变；**旧版两列基线**（历史归档工件）与新基线比较时，签名级变更不可识别——脚本对此显式打印告警，不静默当作「无变化」。
+
 ## [0.9.0-rc.4] - 2026-10-20
 
 ### Changed
@@ -117,7 +132,7 @@
 
 ### Fixed
 
-- **发布文档检查对齐 rustdoc 1.99（`redundant-explicit-links`）**：`protocol::sign::handler` 模块文档去掉冗余显式链接目标（`` [`SignHandler`](crate::protocol::sign::SignHandler) `` → `` [`SignHandler`] ``）——标签经模块内 `use super::SignHandler` 已可解析到同一目标，rustdoc 1.99 起该形态判定为冗余（诊断无源码跨度，CI 日志不显示位置、本地 rustdoc 1.97 面不触发），在 `-D warnings` 下阻断 release 文档检查；MSRV（1.97.1）与 1.99.0 双工具链本地复验文档构建零警告。
+- **发布文档检查对齐 rustdoc 1.99（`redundant-explicit-links`）**：`protocol::sign::handler` 模块文档去掉冗余显式链接目标（``[`SignHandler`](crate::protocol::sign::SignHandler)`` → ``[`SignHandler`]``）——标签经模块内 `use super::SignHandler` 已可解析到同一目标，rustdoc 1.99 起该形态判定为冗余（诊断无源码跨度，CI 日志不显示位置、本地 rustdoc 1.97 面不触发），在 `-D warnings` 下阻断 release 文档检查；MSRV（1.97.1）与 1.99.0 双工具链本地复验文档构建零警告。
 - **CI 工具链确定性恢复（删除 `rust-toolchain.toml`）**：该文件声明 `channel = "stable"`，以目录级优先级覆盖各工作流 `dtolnay/rust-toolchain` 的工具链 pin——MSRV 1.97.1 / stable / beta 三档测试矩阵腿与 release 文档检查实际全部运行 runner 镜像内置 stable（实测定位为 1.99.0，发布门禁随镜像静默漂移，本轮 release 失败即由此暴露：文档检查声明 1.97.1、实跑 1.99.0）。删除后各工作流 pin 恢复生效。矩阵/fuzz 工具链接线同修：所用版本分支快照（1.97.1）在源码内硬编码工具链、不声明 `toolchain` 输入（传入被 runner 忽略并告警，实测三档腿全部回退同一工具链），测试矩阵改钉 stable 分支快照（声明 `toolchain` 输入）按 `${{ matrix.rust }}` 逐腿安装，security/fuzz-weekly 两处 nightly 腿改钉 nightly 分支快照；README（中英）/ CONTRIBUTING / DEVELOPMENT / TROUBLESHOOTING 的工具链表述同步更新，本地工具链改由 rustup 默认通道决定（要求 ≥ MSRV 1.97.1）。
 - **manifest 卫生（cargo 1.100 beta 提示清零）**：移除与 `repository` 重复的 `package.homepage` / `workspace.package.homepage`、`[workspace.dependencies]` 中 12 条无成员继承的孤儿条目（serde / tokio / async-trait / parking_lot / inventory / md5 / jsonwebtoken / totp-rs / bcrypt / zeroize / regex / serial_test——根包与 examples 均以直接版本声明）、`[workspace.package]` 中未被继承的 `keywords` / `categories`；`.gitignore` 补 `lcov_*.info` 与 `*.cdx.json`（覆盖率 / SBOM 本地生成物）。`cargo metadata --locked` 与 MSRV / beta 双档 `cargo check --locked` 复验通过。
 - **发布流水线收敛与幂等化**：GitHub Release 阶段移除 CycloneDX SBOM 生成与 SLSA Build Provenance attestation（含 `id-token` / `attestations` / `artifact-metadata` 权限），Release 资产仅保留 GitHub 自动生成的源码压缩包；`cargo publish`（garrison-macros 与 garrison）补 `--locked`（`Cargo.lock` 随包发布，验证构建与已提交锁一致）并幂等化（crates.io 已有该版本则跳过）——发布重跑不再因 "already uploaded" 中断，可收敛半发布状态；发布顺序注释的 garrison-macros 版本号由陈旧的 0.7 更正为 0.9.0-rc.3。

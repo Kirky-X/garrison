@@ -83,8 +83,8 @@
 
 | # | 控制点 | 评级 | 证据 |
 |---|--------|------|------|
-| 3.4.1 | cookie `SameSite` 配置 | 🔶 | `cookie_same_site` config 项（web-axum 适配层）；HttpOnly/Secure 由适配层与代理设置 |
-| 3.4.2 | Cookie 域与路径最小化 | ⚪ | 部署方按应用域配置 |
+| 3.4.1 | cookie `SameSite` 配置 | ✅ | Cookie 安全属性收进单一构建点 `src/context/cookie.rs::build_set_cookie_value`：`HttpOnly` 恒定输出；`SameSite` 取 `cookie_same_site`（白名单 Lax/Strict/None，默认 Lax；`SameSite=None` 在非 Secure 上下文降级为 `Lax`）；`Secure` 取 `cookie_secure`——非 `development` profile 默认 `true`（`src/config/mod.rs::DEFAULT_COOKIE_SECURE`），`development` profile 默认 `false` 以支持本地 HTTP 调试（两者均可经 `GarrisonConfig` 显式覆盖）；`production` + Secure 上下文解析 `__Host-` / `__Secure-` 前缀。回归测试 `tests/web_security.rs`（默认档位、显式覆盖、None→Lax 降级） |
+| 3.4.2 | Cookie 域与路径最小化 | ⚪ | 部署方按应用域配置（`CookieType::path` / `domain` 由调用方给出；框架只校验取值合法，拒 `;` 与控制字符注入） |
 
 ### V3.5 基于 Token 的会话
 
@@ -97,12 +97,14 @@
 
 ## 自评结论与差距
 
-**覆盖强项**：密码哈希（V2.1）、暴破防护（V2.2/2.5）、token 生成与校验（V3.1/3.5）、会话终止（V3.3）——均具备代码级证据与回归测试。
+**覆盖强项**：密码哈希（V2.1）、暴破防护（V2.2/2.5）、token 生成与校验（V3.1/3.5）、会话终止（V3.3）、Cookie 安全默认（V3.4）——均具备代码级证据与回归测试。
 
 **框架边界内待增强（记入 ROADMAP 候选）**：
 
-1. V3.4 Cookie 安全属性默认值可在 web 适配层提供更完整的 safe-by-default（当前依赖配置）。
+1. V2.7 MFA 编排基座可进一步抽象（TOTP 原语已备）。
 
-2. V2.7 MFA 编排基座可进一步抽象（TOTP 原语已备）。
+**本轮已关闭的待增强项**：
+
+- V3.4 Cookie 安全属性 safe-by-default：已交付——Cookie 安全默认收进单一构建点 `src/context/cookie.rs`（profile 感知 `Secure`、恒定 `HttpOnly`、`SameSite=None` 非 Secure 上下文降级为 `Lax`、`production` 前缀解析），回归见 `tests/web_security.rs`；`docs/ROADMAP.md` 候选池对应条目已标注交付。
 
 **明示不属于框架**：最终应用的用户 UI 交互、部署层 TLS、业务授权规则本身。
