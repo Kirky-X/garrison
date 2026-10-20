@@ -223,4 +223,9 @@ jobs:
         # template-injection 发现，阻断式会直接打断现有流水线。backlog 清零后
         # 把 continue-on-error 删掉即可转为阻断。
         continue-on-error: true
-        uses: zizmorcore/zizmor-action@v0.12.0
+        # 版本修正（外部事实）：`v0.12.0` 在 zizmorcore/zizmor-action 仓库不存在
+        # （API tags 最高为 v0.7.1）。引用不存在的 action 会在 job 的
+        # "Getting action download info" 阶段就直接失败，continue-on-error 也救不回来
+        # （实跑 run 39447128551 及本轮 rerun 均如此），本仓 Security workflow 因此长红。
+        # 写法对齐 vecboost 仓（同一 SHA + 注释），仍保持非阻断基线语义不变。
+        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
