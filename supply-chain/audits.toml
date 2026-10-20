@@ -13,6 +13,12 @@ criteria = "safe-to-deploy"
 version = "0.6.0-rc.6"
 notes = "配置加载框架（confers 系），声明式配置解析与校验。自审通过（同作者系 CodeNexus 自研库）；rc.6 相对 rc.5 为 FileSource/EnvSource 增量演进。"
 
+[[audits.confers]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.6.0-rc.11"
+notes = "配置加载框架（confers 系），声明式配置解析与校验。自审通过（同作者系 CodeNexus 自研库）；rc.11 相对 rc.10 为 YAML 后端替换（serde_yaml_ng→serde-saphyr，解析结果归一化为 serde_json::Value），文件加载、路径白名单与安全检查次序未变。"
+
 [[audits.confers-macros]]
 who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
@@ -25,17 +31,35 @@ criteria = "safe-to-deploy"
 version = "0.6.0-rc.6"
 notes = "confers 过程宏，无网络/文件系统副作用。自审通过（同作者系 CodeNexus 自研库）。"
 
+[[audits.confers-macros]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.6.0-rc.11"
+notes = "confers 过程宏，无网络/文件系统副作用。自审通过（同作者系 CodeNexus 自研库）；rc.11 相对 rc.10 源码零差异，仅版本与包元数据变更。"
+
 [[audits.dbnexus]]
 who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
 version = "0.6.0-rc.6"
 notes = "数据库访问框架（dbnexus 系），SQL 参数化与连接池。自审通过（同作者系 CodeNexus 自研库）；rc.6 相对 rc.5 为增量演进，拆分 limiter-port 子 crate。"
 
+[[audits.dbnexus]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.6.0-rc.10"
+notes = "数据库访问框架（dbnexus 系），SQL 参数化与连接池。自审通过（同作者系 CodeNexus 自研库）；rc.10 相对 rc.9 为增量演进：YAML 后端替换为 serde-saphyr；新增默认关闭的 retry_busy_writes（仅事务外语句的 BUSY 锁错误重试）；SQLite PRAGMA 取值白名单校验（消除配置值→PRAGMA 语句注入面）；测试口令改程序化派生，源码无明文口令。"
+
 [[audits.dbnexus-limiter-port]]
 who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
 version = "0.6.0-rc.6"
 notes = "dbnexus 拆分的限流端口 trait crate（仅 async-trait 依赖，无网络/文件系统副作用）。自审通过（同作者系 CodeNexus 自研库）。"
+
+[[audits.dbnexus-limiter-port]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.6.0-rc.10"
+notes = "dbnexus 拆分的限流端口 trait crate（仅 async-trait 依赖，无网络/文件系统副作用）。自审通过（同作者系 CodeNexus 自研库）；rc.10 相对 rc.9 源码零差异，仅版本与包元数据变更。"
 
 [[audits.dbnexus-macros]]
 who = "Kirky-X <Kirky-X@outlook.com>"
@@ -49,6 +73,12 @@ criteria = "safe-to-deploy"
 version = "0.6.0-rc.6"
 notes = "dbnexus 过程宏，生成 DAO 样板代码。自审通过（同作者系 CodeNexus 自研库）；rc.6 相对 rc.5 为增量演进。"
 
+[[audits.dbnexus-macros]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.6.0-rc.10"
+notes = "dbnexus 过程宏，生成 DAO 样板代码。自审通过（同作者系 CodeNexus 自研库）；rc.10 相对 rc.9 源码零差异，仅版本与包元数据变更。"
+
 [[audits.inklog]]
 who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
@@ -60,6 +90,12 @@ who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
 version = "0.3.0-rc.7"
 notes = "结构化审计日志库（inklog 系），脱敏与压缩管线。自审通过（同作者系 CodeNexus 自研库）；rc.7 相对 rc.5 为增量演进，i18n 依赖由 fluent-bundle+icu 切换为 fancy-regex。"
+
+[[audits.inklog]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.3.0-rc.10"
+notes = "结构化审计日志库（inklog 系），脱敏与压缩管线。自审通过（同作者系 CodeNexus 自研库）；rc.10 相对 rc.9 为脱敏增强：SSN 掩码扩展至空格分隔与紧凑形态，并加号段合法性守卫抑制误伤；既有掩码规则未收窄。"
 
 [[audits.limiteron]]
 who = "Kirky-X <Kirky-X@outlook.com>"
@@ -73,6 +109,12 @@ criteria = "safe-to-deploy"
 version = "0.3.0-rc.6"
 notes = "限流框架（limiteron 系），滑动窗口/封禁/GeoMatch。自审通过（同作者系 CodeNexus 自研库）；rc.6 相对 rc.5 为增量演进（熔断器 ErrorClassifier 更名泛型 FailureClassifier<E>、execute 错误类型 CircuitCallError）。"
 
+[[audits.limiteron]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.3.0-rc.8"
+notes = "限流框架（limiteron 系），滑动窗口/封禁/GeoMatch。自审通过（同作者系 CodeNexus 自研库）；rc.8 相对 rc.7 为增量演进：封禁文件 YAML 解析后端替换为 serde-saphyr，配额存储路径新增 5s Lua eval 超时（超时上抛 StorageError::TimeoutError，fail-closed），StorageFactory 新增 sqlite_pragmas 透传；配额阈值与封禁匹配逻辑未变。"
+
 [[audits.oxcache]]
 who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
@@ -84,6 +126,12 @@ who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
 version = "0.5.0-rc.6"
 notes = "缓存框架（oxcache 系），多级缓存与 Redis 协同。自审通过（同作者系 CodeNexus 自研库）；rc.6 相对 rc.5 为增量演进。"
+
+[[audits.oxcache]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.5.0-rc.10"
+notes = "缓存框架（oxcache 系），多级缓存与 Redis 协同。自审通过（同作者系 CodeNexus 自研库）；rc.10 相对 rc.8 为增量演进：Redis Lua 命令新增响应超时（默认 5s，消除挂起时的无限期阻塞），EVAL 接入熔断器（超时计入失败、非幂等脚本绝不重试）；依赖面 inklog rc.10、trait-kit rc.10、uuid 1.28。"
 
 [[audits.rustls]]
 who = "Kirky.X <kirky-x@outlook.com>"
@@ -102,6 +150,12 @@ criteria = "safe-to-deploy"
 version = "0.5.0-rc.6"
 notes = "声明式路由运行时（sdforge 系），HTTP/gRPC 路由注册。自审通过（同作者系 CodeNexus 自研库）；rc.6 相对 rc.5 为增量演进。"
 
+[[audits.sdforge]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.5.0-rc.9"
+notes = "声明式路由运行时（sdforge 系），HTTP/gRPC 路由注册。自审通过（同作者系 CodeNexus 自研库）；rc.9 相对 rc.8 为增量演进：Bearer 认证测试密钥改程序化派生（消解 CodeQL 硬编码密钥告警）、健康检查响应键序调整、Swagger UI 静态资产改为 crate 内嵌（src/docs/swagger_assets.rs，8 项，无外部 URL 引用）并移除 utoipa-swagger-ui 依赖；鉴权实现未变。"
+
 [[audits.sdforge-macros]]
 who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
@@ -114,6 +168,12 @@ criteria = "safe-to-deploy"
 version = "0.5.0-rc.6"
 notes = "sdforge 过程宏，#[forge] 路由注册代码生成。自审通过（同作者系 CodeNexus 自研库）；rc.6 相对 rc.5 为增量演进。"
 
+[[audits.sdforge-macros]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.5.0-rc.9"
+notes = "sdforge 过程宏，#[forge] 路由注册代码生成。自审通过（同作者系 CodeNexus 自研库）；rc.9 相对 rc.8 源码零差异，仅版本与包元数据变更。"
+
 [[audits.trait-kit]]
 who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
@@ -125,3 +185,9 @@ who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
 version = "0.5.0-rc.7"
 notes = "typestate DI 构建器（trait-kit 系），生命周期与健康检查。自审通过（同作者系 CodeNexus 自研库）；rc.7 相对 rc.6 为增量演进。"
+
+[[audits.trait-kit]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.5.0-rc.10"
+notes = "typestate DI 构建器（trait-kit 系），生命周期与健康检查。自审通过（同作者系 CodeNexus 自研库）；rc.10 相对 rc.9 为增量演进：i18n 默认显示语言固定为英文（库输出确定性），FTL 语言包按域拆分，系统语言跟随改由 init_with_system_locale 显式启用。"

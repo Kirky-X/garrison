@@ -75,7 +75,7 @@ else
 fi
 
 if command -v cargo-vet >/dev/null 2>&1 || cargo vet --version >/dev/null 2>&1; then
-  run_step "cargo-vet" "cargo vet --locked"
+  run_step "cargo-vet" "cargo vet check --locked"
 else
   record_skip "cargo-vet" "未安装（cargo install cargo-vet）"
 fi
@@ -107,7 +107,7 @@ ROWS+=("| e2e 安全面 | \`bash scripts/e2e_run.sh\` | 手动/发布候选 | \`
   echo "## 说明"
   echo
   echo "- \`cargo audit\` / \`cargo deny\` 需要网络拉取 advisory DB；失败时请重试并检查网络。"
-  echo "- \`cargo vet\` 依赖 \`supply-chain/\` 配置；豁免项需有理由与复核日期。"
+  echo "- \`cargo vet\` 依赖 \`supply-chain/\` 配置；豁免项需有理由（自研 crate 以 audits.toml 真实审计条目记录，第三方依赖以 config.toml 豁免条目记录并标注待审状态）。"
   echo "- CodeQL / fuzz / e2e 安全面在 CI 或发布候选流程执行，见 \`.github/workflows/\`。"
 } > "${OUT}"
 

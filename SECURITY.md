@@ -231,15 +231,19 @@ Garrison 在 CI 与发布流程中内置多层供应链与安全门禁（发布�
 - **处置**：`deny.toml` 显式忽略该通告并注明理由（无 patched 版本 + 签名/验签路径不受影响）；`rsa` 亦作为 dev-dependency 用于 `keycloak-oidc` 测试生成 RSA 密钥对（测试环境）。
 - **回归锚定**：若未来引入 RSA **解密**能力（如 JWE 解密），必须重新评估该通告并补充防护（常数时间解密或等待 rsa crate 发布修复版本后升级并移除忽略项）。
 
-### 6. RUSTSEC-2024-0449（unsafe-libyaml unmaintained）处置说明
+### 6. YAML 解析后端依赖（unsafe-libyaml 已出图 / serde-saphyr 待审）风险接受说明
 
-- **说明**：依赖图中的 `unsafe-libyaml` 0.2.11 命中 RUSTSEC-2024-0449。类别为 **unmaintained**：上游仓库已于 2024-03-25 归档只读，缺陷不再被修复；**不存在已公布的可利用漏洞**（与已披露 CVE 类通告不同）。链条为 `unsafe-libyaml` ← `serde_yaml_ng` ← `confers` / `dbnexus` / `limiteron`（自研依赖），当前**无已修复版本**——crates.io 最新即 0.2.11，公告明示 `No safe upgrade is available`。
-- **影响评估**：该依赖**可到达**，本项是风险接受而非「路径不可达」豁免，风险性质为「未来缺陷不再由上游修复」：
-  - 可达路径：`serde_yaml_ng` 是 `confers` 的 YAML 解析后端，仅由 `config-yaml` 面启用（`production` 与 `full` 显式包含，`default` 不含），解析对象是部署方自备的本地配置文件——本地运维输入，**非网络输入、非终端用户输入**。
-  - 因此不存在「解析不可信 YAML」的攻击面；若未来引入该能力（如解析用户上传的 YAML/模板），必须重新评估。
-  - garrison 不直接依赖 `unsafe-libyaml` / `serde_yaml_ng`，二者由上游 `confers` / `limiteron` / `dbnexus` 持有，仓库内无升级或替换面（该链自 rc.6 线即在依赖图内，非某次升级引入）。
-- **处置**：`deny.toml` [advisories] 显式忽略该通告并注明理由（unmaintained + 上游无修复版本 + 仅本地配置输入）；`.cargo/audit.toml` 同步豁免，保持两份忽略列表一致。暂不自建分支或替换上游已归档 crate（维护成本高、收益低；替换须由上游自研 crate 换用受维护 YAML 后端）。
-- **回归锚定**：上游 `confers` / `limiteron` / `dbnexus` 发布修复版或换用受维护 YAML 后端后，必须升级并移除忽略项；若 garrison 引入「解析不可信 YAML 输入」的能力，必须重新评估该通告并补充防护。
+- **旧链路已出图（RUSTSEC-2024-0449 豁免移除）**：`unsafe-libyaml` 0.2.11 的 RUSTSEC-2024-0449（unmaintained，上游仓库 2024-03-25 归档只读、无已公布可利用漏洞）原经 `unsafe-libyaml` ← `serde_yaml_ng` ← `confers` / `dbnexus` / `limiteron`（自研依赖）可达。自研 crate 升级到 `confers` 0.6.0-rc.11 / `dbnexus` 0.6.0-rc.10 / `limiteron` 0.3.0-rc.8 后，YAML 解析后端由 `serde_yaml_ng` 换为 `serde-saphyr`，`serde_yaml_ng` 与 `unsafe-libyaml` **已不在依赖图内**。
+- **处置**：该通告的忽略项已从 `deny.toml` [advisories] 与 `.cargo/audit.toml` 同步移除——保留会成为「未命中任何 crate」的死豁免，cargo-deny 对此报 `advisory-not-detected` 警告；`supply-chain/config.toml` 中 `serde_yaml_ng` / `unsafe-libyaml` 的过期豁免条目一并清理。
+- **新 YAML 栈（待审风险接受）**：当前依赖图内的 YAML 栈为 `serde-saphyr` 1.3.0 ← `confers` / `dbnexus` / `limiteron`，其传递依赖含 `granit-parser` 1.3.0、`annotate-snippets` 0.12.16、`arraydeque` 0.5.1、`encoding_rs_io` 0.1.8、`nohash-hasher` 0.2.0。**这些均为第三方 crate（作者 bourumir-wyngs / rust-lang / andylokandy / Andrew Gallant / Parity Technologies），仓库未做源码级审计**，在 `supply-chain/config.toml` 中以 `safe-to-deploy` 豁免记录并标注 backlog 待审；风险性质是「未经源码审计的第三方解析器」。
+- **影响评估**（依赖图与运行时调用点分列，不以「不在依赖图内」为前提）：
+  - **依赖图层面**：`serde-saphyr` 经 `limiteron` 的**非 optional** 依赖链进入**所有** feature 组合的产物（`cargo tree --no-default-features -e normal -i serde-saphyr` 可见）——`config-yaml` 面决定的是 garrison 自身是否**调用** YAML 源，不决定 YAML 解析器是否在图内。
+  - **运行时调用点与输入来源**：
+    - `config-yaml` 面的本地配置文件解析——部署方自备的本地文件，**运维输入，非终端用户输入**。
+    - `full` / `config-full` 面的 `config-consul` / `config-etcd` 远程源：拉取 KV 内容后做**格式嗅探**（`confers` 的 `detect_format_from_content`）并按 YAML 解析——属**部署方自管基础设施输入**（攻击者须先取得 Consul / etcd 的 KV 写权限），非直接外部输入。
+  - **解析资源上限**：新栈自带默认预算（`serde-saphyr` 的 `max_depth` 64 / `max_nodes` 250 000 / 别名比值守卫 / inclusion 深度 24），旧栈的递归深度上限 128 与事件数上限不再适用——YAML 解析的已知 DoS 面（实体膨胀 / 深嵌套导致的解析放大）未因换栈而恶化。
+  - **结论**：在「不解析不可信 YAML」的现有能力边界内可接受；一旦引入该能力（解析用户上传的 YAML / 模板），必须重新评估并补充输入体积与嵌套深度限制。
+- **回归锚定**：① 若 garrison 引入「解析不可信 YAML 输入」的能力（如解析用户上传的 YAML / 模板），必须重新评估本节并补充防护（输入体积与嵌套深度限制）；② 待 `serde-saphyr` / `granit-parser` 完成源码审计后，应将 `supply-chain/config.toml` 中的 backlog 豁免替换为 `supply-chain/audits.toml` 的真实审计条目；③ 若上游 YAML 后端再次更换，需同步核对 `deny.toml` / `.cargo/audit.toml` 忽略集合是否仍与实际依赖图一致。
 
 ---
 

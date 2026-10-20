@@ -7,10 +7,12 @@
 db-urls = ["https://github.com/RustSec/advisory-db"]
 yanked = "deny"
 # rsa 0.9.x 有 RUSTSEC-2023-0071（Marvin Attack 定时侧信道）且无 patched 版本（rustsec.org/advisories/RUSTSEC-2023-0071），显式忽略：garrison 使用 rsa 仅为私钥签名/公钥验签（alipay 签名、RS256/384/512 验签端经 pkcs1/pkcs8 纯 DER 提取 (n,e)），无解密路径；Marvin Attack 针对解密时序侧信道，本用法不可达。另作 dev-dependency 生成测试密钥对。
-# unsafe-libyaml 0.2.11 有 RUSTSEC-2024-0449（unmaintained：上游仓库 2024-03-25 归档只读，属「缺陷不再被修复」类通告，非已知可利用漏洞），且无 patched 版本（最新即 0.2.11，公告明示 No safe upgrade is available）——链条 unsafe-libyaml ← serde_yaml_ng ← confers/dbnexus/limiteron，依赖由上游自研 crate 持有，garrison 无升级或替换面（该链自 rc.6 线即在依赖图内，非某次升级引入）。此条是**可达依赖的风险接受**，不是「路径不可达」：serde_yaml_ng 是 confers 的 YAML 解析后端，仅由 config-yaml 面启用（production/full 显式包含，default 不含），解析对象为部署方自备的本地配置文件（运维输入，非网络/终端用户输入），故不存在解析不可信 YAML 的攻击面。处置论证见 SECURITY.md §6；上游发布修复版或换用受维护 YAML 后端后须升级并移除此项，若 garrison 引入「解析不可信 YAML 输入」的能力须重新评估。
+# unsafe-libyaml 0.2.11 的 RUSTSEC-2024-0449（unmaintained）豁免已随 YAML 后端由 serde_yaml_ng 换为 serde-saphyr
+# （confers 0.6.0-rc.11 / dbnexus 0.6.0-rc.10 / limiteron 0.3.0-rc.8）而移除：unsafe-libyaml 与 serde_yaml_ng
+# 已不在依赖图内，cargo-deny 对「未命中任何 crate」的通告项会报 advisory-not-detected 警告。
+# 新 YAML 栈（serde-saphyr / granit-parser）的风险接受说明见 SECURITY.md §6。
 ignore = [
     "RUSTSEC-2023-0071",
-    "RUSTSEC-2024-0449",
 ]
 
 [licenses]

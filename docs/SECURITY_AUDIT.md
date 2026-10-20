@@ -51,7 +51,7 @@
 | SAST（CodeQL） | `.github/workflows/codeql.yml` | GitHub Security 告警 | 已接线 |
 | 依赖漏洞 | `cargo audit` | 终端输出 / CI | 已接线 |
 | 依赖策略 | `cargo deny check`（license / advisory / ban / source） | 终端输出 | 已接线 |
-| 供应链审计 | `cargo vet --locked`（`supply-chain/audits.toml`） | 终端输出 | 已接线（工具需本地安装） |
+| 供应链审计 | `cargo vet check --locked`（`supply-chain/audits.toml`） | 终端输出 | 已接线（工具需本地安装） |
 | 模糊测试 | `cargo +nightly fuzz run <target>`（`fuzz/fuzz_targets/`） | `fuzz/artifacts/` / CI | 已接线（每周 + 60s smoke） |
 | 端到端安全面 | `bash scripts/e2e_run.sh`（含 `security::` 域） | `logs/e2e_final_report.md` / `pentest_report.json` | 可复现 |
 | 双实例限流 | `cargo test --features full --test redis_limiter_backend` | 测试输出 | rc.4 新增 |

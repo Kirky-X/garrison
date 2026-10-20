@@ -7,12 +7,21 @@
 
 ## 📋 目录
 
+- [Unreleased](#unreleased)
 - [0.9.0-rc.4](#090-rc4---2026-10-20)
 - [0.9.0-rc.3](#090-rc3---2026-10-14)
 - [0.9.0-rc.2](#090-rc2---2026-08-26)
 - [0.9.0-rc.1](#090-rc1---2026-08-25)
 
 ---
+
+## [Unreleased]
+
+### Fixed
+
+- **供应链审计条目与已提交 `Cargo.lock` 对齐（CI `cargo vet` 门禁转绿）**：依赖升级（`chore(deps): garrison 升级 base 依赖到最新 rc`）引入 19 个未审计版本，`cargo vet check --locked` 因缺 `safe-to-deploy` 判负，Security 工作流红灯。按既有惯例补齐：`supply-chain/audits.toml` 为 11 个自研 crate（confers / confers-macros / dbnexus / dbnexus-limiter-port / dbnexus-macros / inklog / limiteron / oxcache / sdforge / sdforge-macros / trait-kit）的新版本写入**源码级自审**审计条目——逐 crate 比对上一版本源码差异后落笔（含 YAML 后端 serde_yaml_ng→serde-saphyr 替换、oxcache Redis Lua 命令 5s 响应超时与 EVAL 熔断接入、limiteron 配额路径 5s eval 超时、inklog SSN 掩码扩展、dbnexus 默认关闭的 `retry_busy_writes`、sdforge/trait-kit 测试密钥与 i18n 确定性调整）；`supply-chain/config.toml` 为新进入依赖树的 6 个第三方 crate（annotate-snippets 0.12.16 / arraydeque 0.5.1 / encoding_rs_io 0.1.8 / granit-parser 1.3.0 / nohash-hasher 0.2.0 / serde-saphyr 1.3.0）补 `safe-to-deploy` 豁免并标注 backlog 待审，本仓 `garrison` / `garrison-macros` 豁免版本随 rc.3→rc.4 推进。
+- **YAML 解析后端换代后的死豁免清理（RUSTSEC-2024-0449）**：自研 crate 换用 `serde-saphyr` 后，`serde_yaml_ng` / `unsafe-libyaml` 已不在依赖图内，原「可达依赖的风险接受」论证与忽略项全部失效——保留会成为 cargo-deny 的 `advisory-not-detected` 死豁免警告。`deny.toml` [advisories] 与 `.cargo/audit.toml` 同步移除 `RUSTSEC-2024-0449` 忽略项及旧链路论证；`supply-chain/config.toml` 清理 `serde_yaml_ng` / `unsafe-libyaml` / `untrusted 0.7.1` 三条不在 `Cargo.lock` 中的过期豁免；`SECURITY.md` §6 改写为「旧链路已出图 + 新 YAML 栈（serde-saphyr / granit-parser，第三方且**未经源码审计**）的风险接受」——可达性论述按实测修正：`serde-saphyr` 经 `limiteron` 的**非 optional** 依赖链进入**所有** feature 组合的产物，故风险接受不建立在「不在依赖图内」之上，而建立在**运行时调用点与输入来源**上（`config-yaml` 面解析部署方本地配置；`full` / `config-full` 面的 `config-consul` / `config-etcd` 远程源会嗅探后按 YAML 解析，属部署方自管基础设施输入），并补记新栈自带的解析预算（`max_depth` 64 / `max_nodes` 250 000 / 别名比值守卫）；同时保留「引入不可信 YAML 解析能力须重新评估」「新栈完成审计后把 backlog 豁免换成真实审计条目」两条回归锚定。`SECURITY.md` 供应链段补注本仓 crate（`garrison` / `garrison-macros`）以豁免条目记录而非自审条目。`docs/SECURITY_AUDIT.md` 与 `scripts/security_evidence.sh` 的供应链审计命令口径由 `cargo vet --locked` 对齐 CI 实际执行的 `cargo vet check --locked`；脚本「豁免项需有复核日期」一句与全仓实际状态（795 条豁免均无复核日期）不符，改为「豁免项需有理由」。
+- 验证：本机 `cargo vet check --locked` 通过（Vetting Succeeded — 12 fully audited, 795 exempted）、`cargo deny --all-features --locked check` 无 `advisory-not-detected` 警告。
 
 ## [0.9.0-rc.4] - 2026-10-20
 

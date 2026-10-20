@@ -18,13 +18,8 @@ ignore = [
     # SECURITY.md §5；rsa 出修复版后须升级并移除此项，若引入 RSA 解密能力须重新评估。
     # 参见 https://rustsec.org/advisories/RUSTSEC-2023-0071
     "RUSTSEC-2023-0071",
-    # unsafe-libyaml 0.2.11 RUSTSEC-2024-0449（unmaintained：上游归档只读、无已公布可利用缺陷）：
-    # 官方无 patched 版本（最新即 0.2.11），链条 unsafe-libyaml ← serde_yaml_ng ← confers/dbnexus/limiteron
-    # 由上游自研 crate 持有，garrison 无升级/替换面（该链自 rc.6 线即在依赖图内）。
-    # 此条是可达依赖的风险接受（非路径不可达）：可达路径仅 config-yaml 面（production/full 显式启用，
-    # default 不含）的部署方本地配置文件解析（运维输入），非网络/终端用户输入。
-    # 处置论证见 deny.toml [advisories] 注释与 SECURITY.md §6；
-    # 上游修复或换用受维护后端后须升级并移除此项，若引入不可信 YAML 解析能力须重新评估。
-    # 参见 https://rustsec.org/advisories/RUSTSEC-2024-0449
-    "RUSTSEC-2024-0449",
+    # unsafe-libyaml 0.2.11 的 RUSTSEC-2024-0449（unmaintained）豁免已移除：YAML 后端由
+    # serde_yaml_ng 换为 serde-saphyr（confers 0.6.0-rc.11 / dbnexus 0.6.0-rc.10 /
+    # limiteron 0.3.0-rc.8）后，unsafe-libyaml 与 serde_yaml_ng 已不在依赖图内。
+    # 新 YAML 栈（serde-saphyr / granit-parser）的风险接受说明见 SECURITY.md §6。
 ]
