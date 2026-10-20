@@ -2349,12 +2349,107 @@ mod db_sqlite_tests {
         assert_eq!(deleted, 0, "空表应返回 0");
     }
 
-    /// loom-test：同一 refresh token 双线程并发轮换，恰一成功，另一命中
-    /// 已消费/重用检测（CAS 原子消费或 RecentPrev 处置），不得双成功。
+    /// 竞态轮次：每轮签发全新 token 后做一次并发轮换。
+    ///
+    /// 轮次多于 1 的原因：同 token 并发轮换的落点（条件 UPDATE 的
+    /// rows_affected 判定）是窄窗口，单次采样没撞上窗口不等于窗口不存在；
+    /// 多轮采样把「恰一成功」从不变量升级为可重复验证的不变量。每轮用全新
+    /// token，避免上一轮触发的重用处置（revoke_chain）污染下一轮判定。
     #[cfg(feature = "loom-test")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    const RACE_ROUNDS: usize = 16;
+
+    /// 并发轮换竞态辅助：N 个任务在同一屏障后同时轮换同一 token。
+    ///
+    /// 屏障只提高「同时进入 rotate」的命中率——真实线程交错仍是随机采样，
+    /// 不改变判定语义（判定恒为「恰一成功 + 其余命中已消费/重用检测」）。
+    #[cfg(feature = "loom-test")]
+    async fn race_rotate(
+        rotation: Arc<RefreshTokenRotation>,
+        token: &str,
+        racers: usize,
+    ) -> Vec<crate::error::GarrisonResult<(String, String)>> {
+        let barrier = Arc::new(tokio::sync::Barrier::new(racers));
+        let mut handles = Vec::with_capacity(racers);
+        for _ in 0..racers {
+            let rotation = Arc::clone(&rotation);
+            let token = token.to_string();
+            let barrier = Arc::clone(&barrier);
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                rotation.rotate(&token).await
+            }));
+        }
+        let mut results = Vec::with_capacity(racers);
+        for handle in handles {
+            results.push(handle.await.expect("轮换任务不应 panic"));
+        }
+        results
+    }
+
+    /// 竞态判定：恰一成功，其余必须命中已消费或重用检测。
+    #[cfg(feature = "loom-test")]
+    fn assert_race_outcome(
+        round: usize,
+        racers: usize,
+        results: &[crate::error::GarrisonResult<(String, String)>],
+    ) {
+        let successes = results.iter().filter(|result| result.is_ok()).count();
+        assert_eq!(
+            successes, 1,
+            "第 {round} 轮（{racers} 方）：同一 token 并发轮换必须恰一成功，\
+             实际 {successes} 个成功: {results:?}"
+        );
+        for result in results.iter().filter(|result| result.is_err()) {
+            match result {
+                Err(GarrisonError::InvalidToken(message)) => assert!(
+                    message.starts_with("jwt-refresh-token-consumed")
+                        || message.starts_with("jwt-refresh-reuse-rejected"),
+                    "第 {round} 轮：落败方应返回已消费或重用拒绝错误，实际: {message}"
+                ),
+                Err(GarrisonError::TokenRevoked(_)) => {},
+                other => panic!("第 {round} 轮：落败方应为已消费或重用检测错误，实际: {other:?}"),
+            }
+        }
+    }
+
+    /// 竞态验证：同一 refresh token 双线程并发轮换，恰一成功，另一命中
+    /// 已消费/重用检测（CAS 原子消费或 RecentPrev 处置），不得双成功。
+    ///
+    /// **验证手段边界（不得夸大为 loom 交错穷举）**：本用例在真实 tokio
+    /// 多线程运行时 + 真实 SQLite 上采样竞态，**不是** `loom::model` 交错穷举——
+    /// 本路径的原子性由数据库条件 UPDATE（`UPDATE refresh_tokens SET revoked = 1
+    /// ... WHERE token_hash = ? AND revoked = 0` + rows_affected 判定）保证，属存储层
+    /// CAS；`loom::model` 只能穷举进程内同步原语（`loom::sync` / `loom::thread`）的
+    /// 交错，无法建模真实数据库的写事务串行化，对本路径不适用。纯进程内原子消费
+    /// 路径仍由 `src/protocol/temp/tests.rs` 的 `loom::model` 用例穷举覆盖。
+    #[cfg(feature = "loom-test")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_rotate_same_token_exactly_one_succeeds() {
-        let name = format!("garrison_refresh_concurrent_{}", std::process::id());
+        let name = format!("garrison_refresh_concurrent_{}_pair", std::process::id());
+        let pool = setup_shared_db(&name).await;
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
+        let rotation = Arc::new(RefreshTokenRotation::new(
+            pool.clone(),
+            jwt_handler,
+            Arc::new(RwLock::new(1)),
+        ));
+
+        for round in 0..RACE_ROUNDS {
+            let token = rotation
+                .issue("client", Some(1), &[], None, 1, 0, 9999)
+                .await
+                .expect("issue 应成功");
+            let results = race_rotate(Arc::clone(&rotation), &token, 2).await;
+            assert_race_outcome(round, 2, &results);
+        }
+    }
+
+    /// 竞态验证（多方）：4 个任务同时轮换同一 token，仍须恰一成功，
+    /// 其余 3 方全部命中已消费/重用检测。
+    #[cfg(feature = "loom-test")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_rotate_same_token_many_racers_exactly_one_succeeds() {
+        let name = format!("garrison_refresh_concurrent_{}_many", std::process::id());
         let pool = setup_shared_db(&name).await;
         let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
         let rotation = Arc::new(RefreshTokenRotation::new(
@@ -2367,37 +2462,7 @@ mod db_sqlite_tests {
             .await
             .expect("issue 应成功");
 
-        let left = {
-            let rotation = Arc::clone(&rotation);
-            let token = token.clone();
-            tokio::spawn(async move { rotation.rotate(&token).await })
-        };
-        let right = {
-            let rotation = Arc::clone(&rotation);
-            let token = token.clone();
-            tokio::spawn(async move { rotation.rotate(&token).await })
-        };
-
-        let (left, right) = tokio::join!(left, right);
-        let left = left.expect("左任务不应 panic");
-        let right = right.expect("右任务不应 panic");
-        let successes = [left.is_ok(), right.is_ok()]
-            .into_iter()
-            .filter(|ok| *ok)
-            .count();
-        assert_eq!(
-            successes, 1,
-            "同一 token 并发轮换必须恰一成功: {left:?} / {right:?}"
-        );
-
-        let loser = if left.is_err() { left } else { right };
-        match loser {
-            Err(GarrisonError::InvalidToken(message)) => assert!(
-                message.starts_with("jwt-refresh-token-consumed"),
-                "CAS 落败方应返回已消费错误，实际: {message}"
-            ),
-            Err(GarrisonError::TokenRevoked(_)) => {},
-            other => panic!("落败方应为已消费或重用检测错误，实际: {other:?}"),
-        }
+        let results = race_rotate(Arc::clone(&rotation), &token, 4).await;
+        assert_race_outcome(0, 4, &results);
     }
 }
