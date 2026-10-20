@@ -203,3 +203,24 @@ jobs:
             fi
           done <<< "$alerts"
           echo "共豁免 $count 条"
+
+  # actionlint / zizmor（2026-10-20 补齐）
+  # actionlint：校验 workflow YAML 语法与表达式；zizmor：审计 Actions 的
+  # 权限过宽、脚本注入、模板注入等风险。两者与本 workflow 已有 job 互补，不重复。
+  workflow-hygiene:
+    name: Workflow Hygiene (actionlint + zizmor)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint
+        uses: docker://rhysd/actionlint:latest
+        with:
+          # shellcheck 子检查降到 error 级：YAML 语法/表达式错误仍阻断，
+          # 风格级（SC2086/SC2034 等）不阻断，避免打断既有流水线。
+          args: -color -shellcheck=error
+      - name: zizmor (GitHub Actions 安全审计)
+        # 首轮为非阻断基线：既有 workflow 存在一批 unpinned-uses / cache-poisoning /
+        # template-injection 发现，阻断式会直接打断现有流水线。backlog 清零后
+        # 把 continue-on-error 删掉即可转为阻断。
+        continue-on-error: true
+        uses: zizmorcore/zizmor-action@v0.12.0
