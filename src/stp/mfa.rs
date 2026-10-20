@@ -1306,7 +1306,6 @@ mod tests {
             mock.is_safe("default").await.unwrap(),
             "is_safe 默认应返回 Ok(true)"
         );
-        // check_safe 调用 is_safe，因 is_safe=true，返回 Ok(())
         assert!(mock.check_safe().await.is_ok(), "check_safe 应返回 Ok(())");
     }
 

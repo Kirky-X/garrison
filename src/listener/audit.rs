@@ -94,7 +94,7 @@ fn mask_audit_token(token: &str) -> String {
 /// metadata 字段脱敏内置黑名单（兜底）。
 ///
 /// 即使 operator 未配置 `AuditConfig.mask_fields`，这些敏感字段名也替换为 `"***"`
-/// （安全默认：黑名单未列即放行是危险的），与 operator mask_fields 取并集；
+/// （安全默认：黑名单未列即放行是危险），与 operator mask_fields 取并集；
 /// `old_token`/`new_token` 兜底为 `***`，`token` 列由 `mask_audit_token` 截断保留前缀。
 const BUILTIN_MASK_FIELDS: &[&str] = &[
     "password",
@@ -2175,7 +2175,6 @@ mod db_sqlite_tests {
             .map(|obj| obj["signature"].as_str().unwrap().to_string())
             .collect();
 
-        // 验证原始签名链 → 应通过
         let valid = listener
             .verify_signature_chain(&[entry_a.clone(), entry_b.clone()], &signatures)
             .expect("verify 应成功（不缺 signing_key）");

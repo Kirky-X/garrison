@@ -435,7 +435,7 @@ fn validate_auth_int_rejected_without_body() {
         r#"Digest username="admin", realm="test@realm", nonce="{}", uri="{}", response="{}", qop=auth-int, nc={}, cnonce="{}""#,
         nonce, uri, resp_hex, nc, cnonce
     );
-    // 无 body 的 validate() 对 auth-int 一律拒绝（即使 response 是按空 body 正确计算的）
+    // 无 body 的 validate 对 auth-int 一律拒绝（即使 response 是按空 body 正确计算）
     assert!(
         !auth.validate(&header, method, uri, &ha1),
         "auth-int 在 body 缺失时应被拒绝（即使按空 body 正确计算 response）"

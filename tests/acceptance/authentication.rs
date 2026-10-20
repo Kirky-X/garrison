@@ -662,7 +662,6 @@ async fn acc_auth_019_bw_ac_010_login_failure_locks_account() {
         until: Some(until),
     };
 
-    // 验证错误变体与字段
     match &disable_err {
         garrison::error::GarrisonError::DisableService { service, until } => {
             assert_eq!(service, "default");

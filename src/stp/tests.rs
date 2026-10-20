@@ -903,7 +903,7 @@ async fn util_check_role_fails_when_not_initialized() {
     );
 }
 
-/// 未初始化时 GarrisonUtil::check_safe 返回 Session 错误（）。
+/// 未初始化时 GarrisonUtil::check_safe 返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_check_safe_fails_when_not_initialized() {
@@ -915,7 +915,7 @@ async fn util_check_safe_fails_when_not_initialized() {
     );
 }
 
-/// 未初始化时 GarrisonUtil::check_disable 返回 Session 错误（）。
+/// 未初始化时 GarrisonUtil::check_disable 返回 Session 错误。
 #[tokio::test]
 #[serial]
 async fn util_check_disable_fails_when_not_initialized() {
@@ -2490,7 +2490,6 @@ async fn check_permission_with_checker_emits_metric() {
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
     with_current_token(token, async {
         with_default_tenant(async {
-            // check_permission 持有权限 → Ok(()) + emit allow metric
             let result = logic.check_permission("user:read").await;
             assert_eq!(
                 result.unwrap(),
@@ -2548,7 +2547,6 @@ async fn check_role_logged_in_emits_metric() {
 
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
     with_current_token(token, async {
-        // check_role（MockFirewall.has_role=true → Ok(())），需要 with_default_tenant 支持 tenant-isolation feature
         let result = with_default_tenant(logic.check_role("admin")).await;
         assert!(result.is_ok(), "check_role 应返回 Ok，实际: {:?}", result);
     })
@@ -4053,7 +4051,7 @@ async fn login_rolls_back_session_when_enforce_fails() {
         login_result
     );
 
-    // 验证回滚：login_token_map 应只剩 1 个 token（首次登录的）
+    // 验证回滚：login_token_map 应只剩 1 个 token（首次登录）
     let tokens = logic.session.get_tokens_by_login_id("high002-user-001");
     assert_eq!(
         tokens.len(),

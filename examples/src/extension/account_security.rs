@@ -145,7 +145,6 @@ fn demo_auth_flow() {
         println!("    [{}] {:?}", i, step);
     }
 
-    // 构建社交登录流程
     let social_flow = FlowBuilder::new("social-login-flow")
         .social("wechat")
         .conditional(

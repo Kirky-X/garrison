@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! Web 适配层 Cookie 安全默认与配置覆盖（v1.0 门禁 T006-T008）。
+//! Web 适配层 Cookie 安全默认与配置覆盖（v1.0 门禁）。
 
 use garrison::config::GarrisonConfig;
 use garrison::context::{build_set_cookie_value, CookieType, GarrisonResponse};

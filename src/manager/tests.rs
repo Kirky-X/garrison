@@ -599,7 +599,6 @@ async fn with_strategy_replaces_registry() {
 
     GarrisonManager::with_strategy(custom_strategy).unwrap();
 
-    // 验证替换后使用自定义策略
     let strategy = GarrisonManager::strategy().unwrap();
     let login_handler = strategy.read().login_handler().clone();
     let token = login_handler.handle_login("1001").await.unwrap();

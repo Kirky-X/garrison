@@ -583,7 +583,6 @@ fn e4_source_verify_revoke_have_no_keys_scan() {
         !code_only.contains("\"garrison:apikey:*:"),
         "E4: handler.rs 代码不应再使用 garrison:apikey:*: 通配符扫描模式（verify/revoke 旧路径）"
     );
-    // 检查代码中存在反向索引查询
     assert!(
         code_only.contains("idx_key_for"),
         "E4: handler.rs 代码应使用 idx_key_for 构造反向索引 key"

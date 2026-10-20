@@ -935,7 +935,6 @@ mod tests {
         let usage2 = meter.get_credit_usage(2).await.unwrap();
         assert_eq!(usage1.consumed, 10);
         assert_eq!(usage2.consumed, 20);
-        // 重置租户 1 不影响租户 2
         meter.reset_credit(1).await.unwrap();
         assert_eq!(meter.get_credit_usage(1).await.unwrap().consumed, 0);
         assert_eq!(meter.get_credit_usage(2).await.unwrap().consumed, 20);

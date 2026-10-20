@@ -129,7 +129,6 @@ impl super::GarrisonRouter {
                         .map(|(_, annotation)| annotation.clone());
 
                     if let Some(annotation) = annotation {
-                        // Token 可选：Ignore 注解的 pre_handle 直接 Ok(())，不需要 token（与 actix middleware 对齐）
                         let token = extract_token_from_headers(&headers, &config)
                             .map_err(|e| warp::reject::custom(super::GarrisonRejection(e)))?;
 

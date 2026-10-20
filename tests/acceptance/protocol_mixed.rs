@@ -366,7 +366,6 @@ async fn acc_mixed_009_apikey_revoked_invalidates() {
         "吊销后 verify 应被拒，实际: {revoked:?}"
     );
 
-    // 吊销不存在的 key：显性失败（Fail Loud，）
     let ghost = handler
         .revoke(&format!("{}.{}", "0".repeat(32), "0".repeat(32)))
         .await;

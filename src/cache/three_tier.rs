@@ -859,7 +859,6 @@ mod tests {
         );
         assert_eq!(dao.set_count(), 1, "应回填 L2 一次");
 
-        // 验证 L2 已被回填
         assert!(dao.contains_key("perm:cache:3001"), "L2 应已被回填");
 
         // 验证 L1 已被回填（第二次调用不走 L3）
@@ -997,7 +996,6 @@ mod tests {
         let result = service.get_user("9001").await.unwrap();
         assert!(result.is_none(), "用户不存在时应返回 Ok(None)");
 
-        // 验证 L3 被调用
         assert_eq!(interface.user_count(), 1, "应查询 L3 一次");
 
         // 验证 L2 未被写入（None 不缓存）
@@ -1025,7 +1023,6 @@ mod tests {
         let _ = service.get_permissions("10001").await.unwrap();
         assert_eq!(interface.perm_count(), 1, "第一次应查询 L3");
 
-        // 等待 L1 TTL 过期
         tokio::time::sleep(Duration::from_secs(2)).await;
 
         // 第二次调用：L1 已过期 → L2 命中 → 回填 L1 → 不查询 L3
@@ -1113,7 +1110,6 @@ mod tests {
         // 模拟登出：invalidate 所有缓存
         service.invalidate("12001").await.unwrap();
 
-        // 验证 L2 已清除
         assert!(!dao.contains_key("perm:cache:12001"));
         assert!(!dao.contains_key("role:cache:12001"));
         assert!(!dao.contains_key("user:cache:12001"));
@@ -1508,7 +1504,6 @@ mod tests {
         );
         assert_eq!(dao.set_count(), 1, "应回填 L2 一次");
 
-        // 验证 L2 已被回填
         assert!(dao.contains_key("user:cache:21001"), "L2 应已被回填");
 
         // 验证 L1 已被回填（第二次调用不走 L3）
@@ -1814,7 +1809,6 @@ mod tests {
         );
         assert_eq!(dao.set_count(), 1, "应回填 L2 一次");
 
-        // 验证 L2 已被回填
         assert!(dao.contains_key("role:cache:32001"), "L2 应已被回填");
 
         // 验证 L1 已被回填（第二次调用不走 L3）
@@ -1857,7 +1851,6 @@ mod tests {
         let _ = service.get_roles("35001").await.unwrap();
         assert_eq!(interface.role_count(), 1, "第一次应查询 L3");
 
-        // 等待 L1 TTL 过期
         tokio::time::sleep(Duration::from_secs(2)).await;
 
         // 第二次调用：L1 已过期 → L2 命中 → 回填 L1 → 不查询 L3
@@ -1876,7 +1869,6 @@ mod tests {
         let _ = service.get_user("36001").await.unwrap();
         assert_eq!(interface.user_count(), 1, "第一次应查询 L3");
 
-        // 等待 L1 TTL 过期
         tokio::time::sleep(Duration::from_secs(2)).await;
 
         // 第二次调用：L1 已过期 → L2 命中 → 回填 L1 → 不查询 L3
@@ -2032,14 +2024,12 @@ mod tests {
         let _ = service.get_roles("43001").await.unwrap();
         let _ = service.get_user("43001").await.unwrap();
 
-        // 验证 L2 缓存已填充
         assert!(dao.contains_key("perm:cache:43001"));
         assert!(dao.contains_key("role:cache:43001"));
         assert!(dao.contains_key("user:cache:43001"));
 
         service.invalidate("43001").await.unwrap();
 
-        // 验证 L2 缓存已全部删除
         assert!(!dao.contains_key("perm:cache:43001"));
         assert!(!dao.contains_key("role:cache:43001"));
         assert!(!dao.contains_key("user:cache:43001"));
@@ -2084,7 +2074,6 @@ mod tests {
         assert_eq!(interface.user_count(), 1, "应查询 L3 一次");
         assert_eq!(dao.set_count(), 1, "Some(\"\") 应回填 L2");
 
-        // 验证 L2 已被回填
         assert!(
             dao.contains_key("user:cache:44001"),
             "Some(\"\") 应被缓存到 L2"
@@ -2174,7 +2163,6 @@ mod tests {
 
         service.invalidate("user_2001.v2").await.unwrap();
 
-        // 验证 L2 已清除
         assert!(!dao.contains_key("perm:cache:user_2001.v2"));
 
         let delete_keys = dao.delete_keys();
@@ -2222,7 +2210,7 @@ mod tests {
         assert_eq!(interface.perm_count(), 1, "应查询 L3 一次");
         assert_eq!(dao.set_count(), 1, "空 Vec 也应回填 L2");
 
-        // 验证 L2 已被回填（空列表 "[]" ）
+        // 验证 L2 已被回填（空列表 "[]"）
         assert!(dao.contains_key("perm:cache:51001"), "空 Vec 应被缓存到 L2");
 
         // 验证 L1 已被回填（第二次调用不走 L3）
@@ -2242,7 +2230,6 @@ mod tests {
         assert_eq!(dao.set_count(), 1, "空 Vec 也应回填 L2");
         assert!(dao.contains_key("role:cache:52001"), "空 Vec 应被缓存到 L2");
 
-        // 验证 L1 已被回填
         let roles2 = service.get_roles("52001").await.unwrap();
         assert!(roles2.is_empty());
         assert_eq!(interface.role_count(), 1, "L1 回填后不应再查询 L3");
@@ -2262,7 +2249,6 @@ mod tests {
         let perms1 = service.get_permissions("53001").await.unwrap();
         assert_eq!(perms1, vec!["old:perm".to_string()]);
 
-        // 更新 L3 数据
         interface.set_permissions("53001", vec!["new:perm".to_string()]);
 
         service.invalidate("53001").await.unwrap();

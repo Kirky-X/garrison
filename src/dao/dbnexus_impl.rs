@@ -556,7 +556,6 @@ mod tests {
             .expect("第二次 migrate 应成功");
         assert_eq!(second, 0, "第二次应跳过已应用的迁移");
 
-        // 验证表仍存在
         let pool = migration.pool();
         let session = pool.get_session("admin").await.unwrap();
         let count = query_count(

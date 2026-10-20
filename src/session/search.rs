@@ -803,9 +803,7 @@ mod tests {
     #[tokio::test]
     async fn search_token_value_skips_corrupted_json() {
         let (dao, session) = make_session(3600, 86400);
-        // 写入正常 session
         put_token_session(&dao, "valid-tok", "u1", 100, 100).await;
-        // 写入损坏的 JSON
         let corrupt_key = format!("{}{}", TOKEN_SESSION_PREFIX, "corrupt-tok");
         dao.set(&corrupt_key, "{invalid json}", 3600).await.unwrap();
 
@@ -859,7 +857,6 @@ mod tests {
     #[tokio::test]
     async fn search_skips_keys_with_none_get() {
         let (dao, session) = make_session(3600, 86400);
-        // 写入一个正常 session
         put_token_session(&dao, "exists-tok", "u1", 100, 100).await;
         // 写入一个 key 但值被手动删除（模拟 TTL 过期）
         let expired_key = format!("{}{}", TOKEN_SESSION_PREFIX, "expired-tok");

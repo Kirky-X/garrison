@@ -187,7 +187,6 @@ async fn demo_tenant_isolation(
         .into());
     }
 
-    // 验证拒绝路径
     let deny_request = AuthRequest {
         login_id: "1001".to_string(),
         tenant_id: 42,

@@ -456,7 +456,7 @@ pub(crate) fn uuid_like() -> String {
 /// 启动双端口测试服务器（外网 + 内网），返回 (external_url, internal_url, handle)。
 ///
 /// `pub(crate)`：供 security.rs 的 pentest 场景（/027/028）复用
-/// 。仅使用 `InMemoryAuthBackend`（无全局状态），
+///。仅使用 `InMemoryAuthBackend`（无全局状态），
 /// 不需要 `#[serial]`。
 pub(crate) async fn start_test_server(
     rate_limit: u32,

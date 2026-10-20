@@ -23,7 +23,6 @@ use std::path::PathBuf;
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison DAO 操作示例 ===\n");
 
-    // 1. 创建 oxcache DAO
     let dao = GarrisonDaoOxcache::new().await?;
     println!("[1] GarrisonDaoOxcache 创建完成（sync_mode 启用）\n");
 

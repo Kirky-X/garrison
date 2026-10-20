@@ -306,7 +306,6 @@ mod tests {
     #[tokio::test]
     async fn test_get_meta_parse_success() {
         let storage = CreditMeterStorage::new(make_dao());
-        // 写入合法 meta
         let meta = CreditMeta {
             consumed: 100,
             limit: 1000,

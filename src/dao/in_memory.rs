@@ -223,7 +223,6 @@ impl GarrisonDao for InMemoryDao {
     async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64> {
         let mut store = self.store.lock();
         let now = Instant::now();
-        // 清理已过期的 key
         let should_init = match store.get(key) {
             Some((_, Some(deadline))) => *deadline <= now, // 已过期
             Some((_, None)) => false,                      // 永久键

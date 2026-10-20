@@ -160,7 +160,6 @@ pub async fn run() -> GarrisonResult<()> {
     manager.broadcast(&expired_event).await;
     println!();
 
-    // 4. 验证监听器总调用次数
     let total_calls = EVENT_CALLS.load(Ordering::SeqCst);
     println!("[4] AuditListener 总调用次数 = {}（4 个事件）", total_calls);
     assert!(total_calls >= 4);

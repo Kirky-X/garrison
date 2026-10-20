@@ -46,7 +46,6 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    资源权重: login=1, sms=5, api_call=2");
     println!("    告警阈值: {:?}%\n", config.alert_thresholds);
 
-    // 2. 创建计量引擎
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
     let meter = CreditMeter::new(dao, config);
     println!("[2] CreditMeter 创建完成\n");

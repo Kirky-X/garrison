@@ -151,7 +151,7 @@ fn plugin_on_permission_check_invoked() {
     );
 }
 
-/// 多次调用累计计数（验证 plugin 是无状态可重入的）。
+/// 多次调用累计计数（验证 plugin 是无状态可重入）。
 #[test]
 #[serial_test::serial]
 fn plugin_multiple_calls_accumulate() {
@@ -294,7 +294,6 @@ async fn full_lifecycle_plugin_and_listener_cooperate() {
         })
         .await;
 
-    // 验证全部钩子与事件被触发
     assert!(
         PLUGIN_LOGIN_CALLS.load(Ordering::SeqCst) >= 1,
         "plugin on_login"

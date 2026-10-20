@@ -22,12 +22,12 @@ Garrison 是一个面向 Rust 生态的身份认证鉴权框架，安全是项�
 
 Garrison 仅对已发布版本提供安全修复，开发分支（`main`）不承诺向后移植补丁。
 
-| 版本 | 支持状态 | 说明 |
-|------|---------|------|
+| 版本                       | 支持状态       | 说明                                       |
+| -------------------------- | -------------- | ------------------------------------------ |
 | 0.9.x（当前 `0.9.0-rc.3`） | 🚧 pre-release | 发布候选（2026-10-14），接受安全反馈与修复 |
-| 0.8.x | ✅ 维护中 | 当前稳定版本，接受安全修复 |
-| 0.7.x | 🔶 有限维护 | 仅修复严重漏洞 |
-| < 0.7 | ❌ 不支持 | 不提供安全修复 |
+| 0.8.x                      | ✅ 维护中      | 当前稳定版本，接受安全修复                 |
+| 0.7.x                      | 🔶 有限维护    | 仅修复严重漏洞                             |
+| < 0.7                      | ❌ 不支持      | 不提供安全修复                             |
 
 > 新版本发布后，旧版本将进入仅修复严重漏洞的「有限维护」状态，至少持续 6 个月。
 
@@ -66,12 +66,12 @@ Garrison 仅对已发布版本提供安全修复，开发分支（`main`）不�
 
 ## ⏱️ 响应承诺
 
-| 阶段 | 时间窗口 | 行动 |
-|------|---------|------|
-| 确认收到 | **48 小时内** | Maintainer 确认收到报告，并指派负责人 |
-| 初步评估 | 7 天内 | 评估漏洞等级（Critical / High / Medium / Low）与影响范围 |
-| 修复计划 | 14 天内 | 与报告者沟通修复方案与发布计划 |
-| 修复发布 | 90 天内（依据严重程度调整） | Critical / High 优先紧急发布 patch 版本 |
+| 阶段     | 时间窗口                    | 行动                                                     |
+| -------- | --------------------------- | -------------------------------------------------------- |
+| 确认收到 | **48 小时内**               | Maintainer 确认收到报告，并指派负责人                    |
+| 初步评估 | 7 天内                      | 评估漏洞等级（Critical / High / Medium / Low）与影响范围 |
+| 修复计划 | 14 天内                     | 与报告者沟通修复方案与发布计划                           |
+| 修复发布 | 90 天内（依据严重程度调整） | Critical / High 优先紧急发布 patch 版本                  |
 
 修复发布后，将在 GitHub Security Advisories 中公开致谢报告者（如同意）。
 
@@ -171,7 +171,7 @@ Garrison 在 CI 与发布流程中内置多层供应链与安全门禁（发布�
 
 - **`cargo deny check`**（`deny.toml`）：安全公告、许可证、禁用依赖与来源校验，CI 每次 PR 执行（`ci.yml` deny 步骤），发布门禁要求 0 failures。
 - **`cargo audit`**：RustSec 安全公告扫描，**本地发布 precheck**（`scripts/release.sh`，要求 0 CRITICAL），不在 CI 中——CI 侧同等漏洞检查由上面的 `cargo-deny` advisory 覆盖（`.cargo/audit.toml` 与 `deny.toml` 的忽略项保持一致）；`deny.toml` 中的忽略项均注明理由（如 RUSTSEC-2023-0071，见下文[已知安全考量](#️-已知安全考量)）。
-- **`cargo vet`**（`supply-chain/`）：供应商依赖人工审核记录——自研库（CodeNexus 系）已建立 `safe-to-deploy` 审核条目，第三方依赖豁免清单渐进收紧；审核记录公开可复核（众包审计背书）。
+- **`cargo vet`**（`supply-chain/`）：供应商依赖人工审核记录——自研库（CodeNexus 系）已建立 `safe-to-deploy` 审核条目；**本仓自身 crate（`garrison` / `garrison-macros`）以豁免条目记录**（cargo-vet 以 workspace 成员为审计根，二者按被审依赖节点计，须各持一条 `safe-to-deploy` 凭据；「被审计者自签审核条目」不构成独立审核）；第三方依赖豁免清单渐进收紧；审核记录公开可复核（众包审计背书）。
 - **SBOM（CycloneDX）**：`security.yml` 全特性面生成 `garrison.cdx.json`（覆盖 optional 依赖），并作为 Release 资产附加（`release.yml`），下游可审计依赖构成。
 - **Artifact Attestations**：Release 资产生成 SLSA 构建溯源（`actions/attest-build-provenance`），可用 `gh attestation verify` 验证产物来自本仓库 CI。
 

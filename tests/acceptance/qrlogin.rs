@@ -340,7 +340,7 @@ async fn dual_device_full_flow_confirmed_and_exchange() {
     let app_token = app_login(&app, &external_url, "app-user").await;
 
     // ④ App 端扫码：持 Bearer 提交扫到的二维码内容，收到一次性确认凭据
-    //    与待登录端脱敏摘要（create 的 Chrome UA → 设备标签 Chrome）
+    // 与待登录端脱敏摘要（create 的 Chrome UA → 设备标签 Chrome）
     let (status, scan_body) = post_json(
         &app,
         &format!("{}/qrlogin/scan", external_url),

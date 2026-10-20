@@ -361,7 +361,6 @@ mod tests {
 
         let token = logic.login("1001", &LoginParams::default()).await.unwrap();
 
-        // 持有权限：logic.check_permission → Ok(())，manager.check_permission → Ok(true)
         let logic_held = with_token(token.clone(), async {
             with_default_tenant(async { logic.check_permission("user:read").await }).await
         })

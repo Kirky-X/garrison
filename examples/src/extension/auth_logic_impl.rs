@@ -199,7 +199,6 @@ pub async fn run() -> GarrisonResult<()> {
         after_logout
     );
 
-    // logout 幂等：再次 logout 不存在的 token 返回 Ok(())
     auth.logout(&token).await?;
     println!("[9] 再次 logout 同一 token：Ok(())（幂等语义）✓\n");
 

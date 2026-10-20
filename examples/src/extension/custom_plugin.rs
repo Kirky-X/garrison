@@ -140,7 +140,6 @@ pub fn run() -> GarrisonResult<()> {
     assert!(LOGOUT_CALLS.load(Ordering::SeqCst) >= 1);
     println!();
 
-    // 5. 验证各钩子总调用次数
     println!("[5] AuditPlugin 钩子调用统计:");
     println!(
         "    on_login            = {}",

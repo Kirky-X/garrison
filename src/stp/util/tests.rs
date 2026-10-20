@@ -477,7 +477,6 @@ mod suite {
 
         reset_backend_for_test();
 
-        // 启动 mock server
         let server = MockServer::start().await;
 
         // 设置 mock：期望收到 POST /api/v1/auth/check-login + X-API-Key header
@@ -598,7 +597,6 @@ mod suite {
         let cloned = original;
         // Copy 语义：原值仍可用
         assert_eq!(original, cloned);
-        // Clone 等价于 Copy
         assert_eq!(JwtMode::Mixin.clone(), JwtMode::Mixin);
     }
 

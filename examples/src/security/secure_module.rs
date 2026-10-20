@@ -74,7 +74,6 @@ pub async fn run() -> GarrisonResult<()> {
         println!();
     }
 
-    // 3. 输入消毒
     #[cfg(feature = "secure-sanitize")]
     {
         println!("[3] sanitize_input 输入消毒:");

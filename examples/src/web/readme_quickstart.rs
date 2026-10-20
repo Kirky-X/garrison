@@ -56,7 +56,6 @@ async fn readme_flow() -> GarrisonResult<()> {
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface);
 
-    // 3. 初始化全局管理器
     GarrisonManager::builder()
         .dao(dao)
         .config(config)

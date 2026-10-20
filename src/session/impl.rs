@@ -900,7 +900,7 @@ impl GarrisonSession {
         self.set(token, "temp_credential_key", temp_key).await
     }
 
-    /// 查询 token 关联的临时凭证 key（）。
+    /// 查询 token 关联的临时凭证 key。
     pub async fn get_temp_credential(&self, token: &str) -> GarrisonResult<Option<String>> {
         self.get(token, "temp_credential_key").await
     }

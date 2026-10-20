@@ -582,7 +582,6 @@ impl GarrisonAuthServer {
     /// SIGTERM / SIGINT 触发后停止接收新连接并 drain 在途请求；TLS 路径经
     /// `axum_server::Handle::graceful_shutdown`（30s 上限）等效实现。
     pub async fn listen(self) -> GarrisonResult<()> {
-        // 启动前校验配置合法性
         self.config.validate().map_err(GarrisonError::Config)?;
 
         // 启动期维护：清理引用已删 client 的孤儿 consent 行（fail-open，失败仅告警，见函数文档）

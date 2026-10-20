@@ -926,7 +926,7 @@ async fn mock_find_by_user_and_type_isolated_per_user() {
         .await
         .unwrap();
 
-    // bob 的 password 查询只返回 bob 的凭证（不泄露 alice 的）
+    // bob 的 password 查询只返回 bob 的凭证（不泄露 alice）
     let bob_passwords = repo.find_by_user_and_type("bob", "password").await.unwrap();
     assert_eq!(
         bob_passwords.len(),

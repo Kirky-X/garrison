@@ -476,7 +476,7 @@ pub struct GarrisonConfig {
     /// 是否共享 Token（对应 `isShare`；默认 false，true = 同一账号多登录复用同一 Token，要求 `is_concurrent=true` 否则 `validate()` 报错）。
     pub is_share: bool,
 
-    /// 最大登录数量（对应 `maxLoginCount`；默认 0 = 不限制，>0 = 登录后活跃 Token 超限时按 `last_active_time` 升序踢出最早的）。
+    /// 最大登录数量（对应 `maxLoginCount`；默认 0 = 不限制，>0 = 登录后活跃 Token 超限时按 `last_active_time` 升序踢出最早）。
     pub max_login_count: u32,
 
     /// 设备绑定模式（默认 "disabled"）：`strict` 新设备登录触发二次认证（`StrictBinding`），`loose` 仅告警不阻断（`LooseBinding`）；字段非 feature-gated，策略注入由 `GarrisonManager::builder()` 按值决定。

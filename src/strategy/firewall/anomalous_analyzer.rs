@@ -1196,7 +1196,6 @@ mod tests {
         };
         let analyzer = AnomalousLoginAnalyzer::new(dao, config, rx, None);
         let handle = analyzer.start();
-        // 发送 shutdown 信号
         let _ = tx.send(true);
         // 等待任务结束（给 1 秒超时）
         tokio::time::timeout(Duration::from_secs(1), handle)
