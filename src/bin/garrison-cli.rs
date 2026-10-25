@@ -18,9 +18,12 @@
 //! # 用法
 //!
 //! ```sh
-//! cargo build --bins --features cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption
+//! cargo build --bins --features cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption,dao-key-index
 //! ./target/debug/garrison-cli --help
 //! ```
+//! 缺 `dao-key-index` 时 `[[bin]] required-features` 不满足，Cargo 跳过本 bin
+//! （`./target/debug/garrison-cli` 不存在），且 `change-key` / `check-key` /
+//! `vacuum-kv --sweep-legacy-session-keys` 依赖的 `keys()` 只有该 feature 编译。
 use clap::{Parser, Subcommand};
 use garrison::error::{GarrisonError, GarrisonResult};
 use garrison::i18n::translate_detail;

@@ -12,8 +12,11 @@
 //! 运行（scripts/e2e_matrix.sh S3 自动执行）：
 //! ```bash
 //! cargo test --test acceptance_db_mysql \
-//! --no-default-features --features db-mysql -- --test-threads=1
+//! --no-default-features --features "db-mysql,testing" -- --test-threads=1
 //! ```
+//! `testing` 必须带上：environment.rs 的 MySQL 场景引用 `garrison::dao::testing`，
+//! 该模块 `#[cfg(any(test, feature = "testing"))]` 门控，集成测试编译 lib 时不处于
+//! `cfg(test)`，缺 feature 直接 unresolved-path 编译失败。
 
 #[cfg(feature = "db-mysql")]
 #[path = "acceptance/environment.rs"]

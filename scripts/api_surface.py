@@ -130,8 +130,8 @@ def _render_type(node: Any) -> str:
         bounds = node["impl_trait"] or []
         return "impl " + " + ".join(_render_trait(bound) for bound in bounds)
     if "function_pointer" in node:
-        sig = (node["function_pointer"] or {}).get("sig") or {}
-        return _render_fn_body(sig)
+        pointer = node["function_pointer"] or {}
+        return _render_fn_body(pointer.get("sig"), pointer.get("header"))
     if "qualified_path" in node:
         qualified = node["qualified_path"] or {}
         return (
@@ -156,11 +156,26 @@ def _render_generics(generics: Any) -> str:
         name = str(param.get("name", "?"))
         kind = param.get("kind") or {}
         if "lifetime" in kind:
-            names.append(f"'{name}")
+            lifetime = kind["lifetime"] or {}
+            outlives = ", ".join(str(x) for x in lifetime.get("outlives") or [])
+            name = name.lstrip("'")
+            names.append(f"'{name}: {outlives}" if outlives else f"'{name}")
         elif "type" in kind:
-            bounds = (kind["type"] or {}).get("bounds") or []
+            type_kind = kind["type"] or {}
+            bounds = type_kind.get("bounds") or []
             rendered = ", ".join(_render_trait(bound) for bound in bounds)
-            names.append(f"{name}: {rendered}" if rendered else name)
+            text = f"{name}: {rendered}" if rendered else name
+            default = type_kind.get("default")
+            if default is not None:
+                text += f" = {_render_type(default)}"
+            names.append(text)
+        elif "const" in kind:
+            const_kind = kind["const"] or {}
+            text = f"const {name}: {_render_type(const_kind.get('type'))}"
+            default = const_kind.get("default")
+            if default is not None:
+                text += f" = {json.dumps(default, sort_keys=True, ensure_ascii=False, default=str)}"
+            names.append(text)
         else:
             names.append(name)
     text = "<" + ", ".join(names) + ">" if names else ""
@@ -172,28 +187,35 @@ def _render_generics(generics: Any) -> str:
 
 
 def _render_where_predicate(predicate: Any) -> str:
-    """渲染 where 约束（bounded / lifetime / eq 三类）。"""
+    """渲染 where 约束（bound / lifetime / eq 三类）。
+
+    键名是 `bound_predicate` / `lifetime_predicate` / `eq_predicate`，直接
+    挂在谓词对象上（没有 predicate_type 包裹层）；键名写错会让所有 where
+    子句静默塌缩成 "?"，约束变更在指纹上不可见。
+    """
     if not isinstance(predicate, dict):
         return "?"
-    inner = predicate.get("predicate_type")
-    if not isinstance(inner, dict):
-        return "?"
-    if "bounded" in inner:
-        bounded = inner["bounded"] or {}
-        trait = bounded.get("trait") or {}
-        return f"{trait.get('path', '?')}: {_render_type(bounded.get('ty'))}"
-    if "lifetime" in inner:
-        lifetime = inner["lifetime"] or {}
-        outlives = lifetime.get("outlives") or {}
-        return f"'{outlives.get('name', '?')}: {_render_trait(outlives.get('bound'))}"
-    if "eq" in inner:
-        eq = inner["eq"] or {}
+    if "bound_predicate" in predicate:
+        bound = predicate["bound_predicate"] or {}
+        bounds = ", ".join(_render_trait(b) for b in bound.get("bounds") or [])
+        return f"{_render_type(bound.get('type'))}: {bounds}"
+    if "lifetime_predicate" in predicate:
+        lifetime = predicate["lifetime_predicate"] or {}
+        outlives = ", ".join(str(x) for x in lifetime.get("outlives") or [])
+        return f"{lifetime.get('lifetime', '?')}: {outlives}"
+    if "eq_predicate" in predicate:
+        eq = predicate["eq_predicate"] or {}
         return f"{_render_type(eq.get('lhs'))} = {_render_type(eq.get('rhs'))}"
     return "?"
 
 
-def _render_fn_body(sig: Any) -> str:
-    """渲染函数签名主体（参数 + 返回类型 + async/const/unsafe 修饰）。"""
+def _render_fn_body(sig: Any, header: Any = None) -> str:
+    """渲染函数签名主体（参数 + 返回类型 + async/const/unsafe/ABI/变参修饰）。
+
+    rustdoc JSON 中 `header` 是 function/function_pointer 节点里与 `sig`
+    平级的兄弟字段（sig 内只有 inputs/is_c_variadic/output）——必须由
+    调用方显式传入，缺失时 async/const/unsafe/ABI 变更在指纹上不可见。
+    """
     if not isinstance(sig, dict):
         return "fn()"
     inputs = sig.get("inputs") or []
@@ -203,15 +225,24 @@ def _render_fn_body(sig: Any) -> str:
             parts.append(f"{entry[0]}: {_render_type(entry[1])}")
         else:
             parts.append(_render_type(entry))
-    header = sig.get("header") or {}
-    prefix = "fn"
+    if sig.get("is_c_variadic"):
+        parts.append("...")
+    if not isinstance(header, dict):
+        header = {}
+    prefix = ""
     if header.get("is_unsafe"):
-        prefix = "unsafe " + prefix
+        prefix += "unsafe "
     if header.get("is_const"):
-        prefix = "const " + prefix
+        prefix += "const "
     if header.get("is_async"):
-        prefix = "async " + prefix
-    text = f"{prefix}({', '.join(parts)})"
+        prefix += "async "
+    abi = header.get("abi")
+    if isinstance(abi, str):
+        if abi != "Rust":
+            prefix += f'extern "{abi}" '
+    elif isinstance(abi, dict) and abi:
+        prefix += f'extern "{next(iter(abi))}" '
+    text = f"{prefix}fn({', '.join(parts)})"
     output = sig.get("output")
     if output is not None:
         text += " -> " + _render_type(output)
@@ -286,9 +317,12 @@ def _render_inherent_members(index: dict[str, Any], impl_ids: Any) -> str:
             member_inner = member.get("inner") or {}
             name = str(member.get("name", "?"))
             if "function" in member_inner:
-                body = member_inner["function"].get("sig") or {}
-                generics = _render_generics(member_inner["function"].get("generics"))
-                members.append(f"{name} {_render_fn_body(body)}{generics}")
+                function = member_inner["function"]
+                body = function.get("sig") or {}
+                generics = _render_generics(function.get("generics"))
+                members.append(
+                    f"{name} {_render_fn_body(body, function.get('header'))}{generics}"
+                )
             elif "constant" in member_inner:
                 constant = member_inner["constant"] or {}
                 members.append(f"const {name}: {_render_type(constant.get('type'))}")
@@ -308,9 +342,12 @@ def _render_trait_items(index: dict[str, Any], item_ids: Any) -> str:
         member_inner = member.get("inner") or {}
         name = str(member.get("name", "?"))
         if "function" in member_inner:
-            body = member_inner["function"].get("sig") or {}
-            generics = _render_generics(member_inner["function"].get("generics"))
-            members.append(f"{name} {_render_fn_body(body)}{generics}")
+            function = member_inner["function"]
+            body = function.get("sig") or {}
+            generics = _render_generics(function.get("generics"))
+            members.append(
+                f"{name} {_render_fn_body(body, function.get('header'))}{generics}"
+            )
         elif "type_alias" in member_inner:
             alias = member_inner["type_alias"] or {}
             members.append(f"type {name} = {_render_type(alias.get('type'))}")
@@ -329,7 +366,7 @@ def signature_of(index: dict[str, Any], item: dict[str, Any]) -> str:
         function = inner["function"]
         body = function.get("sig") or {}
         generics = _render_generics(function.get("generics"))
-        return f"{_render_fn_body(body)}{generics}"
+        return f"{_render_fn_body(body, function.get('header'))}{generics}"
     if "struct" in inner:
         struct = inner["struct"]
         kind_body = struct.get("kind") or {}
@@ -355,13 +392,25 @@ def signature_of(index: dict[str, Any], item: dict[str, Any]) -> str:
         union = inner["union"]
         generics = _render_generics(union.get("generics"))
         fields = _render_fields(index, union.get("fields"))
-        return f"union{generics} {{ {fields} }}"
+        members = _render_inherent_members(index, union.get("impls"))
+        body_text = f"union{generics} {{ {fields} }}"
+        return f"{body_text}; {members}" if members else body_text
     if "trait" in inner:
         trait = inner["trait"]
+        # is_unsafe/is_auto/is_dyn_compatible 都是破坏性变更维度：
+        # trait 加 unsafe / 转 auto / 变 dyn 不兼容，实现方与调用方全部受影响。
+        prefix = ""
+        if trait.get("is_unsafe"):
+            prefix += "unsafe "
+        if trait.get("is_auto"):
+            prefix += "auto "
         generics = _render_generics(trait.get("generics"))
         bounds = ", ".join(_render_trait(bound) for bound in trait.get("bounds") or [])
         members = _render_trait_items(index, trait.get("items"))
-        return f"trait{generics}: {bounds} {{ {members} }}"
+        body_text = f"{prefix}trait{generics}: {bounds} {{ {members} }}"
+        if not trait.get("is_dyn_compatible", True):
+            body_text += " !dyn_compatible"
+        return body_text
     if "type_alias" in inner:
         alias = inner["type_alias"]
         generics = _render_generics(alias.get("generics"))

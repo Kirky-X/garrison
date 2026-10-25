@@ -15,12 +15,18 @@ SKIP_BENCH=false
 SKIP_E2E_HTTP=false
 while [ $# -gt 0 ]; do
     case "$1" in
-        --full-matrix) FULL_MATRIX=true ;;
-        --keep-env) KEEP_ENV=true ;;
-        --skip-bench) SKIP_BENCH=true ;;
-        --skip-e2e-http) SKIP_E2E_HTTP=true ;;
-        -h|--help) sed -n '2,60p' "${BASH_SOURCE[0]}"; exit 0 ;;
-        *) echo "未知参数: $1（--help 查看用法）" >&2; exit 2 ;;
+    --full-matrix) FULL_MATRIX=true ;;
+    --keep-env) KEEP_ENV=true ;;
+    --skip-bench) SKIP_BENCH=true ;;
+    --skip-e2e-http) SKIP_E2E_HTTP=true ;;
+    -h | --help)
+        sed -n '2,60p' "${BASH_SOURCE[0]}"
+        exit 0
+        ;;
+    *)
+        echo "未知参数: $1（--help 查看用法）" >&2
+        exit 2
+        ;;
     esac
     shift
 done
@@ -39,7 +45,7 @@ export GARRISON_TEST_SQLITE_MEMORY=1
 # 按常见安装布局推导；未命中不猜，让缺失 protoc 的报错显性暴露。
 if [ -z "${PROTOC_INCLUDE:-}" ]; then
     _protoc_dir=""
-    if command -v protoc > /dev/null 2>&1; then
+    if command -v protoc >/dev/null 2>&1; then
         _protoc_dir="$(cd "$(dirname "$(command -v protoc)")/.." && pwd)"
     fi
     for _cand in "${_protoc_dir}/include" "${HOME}/.local/share/protoc/include" "/usr/include"; do
@@ -59,14 +65,29 @@ FAILED_STAGES=()
 SKIPPED_STAGES=()
 PASSED_STAGES=()
 
-log_stage() { echo ""; echo "=================================================================="; echo "=== [STAGE $1] $2"; echo "=================================================================="; }
+log_stage() {
+    echo ""
+    echo "=================================================================="
+    echo "=== [STAGE $1] $2"
+    echo "=================================================================="
+}
 
-record_pass() { PASSED_STAGES+=("$1"); echo ">>> [$1] PASS"; }
-record_fail() { FAILED_STAGES+=("$1"); echo ">>> [$1] FAIL（日志: ${LOG_DIR}/$1.log）"; }
-record_skip() { SKIPPED_STAGES+=("$1"); echo ">>> [$1] SKIP — $2"; }
+record_pass() {
+    PASSED_STAGES+=("$1")
+    echo ">>> [$1] PASS"
+}
+record_fail() {
+    FAILED_STAGES+=("$1")
+    echo ">>> [$1] FAIL（日志: ${LOG_DIR}/$1.log）"
+}
+record_skip() {
+    SKIPPED_STAGES+=("$1")
+    echo ">>> [$1] SKIP — $2"
+}
 
 run_stage() {
-    local id="$1" name="$2"; shift 2
+    local id="$1" name="$2"
+    shift 2
     log_stage "${id}" "${name}"
     if "$@" >"${LOG_DIR}/${id}.log" 2>&1; then
         record_pass "${id}"
@@ -81,13 +102,15 @@ run_stage() {
 # S0 环境自举
 log_stage "S0" "环境自举（docker compose 中间件 + Keycloak realm 供给）"
 ENV_READY=false
-if ! docker info > /dev/null 2>&1; then
+if ! docker info >/dev/null 2>&1; then
     record_skip "S0" "docker daemon 不可达，服务依赖阶段将按探测结果 [SKIP]"
 else
     if ${COMPOSE} up -d --wait >"${LOG_DIR}/S0.log" 2>&1; then
         # 探活（2s 超时 ×2 轮重试，compose --wait 已含健康检查，此处为双保险）
-        probe() { (echo > "/dev/tcp/$1/$2") > /dev/null 2>&1; }
-        REDIS_OK=false; PG_OK=false; KC_OK=false
+        probe() { (echo >"/dev/tcp/$1/$2") >/dev/null 2>&1; }
+        REDIS_OK=false
+        PG_OK=false
+        KC_OK=false
         for i in 1 2; do
             probe 127.0.0.1 16379 && REDIS_OK=true
             probe 127.0.0.1 15432 && PG_OK=true
@@ -96,8 +119,8 @@ else
             sleep 2
         done
         if ${REDIS_OK} && ${PG_OK} && ${KC_OK}; then
-                # Keycloak realm 供给（幂等；协议验收打真实 IdP）
-            if python3 scripts/keycloak_provision.py                 --base-url http://127.0.0.1:18090 >>"${LOG_DIR}/S0.log" 2>&1; then
+            # Keycloak realm 供给（幂等；协议验收打真实 IdP）
+            if python3 scripts/keycloak_provision.py --base-url http://127.0.0.1:18090 >>"${LOG_DIR}/S0.log" 2>&1; then
                 # 地址覆盖：验收测试经 GARRISON_TEST_* 读取（默认值不变，向后兼容）
                 export GARRISON_TEST_REDIS_ADDR="127.0.0.1:16379"
                 export GARRISON_TEST_REDIS_URL="redis://127.0.0.1:16379"
@@ -151,10 +174,11 @@ if [ "${ENV_READY}" = "true" ]; then
     run_stage "S3" "integration + acceptance tests (full, real Redis/Postgres/MySQL)" \
         bash -c 'cargo test --features "full" --tests --no-fail-fast --locked'
     # db 后端专用验收：dbnexus 禁止 embedded(sqlite)×server-side 共存，full 面下 ACC-ENV-005..008 被 cfg 剥离，需按单 db 特性面单独执行
+    # testing 必带：conformance 场景引用 dao::testing，该模块 cfg(any(test, feature="testing")) 门控
     run_stage "S3pg" "acceptance_db_postgres (real PostgreSQL via compose :15432)" \
-        bash -c 'GARRISON_TEST_POSTGRES_ADDR=127.0.0.1:15432 GARRISON_TEST_POSTGRES_URL=postgres://garrison:garrison@localhost:15432/garrison_test cargo test --test acceptance_db_postgres --no-default-features --features "db-postgres" --locked -- --test-threads=1'
+        bash -c 'GARRISON_TEST_POSTGRES_ADDR=127.0.0.1:15432 GARRISON_TEST_POSTGRES_URL=postgres://garrison:garrison@localhost:15432/garrison_test cargo test --test acceptance_db_postgres --no-default-features --features "db-postgres,testing" --locked -- --test-threads=1'
     run_stage "S3my" "acceptance_db_mysql (MySQL via testcontainers)" \
-        bash -c 'cargo test --test acceptance_db_mysql --no-default-features --features "db-mysql" --locked -- --test-threads=1'
+        bash -c 'cargo test --test acceptance_db_mysql --no-default-features --features "db-mysql,testing" --locked -- --test-threads=1'
     # keycloak-oidc 面（full 未含 keycloak-oidc）：真实 Keycloak OIDC RP 完整流程
     run_stage "S3kc" "acceptance keycloak-oidc face (real Keycloak OIDC RP)" \
         bash -c 'GARRISON_TEST_KEYCLOAK_URL=http://127.0.0.1:18090 cargo test --test acceptance --features "full,keycloak-oidc,testing" --locked keycloak_oidc_rp_full_flow -- --test-threads=1'
@@ -178,9 +202,9 @@ matrix_combo() {
     local feat_args=()
     [ -n "${features}" ] && feat_args=(--features "${features}")
     if cargo check --no-default-features "${feat_args[@]}" --locked \
-        >>"${LOG_DIR}/S5.log" 2>&1 \
-        && cargo test --lib --no-run --no-default-features "${feat_args[@]}" --locked \
-        >>"${LOG_DIR}/S5.log" 2>&1; then
+        >>"${LOG_DIR}/S5.log" 2>&1 &&
+        cargo test --lib --no-run --no-default-features "${feat_args[@]}" --locked \
+            >>"${LOG_DIR}/S5.log" 2>&1; then
         echo "  ✅ ${label} [${features}]"
     else
         echo "  ❌ ${label} [${features}]（详情: ${LOG_DIR}/S5.log）"
@@ -235,10 +259,10 @@ if [ "${FULL_MATRIX}" = "true" ]; then
     if run_stage "S5x" "cargo hack check --each-feature" \
         bash -c 'cargo hack check --each-feature --no-dev-deps --keep-going --exclude-all-features'; then
         # 单 feature 测试编译兜底（排除聚合特性，与 feature-matrix.yml 同清单逻辑；此处未改写 manifest，--locked 合法）
-        FEATURES=$(cargo metadata --no-deps --format-version 1 --locked \
-            | python3 -c "import json,sys; md=json.load(sys.stdin); [print(f) for p in md['packages'] if p['name']=='garrison' for f in sorted(p['features']) if f not in ('default','full','production','development')]")
+        FEATURES=$(cargo metadata --no-deps --format-version 1 --locked |
+            python3 -c "import json,sys; md=json.load(sys.stdin); [print(f) for p in md['packages'] if p['name']=='garrison' for f in sorted(p['features']) if f not in ('default','full','production','development')]")
         LOOP_OK=true
-        : > "${LOG_DIR}/S5y.log"
+        : >"${LOG_DIR}/S5y.log"
         for f in ${FEATURES}; do
             if ! cargo test --lib --no-run --no-default-features --features "${f}" --locked \
                 >>"${LOG_DIR}/S5y.log" 2>&1; then
@@ -267,8 +291,8 @@ else
             grep -iB2 -A2 "regressed" "${LOG_DIR}/S6.log" | head -40
             record_fail "S6"
         else
-            grep -E "^(login_flow|token_verify|permission_check|oxcache|convert_placeholders|circuit_execute|change|Benchmarking .*: Collecting)" "${LOG_DIR}/S6.log" \
-                | tail -20 || true
+            grep -E "^(login_flow|token_verify|permission_check|oxcache|convert_placeholders|circuit_execute|change|Benchmarking .*: Collecting)" "${LOG_DIR}/S6.log" |
+                tail -20 || true
             record_pass "S6"
         fi
     else
@@ -298,7 +322,7 @@ fi
 # S8 清理 + 报告
 if [ "${KEEP_ENV}" = "true" ]; then
     record_skip "S8-cleanup" "--keep-env：保留 garrison-e2e compose 环境（手动 down：${COMPOSE} down -v --remove-orphans）"
-elif command -v docker > /dev/null 2>&1 && docker info > /dev/null 2>&1; then
+elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     log_stage "S8" "清理 compose 环境（容器 + 卷）"
     if ${COMPOSE} down -v --remove-orphans --timeout 10 >"${LOG_DIR}/S8-cleanup.log" 2>&1; then
         echo "garrison-e2e 容器与卷已清理"
@@ -330,7 +354,7 @@ REPORT="${REPO_ROOT}/logs/e2e_matrix_report.md"
     for s in "${FAILED_STAGES[@]:-}"; do [ -n "${s}" ] && echo "| ${s} | ❌ FAIL |"; done
     echo ""
     echo "各阶段完整日志：logs/e2e_matrix/<stage>.log"
-} > "${REPORT}"
+} >"${REPORT}"
 
 echo ""
 echo "=================================================================="

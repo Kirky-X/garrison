@@ -30,7 +30,7 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${ROOT_DIR}"
 
 usage() {
-  cat <<'USAGE'
+    cat <<'USAGE'
 用法：bash scripts/perf_compare.sh [选项]
 
 选项：
@@ -57,119 +57,133 @@ OUT="${OUT:-logs/perf-compare.md}"
 BASELINE_MD="${BASELINE_MD:-}"
 
 while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --help|-h)
-      usage
-      exit 0
-      ;;
+    case "$1" in
+    --help | -h)
+        usage
+        exit 0
+        ;;
     --baseline)
-      [[ $# -ge 2 ]] || { echo "ERROR: --baseline 缺少参数" >&2; exit 2; }
-      BASELINE="$2"
-      shift 2
-      ;;
+        [[ $# -ge 2 ]] || {
+            echo "ERROR: --baseline 缺少参数" >&2
+            exit 2
+        }
+        BASELINE="$2"
+        shift 2
+        ;;
     --threshold)
-      [[ $# -ge 2 ]] || { echo "ERROR: --threshold 缺少参数" >&2; exit 2; }
-      THRESHOLD="$2"
-      shift 2
-      ;;
+        [[ $# -ge 2 ]] || {
+            echo "ERROR: --threshold 缺少参数" >&2
+            exit 2
+        }
+        THRESHOLD="$2"
+        shift 2
+        ;;
     --baseline-md)
-      [[ $# -ge 2 ]] || { echo "ERROR: --baseline-md 缺少参数" >&2; exit 2; }
-      BASELINE_MD="$2"
-      shift 2
-      ;;
+        [[ $# -ge 2 ]] || {
+            echo "ERROR: --baseline-md 缺少参数" >&2
+            exit 2
+        }
+        BASELINE_MD="$2"
+        shift 2
+        ;;
     *)
-      echo "ERROR: 未知参数: $1（--help 查看用法）" >&2
-      exit 2
-      ;;
-  esac
+        echo "ERROR: 未知参数: $1（--help 查看用法）" >&2
+        exit 2
+        ;;
+    esac
 done
 
 if [[ ! "${THRESHOLD}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-  echo "ERROR: THRESHOLD 必须是数字: ${THRESHOLD}" >&2
-  exit 2
+    echo "ERROR: THRESHOLD 必须是数字: ${THRESHOLD}" >&2
+    exit 2
 fi
 
 # 本地 criterion 基线是否存在（任意深度的 <BASELINE>/estimates.json）
 local_baseline_count=0
 if [[ -d target/criterion ]]; then
-  local_baseline_count="$(find target/criterion -mindepth 2 -type f \
-    -path "*/${BASELINE}/estimates.json" 2>/dev/null | wc -l | tr -d ' ')"
+    local_baseline_count="$(find target/criterion -mindepth 2 -type f \
+        -path "*/${BASELINE}/estimates.json" 2>/dev/null | wc -l | tr -d ' ')"
 fi
 
 # 基线来源判定：显式 md > 本地 criterion 基线 > 自动匹配归档 md
 if [[ -n "${BASELINE_MD}" ]]; then
-  if [[ ! -f "${BASELINE_MD}" ]]; then
-    echo "ERROR: 指定的基线 markdown 不存在: ${BASELINE_MD}" >&2
-    exit 2
-  fi
-  BASELINE_SOURCE="md"
+    if [[ ! -f "${BASELINE_MD}" ]]; then
+        echo "ERROR: 指定的基线 markdown 不存在: ${BASELINE_MD}" >&2
+        exit 2
+    fi
+    BASELINE_SOURCE="md"
 elif [[ "${local_baseline_count}" -gt 0 ]]; then
-  BASELINE_SOURCE="local"
+    BASELINE_SOURCE="local"
 else
-  BASELINE_SOURCE="md-auto"
+    BASELINE_SOURCE="md-auto"
 fi
 
 if [[ "${BASELINE_SOURCE}" == "md" ]]; then
-  BASELINE_MD_PATH="${BASELINE_MD}"
+    BASELINE_MD_PATH="${BASELINE_MD}"
 elif [[ "${BASELINE_SOURCE}" == "md-auto" ]]; then
-  # 采集前先定位归档基线：找不到就在跑 benchmark 之前显性失败（退出码 2），
-  # 不让「无基线」拖成一次几分钟的无效采集
-  BASELINE_MD_PATH=""
-  BASELINE_MARKER="- 基线名称：\`${BASELINE}\`"
-  for candidate in docs/benchmarks/*.md; do
-    [[ -f "${candidate}" ]] || continue
-    if grep -qF -- "${BASELINE_MARKER}" "${candidate}"; then
-      BASELINE_MD_PATH="${candidate}"
-      break
+    # 采集前先定位归档基线：找不到就在跑 benchmark 之前显性失败（退出码 2），
+    # 不让「无基线」拖成一次几分钟的无效采集
+    BASELINE_MD_PATH=""
+    BASELINE_MARKER="- 基线名称：\`${BASELINE}\`"
+    for candidate in docs/benchmarks/*.md; do
+        [[ -f "${candidate}" ]] || continue
+        if grep -qF -- "${BASELINE_MARKER}" "${candidate}"; then
+            BASELINE_MD_PATH="${candidate}"
+            break
+        fi
+    done
+    if [[ -z "${BASELINE_MD_PATH}" ]]; then
+        echo "ERROR: docs/benchmarks/ 中找不到基线名称为 \`${BASELINE}\` 的归档基线；" \
+            "可用 BASELINE_MD=<path> 显式指定" >&2
+        exit 2
     fi
-  done
-  if [[ -z "${BASELINE_MD_PATH}" ]]; then
-    echo "ERROR: docs/benchmarks/ 中找不到基线名称为 \`${BASELINE}\` 的归档基线；" \
-      "可用 BASELINE_MD=<path> 显式指定" >&2
-    exit 2
-  fi
 else
-  BASELINE_MD_PATH=""
+    BASELINE_MD_PATH=""
 fi
 
 mkdir -p logs
 
 {
-  echo "# Garrison 性能对比"
-  echo
-  echo "- 采集时间（UTC）：$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-  echo "- 基线名称：\`${BASELINE}\`"
-  echo "- 基线来源：${BASELINE_SOURCE}"
-  echo "- 回归阈值：${THRESHOLD}%"
-  echo "- git：\`$(git rev-parse HEAD 2>/dev/null || echo unknown)\`"
-  echo "- rustc：\`$(rustc -V 2>/dev/null | head -n1 || echo unknown)\`"
-  echo
-  echo "## criterion 输出"
-  echo
-  echo '```text'
-} > "${OUT}"
+    echo "# Garrison 性能对比"
+    echo
+    echo "- 采集时间（UTC）：$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    echo "- 基线名称：\`${BASELINE}\`"
+    echo "- 基线来源：${BASELINE_SOURCE}"
+    echo "- 回归阈值：${THRESHOLD}%"
+    echo "- git：\`$(git rev-parse HEAD 2>/dev/null || echo unknown)\`"
+    echo "- rustc：\`$(rustc -V 2>/dev/null | head -n1 || echo unknown)\`"
+    echo
+    echo "## criterion 输出"
+    echo
+    echo '```text'
+} >"${OUT}"
 
 set +e
+RUN_STARTED_AT="$(date +%s)"
 if [[ "${BASELINE_SOURCE}" == "local" ]]; then
-  cargo bench --features full --bench garrison_benchmark -- \
-    --baseline "${BASELINE}" 2>&1 | tee -a "${OUT}"
+    cargo bench --features full --bench garrison_benchmark -- \
+        --baseline "${BASELINE}" 2>&1 | tee -a "${OUT}"
 else
-  # 归档基线路径下本地无 criterion 基线可比：只采集当前值，由汇总表做差分
-  cargo bench --features full --bench garrison_benchmark -- 2>&1 | tee -a "${OUT}"
+    # 归档基线路径下本地无 criterion 基线可比：只采集当前值，由汇总表做差分。
+    # 采集前清掉上次运行残留的 new/：criterion 的 new/ 在每个基准目录
+    # （target/criterion/<group>/<id>/new/）下，残留会被 load_current 当成
+    # 本次结果——被改名/跳过/中断的基准照样进对比表，门禁假绿。
+    find target/criterion -type d -name new -prune -exec rm -rf {} + 2>/dev/null || true
+    cargo bench --features full --bench garrison_benchmark -- 2>&1 | tee -a "${OUT}"
 fi
 BENCH_STATUS=${PIPESTATUS[0]}
 set -e
 
 {
-  echo '```'
-  echo
-  echo "## 汇总"
-  echo
-} >> "${OUT}"
+    echo '```'
+    echo
+    echo "## 汇总"
+    echo
+} >>"${OUT}"
 
 if [[ "${BENCH_STATUS}" -ne 0 ]]; then
-  echo "criterion 采集失败（退出码 ${BENCH_STATUS}），无法对比。" | tee -a "${OUT}" >&2
-  exit 2
+    echo "criterion 采集失败（退出码 ${BENCH_STATUS}），无法对比。" | tee -a "${OUT}" >&2
+    exit 2
 fi
 
 set +e
@@ -214,6 +228,7 @@ def parse_md_baseline(path: pathlib.Path) -> dict[str, float]:
         raise ValueError(f"归档基线的「## criterion 输出」小节缺少 ```text 代码块: {path}")
 
     rows: dict[str, float] = {}
+    skipped: list[str] = []
     previous: str | None = None
     for line in fence.group(1).splitlines():
         stripped = line.strip()
@@ -232,18 +247,26 @@ def parse_md_baseline(path: pathlib.Path) -> dict[str, float]:
             continue
         parts = match.group(1).split()
         if len(parts) < 6:
+            skipped.append(stripped)
             continue
         try:
             mean = float(parts[2])
         except ValueError:
+            skipped.append(stripped)
             continue
         unit = parts[3]
         factor = UNIT_TO_MS.get(unit)
         if factor is None:
+            skipped.append(stripped)
             continue
         rows[name] = mean * factor
     if not rows:
         raise ValueError(f"归档基线未解析出任何基准条目: {path}")
+    if skipped:
+        raise ValueError(
+            f"归档基线有 {len(skipped)} 行无法解析（格式变更会静默缩小可比面）: {path}；"
+            f"首行: {skipped[0]!r}"
+        )
     return rows
 
 
@@ -273,6 +296,24 @@ def load_current() -> dict[str, float]:
     return rows
 
 
+def load_current_md_compatible() -> dict[str, float]:
+    """当前采集结果（median 口径）：与归档 markdown 基线同一统计量。
+
+    归档基线 parse 的是 criterion 终端输出 time: [lo typical hi] 的中间值
+    （typical = median）；当前侧若读 mean，则 median 基线 vs mean 当前
+    两个统计量混比，噪声大的基准会假报/漏报回归。md 口径统一取 median。
+    """
+    rows: dict[str, float] = {}
+    for path in root.rglob("new/estimates.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            median = float(data["median"]["point_estimate"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        rows[str(path.parent.parent.relative_to(root))] = median / 1e6
+    return rows
+
+
 def discover_md_baseline(name: str) -> pathlib.Path:
     """在 docs/benchmarks/ 中找「基线名称」与 name 匹配的归档 markdown。"""
     candidates = sorted(pathlib.Path("docs/benchmarks").glob("*.md"))
@@ -291,10 +332,11 @@ def discover_md_baseline(name: str) -> pathlib.Path:
 try:
     if source == "local":
         base_rows = load_local_baseline()
+        current_rows = load_current()
     else:
         md = pathlib.Path(md_path) if md_path else discover_md_baseline(baseline)
         base_rows = parse_md_baseline(md)
-    current_rows = load_current()
+        current_rows = load_current_md_compatible()
 except ValueError as error:
     print(f"基线解析失败：{error}")
     raise SystemExit(2)
@@ -332,6 +374,8 @@ added = sorted(set(current_rows) - set(base_rows))
 if missing:
     print()
     print(f"基线中有但本次未采集到（基准被删除或改名）：{', '.join(f'`{n}`' for n in missing)}")
+    print("判定：可比面不完整（missing > 0），按失败处理——部分基线未验证不能判绿。")
+    raise SystemExit(2)
 if added:
     print()
     print(f"本次新增且基线中无（无基线可比，不计入回归判定）：{', '.join(f'`{n}`' for n in added)}")

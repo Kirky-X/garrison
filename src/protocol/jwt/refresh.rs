@@ -2386,30 +2386,64 @@ mod db_sqlite_tests {
         results
     }
 
-    /// 竞态判定：恰一成功，其余必须命中已消费或重用检测。
+    /// 竞态判定：恰一成功，其余必须命中已消费 / 重用拒绝 / 盗用吊销错误；
+    /// 未触发链吊销路径时，胜者新签发的 refresh token 必须仍可验证。
+    ///
+    /// 胜者 token 存活是**路径相关**属性：任一落败方返回 `TokenRevoked`
+    /// ⟺ 走了 revoke_chain（TheftDetected 的 RecentPrev，或任何策略下都
+    /// 恒盗用的 StaleLineage），此时胜者子代是否被吊销取决于其 INSERT 与
+    /// 吊销方 SELECT 子代的交错序——并发下两者皆合法，不断言；全部落败方
+    /// 都是 `InvalidToken`（claim 竞争或 Unauthorised 的 RecentPrev 拒绝，
+    /// 均无吊销路径）时，胜者 token 必须存活，否则即缺陷。只数「恰一成功」
+    /// 不够：吊销路径下表面成功的胜者 token 可能已被吊销，客户端实际被踢。
+    ///
+    /// 失败消息只打印错误码分布，不打印 token（CI 日志不落凭据）。
     #[cfg(feature = "loom-test")]
-    fn assert_race_outcome(
+    async fn assert_race_outcome(
         round: usize,
         racers: usize,
+        rotation: &RefreshTokenRotation,
         results: &[crate::error::GarrisonResult<(String, String)>],
     ) {
         let successes = results.iter().filter(|result| result.is_ok()).count();
+        let error_shapes: Vec<String> = results
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .map(|error| error.code().to_string())
+            .collect();
         assert_eq!(
             successes, 1,
             "第 {round} 轮（{racers} 方）：同一 token 并发轮换必须恰一成功，\
-             实际 {successes} 个成功: {results:?}"
+             实际 {successes} 个成功，错误分布: {error_shapes:?}"
         );
-        for result in results.iter().filter(|result| result.is_err()) {
-            match result {
-                Err(GarrisonError::InvalidToken(message)) => assert!(
+        let mut revocation_ran = false;
+        for error in results.iter().filter_map(|result| result.as_ref().err()) {
+            match error {
+                GarrisonError::InvalidToken(message) => assert!(
                     message.starts_with("jwt-refresh-token-consumed")
                         || message.starts_with("jwt-refresh-reuse-rejected"),
                     "第 {round} 轮：落败方应返回已消费或重用拒绝错误，实际: {message}"
                 ),
-                Err(GarrisonError::TokenRevoked(_)) => {},
+                GarrisonError::TokenRevoked(_) => revocation_ran = true,
                 other => panic!("第 {round} 轮：落败方应为已消费或重用检测错误，实际: {other:?}"),
             }
         }
+        if revocation_ran {
+            return;
+        }
+        let (_, new_refresh) = results
+            .iter()
+            .find_map(|result| result.as_ref().ok())
+            .expect("应恰有一个成功结果");
+        let record = rotation
+            .validate(new_refresh)
+            .await
+            .expect("校验胜者 token 不应失败");
+        assert!(
+            record.is_some(),
+            "第 {round} 轮：落败方未触发链吊销，胜者新签发的 refresh token \
+             却不可验证——「恰一成功」不代表客户端仍持有可用会话"
+        );
     }
 
     /// 竞态验证：同一 refresh token 双线程并发轮换，恰一成功，另一命中
@@ -2440,7 +2474,7 @@ mod db_sqlite_tests {
                 .await
                 .expect("issue 应成功");
             let results = race_rotate(Arc::clone(&rotation), &token, 2).await;
-            assert_race_outcome(round, 2, &results);
+            assert_race_outcome(round, 2, &rotation, &results).await;
         }
     }
 
@@ -2457,12 +2491,41 @@ mod db_sqlite_tests {
             jwt_handler,
             Arc::new(RwLock::new(1)),
         ));
-        let token = rotation
-            .issue("client", Some(1), &[], None, 1, 0, 9999)
-            .await
-            .expect("issue 应成功");
 
-        let results = race_rotate(Arc::clone(&rotation), &token, 4).await;
-        assert_race_outcome(0, 4, &results);
+        // 4 方是争抢最烈的形态（最易落入 CAS 窗口），与 2 方同样多轮采样；
+        // 每轮换新 token，避免上一轮的 reuse 处置污染下一轮判定。
+        for round in 0..RACE_ROUNDS {
+            let token = rotation
+                .issue("client", Some(1), &[], None, 1, 0, 9999)
+                .await
+                .expect("issue 应成功");
+            let results = race_rotate(Arc::clone(&rotation), &token, 4).await;
+            assert_race_outcome(round, 4, &rotation, &results).await;
+        }
+    }
+
+    /// 竞态验证（Unauthorised 策略）：RecentPrev 落败方被拒绝但不吊链，
+    /// 复用 `jwt-refresh-reuse-rejected` 分支——TheftDetected 默认策略下
+    /// 该分支不可达（走 TokenRevoked），此处使其被真实并发路径覆盖；
+    /// 未触发吊销路径（StaleLineage 窗口）时胜者必须保持可用会话。
+    #[cfg(feature = "loom-test")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_rotate_unauthorised_policy_rejected_without_chain_revocation() {
+        let name = format!("garrison_refresh_concurrent_{}_unauth", std::process::id());
+        let pool = setup_shared_db(&name).await;
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
+        let rotation = Arc::new(
+            RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)))
+                .with_reuse_behaviour(RecentReuseBehaviour::Unauthorised),
+        );
+
+        for round in 0..RACE_ROUNDS {
+            let token = rotation
+                .issue("client", Some(1), &[], None, 1, 0, 9999)
+                .await
+                .expect("issue 应成功");
+            let results = race_rotate(Arc::clone(&rotation), &token, 2).await;
+            assert_race_outcome(round, 2, &rotation, &results).await;
+        }
     }
 }
