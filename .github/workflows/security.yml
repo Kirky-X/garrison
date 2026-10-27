@@ -68,7 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1
-      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # cargo-vet
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # cargo-vet
         with:
           tool: cargo-vet
       # 仓库已提交 Cargo.lock（与全仓 --locked 构建一致性约定同步），vet 按锁定的
@@ -87,7 +87,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1
-      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # cargo-cyclonedx
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # cargo-cyclonedx
         with:
           tool: cargo-cyclonedx
       - name: Generate Cargo.lock (library crate, not committed)
@@ -211,7 +211,7 @@ jobs:
     name: Workflow Hygiene (actionlint + zizmor)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: actionlint
         uses: docker://rhysd/actionlint:latest
         with:
