@@ -17,6 +17,8 @@
 
 ## [Unreleased]
 
+## [0.9.0-rc.5] - 2026-11-01
+
 ### Fixed
 
 - **供应链审计条目与已提交 `Cargo.lock` 对齐（CI `cargo vet` 门禁转绿）**：依赖升级（`chore(deps): garrison 升级 base 依赖到最新 rc`）引入 19 个未审计版本，`cargo vet check --locked` 因缺 `safe-to-deploy` 判负，Security 工作流红灯。按既有惯例补齐：`supply-chain/audits.toml` 为 11 个自研 crate（confers / confers-macros / dbnexus / dbnexus-limiter-port / dbnexus-macros / inklog / limiteron / oxcache / sdforge / sdforge-macros / trait-kit）的新版本写入**源码级自审**审计条目——逐 crate 比对上一版本源码差异后落笔（含 YAML 后端 serde_yaml_ng→serde-saphyr 替换、oxcache Redis Lua 命令 5s 响应超时与 EVAL 熔断接入、limiteron 配额路径 5s eval 超时、inklog SSN 掩码扩展、dbnexus 默认关闭的 `retry_busy_writes`、sdforge/trait-kit 测试密钥与 i18n 确定性调整）；`supply-chain/config.toml` 为新进入依赖树的 6 个第三方 crate（annotate-snippets 0.12.16 / arraydeque 0.5.1 / encoding_rs_io 0.1.8 / granit-parser 1.3.0 / nohash-hasher 0.2.0 / serde-saphyr 1.3.0）补 `safe-to-deploy` 豁免并标注 backlog 待审，本仓 `garrison` / `garrison-macros` 豁免版本随 rc.3→rc.4 推进。
