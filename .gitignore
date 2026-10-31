@@ -196,6 +196,7 @@ docs/HUB_PROTOCOL.md
 .claude/
 .agents/
 .mimocode/
+.qoder/
 /coverage_report/
 
 # specmark 工作目录与 skills lock 不入库
