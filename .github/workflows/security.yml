@@ -14,7 +14,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  security-events: write
   contents: read
 
 concurrency:
@@ -37,6 +36,8 @@ jobs:
       image: semgrep/semgrep@sha256:59fbed6127ea7c5dde3ba6a85142733bb20ea9aaa36120c953904f1539aaf66e # 1.168.0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Run semgrep (block on findings)
         run: semgrep scan --config p/rust --config p/secrets --error --metrics=off
 
@@ -51,6 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
@@ -67,7 +69,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # cargo-vet
         with:
           tool: cargo-vet
@@ -86,7 +90,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # cargo-cyclonedx
         with:
           tool: cargo-cyclonedx
@@ -109,6 +115,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@f0d5300ba8908d942c808f4d31c08471d7798ba3 # nightly 分支快照（声明 toolchain 输入）, nosemgrep
         with:
           toolchain: nightly
@@ -128,7 +136,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定
       # --frozen 禁网络,而 runner 的 registry 缓存为空,须先经 fetch 落盘依赖
       # (一次联网解析+下载),否则离线解析直接报 no matching package
       - name: Fetch dependencies
@@ -213,13 +223,16 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: actionlint
         # 第三方 docker action 钉具体版本：latest 是可变 tag，上游可静默换镜像。
         # Docker Hub 镜像 tag 无 v 前缀（GitHub release 用 v1.7.7，镜像 tag 是 1.7.7；
         # 实测 v1.7.7 404、1.7.7 200），带 v 引用不存在 tag 会在拉镜像期失败、job 长红。
-        uses: docker://rhysd/actionlint:1.7.12
+        uses: docker://rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 # 1.7.12
         with:
           # shellcheck 子检查降到 error 级：YAML 语法/表达式错误仍阻断，
           # 风格级（SC2086/SC2034 等）不阻断，避免打断既有流水线。

@@ -37,7 +37,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定, nosemgrep
         with:
           components: rustfmt, clippy
       - name: Install protoc (sdforge build dep)
@@ -59,7 +61,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定, nosemgrep
         with:
           components: rustfmt, clippy
       - name: Install protoc (sdforge build dep)
@@ -83,6 +87,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # cargo-deny 已覆盖漏洞/许可证/禁用源/重复依赖检查，配置统一在 deny.toml 管理
       # 删除 cargo-audit，避免维护两份忽略列表（audit.toml + deny.toml）
       - name: Cargo deny check (advisory/license/ban/source)
@@ -98,7 +104,9 @@ jobs:
       RUSTDOCFLAGS: "-D warnings"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定, nosemgrep
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
@@ -122,6 +130,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0 # 完整历史，用于读取 CHANGELOG
 
       - name: Extract version
@@ -202,7 +211,9 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定, nosemgrep
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
@@ -255,6 +266,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       # semver 预发布段（-rc.N 等）→ GitHub prerelease 标记；rc 不得抢占 Latest。
@@ -308,6 +320,8 @@ jobs:
     needs: [github-release, publish-crates-io]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Extract version from Cargo.toml
         id: extract-version
