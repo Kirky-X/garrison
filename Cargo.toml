@@ -128,11 +128,11 @@ futures = { version = "0.3", default-features = false, features = ["std"] }
 # mimalloc 全局分配器（auth_server 二进制使用，多线程分配性能优于系统默认分配器）
 mimalloc = { version = "0.1", optional = true, default-features = false }
 # optional 化：唯一使用点 observability/inklog（audit-inklog 门控），其 inklog/* 引用自动激活。
-inklog = { version = "0.3.0-rc.10", default-features = false, optional = true }
+inklog = { version = "0.3.0-rc.12", default-features = false, optional = true }
 # retry 供 stp 会话 JWT 黑名单退避调度（delay_for_attempt，空 feature 零依赖）；distributed 供防火墙限流/双窗口限速的分布式滑窗桥接
-limiteron = { version = "0.3.0-rc.8", default-features = false, features = ["distributed", "retry"] }
+limiteron = { version = "0.3.0-rc.10", default-features = false, features = ["distributed", "retry"] }
 # sdforge 运行时：必须暴露同名 http feature（#[forge] 宏在 garrison 上下文求值 cfg）；仅 auth-server 启用
-sdforge = { version = "0.5.0-rc.9", default-features = false, features = ["http"], optional = true }
+sdforge = { version = "0.5.0-rc.10", default-features = false, features = ["http"], optional = true }
 trait-kit = { version = "0.5.0-rc.10", default-features = false, features = ["async"] }
 cedar-policy = { version = "4.14", default-features = false, optional = true }
 icu_plurals = { version = "2.4", default-features = false, features = ["compiled_data"], optional = true }

@@ -2386,9 +2386,9 @@ dependencies = [
 
 [[package]]
 name = "fancy-regex"
-version = "0.19.2"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d301f5bf187b3c295fce6468d3875037a0bccc5f6b151c63cac2f85babf21912"
+checksum = "20ed7f62ce0ae0da1a8b93c3c7104ab7e0760a74491e097c701fff966e945390"
 dependencies = [
  "bit-set",
  "regex-automata",
@@ -3829,12 +3829,11 @@ dependencies = [
 
 [[package]]
 name = "inklog"
-version = "0.3.0-rc.11"
+version = "0.3.0-rc.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff319d72f10c1394f967dc7af3f2ca0355b46fe15a53acdfaaa67da5e5933ec9"
+checksum = "33ceea52d72792b9b2c81e37ba25da3aabf5e5d8f341d5f5b9c4f47e34677271"
 dependencies = [
  "aes-gcm",
- "aho-corasick",
  "anyhow",
  "async-trait",
  "axum",
@@ -3844,15 +3843,12 @@ dependencies = [
  "confers",
  "crossbeam-channel",
  "dirs",
- "fancy-regex",
- "futures",
  "ipnet",
  "is-terminal",
- "limiteron",
  "log",
  "nix",
  "owo-colors",
- "parking_lot 0.12.5",
+ "parking_lot 0.13.0",
  "pbkdf2",
  "rand 0.10.3",
  "regex",
@@ -3866,6 +3862,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "trait-kit",
  "zeroize",
  "zstd",
 ]
@@ -4335,9 +4332,9 @@ dependencies = [
 
 [[package]]
 name = "limiteron"
-version = "0.3.0-rc.8"
+version = "0.3.0-rc.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6579be122ec691fc3423b4a92739fd103f4bae9a2c3733374f993f1152b12400"
+checksum = "149b04315444f7a9abdc1e6bad624f666350c892fcbd167d80f40513cb3213c7"
 dependencies = [
  "ahash",
  "async-trait",
@@ -5099,9 +5096,9 @@ checksum = "13c45bb4a6ae1280ec0803b1ef9d3455eb50f01efbbe1447ab020f1d54fba9d8"
 
 [[package]]
 name = "oxcache"
-version = "0.5.0-rc.11"
+version = "0.5.0-rc.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e7692b7941fc7bd70021726c9fc0840c82a483e5d03eedfb625f21934a5a9d6"
+checksum = "41f58d435b2d2848ba0e04cb31be9c7c00fd33cc60d6b60fb52083d57dc646de"
 dependencies = [
  "async-trait",
  "bloomfilter",
@@ -6348,9 +6345,9 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "sdforge"
-version = "0.5.0-rc.9"
+version = "0.5.0-rc.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1e4d8fa879f68d7c63d3d53fabdf2bfe90b569f1a5409fdb9938f290ced8826"
+checksum = "44a5dbdd22c0682ce5e77e7a4dc5cea9b4dc0176fc13bc8f81677eba0113cb04"
 dependencies = [
  "async-trait",
  "axum",
@@ -7900,12 +7897,18 @@ dependencies = [
 
 [[package]]
 name = "trait-kit"
-version = "0.5.0-rc.11"
+version = "0.5.0-rc.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af81efe05c217a17c4a09a5faeb3e8d202639e49781a0a3b1c5969d636e12e70"
+checksum = "0a9fa4c077e939f17a6f0bda0fc720ef1af104636f7da4ef2d5d29de9cd200ac"
 dependencies = [
+ "aho-corasick",
+ "fancy-regex",
  "fluent-bundle",
  "log",
+ "regex",
+ "serde_json",
+ "toml",
+ "tracing",
  "unic-langid",
 ]
 
