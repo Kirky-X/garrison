@@ -35,7 +35,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # protoc
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -57,7 +57,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # protoc
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -81,7 +81,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # protoc
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -116,7 +116,7 @@ jobs:
         with:
           components: clippy
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # protoc
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -165,7 +165,7 @@ jobs:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # protoc
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
       # Windows runner 无系统 OpenSSL 开发文件：webauthn-rs 0.5.5 引入的
@@ -257,7 +257,7 @@ jobs:
           df -h /
       - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # protoc
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -285,7 +285,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # protoc
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -294,7 +294,7 @@ jobs:
       - name: Build docs
         run: cargo doc --no-deps --features "full"
       - name: Install cargo-deadlinks
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # cargo-deadlinks
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # cargo-deadlinks
         with:
           tool: cargo-deadlinks
       # 死链检查（显性化策略 — 规则 12：不掩盖，分类处理）
@@ -342,7 +342,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
-      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0 (cargo-deny)
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.88.0 (cargo-deny)
         with:
           tool: cargo-deny
       - name: Generate Cargo.lock (library crate, not committed)
@@ -388,7 +388,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # protoc
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -441,14 +441,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # protoc
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: ci-coverage-deps
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # cargo-llvm-cov
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # cargo-llvm-cov
         with:
           tool: cargo-llvm-cov
       - name: Run coverage (fail under 95% lines)
