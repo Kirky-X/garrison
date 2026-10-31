@@ -29,7 +29,7 @@ documentation = "https://docs.rs/garrison"
 garrison = { path = ".", default-features = false }
 garrison-macros = { version = "0.9.0-rc.4", path = "macros", default-features = false }
 axum = { version = "0.8", default-features = false, features = ["json"] }
-actix-web = { version = "4.12", default-features = false }
+actix-web = { version = "4.18", default-features = false }
 warp = { version = "0.4", default-features = false }
 tonic = { version = "0.14", default-features = false, features = ["transport"] }
 oxcache = { version = "0.5.0-rc.10", default-features = false }
@@ -51,16 +51,16 @@ path = "src/lib.rs"
 serde = { version = "1.0", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
 confers = { version = "0.6.0-rc.11", default-features = false }
-tokio = { version = "1.53", default-features = false, features = ["sync", "macros", "rt-multi-thread", "time", "signal"] }
+tokio = { version = "1.54", default-features = false, features = ["sync", "macros", "rt-multi-thread", "time", "signal"] }
 inventory = { version = "0.3", default-features = false }
 thiserror = { version = "2.0", default-features = false, features = ["std"] }
 tracing = { version = "0.1", default-features = false, features = ["std", "attributes"] }
 async-trait = { version = "0.1", default-features = false }
-parking_lot = { version = "0.12", default-features = false }
+parking_lot = { version = "0.13", default-features = false }
 arc-swap = { version = "1.9", default-features = false }
 dashmap = { version = "6.2", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
-uuid = { version = "1.26", default-features = false, features = ["std", "v4", "v7", "serde"] }
+uuid = { version = "1.29", default-features = false, features = ["std", "v4", "v7", "serde"] }
 http = { version = "1.5", default-features = false, features = ["std"] }
 # warp request id 后置回填（web-warp feature）：收集错误响应体解析注入 request_id
 http-body-util = { optional = true, workspace = true }
@@ -134,13 +134,13 @@ limiteron = { version = "0.3.0-rc.8", default-features = false, features = ["dis
 # sdforge 运行时：必须暴露同名 http feature（#[forge] 宏在 garrison 上下文求值 cfg）；仅 auth-server 启用
 sdforge = { version = "0.5.0-rc.9", default-features = false, features = ["http"], optional = true }
 trait-kit = { version = "0.5.0-rc.10", default-features = false, features = ["async"] }
-cedar-policy = { version = "4.13", default-features = false, optional = true }
-icu_plurals = { version = "2.3", default-features = false, features = ["compiled_data"], optional = true }
-icu_datetime = { version = "2.3", default-features = false, features = ["compiled_data"], optional = true }
-icu_decimal = { version = "2.3", default-features = false, features = ["compiled_data", "alloc"], optional = true }
-icu_locale_core = { version = "2.3", default-features = false, optional = true }
-icu_calendar = { version = "2.3", default-features = false, features = ["compiled_data"], optional = true }
-icu_time = { version = "2.3", default-features = false, features = ["compiled_data"], optional = true }
+cedar-policy = { version = "4.14", default-features = false, optional = true }
+icu_plurals = { version = "2.4", default-features = false, features = ["compiled_data"], optional = true }
+icu_datetime = { version = "2.4", default-features = false, features = ["compiled_data"], optional = true }
+icu_decimal = { version = "2.4", default-features = false, features = ["compiled_data", "alloc"], optional = true }
+icu_locale_core = { version = "2.4", default-features = false, optional = true }
+icu_calendar = { version = "2.4", default-features = false, features = ["compiled_data"], optional = true }
+icu_time = { version = "2.4", default-features = false, features = ["compiled_data"], optional = true }
 fixed_decimal = { version = "0.7", optional = true, default-features = false }
 percent-encoding = { version = "2.3", optional = true, default-features = false }
 hkdf = { version = "0.13", optional = true, default-features = false }
@@ -169,33 +169,33 @@ clap = { version = "4.6", optional = true, default-features = false, features = 
 aes-gcm = { version = "0.11", optional = true, default-features = false, features = ["aes", "alloc"] }
 
 [dev-dependencies]
-once_cell = "1.21"
-toml = "1.1"
-tokio-test = "0.4"
-mockall = "0.15"
+once_cell = { version = "1.21", default-features = false, features = ["std"] }
+toml = { version = "1.1", default-features = false }
+tokio-test = { version = "0.4", default-features = false }
+mockall = { version = "0.15", default-features = false }
 # 日志断言（refresh 退化路径 warn 验收）：fmt/json/env-filter，registry().with(fmt Layer + 自定义 writer) 捕获事件
 tracing-subscriber = { workspace = true }
-# tempfile 同时在 dependencies（optional）与 dev-dependencies，Cargo 允许
-tempfile = "3.27"
+# tempfile 同时在 dependencies（optional）与 dev-dependencies，Cargo 允许；特性集与 optional 声明一致（getrandom 供临时名随机）
+tempfile = { version = "3.27", default-features = false, features = ["getrandom"] }
 # serial_test 用于串行化依赖 std::env::set_var 的测试，避免多线程并发污染环境变量
-serial_test = "4.0"
+serial_test = { version = "4.0", default-features = false, features = ["async"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
 http-body-util = { workspace = true }
 wiremock = { workspace = true }
 warp = { default-features = false, features = ["test"], workspace = true }
 # 测试用 OsRng：rand 0.10 已移除，rsa 0.9 keygen 基于 rand_core 0.6
-rsa = { version = "0.9", features = ["getrandom"] }
+rsa = { version = "0.9", default-features = false, features = ["getrandom"] }
 rand = { workspace = true }
-testcontainers = "0.28"
-criterion = { version = "0.8", features = ["html_reports"] }
+testcontainers = { version = "0.28", default-features = false }
+criterion = { version = "0.8", default-features = false, features = ["html_reports"] }
 # rcgen 用于 BackendRemote mTLS 测试中生成自签名证书
-rcgen = "0.14"
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "aws_lc_rs", "pem"] }
 # tls-cert-watch 测试需显式安装 rustls CryptoProvider（aws-lc-rs 与 ring 并存会 panic）
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 # 集成测试直接发送 HTTP 请求故无条件引入；cookies 供 keycloak_fixture 以 cookie jar 驱动真实登录表单流
 reqwest = { default-features = false, features = ["json", "rustls", "cookies"], workspace = true }
 # macros UI 测试：trybuild 子项目继承父 dev-deps，annotation-macros 由测试面透传
-trybuild = "1.0"
+trybuild = { version = "1.0", default-features = false }
 axum = { version = "0.8", default-features = false }
 
 [features]

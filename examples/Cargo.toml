@@ -16,7 +16,7 @@ description = "Garrison 官方示例集（workspace member，不发布到 crates
 
 [dependencies]
 garrison = { default-features = false, workspace = true }
-tokio = { version = "1.53", default-features = false, features = ["macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1.54", default-features = false, features = ["macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
 async-trait = { version = "0.1", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
@@ -24,7 +24,7 @@ serde_json = { version = "1.0", default-features = false, features = ["std"] }
 # 0.11 与主 crate 统一，避免 sha2 双版本共存
 sha2 = { version = "0.11", default-features = false }
 # 直接被 sso_flow 使用（InMemoryDao 内部 Mutex）
-parking_lot = { version = "0.12", default-features = false }
+parking_lot = { version = "0.13", default-features = false }
 # 直接被 custom_plugin / event_listener 使用（inventory::submit! 编译时注册插件/监听器）
 inventory = { version = "0.3", default-features = false }
 # 直接被 context_request / axum_integration 使用（仅 web-axum feature 启用时编译）
@@ -54,7 +54,7 @@ tracing-subscriber = { optional = true, features = ["fmt", "json", "env-filter"]
 # 串行化依赖 std::env::set_var / 全局单例的集成测试（auth_server_serve、
 # web_*_example、grpc_interceptor 等 12 个 tests/*.rs 的 #[serial]）
 [dev-dependencies]
-serial_test = "4.0"
+serial_test = { version = "4.0", default-features = false, features = ["async"] }
 
 [features]
 default = []

@@ -1846,6 +1846,7 @@ fn validate_rejects_zero_burst_threshold() {
 
 #[test]
 fn load_rejects_empty_path() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let err = GarrisonConfig::load(Some("")).unwrap_err();
     assert!(
         matches!(err, GarrisonError::Config(ref m) if m.contains("must not be empty")),
@@ -1878,6 +1879,7 @@ fn load_url_encoded_traversal_returns_enoent() {
 
 #[test]
 fn load_rejects_oversized_config() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let dir = tempfile::tempdir().expect("创建临时目录失败");
     let path = dir.path().join("big.toml");
     // 写入 11MB 数据（>10MB 上限），用注释避免 TOML 解析失败

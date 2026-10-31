@@ -3,7 +3,7 @@
 本文件汇总 Garrison 框架在设计、使用与部署过程中最常被问到的问题。如果你是初次接触 Garrison，建议先阅读本文件再查阅 API 文档。
 
 > 项目仓库：<https://github.com/Kirky-X/garrison>
-> 当前版本：0.9.0-rc.3（发布候选，开发验证中）｜下一版本：1.0.0（门禁启动，2027 Q2）
+> 当前版本：0.9.0-rc.4（发布候选，2026-10-20）｜下一版本：1.0.0（门禁启动，2027 Q2）
 
 ## 📋 目录
 
@@ -199,7 +199,7 @@ A: 推荐使用聚合 feature `production`，它包含以下子特性：
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.3", features = ["production"] }
+garrison = { version = "0.9.0-rc.4", features = ["production"] }
 ```
 
 `production` 聚合下列 41 个特性（权威列表见 `Cargo.toml` 的 `[features] production`）：
@@ -252,10 +252,14 @@ A: **支持。** 0.5.0 起 `dbnexus` 0.4+ 提供 SQLite / PostgreSQL / MySQL 三
 
 ### Q: 是否支持分布式会话？
 
-A: 支持。通过启用 `cache-redis` feature，并配置 Redis 连接（单机或 Sentinel 均可）。注意 `GarrisonConfig` **没有** `cache` 字段——Redis 配置走 `dao::RedisConfig` 聚合结构，编程式传给缓存构建器；配置文件中则由 `GARRISON_REDIS_URL` 环境变量注入：
+A: 分两层回答——**分布式限流支持（rc.4 起），分布式会话当前不支持**。
+
+- **限流（支持）**：启用 `rate-limit-redis` 并设 `GARRISON_RATE_LIMIT_BACKEND=redis`、`GARRISON_REDIS_URL=…`，登录防火墙 hook 与 `RateLimitStrategy` 的限流计数落到独立 Redis 运行时，多实例共享计数（覆盖面与故障语义见 [deployment.md](./DEPLOYMENT.md) 的多实例限流章节）。
+- **会话 / 权限缓存（不支持）**：会话、token、互踢等运行期状态仍存放在各实例本地的 DAO 与进程内 oxcache。缓存侧的 Redis L2 接口（`cache-redis` 的 `with_redis_config`）当前**仅存储配置、未实际接入 Redis 后端**（见 `src/dao/oxcache_impl.rs` 的 M4 注记），`GARRISON_REDIS_URL` 也不会注入缓存侧——多个 Garrison 实例无法通过共享同一 Redis 构成会话集群。跨实例会话请用 sticky session 或 stateless JWT 方案；整 DAO 切 Redis（候选 A）在 [roadmap](./ROADMAP.md) 中保持 backlog。
+
+`RedisDeploymentMode`（0.6.1 起 Single / Sentinel / Cluster / PrimaryReplica，旧配置值 `MasterSlave` 经 `#[serde(alias)]` 兼容）是缓存侧 `RedisConfig` 的拓扑描述结构，只能编程式经 `with_redis_config` 传入（`GarrisonConfig` **没有** `cache` / `redis` 字段，配置文件无法直接设置）：
 
 ```rust
-use std::sync::Arc;
 use garrison::dao::{RedisConfig, RedisDeploymentMode};
 
 let redis = RedisConfig {
@@ -268,10 +272,9 @@ let redis = RedisConfig {
     pool_size: 10,
 };
 // 交给缓存构建器（with_redis_config），而非塞进 GarrisonConfig
+// 注意：当前版本该配置仅被存储（Redis L2 未接线），缓存仍走进程内内存
 let dao = build_dao().with_redis_config(redis);
 ```
-
-多端会话、互踢、权限缓存等所有运行期状态都会落到 Redis，多个 Garrison 实例共享同一 Redis 即可构成分布式会话集群。0.6.1 起支持四种 Redis 部署模式（`RedisDeploymentMode`：Single / Sentinel / Cluster / PrimaryReplica，旧配置值 `MasterSlave` 经 `#[serde(alias)]` 兼容），详见 [configuration.md](./CONFIGURATION.md) 的 Redis 部署模式配置章节。
 
 注意：单机 `oxcache` 内存模式无法跨实例共享，仅适合单实例部署或开发环境。
 

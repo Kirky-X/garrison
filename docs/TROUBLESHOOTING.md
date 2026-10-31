@@ -308,13 +308,13 @@ fn test_env_var_override() {
 2. 用 CI 同口径的 feature 面运行（不要用 `--all-features`）：
 
    ```bash
-   cargo llvm-cov --features "full" --fail-under-lines 85
+   cargo llvm-cov --features "full" --fail-under-lines 95
    ```
 
 3. 若遇 `SQLITE_READONLY`（llvm-cov 插桩面下 sqlite 文件库 URL 触发，CI coverage job 同样注明），按 CI 的方式回退内存库：
 
    ```bash
-   GARRISON_TEST_SQLITE_MEMORY=1 cargo llvm-cov --features "full" --fail-under-lines 85 --lcov --output-path coverage/lcov.info
+   GARRISON_TEST_SQLITE_MEMORY=1 cargo llvm-cov --features "full" --fail-under-lines 95 --lcov --output-path coverage/lcov.info
    ```
 
 ---

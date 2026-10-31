@@ -107,6 +107,9 @@ repos:
     rev: v0.43.0
     hooks:
       - id: markdownlint
+        # 钉 node 版本：nodeenv 解析 'latest' 时会命中 dist 索引的 alpha 预发布串
+        # （patch 段 "0-alpha" int() 崩溃），钉稳定版绕开且构建可复现
+        language_version: 26.12.1
         args: [--disable=MD013,--disable=MD024,--disable=MD033]
         exclude: '^(docs/archive|temp|\.github|mdbook/src/SUMMARY\.md)(/.*)?$'
 

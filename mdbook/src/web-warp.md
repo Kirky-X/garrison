@@ -6,11 +6,11 @@ warp 适配在 0.3.0 新增，采用 Filter 组合模型，通过 `web-warp` fea
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.3", features = ["web-warp"] }
+garrison = { version = "0.9.0-rc.4", features = ["web-warp"] }
 warp = "0.4"
 ```
 
-> 注：当前版本为 pre-release（0.9.0-rc.3），`version = "0.9"` 不会匹配它——Cargo 要求显式写出完整 pre-release 版本号；待 0.9.0 正式发布后可再改为 `"0.9"`。
+> 注：当前版本为 pre-release（0.9.0-rc.4），`version = "0.9"` 不会匹配它——Cargo 要求显式写出完整 pre-release 版本号；待 0.9.0 正式发布后可再改为 `"0.9"`。
 
 `web-warp` 启用 `warp`（default-features = false）。
 

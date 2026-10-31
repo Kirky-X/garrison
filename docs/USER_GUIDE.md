@@ -2,7 +2,7 @@
 
 **Garrison** 是面向 Rust 生态的一站式身份认证鉴权框架：登录认证 → 权限校验 → 会话管理 → 路由拦截开箱即用。业务方实现一个 `GarrisonInterface` 回调、注入一个 `GarrisonDao` 存储后端，即可获得完整的认证鉴权能力；全部可选能力（协议层、防火墙、账号安全等）均以独立 feature 门控，编译产物只包含启用的部分。
 
-> 适用版本：0.9.0-rc.3（MSRV 1.97.1，`Cargo.toml` 的 `rust-version`）。本文只讲「怎么用」；架构设计见 [🏗️ 架构文档](ARCHITECTURE.md)，配置项全表见 [⚙️ 配置指南](CONFIGURATION.md)。
+> 适用版本：0.9.0-rc.4（MSRV 1.97.1，`Cargo.toml` 的 `rust-version`）。本文只讲「怎么用」；架构设计见 [🏗️ 架构文档](ARCHITECTURE.md)，配置项全表见 [⚙️ 配置指南](CONFIGURATION.md)。
 
 ## 📋 目录
 
@@ -34,7 +34,7 @@
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.3", features = ["development"] }
+garrison = { version = "0.9.0-rc.4", features = ["development"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -108,7 +108,7 @@ async fn main() -> GarrisonResult<()> {
 
 ### 🏢 全局单例与静态 API
 
-`GarrisonManager` 是全局单例，启动时通过 builder 一次性注入 `dao`（存储）、`config`（配置）、`interface`（业务回调）后 `build()`。此后业务代码统一走 `GarrisonUtil` 静态 API（登录、登出、校验等），无需再传递句柄。单例内部持有 `Arc<GarrisonLogicDefault>`（实现 6 个子 trait），经 `arc_swap::ArcSwapOption` 无锁读取。
+`GarrisonManager` 是全局单例，启动时通过 builder 一次性注入 `dao`（存储）、`config`（配置）、`interface`（业务回调）后 `build()`。此后业务代码统一走 `GarrisonUtil` 静态 API（登录、登出、校验等），无需再传递句柄。单例内部持有 `Arc<GarrisonLogicDefault>`（实现 `GarrisonCore` 与 5 个逻辑子 trait：Session / Permission / Token / Mfa / Password），经 `arc_swap::ArcSwapOption` 无锁读取。
 
 ### 🧩 双模会话
 

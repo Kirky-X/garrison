@@ -21,7 +21,7 @@ Garrison 本体是库（crate），业务方将其作为依赖集成到 axum / a
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.3", features = ["production"] }
+garrison = { version = "0.9.0-rc.4", features = ["production"] }
 ```
 
 `production` 等价于：

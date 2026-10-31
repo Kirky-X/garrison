@@ -68,7 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1
-      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # cargo-vet
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # cargo-vet
         with:
           tool: cargo-vet
       # 仓库已提交 Cargo.lock（与全仓 --locked 构建一致性约定同步），vet 按锁定的
@@ -87,7 +87,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1
-      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # cargo-cyclonedx
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # cargo-cyclonedx
         with:
           tool: cargo-cyclonedx
       - name: Generate Cargo.lock (library crate, not committed)
@@ -214,10 +214,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: actionlint
         # 第三方 docker action 钉具体版本：latest 是可变 tag，上游可静默换镜像。
-        uses: docker://rhysd/actionlint:v1.7.7
+        # Docker Hub 镜像 tag 无 v 前缀（GitHub release 用 v1.7.7，镜像 tag 是 1.7.7；
+        # 实测 v1.7.7 404、1.7.7 200），带 v 引用不存在 tag 会在拉镜像期失败、job 长红。
+        uses: docker://rhysd/actionlint:1.7.12
         with:
           # shellcheck 子检查降到 error 级：YAML 语法/表达式错误仍阻断，
           # 风格级（SC2086/SC2034 等）不阻断，避免打断既有流水线。
@@ -234,4 +236,4 @@ jobs:
         # 本仓 Security workflow 因此长红（run 39447128551 及 rerun 实证）。
         # 写法对齐 vecboost 仓（同一 SHA + 注释），仍保持非阻断基线语义不变。
         continue-on-error: true
-        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0

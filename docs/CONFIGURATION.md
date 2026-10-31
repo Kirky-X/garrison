@@ -2,7 +2,7 @@
 
 > Garrison 配置由 `GarrisonConfig` 统一管理，支持三级配置源合并与 `tokio::sync::watch` 热更新能力。
 >
-> - 适用版本：0.9.0-rc.3（rc.4 Unreleased 更新 `rate_limit_backend` 语义；核心配置 + JWT / 签名 / SSO / remember-me / Redis 部署模式 / 多租户 / 账号安全引擎 / 微服务架构 / ABAC / OAuth2 Server 等扩展配置）
+> - 适用版本：0.9.0-rc.4（核心配置 + JWT / 签名 / SSO / remember-me / Redis 部署模式 / 多租户 / 账号安全引擎 / 微服务架构 / ABAC / OAuth2 Server 等扩展配置；rc.4 起 `rate_limit_backend` 真正驱动限流后端切换）
 > - 配置类型：`GarrisonConfig`，实现 `serde::Serialize / Deserialize`
 > 架构设计详见 [🏗️ 架构文档](./ARCHITECTURE.md)；部署配置详见 [🚀 部署指南](./DEPLOYMENT.md)。
 
@@ -56,7 +56,7 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 | `is_read_header` | `bool` | `true` | `GARRISON_IS_READ_HEADER` | 是否从 Header 读取 Token |
 | `is_write_header` | `bool` | `true` | `GARRISON_IS_WRITE_HEADER` | 是否在登录后写入 Header |
 | `throw_on_not_login` | `bool` | `true` | `GARRISON_THROW_ON_NOT_LOGIN` | 未登录时是否抛出异常（`false` 时返回 `false`） |
-| `cookie_secure` | `bool` | `true` | `GARRISON_COOKIE_SECURE` | Cookie 是否标记 `Secure`（仅 HTTPS 传输） |
+| `cookie_secure` | `bool` | `true`（`development` profile 为 `false`） | `GARRISON_COOKIE_SECURE` | Cookie 是否标记 `Secure`（仅 HTTPS 传输）；默认随 profile：启用 `development` 聚合特性为 `false`（本地 HTTP 调试），其余为 `true`（rc.4 起，两种 profile 均可显式覆盖） |
 | `cookie_same_site` | `String` | `"Lax"` | `GARRISON_COOKIE_SAME_SITE` | Cookie 的 `SameSite` 策略（`Lax` / `Strict` / `None`；`None` 仅在 `cookie_secure=true` 时生效，非 Secure 上下文构建点降级为 `Lax`） |
 | `is_read_body` | `bool` | `false` | `GARRISON_IS_READ_BODY` | 是否从请求体读取 Token |
 | `is_write_cookie` | `bool` | `false` | `GARRISON_IS_WRITE_COOKIE` | 是否在续签后将新 Token 写入 Cookie |
@@ -443,7 +443,7 @@ assert_eq!(new_config.timeout, 3600);
 
 ### 5.1 Redis 部署模式配置（0.6.0 新增）
 
-`RedisDeploymentMode` 枚举覆盖生产环境常见 Redis 拓扑，通过 `RedisConfig` 聚合结构配置（注意：`RedisConfig` 并非 `GarrisonConfig` 的字段，而是编程式传给缓存构建器 `with_redis_config`；配置文件中由 `GARRISON_REDIS_URL` 等环境变量注入）：
+`RedisDeploymentMode` 枚举覆盖生产环境常见 Redis 拓扑，通过 `RedisConfig` 聚合结构配置（注意：`RedisConfig` 并非 `GarrisonConfig` 的字段，只能编程式传给缓存构建器 `with_redis_config`；环境变量 `GARRISON_REDIS_URL` 仅作用于限流后端 `rate-limit-redis`，不注入缓存侧 `RedisConfig`）：
 
 | 模式 | 字段 | 说明 |
 |------|------|------|
@@ -454,6 +454,8 @@ assert_eq!(new_config.timeout, 3600);
 
 `RedisConfig` 完整字段：`mode`（部署模式）/ `password`（认证密码）/ `db`（数据库编号 0-15）/ `connection_timeout_secs`（默认 5）/ `pool_size`（默认 10）。
 
+> ⚠️ **接线状态如实说明**：当前版本缓存侧 Redis L2 尚未实际接线——`with_redis_config` 仅存储配置并输出一次 warn（`src/dao/oxcache_impl.rs` 的 M4 注记），缓存仍走进程内内存；多实例会话共享当前不可用。上述拓扑结构为接口预留，实际生效待后续版本；当前真实消费 Redis 的是限流后端（`rate-limit-redis`）。
+
 ---
 
 ## 六、各 Feature 的配置说明
@@ -463,7 +465,7 @@ Garrison 通过 feature flag 在编译期裁剪，不同 feature 下需要的配
 | Feature | 默认 | 关联配置项 |
 |---------|------|------------|
 | `cache-memory` | 关 | 无（使用 oxcache 内存缓存） |
-| `cache-redis` | 关 | 需配置 `GARRISON_REDIS_URL` |
+| `cache-redis` | 关 | 缓存侧 Redis 拓扑编程式经 `RedisConfig` + `with_redis_config` 传入（L2 当前仅存储配置未接线，见 §5.1 注）；`GARRISON_REDIS_URL` 属限流后端（`rate-limit-redis`） |
 | `db-sqlite` | 关 | SQLite 路径由宿主编程式传给 `garrison::dao::init_dbnexus(&db_url)`（无 `GARRISON_DB_URL` 环境变量） |
 | `web-axum` | 关 | 启用 axum extractor / router |
 | `protocol-jwt` | 关 | `jwt_algorithm`（`GARRISON_JWT_SECRET` 必填） |
@@ -505,7 +507,7 @@ Garrison 通过 feature flag 在编译期裁剪，不同 feature 下需要的配
 ```toml
 # Cargo.toml
 [dependencies]
-garrison = { version = "0.9.0-rc.3", features = ["web-axum"] } # 或 web-actix / web-warp
+garrison = { version = "0.9.0-rc.4", features = ["web-axum"] } # 或 web-actix / web-warp
 ```
 
 ```rust,ignore
@@ -537,7 +539,7 @@ delta-seconds 整数秒，下限 1）。
 ```toml
 [dependencies]
 garrison = {
-    version = "0.9.0-rc.3",
+    version = "0.9.0-rc.4",
     features = [
         "cache-memory",
         "cache-redis",

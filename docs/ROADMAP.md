@@ -568,7 +568,7 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 
 完成时间：2026-10-20（`0.9.0-rc.4`）
 
-#### 已完成（[Unreleased] 累计）
+#### 已完成（随 rc.4 发布）
 
 - ✅ 会话凭据落库 key SHA-256 摘要化（`session::token_key` 单点；存量会话一次性失效，旧 raw key 由 `vacuum_expired` / `garrison-cli vacuum-kv` 收敛）
 - ✅ `DbnexusKvDao::set_if_absent` 过期接管原子化（SQLite/PG 单语句条件 upsert，MySQL 事务 + 行锁），闭合 trait 契约竞态
@@ -712,4 +712,4 @@ explore → propose → apply → archive
 ---
 
 > 本路线图为持续滚动更新文档，实际发布时间与内容可能随社区反馈调整。最新进展请关注 [GitHub Releases](https://github.com/Kirky-X/garrison/releases)。
-> 最近同步：2026-10-19（rc.4 Unreleased）。
+> 最近同步：2026-10-28（0.9.0-rc.4 已发布）。

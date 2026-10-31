@@ -4,7 +4,7 @@
 
 首先，感谢你对 Garrison 项目的关注与支持！本文档将引导你完成从环境搭建到提交 Pull Request 的完整贡献流程。
 
-Garrison 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 TDD（测试驱动开发）工作流，对代码质量有严格要求：5100+ 个 lib 测试通过 + doc-tests、95%+ 覆盖率、clippy 零警告、所有 public API 均带 `///` 文档注释。
+Garrison 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 TDD（测试驱动开发）工作流，对代码质量有严格要求：5454 个 lib 测试通过 + doc-tests、95%+ 覆盖率、clippy 零警告、所有 public API 均带 `///` 文档注释。
 
 > 相关文档：[🛠️ 开发规范](./DEVELOPMENT.md) | [🏗️ 架构设计](./ARCHITECTURE.md) | [⚙️ 配置指南](./CONFIGURATION.md)
 
@@ -85,7 +85,7 @@ cargo build --features full
 cargo test --features full
 ```
 
-预期输出：5100+ 个测试通过 + doc-tests 全部通过。
+预期输出：5454 个 lib 测试通过 + doc-tests 全部通过。
 
 ---
 
@@ -297,7 +297,7 @@ cargo doc --no-deps --features full
 
 ## 📊 测试覆盖率要求
 
-Garrison 要求测试覆盖率 **≥ 85% 行覆盖率**（CI 门禁 `cargo llvm-cov --features "full" --fail-under-lines 85`；2026-10-14 实测约 95.15%）。新增代码不得使总覆盖率下降。分模块的期望值见下表。
+Garrison 要求测试覆盖率 **≥ 95% 行覆盖率**（CI 门禁 `cargo llvm-cov --features "full" --fail-under-lines 95`；2026-10-14 实测约 95.15%）。新增代码不得使总覆盖率下降。分模块的期望值见下表。
 
 使用 `cargo-llvm-cov` 生成覆盖率报告（与 CI 同一工具，口径一致）：
 
@@ -306,8 +306,8 @@ Garrison 要求测试覆盖率 **≥ 85% 行覆盖率**（CI 门禁 `cargo llvm-
 cargo install cargo-llvm-cov
 rustup component add llvm-tools-preview
 
-# 生成本地覆盖率报告并复用 CI 门禁阈值（行覆盖率 < 85% 时非零退出）
-cargo llvm-cov --features "full" --fail-under-lines 85
+# 生成本地覆盖率报告并复用 CI 门禁阈值（行覆盖率 < 95% 时非零退出）
+cargo llvm-cov --features "full" --fail-under-lines 95
 
 # 需要 Lcov 报告（如上传 Codecov）时：追加 --lcov --output-path lcov.info
 ```

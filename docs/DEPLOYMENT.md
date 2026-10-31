@@ -127,7 +127,7 @@ Garrison 支持 4 种 Redis 部署模式（`RedisDeploymentMode` 枚举）：
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.3", features = ["tls", "auth-server"] }
+garrison = { version = "0.9.0-rc.4", features = ["tls", "auth-server"] }
 ```
 
 ```rust
@@ -140,7 +140,7 @@ garrison = { version = "0.9.0-rc.3", features = ["tls", "auth-server"] }
 在 `tls` 之上再启用 `tls-cert-watch` 后，框架监视证书与私钥文件（去抖 200ms）并在文件变更后换入新配置：
 
 ```toml
-garrison = { version = "0.9.0-rc.3", features = ["tls-cert-watch", "auth-server"] }
+garrison = { version = "0.9.0-rc.4", features = ["tls-cert-watch", "auth-server"] }
 ```
 
 - 覆盖「原地覆盖写」与「写临时文件 + rename」两种换证手法；外网与内网端口共用同一配置，新握手同时使用新证书，既有连接不中断、进程不重启。
@@ -220,13 +220,13 @@ garrison = { version = "0.9.0-rc.3", features = ["tls-cert-watch", "auth-server"
 ```bash
 # debian-slim 变体（默认）
 docker build \
-  --build-arg VERSION=0.9.0-rc.3 \
+  --build-arg VERSION=0.9.0-rc.4 \
   --build-arg GIT_SHA=$(git rev-parse HEAD) \
   -t garrison-auth:local .
 
 # distroless 变体
 docker build -f docker/Dockerfile.distroless \
-  --build-arg VERSION=0.9.0-rc.3 \
+  --build-arg VERSION=0.9.0-rc.4 \
   --build-arg GIT_SHA=$(git rev-parse HEAD) \
   -t garrison-auth:local-distroless .
 ```

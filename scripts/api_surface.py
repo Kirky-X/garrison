@@ -92,6 +92,16 @@ def _fallback(node: Any) -> str:
     return f"#{digest}"
 
 
+def _json_fragment(node: Any) -> str:
+    """rustdoc JSON 子树的保真渲染：合法 JSON、确定性、保留原对象形态。
+
+    嵌套结构（GenericBound/Term 等）不做 repr 化——Python repr（单引号）
+    不是合法 JSON，与真实 rustdoc 节点形态也不一致；指纹只要求确定性，
+    输出形态对齐上游 JSON 才能与文档对照阅读。
+    """
+    return json.dumps(node, sort_keys=True, ensure_ascii=False, default=str)
+
+
 def _render_type(node: Any) -> str:
     """把 rustdoc JSON 的类型节点渲染为可读文本。"""
     if not isinstance(node, dict):
@@ -157,7 +167,7 @@ def _render_generics(generics: Any) -> str:
         kind = param.get("kind") or {}
         if "lifetime" in kind:
             lifetime = kind["lifetime"] or {}
-            outlives = ", ".join(str(x) for x in lifetime.get("outlives") or [])
+            outlives = ", ".join(_json_fragment(x) for x in lifetime.get("outlives") or [])
             name = name.lstrip("'")
             names.append(f"'{name}: {outlives}" if outlives else f"'{name}")
         elif "type" in kind:
@@ -174,7 +184,7 @@ def _render_generics(generics: Any) -> str:
             text = f"const {name}: {_render_type(const_kind.get('type'))}"
             default = const_kind.get("default")
             if default is not None:
-                text += f" = {json.dumps(default, sort_keys=True, ensure_ascii=False, default=str)}"
+                text += f" = {_json_fragment(default)}"
             names.append(text)
         else:
             names.append(name)
@@ -201,7 +211,7 @@ def _render_where_predicate(predicate: Any) -> str:
         return f"{_render_type(bound.get('type'))}: {bounds}"
     if "lifetime_predicate" in predicate:
         lifetime = predicate["lifetime_predicate"] or {}
-        outlives = ", ".join(str(x) for x in lifetime.get("outlives") or [])
+        outlives = ", ".join(_json_fragment(x) for x in lifetime.get("outlives") or [])
         return f"{lifetime.get('lifetime', '?')}: {outlives}"
     if "eq_predicate" in predicate:
         eq = predicate["eq_predicate"] or {}

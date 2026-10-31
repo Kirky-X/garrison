@@ -9,6 +9,7 @@ use std::sync::Arc;
 #[tokio::test]
 #[serial_test::serial]
 async fn check_abac_with_policy_no_engine_returns_err() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     reset_abac_for_test();
     let result = check_abac_with_policy("test:read", r#"Resource::"default""#, "1 == 1").await;
     assert!(

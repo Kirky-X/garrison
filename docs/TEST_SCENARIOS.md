@@ -1,6 +1,6 @@
 # 🧪 Garrison 测试场景矩阵
 
-> 适用版本：Garrison **0.9.0-rc.3**（MSRV 1.97.1——`Cargo.toml` 的 `rust-version`，见下表硬约束；`rust-toolchain.toml` 锁定的是 `stable` 通道，版本仅在 CI 测试矩阵的 MSRV 腿钉）
+> 适用版本：Garrison **0.9.0-rc.4**（MSRV 1.97.1——`Cargo.toml` 的 `rust-version`，见下表硬约束；仓库无 `rust-toolchain.toml`（rc.3 已删除），本地工具链由 rustup 默认通道决定，CI 经 `dtolnay/rust-toolchain` 逐工作流 pin：主 job 钉 1.97.1，测试矩阵腿为 `1.97.1 / stable / beta`）
 > 编写依据（只读核对）：`Cargo.toml [features]` 与 `[[test]]` 注册、`tests/acceptance.rs` 域入口、`tests/acceptance/*.rs`、`tests/acceptance/migrated/*.rs`、`examples/tests/`、`.github/workflows/ci.yml`、`.github/workflows/feature-matrix.yml`、`scripts/e2e_matrix.sh`、`scripts/e2e_run.sh`、`benches/garrison_benchmark.rs`。
 > 本文合并自原《E2E 特性组合测试套件》文档（`E2E_TESTING.md` 已删除），并补入基于真实测试套件的场景穷举。
 > 规模数字均为 `#[test]` / `#[tokio::test]` 属性的 grep 统计（含 `#[tokio::test(flavor = ...)]` 形态），截至 2026-09-15。
@@ -61,19 +61,19 @@
 
 ## 📊 测试规模统计
 
-> 单元与验收两列为 `cargo test -- --list` 在 CI 特性面（full / full+testing）下的实测计数，示例与过程宏为 `#[test]` / `#[tokio::test]` 属性静态计数；截至 2026-10-13（v0.9.0-rc.3 开发验证态工作区）。
+> 单元与验收两列为 `cargo test -- --list` 在 CI 特性面（full / full+testing）下的实测计数，示例与过程宏为 `#[test]` / `#[tokio::test]` 属性静态计数；截至 2026-10-28（v0.9.0-rc.4 工作区实测）。
 
 | 类别 | 位置 | 数量 |
 |------|------|------|
-| 单元测试 | `src/` 内联（`cargo test --features full --lib -- --list`） | 5431 |
+| 单元测试 | `src/` 内联（`cargo test --features full --lib -- --list`） | 5454 |
 | 验收 / 集成 / UI 测试 | `tests/`（`cargo test --test acceptance --features "full testing" -- --list`） | 416 |
 | 示例级集成测试 | `examples/tests/`（65 个文件，与示例 bin 一一对应） | 约 116 |
 | 过程宏测试 | `macros/` | 8 |
-| 合计 | — | **约 5971** |
+| 合计 | — | **约 5994** |
 | Criterion 基准 | `benches/garrison_benchmark.rs` | 6 场景 |
-| 行覆盖率门禁 | `ci.yml` coverage job | `--fail-under-lines 85`（2026-10-14 实测约 95.15%） |
+| 行覆盖率门禁 | `ci.yml` coverage job | `--fail-under-lines 95`（2026-10-14 实测约 95.15%） |
 
-> 覆盖率沿用既有记录值；本轮已实测刷新测试计数（full 面 5431 / acceptance 面 416），行覆盖率未重测。
+> 覆盖率沿用既有记录值；本轮已实测刷新测试计数（full 面 5454 / acceptance 面 416），行覆盖率未重测。
 
 ---
 
@@ -376,7 +376,7 @@ EXAMPLE_INTERNAL_API_KEY=$(openssl rand -hex 16) bash scripts/e2e_run.sh
 | Lint | `cargo clippy --no-default-features --features "default" -- -D warnings`<br>`cargo clippy --features "full" -- -D warnings` | 零告警 |
 | 依赖安全 | `cargo deny --all-features --locked check` | 漏洞/许可证/禁用源/重复依赖全过 |
 | 测试 | S2~S4 | 全绿；服务门控场景不得静默退化（S0 保证真服务在位） |
-| 覆盖率 | `cargo llvm-cov --features "full" --fail-under-lines 85` | 行覆盖率不低于 85%（CI coverage job） |
+| 覆盖率 | `cargo llvm-cov --features "full" --fail-under-lines 95` | 行覆盖率不低于 95%（CI coverage job） |
 | 性能 | `cargo bench --bench garrison_benchmark --features full --locked -- --quick --save-baseline e2e` | criterion 无 `Regressed` 判定；基线存于 `target/criterion` 供后续对比 |
 | HTTP E2E | `scripts/e2e_run.sh`（外部 18080 / 内部 18081） | happy path / errors / boundary / perf / pentest 全绿 + Markdown 报告生成 |
 

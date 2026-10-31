@@ -77,7 +77,7 @@ cargo build --features full
 # 全量编译
 cargo build --features full
 
-# 全量测试（5100+ 个 lib 测试应全部通过）
+# 全量测试（5454 个 lib 测试应全部通过）
 cargo test --features full
 
 # Lint（零警告）
@@ -161,7 +161,9 @@ garrison/
 │   ├── error.rs              # 错误类型定义
 │   ├── prelude.rs            # 预导出
 │   ├── bin/                  # 二进制入口
-│   │   └── auth_server.rs    # GarrisonAuthServer 独立运行入口（v0.7.0 新增，需 auth-server feature）
+│   │   ├── auth_server.rs    # GarrisonAuthServer 独立运行入口（v0.7.0 新增，需 auth-server feature）
+│   │   ├── garrison-cli.rs   # garrison-cli 运维 CLI（需 cli-ops feature，不进默认容器镜像）
+│   │   └── garrison-healthcheck.rs # 容器 HEALTHCHECK 探针（零依赖零 feature）
 │   └── lib.rs                # crate 入口
 ├── tests/                    # 集成测试
 ├── examples/                 # 示例代码（独立 workspace member）
@@ -212,7 +214,7 @@ Garrison 强制采用测试驱动开发（TDD）。每个任务必须严格按�
 4. **运行测试通过** — `cargo test --features full` 必须全部通过
 5. **格式化与 Lint** — `cargo fmt` + `cargo clippy --features full -- -D warnings`，然后 `git commit`
 
-> 不得先写实现再补测试。覆盖率门禁为行覆盖率 ≥ 85%（CI `--fail-under-lines 85`），新增代码不得使总覆盖率下降。
+> 不得先写实现再补测试。覆盖率门禁为行覆盖率 ≥ 95%（CI `--fail-under-lines 95`），新增代码不得使总覆盖率下降。
 
 ### 3.2 测试驱动示例
 
@@ -331,7 +333,7 @@ garrison::dao_conformance_tests! {
 
 ### 4.4 覆盖率要求
 
-Garrison 的覆盖率门禁为**行覆盖率 ≥ 85%**（CI 门禁 `cargo llvm-cov --features "full" --fail-under-lines 85`；当前约 95.8%）。新增代码不得使总覆盖率下降。
+Garrison 的覆盖率门禁为**行覆盖率 ≥ 95%**（CI 门禁 `cargo llvm-cov --features "full" --fail-under-lines 95`；2026-10-14 实测约 95.8%）。新增代码不得使总覆盖率下降。
 
 以下分模块数值为目标线（Kirky.X 设定的期望值），**非 CI 门禁**：
 
@@ -341,7 +343,7 @@ Garrison 的覆盖率门禁为**行覆盖率 ≥ 85%**（CI 门禁 `cargo llvm-c
 | 协议/安全插件 | ≥ 90% |
 | Web 适配层 | 集成测试覆盖主要中间件路径即可 |
 
-- 5500+ 个测试通过（5117 lib + 404 验收 E2E，合计 5521）+ doc-tests（`cargo test --list` 实测）
+- 5800+ 个测试通过（5454 lib + 416 验收 E2E，合计 5870）+ doc-tests（`cargo test --list` 实测，截至 2026-10-28）
 - 不追求 100% 覆盖率，但每个分支必须有对应测试用例
 - 禁止通过「不写测试」来提高覆盖率的行为
 
@@ -542,7 +544,7 @@ cargo run --features cli-ops,account-credential,protocol-zeroize,db-sqlite,proto
 | Clippy 检查（零警告） | `cargo clippy --features full --lib --tests -- -D warnings` |
 | 格式化 | `cargo fmt --all` |
 | 格式化检查 | `cargo fmt --all -- --check` |
-| 覆盖率测试 | `cargo llvm-cov --features "full" --fail-under-lines 85`（与 CI 同口径；Lcov 报告追加 `--lcov --output-path coverage/lcov.info`） |
+| 覆盖率测试 | `cargo llvm-cov --features "full" --fail-under-lines 95`（与 CI 同口径；Lcov 报告追加 `--lcov --output-path coverage/lcov.info`） |
 | 生成文档 | `cargo doc --no-deps --features full --open` |
 | 生产构建 | `cargo build --release --features production` |
 | 检查依赖更新 | `cargo update --dry-run` |

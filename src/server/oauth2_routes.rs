@@ -893,6 +893,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn oauth2_state_new_without_rotation_warns_at_construction() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::util::SubscriberInitExt;
 

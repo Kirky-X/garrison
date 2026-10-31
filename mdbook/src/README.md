@@ -9,7 +9,7 @@ Garrison 是一个面向 Rust 生态的身份认证鉴权框架，目标是提�
 
 - 仓库：<https://github.com/Kirky-X/garrison>
 - License：Apache-2.0
-- 当前版本：0.9.0-rc.3（开发验证中，未发布；上一版 0.9.0-rc.2 于 2026-08-26 发布）
+- 当前版本：0.9.0-rc.4（发布候选，2026-10-20；上一版 0.9.0-rc.3 于 2026-10-14 发布）
 - 工具链：Rust 1.97.1+（`Cargo.toml` 的 `rust-version = "1.97.1"`，与兄弟生态依赖 rc 线各自声明的 `rust-version` 同值——依赖图可满足的最低工具链，低于该版本 `cargo check` 直接拒绝）
 
 ## 框架定位
@@ -47,7 +47,7 @@ Garrison 采用 **双抽象层 + 全局单例** 的架构：
 
 ## 版本演进
 
-Garrison 自 0.1.0 起逐步演进至当前 0.9.0-rc.3，主要能力域落地节奏如下：
+Garrison 自 0.1.0 起逐步演进至当前 0.9.0-rc.4，主要能力域落地节奏如下：
 
 - **0.2.0**：协议层（JWT / OAuth2 / SSO / Sign / APIKey / Temp）与安全模块（TOTP / HMAC / HTTP Basic / HTTP Digest）
 - **0.3.0**：可观测性（Prometheus 指标 + 结构化 JSON 日志 + OpenTelemetry OTLP）、gRPC 鉴权拦截器（`GarrisonGrpcInterceptor` 实现 `tonic::Interceptor`）、异常消息 i18n（fluent-rs 中英文切换）、防火墙安全钩子（`GarrisonFirewallCheckHook` 5 个登录流程检查点）、多框架适配（`web-actix` / `web-warp` feature 与 axum 对齐）
@@ -61,7 +61,8 @@ Garrison 自 0.1.0 起逐步演进至当前 0.9.0-rc.3，主要能力域落地�
 - **0.7.2~0.7.3**：Windows CI 修复 + 配置文件安全加固 + `#[check_disable]` 过程宏 + `dao_session!` 宏
 - **0.8.0~0.8.1**：安全加固（常量时间比较原语 + JWT 弱密钥拒绝 + API Key 安全迁移 + 审计日志 token 泄漏修复）
 - **0.9.0-rc.1~rc.2**：安全 fail-closed 加固（`#[check_api_key]` / `check_abac_with_policy` 缺 feature 不再静默放行）+ 防火墙自动装配 + `policy-hibp` 泄露密码检查 + `IpWhitelist` CIDR 白名单 + `MockDao` 正名 `InMemoryDao`
-- **0.9.0-rc.3**（开发验证中）：安全审计整改 R01–R18（统一错误模型 request-id / Retry-After + 字段静态加密 + WebAuthn/Passkey + 密码找回 + MFA/step-up 编排 + OIDC back-channel logout + 多租户强化）+ garrison-cli 运维面
+- **0.9.0-rc.3**（2026-10-14）：安全审计整改 R01–R18（统一错误模型 request-id / Retry-After + 字段静态加密 + WebAuthn/Passkey + 密码找回 + MFA/step-up 编排 + OIDC back-channel logout + 多租户强化）+ garrison-cli 运维面
+- **0.9.0-rc.4**（2026-10-20）：会话凭据落库 key SHA-256 摘要化 + DAO 原子契约修复（`set_if_absent` 过期接管 / MySQL `ensure_table`）+ `vacuum_expired` 原语 + 限流后端 Redis 落地（`rate_limit_backend` 真正驱动切换）+ v1.0 门禁仓库侧产物
 
 详细演进历史与里程碑意义见 [版本路线图](./roadmap.md)。
 

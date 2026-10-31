@@ -293,6 +293,7 @@ mod tests {
     /// DistributedLimiter::get_count 遇到脏数据时返回错误（非静默用 0）。
     #[tokio::test]
     async fn m3_limiter_get_count_dirty_data_returns_err() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let limiter = GarrisonDaoDistributedLimiter::new(make_dao());
         limiter
             .dao

@@ -35,6 +35,7 @@ fn with_login_type_accepts_string() {
 
 #[test]
 fn display_formats_correctly() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let ex = NotLoginException::new("token 已过期");
     assert_eq!(format!("{}", ex), "Not logged in: token 已过期");
 }
@@ -42,6 +43,7 @@ fn display_formats_correctly() {
 /// login_type 变化必须反映在 Display 输出（防硬编码前缀忽略字段）。
 #[test]
 fn display_includes_custom_login_type() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let ex = NotLoginException::new("请先登录").with_login_type("wechat");
     let rendered = format!("{}", ex);
     assert!(
@@ -171,6 +173,7 @@ fn garrison_exception_debug_sanitizes_extras() {
 
 #[test]
 fn garrison_exception_display_format() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let ex = GarrisonException::new(-1, "请先登录");
     assert_eq!(format!("{}", ex), "Business exception[-1]: 请先登录");
 }
@@ -188,6 +191,7 @@ fn garrison_exception_into_garrison_error() {
 
 #[test]
 fn existing_garrison_error_variants_unaffected() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let err = GarrisonError::NotLogin("请先登录".to_string());
     assert_eq!(err.to_string(), "Not logged in: 请先登录");
     let errors: [GarrisonError; 2] = [

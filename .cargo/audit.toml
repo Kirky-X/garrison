@@ -18,6 +18,13 @@ ignore = [
     # SECURITY.md §5；rsa 出修复版后须升级并移除此项，若引入 RSA 解密能力须重新评估。
     # 参见 https://rustsec.org/advisories/RUSTSEC-2023-0071
     "RUSTSEC-2023-0071",
+    # crypto-bigint 0.5.5 RUSTSEC-2026-0387（常时运算时序变异，2026-10-23）：
+    # 经 elliptic-curve 0.13 ← p256/p384 0.13 ← jsonwebtoken 11.1.0 引入，修补需
+    # RustCrypto 0.14-gen 栈（crypto-bigint ≥0.7.6 / elliptic-curve 0.14），
+    # jsonwebtoken 最新发布 11.1.0 仍锁 0.13-gen，图内无 patched 路径；上游迁移后
+    # （jsonwebtoken 支持 p256 0.14 一线）随阶段 7 机械对齐解除本豁免。
+    # 与 deny.toml [advisories].ignore 同步维护（修改任一处必须同步另一处）。
+    "RUSTSEC-2026-0387",
     # unsafe-libyaml 0.2.11 的 RUSTSEC-2024-0449（unmaintained）豁免已移除：YAML 后端由
     # serde_yaml_ng 换为 serde-saphyr（confers 0.6.0-rc.11 / dbnexus 0.6.0-rc.10 /
     # limiteron 0.3.0-rc.8）后，unsafe-libyaml 与 serde_yaml_ng 已不在依赖图内。

@@ -76,7 +76,7 @@
 <td width="50%" style="vertical-align:top; padding: 12px">📊 <b>高可观测</b><br><span style="color:#64748B"><code>tracing</code> 日志 + <code>listener</code> 事件订阅 + <code>prometheus</code> 指标（可选）</span></td>
 </tr>
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>高覆盖</b><br><span style="color:#64748B">5900+ 个测试（lib 约 5360 + 验收/集成/示例约 540），95%+ 行覆盖率，clippy 零警告</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>高覆盖</b><br><span style="color:#64748B">5990+ 个测试（lib 约 5454 + 验收/集成/示例约 540），95%+ 行覆盖率，clippy 零警告</span></td>
 <td width="50%" style="vertical-align:top; padding: 12px">🌐 <b>Web 框架适配</b><br><span style="color:#64748B">axum/actix/warp 三框架注解式 extractor + 过程宏</span></td>
 </tr>
 </table>
@@ -252,7 +252,7 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 <tr><td><code>core-advanced</code> / <code>session-extra</code></td><td align="center">❌</td><td>核心增强 / 会话增强合并</td></tr>
 <tr><td><code>email-verification</code> / <code>email-verification-smtp</code></td><td align="center">❌</td><td>邮箱验证码</td></tr>
 <tr><td><code>config-*</code></td><td align="center">❌</td><td>配置文件加密/校验/热更新/插值/动态/开关（confers 透传）</td></tr>
-<tr><td><code>i18n</code> / <code>i18n-icu</code></td><td align="center">❌</td><td>国际化</td></tr>
+<tr><td><code>i18n-icu</code></td><td align="center">❌</td><td>国际化（基础 i18n 层无需 feature，ICU 集成按此门控）</td></tr>
 <tr><td><code>protocol-webauthn</code></td><td align="center">❌</td><td>WebAuthn / Passkey 凭据注册与认证仪式（challenge 防重放 / sign_count 克隆检测）</td></tr>
 <tr><td><code>backchannel-logout</code></td><td align="center">❌</td><td>OIDC Back-Channel Logout（logout token 签发 + 持久化投递队列）</td></tr>
 <tr><td><code>keycloak-oidc</code></td><td align="center">❌</td><td>Keycloak OIDC 依赖方（RP）集成</td></tr>
@@ -395,8 +395,8 @@ cargo clippy --no-default-features --features "default" -- -D warnings
 cargo clippy --features "full" -- -D warnings
 cargo fmt --all -- --check
 
-# 覆盖率门禁：行覆盖率不低于 85%
-cargo llvm-cov --features "full" --fail-under-lines 85
+# 覆盖率门禁：行覆盖率不低于 95%
+cargo llvm-cov --features "full" --fail-under-lines 95
 
 # 依赖安全门禁
 cargo deny --all-features --locked check
@@ -411,7 +411,7 @@ cargo bench --bench garrison_benchmark --features full --locked -- --quick
 
 ### 📊 测试规模
 
-约 5971 个测试（lib 单元 5431 + 验收 / 集成 416 + 示例级 116 + 过程宏 8；lib 与验收数为 `cargo test --list` 实测，示例与过程宏为属性静态计数，截至 2026-10-13）与 6 个 Criterion 基准场景；覆盖率门禁为行覆盖率不低于 85%（2026-10-14 实测约 95.15%）。统计口径与明细见 [🧪 测试场景矩阵 · 测试规模统计](docs/TEST_SCENARIOS.md#-测试规模统计)。
+约 5994 个测试（lib 单元 5454 + 验收 / 集成 416 + 示例级 116 + 过程宏 8；lib 与验收数为 `cargo test --list` 实测，示例与过程宏为属性静态计数，截至 2026-10-28）与 6 个 Criterion 基准场景；覆盖率门禁为行覆盖率不低于 95%（2026-10-14 实测约 95.15%）。统计口径与明细见 [🧪 测试场景矩阵 · 测试规模统计](docs/TEST_SCENARIOS.md#-测试规模统计)。
 
 ---
 

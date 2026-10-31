@@ -77,6 +77,7 @@ fn assert_error_text(err: &GarrisonError, text: &str) {
 /// 空 secret 拒绝构造，错误为 InvalidParam。
 #[tokio::test]
 async fn new_rejects_empty_secret() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let err = QrLoginService::new(Arc::new(InMemoryDao::new()), "")
         .expect_err("empty secret must be rejected");
     assert_error_text(&err, "secret must not be empty");
@@ -85,6 +86,7 @@ async fn new_rejects_empty_secret() {
 /// 31 字节 secret 拒绝构造（强度下限 = 32 字节，对齐 JWT HS256）。
 #[tokio::test]
 async fn new_rejects_short_secret() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let err = QrLoginService::new(Arc::new(InMemoryDao::new()), "a".repeat(31))
         .expect_err("31-byte secret must be rejected");
     assert_error_text(&err, "at least 32 bytes");
@@ -186,6 +188,7 @@ async fn scan_moves_pending_to_scanned_and_issues_confirm_token() {
 /// scan：非法签名票据拒绝（无白名单配置时跳过域名校验，仍验签）。
 #[tokio::test]
 async fn scan_rejects_forged_ticket() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let svc = service();
     let err = svc
         .scan(
@@ -214,6 +217,7 @@ async fn scan_allows_allowlisted_domain() {
 /// scan：白名单外域名的 qr_content 拒绝。
 #[tokio::test]
 async fn scan_rejects_non_allowlisted_domain() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let svc = service_with_domains(&["app.example.com"]);
     let created = svc.create_session(web_context()).await.unwrap();
     // 篡改 host 为白名单外域名（票据本身不变）
@@ -226,6 +230,7 @@ async fn scan_rejects_non_allowlisted_domain() {
 /// scan：重复扫码返回 already-scanned；App 取消后再扫返回 cancelled。
 #[tokio::test]
 async fn scan_rejects_repeated_scan_and_cancelled_session() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let svc = service();
     let created = svc.create_session(web_context()).await.unwrap();
     svc.scan(&created.qr_content, "user-1", None).await.unwrap();
@@ -255,6 +260,7 @@ async fn scan_rejects_repeated_scan_and_cancelled_session() {
 /// 「token 无效」完全一致（身份绑定 + 防枚举）。
 #[tokio::test]
 async fn confirm_by_other_user_rejected_indistinguishable() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let svc = service();
     let created = svc.create_session(web_context()).await.unwrap();
     let view = svc.scan(&created.qr_content, "user-1", None).await.unwrap();
@@ -276,6 +282,7 @@ async fn confirm_by_other_user_rejected_indistinguishable() {
 /// confirm：Scanned → Confirmed；confirm_token 重放失败。
 #[tokio::test]
 async fn confirm_moves_scanned_to_confirmed_and_replay_fails() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let svc = service();
     let created = svc.create_session(web_context()).await.unwrap();
     let view = svc.scan(&created.qr_content, "user-1", None).await.unwrap();
@@ -297,6 +304,7 @@ async fn confirm_moves_scanned_to_confirmed_and_replay_fails() {
 /// confirm：未扫码会话（Pending）确认返回 not-scanned。
 #[tokio::test]
 async fn confirm_pending_session_fails() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let svc = service();
     let created = svc.create_session(web_context()).await.unwrap();
     // 直接注入一个与 qr_id 关联的 confirm token（模拟 scan 后又手动回退状态的异常路径）
@@ -359,6 +367,7 @@ async fn poll_confirmed_exchanges_atomically() {
 /// poll：未扫码/已扫码/不存在 各返回对应 outcome；兑换后再 confirm 返回 already-consumed。
 #[tokio::test]
 async fn poll_outcomes_and_post_exchange_confirm() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let svc = service();
     let created = svc.create_session(web_context()).await.unwrap();
     assert_eq!(
@@ -395,6 +404,7 @@ async fn poll_outcomes_and_post_exchange_confirm() {
 /// confirm：Cancel 后重放同一 confirm_token 失败（原子消费先于状态检查，fail-closed）。
 #[tokio::test]
 async fn confirm_replay_after_cancel_fails_fail_closed() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let svc = service();
     let created = svc.create_session(web_context()).await.unwrap();
     let view = svc.scan(&created.qr_content, "user-1", None).await.unwrap();

@@ -6,10 +6,10 @@
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.3", features = ["otlp"] }
+garrison = { version = "0.9.0-rc.4", features = ["otlp"] }
 ```
 
-> 注：当前版本为 pre-release（0.9.0-rc.3），`version = "0.9"` 不会匹配它——Cargo 要求显式写出完整 pre-release 版本号；待 0.9.0 正式发布后可再改为 `"0.9"`。
+> 注：当前版本为 pre-release（0.9.0-rc.4），`version = "0.9"` 不会匹配它——Cargo 要求显式写出完整 pre-release 版本号；待 0.9.0 正式发布后可再改为 `"0.9"`。
 
 `otlp` 独立门控以隔离重依赖（opentelemetry / opentelemetry_sdk / opentelemetry-otlp / tracing-subscriber）：
 

@@ -76,7 +76,7 @@ Inject your dependencies into `GarrisonManager` once at startup — from login t
 <td width="50%" style="vertical-align:top; padding: 12px">📊 <b>High Observability</b><br><span style="color:#64748B"><code>tracing</code> logging + <code>listener</code> event subscriptions + <code>prometheus</code> metrics (optional)</span></td>
 </tr>
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>High Coverage</b><br><span style="color:#64748B">5900+ tests (≈5360 lib + ≈540 acceptance/integration/examples), 95%+ line coverage, clippy zero warnings</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>High Coverage</b><br><span style="color:#64748B">5990+ tests (≈5454 lib + ≈540 acceptance/integration/examples), 95%+ line coverage, clippy zero warnings</span></td>
 <td width="50%" style="vertical-align:top; padding: 12px">🌐 <b>Web Framework Adapters</b><br><span style="color:#64748B">axum/actix/warp annotation-style extractors + proc macros</span></td>
 </tr>
 </table>
@@ -252,7 +252,7 @@ The table below summarizes the main `[features]` of `Cargo.toml` grouped by capa
 <tr><td><code>core-advanced</code> / <code>session-extra</code></td><td align="center">❌</td><td>Core enhancements / Session enhancements merged</td></tr>
 <tr><td><code>email-verification</code> / <code>email-verification-smtp</code></td><td align="center">❌</td><td>Email verification codes</td></tr>
 <tr><td><code>config-*</code></td><td align="center">❌</td><td>Config file encryption/validation/hot-reload/interpolation/dynamic/toggle (confers passthrough)</td></tr>
-<tr><td><code>i18n</code> / <code>i18n-icu</code></td><td align="center">❌</td><td>Internationalization</td></tr>
+<tr><td><code>i18n-icu</code></td><td align="center">❌</td><td>Internationalization (the base i18n layer needs no feature; ICU integration is gated here)</td></tr>
 <tr><td><code>protocol-webauthn</code></td><td align="center">❌</td><td>WebAuthn / Passkey credential registration &amp; authentication ceremony (challenge replay-guard / sign_count clone detection)</td></tr>
 <tr><td><code>backchannel-logout</code></td><td align="center">❌</td><td>OIDC Back-Channel Logout (logout token issuance + persistent delivery queue)</td></tr>
 <tr><td><code>keycloak-oidc</code></td><td align="center">❌</td><td>Keycloak OIDC Relying Party (RP) integration</td></tr>
@@ -395,8 +395,8 @@ cargo clippy --no-default-features --features "default" -- -D warnings
 cargo clippy --features "full" -- -D warnings
 cargo fmt --all -- --check
 
-# Coverage gate: line coverage no lower than 85%
-cargo llvm-cov --features "full" --fail-under-lines 85
+# Coverage gate: line coverage no lower than 95%
+cargo llvm-cov --features "full" --fail-under-lines 95
 
 # Dependency security gate
 cargo deny --all-features --locked check
@@ -411,7 +411,7 @@ cargo bench --bench garrison_benchmark --features full --locked -- --quick
 
 ### 📊 Test Scale
 
-About 5971 tests (5431 lib unit + 416 acceptance / integration + 116 example-level + 8 proc macros; lib and acceptance counts measured via `cargo test --list`, examples and proc macros counted statically by attribute, as of 2026-10-13) and 6 Criterion benchmark scenarios; the coverage gate is line coverage no lower than 85% (measured about 95.15% on 2026-10-14). For the counting methodology and details, see [🧪 Test Scenarios · Test Scale](docs/TEST_SCENARIOS.md#-测试规模统计).
+About 5994 tests (5454 lib unit + 416 acceptance / integration + 116 example-level + 8 proc macros; lib and acceptance counts measured via `cargo test --list`, examples and proc macros counted statically by attribute, as of 2026-10-28) and 6 Criterion benchmark scenarios; the coverage gate is line coverage no lower than 95% (measured about 95.15% on 2026-10-14). For the counting methodology and details, see [🧪 Test Scenarios · Test Scale](docs/TEST_SCENARIOS.md#-测试规模统计).
 
 ---
 

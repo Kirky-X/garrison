@@ -988,7 +988,9 @@ mod tests {
             if lines.iter().any(|(level, msg)| {
                 level == "WARN"
                     && msg.contains("garrison-event-tx-dispatch-cancelled-after-commit")
-                    && msg.contains("0 of 1")
+                    // 已派发/总数断言取双语目录兼容形式：en 为 "0 of 1"、zh 为 "0/1"
+                    // （该 warn 在 multi_thread worker 线程发射，thread-local locale guard 不可达）
+                    && (msg.contains("0 of 1") || msg.contains("0/1"))
                     && msg.contains("Login=1")
             }) {
                 warn_captured = true;

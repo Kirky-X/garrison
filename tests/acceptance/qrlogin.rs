@@ -407,6 +407,9 @@ async fn dual_device_full_flow_confirmed_and_exchange() {
 #[tokio::test]
 #[serial]
 async fn scan_rejects_missing_and_invalid_bearer() {
+    // 断言 401 错误消息语义（英文字面量），须固定 locale：默认 locale 经系统语言探测得出，
+    // 中文宿主会将消息翻成中文，导致断言与宿主语言耦合（与 `qrlogin_routes.rs` 单测同惯例）。
+    let _en = garrison::i18n::set_locale(garrison::i18n::GarrisonLocale::En);
     let (external_url, _internal_url, _handle) = start_test_server().await;
     let web = device_client();
     let attacker = device_client();
@@ -441,6 +444,8 @@ async fn scan_rejects_missing_and_invalid_bearer() {
 #[tokio::test]
 #[serial]
 async fn scan_forged_ticket_rejected() {
+    // 与 `scan_rejects_missing_and_invalid_bearer` 同理：断言英文字面量前固定 locale。
+    let _en = garrison::i18n::set_locale(garrison::i18n::GarrisonLocale::En);
     let (external_url, _internal_url, _handle) = start_test_server().await;
     let app = device_client();
     let app_token = app_login(&app, &external_url, "app-user").await;

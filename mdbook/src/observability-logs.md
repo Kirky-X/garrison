@@ -8,9 +8,9 @@
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.3", features = ["tracing-log"] }
+garrison = { version = "0.9.0-rc.4", features = ["tracing-log"] }
 # 或包含在 production 聚合 feature 中：
-# garrison = { version = "0.9.0-rc.3", features = ["production"] }
+# garrison = { version = "0.9.0-rc.4", features = ["production"] }
 ```
 
 - `tracing-log`：启用 `tracing/log` feature 并引入 `tracing-subscriber`，使 `tracing` 的 span/event 在无激活 `Subscriber` 时发出 `log` 记录（tracing → log 方向）；`log` → `tracing` 的桥接不在其中，如需可自行引入 `tracing-log` crate 的 `LogTracer`

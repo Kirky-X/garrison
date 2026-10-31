@@ -596,7 +596,12 @@ impl GarrisonDao for GarrisonDaoOxcache {
     }
 
     /// 委托 oxcache `Cache::eval_lua`（`cache-redis` 门控，启用 `oxcache/lua`），
-    /// 将 `oxcache::redis::Value` 递归转为 `Vec<String>`；非 Redis 后端返回 `Operation` 错误，调用方应降级非原子路径。
+    /// 将 `oxcache::redis::Value` 递归转为 `Vec<String>`。
+    ///
+    /// 非 Redis 后端无 Lua 能力：oxcache 返回 `Operation` 错误，映射为 `NotImplemented`
+    /// 以兑现 [`GarrisonDao::eval_lua`] 契约（非 Redis 后端以 NotImplemented 通知调用方）——
+    /// `atomic_check_and_incr` 与 `RateLimitStrategy::check` 只在 NotImplemented 信号下降级
+    /// 非原子路径；Redis 运行期错误仍为 `Dao`（fail-closed，不降级）。
     #[cfg(feature = "cache-redis")]
     async fn eval_lua(
         &self,
@@ -610,9 +615,25 @@ impl GarrisonDao for GarrisonDaoOxcache {
             .cache
             .eval_lua(script, &key_refs, &arg_refs)
             .await
-            .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-eval-lua::{}", e)))?;
+            .map_err(|e| {
+                if is_lua_backend_unsupported(&e) {
+                    GarrisonError::NotImplemented(format!("dao-oxcache-eval-lua::{}", e))
+                } else {
+                    GarrisonError::Dao(format!("dao-oxcache-eval-lua::{}", e))
+                }
+            })?;
         Ok(redis_value_to_strings(value))
     }
+}
+
+/// 判定 oxcache 错误是否为「后端无 Lua 能力」：非 Redis 后端执行 Lua 时 oxcache
+/// 统一返回 `Operation` 变体（固定文案，rc.10/rc.11 一致）。变体 + 文案双匹配，
+/// 任一漂移即落到 `Dao`（fail-closed），不误降级。
+#[cfg(feature = "cache-redis")]
+fn is_lua_backend_unsupported(e: &oxcache::OxCacheError) -> bool {
+    matches!(e, oxcache::OxCacheError::Operation(_))
+        && e.to_string()
+            .contains("Lua scripts require a Redis backend")
 }
 
 /// 将 `oxcache::redis::Value` 递归展平为 `Vec<String>`：Nil→空、Int/Double→格式化、
@@ -1180,18 +1201,41 @@ mod tests {
             assert!(matches!(r, Err(GarrisonError::Config(_))), "实际: {:?}", r);
         }
 
-        /// eval_lua 在内存后端（非 Redis）返回 Dao 错误（oxcache Operation 语义），
-        /// 调用方应据此降级到非原子路径。
+        /// eval_lua 在内存后端（非 Redis）必须返回 `NotImplemented`（含 dao-oxcache-eval-lua 标识）：
+        /// `GarrisonDao::eval_lua` 契约规定非 Redis 后端以 NotImplemented 通知调用方降级；
+        /// `Dao` 错误会绕过两条降级分支——`atomic_check_and_incr`（仅 NotImplemented 降级）
+        /// 与 `RateLimitStrategy::check`（消息含 NotImplemented 才降级），使限流显性报错。
         #[tokio::test(flavor = "multi_thread")]
-        async fn eval_lua_on_memory_backend_returns_dao_error() {
+        async fn eval_lua_on_memory_backend_returns_not_implemented() {
             let dao = GarrisonDaoOxcache::new().await.unwrap();
             let result = dao
                 .eval_lua("return 1", vec!["el_k".to_string()], vec![])
                 .await;
             assert!(
-                matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("dao-oxcache-eval-lua")),
-                "内存后端 eval_lua 应返回含 'dao-oxcache-eval-lua' 的 Dao 错误，实际: {:?}",
+                matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("dao-oxcache-eval-lua")),
+                "内存后端 eval_lua 应返回含 'dao-oxcache-eval-lua' 的 NotImplemented 错误，实际: {:?}",
                 result
+            );
+        }
+
+        /// 端到端回归：`GarrisonDaoOxcache`（内存后端）经 `GarrisonDaoDistributedLimiter`
+        /// 原子计数在 `cache-redis` 下仍走 incr 降级路径（eval_lua NotImplemented → 降级），
+        /// 与 `cache-memory` 单开时行为一致——启用 cache-redis 不得改变降级语义。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn distributed_limiter_falls_back_to_incr_with_oxcache_dao() {
+            use crate::limiteron::GarrisonDaoDistributedLimiter;
+            let dao: std::sync::Arc<dyn GarrisonDao> =
+                std::sync::Arc::new(GarrisonDaoOxcache::new().await.unwrap());
+            let limiter = GarrisonDaoDistributedLimiter::new(dao.clone());
+            let allowed = limiter
+                .atomic_check_and_incr("rc_lua_fb", 5, Duration::from_secs(60))
+                .await
+                .expect("内存后端应走 incr 降级而非报错");
+            assert!(allowed, "count 1 <= 5 应放行");
+            assert_eq!(
+                dao.get("rc_lua_fb").await.unwrap().as_deref(),
+                Some("1"),
+                "降级路径应经 incr 落盘计数"
             );
         }
 

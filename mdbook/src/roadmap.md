@@ -28,8 +28,8 @@
 | 0.7.3 | ✅ 已完成 | 2026-07-22 | `#[check_disable]` 过程宏 + `dao_session!` 宏 + garrison-macros 版本对齐 |
 | 0.8.0 | ✅ 已完成 | 2026-07-24 | 安全加固：常量时间比较原语 + JWT 弱密钥拒绝 + API Key 安全迁移 + tech-review 修复批次 |
 | 0.8.1 | ✅ 已完成 | 2026-07-24 | 审计日志 token 泄漏修复（CWE-532） |
-| 0.9.0 | 🚧 进行中（rc.3 开发验证中，未发布） | rc.1：2026-09-07 | 自研库特性吸收 + 依赖批量升级 + 配置/数据库/防火墙增强 + 协议域统一重命名（secure-httpbasic/httpdigest → protocol-*）+ feature 整合改名（safe-defaults / decision-trace / permission-registry 合并为 core-advanced） |
-| 1.0.0 | 📋 待规划 | 2027 Q2 | 稳定版 |
+| 0.9.0 | 🚧 rc 线迭代中（0.9.0-rc.4 已发布，2026-10-20） | rc.1：2026-09-07｜rc.3：2026-10-14｜rc.4：2026-10-20 | 自研库特性吸收 + 依赖批量升级 + 配置/数据库/防火墙增强 + 协议域统一重命名（secure-httpbasic/httpdigest → protocol-*）+ feature 整合改名（safe-defaults / decision-trace / permission-registry 合并为 core-advanced）+ 安全审计整改 R01–R18（rc.3）+ 会话 key SHA-256 摘要化 / 限流后端 Redis 落地（rc.4） |
+| 1.0.0 | 📋 外部待办（仓库侧产物已完成，第三方安全审计待） | 2027 Q2 | 稳定版 |
 
 ## v0.1.0 核心基础设施（已完成）
 

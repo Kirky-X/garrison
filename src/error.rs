@@ -998,6 +998,7 @@ mod tests {
 
     #[test]
     fn string_variants_display_includes_message() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let cases: [(GarrisonError, &str); 16] = [
             (
                 GarrisonError::Session("会话已过期".into()),
@@ -1191,6 +1192,7 @@ mod tests {
 
     #[test]
     fn exception_variant_display_includes_code_and_message() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         use crate::exception::GarrisonException;
         let err = GarrisonError::Exception(Box::new(GarrisonException::new(-1, "请先登录")));
         assert_eq!(err.to_string(), "Business exception[-1]: 请先登录");
@@ -1233,6 +1235,7 @@ mod tests {
 
     #[test]
     fn invalid_response_variant_display_includes_message() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let err = GarrisonError::InvalidResponse("JSON 解析失败".to_string());
         assert_eq!(err.to_string(), "Invalid upstream response: JSON 解析失败");
     }
@@ -1253,6 +1256,7 @@ mod tests {
 
     #[test]
     fn invalid_response_to_json_body_does_not_leak_detail() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let err = GarrisonError::InvalidResponse(
             "internal parser stack trace: serde_json::Error at line 42".to_string(),
         );
@@ -1304,6 +1308,7 @@ mod tests {
 
     #[test]
     fn to_json_body_returns_error_code_and_message() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let err = GarrisonError::NotLogin("token missing".to_string());
         let body = err.to_json_body();
         assert_eq!(body["error_code"], "NOT_LOGIN");
@@ -1512,6 +1517,7 @@ mod tests {
 
     #[test]
     fn firewall_blocked_variant_display_includes_message() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let err = GarrisonError::FirewallBlocked("IP 1.2.3.4 被拦截".to_string());
         assert_eq!(err.to_string(), "Firewall blocked: IP 1.2.3.4 被拦截");
     }
@@ -1528,6 +1534,7 @@ mod tests {
 
     #[test]
     fn firewall_blocked_to_json_body_returns_correct_json() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let err = GarrisonError::FirewallBlocked("ratelimit".to_string());
         let body = err.to_json_body();
         assert_eq!(body["error_code"], "FIREWALL_BLOCKED");
@@ -1552,6 +1559,7 @@ mod tests {
 
     #[test]
     fn disable_service_display_includes_service_and_until() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let err = GarrisonError::DisableService {
             service: "default".to_string(),
             until: None,
@@ -1596,6 +1604,7 @@ mod tests {
 
     #[test]
     fn disable_service_to_json_body_does_not_leak_service() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let err = GarrisonError::DisableService {
             service: "sensitive-service-name".to_string(),
             until: None,
@@ -1613,6 +1622,7 @@ mod tests {
 
     #[test]
     fn not_safe_display_includes_reason() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let err = GarrisonError::NotSafe {
             reason: "MFA_TOTP_REQUIRED".to_string(),
         };
@@ -1636,6 +1646,7 @@ mod tests {
 
     #[test]
     fn not_safe_to_json_body_does_not_leak_reason() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let err = GarrisonError::NotSafe {
             reason: "internal-mfa-secret-leak".to_string(),
         };
@@ -1651,6 +1662,7 @@ mod tests {
 
     #[test]
     fn invalid_state_transition_display_includes_from_and_to() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let err = GarrisonError::InvalidStateTransition {
             from: "Expired".to_string(),
             to: "Active".to_string(),
@@ -1679,6 +1691,7 @@ mod tests {
 
     #[test]
     fn invalid_state_transition_to_json_body_does_not_leak_states() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let err = GarrisonError::InvalidStateTransition {
             from: "InternalStateA".to_string(),
             to: "InternalStateB".to_string(),
@@ -2145,6 +2158,7 @@ mod tests {
 
     #[test]
     fn to_json_body_contains_error_id_alongside_legacy_code() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let body = GarrisonError::NotLogin("token missing".into()).to_json_body();
         assert_eq!(body["error_code"], "NOT_LOGIN", "旧码冻结输出");
         assert_eq!(body["error_id"], "auth.not_login", "新码并存输出");

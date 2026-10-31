@@ -1237,6 +1237,7 @@ mod tests {
     /// shutdown_with_timeout 对慢任务（不响应 shutdown 信号）超时后强制 abort：创建一个永远 pending 的任务，100ms 超时后应返回 Err。
     #[tokio::test]
     async fn shutdown_with_timeout_aborts_slow_task() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let handle = tokio::spawn(async {
             std::future::pending::<()>().await;
         });

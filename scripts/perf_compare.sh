@@ -159,16 +159,16 @@ mkdir -p logs
 } >"${OUT}"
 
 set +e
-RUN_STARTED_AT="$(date +%s)"
+# 采集前清掉上次运行残留的 new/：criterion 的 new/ 在每个基准目录
+# （target/criterion/<group>/<id>/new/）下，残留会被 load_current 当成
+# 本次结果——被改名/跳过/中断的基准照样进对比表，门禁假绿。local 基线
+# 分支同样需要：--baseline 的基线归档在独立目录，清理 new/ 不动基线数据。
+find target/criterion -type d -name new -prune -exec rm -rf {} + 2>/dev/null || true
 if [[ "${BASELINE_SOURCE}" == "local" ]]; then
     cargo bench --features full --bench garrison_benchmark -- \
         --baseline "${BASELINE}" 2>&1 | tee -a "${OUT}"
 else
     # 归档基线路径下本地无 criterion 基线可比：只采集当前值，由汇总表做差分。
-    # 采集前清掉上次运行残留的 new/：criterion 的 new/ 在每个基准目录
-    # （target/criterion/<group>/<id>/new/）下，残留会被 load_current 当成
-    # 本次结果——被改名/跳过/中断的基准照样进对比表，门禁假绿。
-    find target/criterion -type d -name new -prune -exec rm -rf {} + 2>/dev/null || true
     cargo bench --features full --bench garrison_benchmark -- 2>&1 | tee -a "${OUT}"
 fi
 BENCH_STATUS=${PIPESTATUS[0]}

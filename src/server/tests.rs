@@ -416,6 +416,7 @@ fn test_to_api_response_ok() {
 /// 测试 to_api_response 在 Err 时返回包含错误码和消息的失败响应。
 #[test]
 fn test_to_api_response_err() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> = Err(GarrisonError::Internal("test error".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
@@ -904,6 +905,7 @@ async fn test_listen_tls_returns_error_when_cert_not_found() {
 /// 测试 to_api_response 处理 NotLogin 错误（401 + NOT_LOGIN）。
 #[test]
 fn test_to_api_response_with_not_login_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> =
         Err(GarrisonError::NotLogin("not logged in".to_string()));
     let resp = to_api_response(result);
@@ -915,6 +917,7 @@ fn test_to_api_response_with_not_login_error() {
 /// 测试 to_api_response 处理 Dao 错误（500 + DAO_ERROR）。
 #[test]
 fn test_to_api_response_with_dao_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> =
         Err(GarrisonError::Dao("db connection failed".to_string()));
     let resp = to_api_response(result);
@@ -926,6 +929,7 @@ fn test_to_api_response_with_dao_error() {
 /// 测试 to_api_response 处理 InvalidParam 错误（400 + INVALID_PARAM）。
 #[test]
 fn test_to_api_response_with_invalid_param_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> =
         Err(GarrisonError::InvalidParam("missing field".to_string()));
     let resp = to_api_response(result);
@@ -937,6 +941,7 @@ fn test_to_api_response_with_invalid_param_error() {
 /// 测试 to_api_response 处理 NotPermission 错误（403 + NOT_PERMISSION）。
 #[test]
 fn test_to_api_response_with_not_permission_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> =
         Err(GarrisonError::NotPermission("admin:read".to_string()));
     let resp = to_api_response(result);
@@ -948,6 +953,7 @@ fn test_to_api_response_with_not_permission_error() {
 /// 测试 to_api_response 处理 ExpiredToken 错误（401 + EXPIRED_TOKEN）。
 #[test]
 fn test_to_api_response_with_expired_token_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> =
         Err(GarrisonError::ExpiredToken("token-abc".to_string()));
     let resp = to_api_response(result);
@@ -961,6 +967,7 @@ fn test_to_api_response_with_expired_token_error() {
 /// 测试 to_api_response 处理 NotRole 错误（403 + NOT_ROLE）。
 #[test]
 fn test_to_api_response_with_not_role_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> = Err(GarrisonError::NotRole("admin".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
@@ -971,6 +978,7 @@ fn test_to_api_response_with_not_role_error() {
 /// 测试 to_api_response 处理 InvalidToken 错误（401 + INVALID_TOKEN）。
 #[test]
 fn test_to_api_response_with_invalid_token_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> =
         Err(GarrisonError::InvalidToken("bad-format".to_string()));
     let resp = to_api_response(result);
@@ -982,6 +990,7 @@ fn test_to_api_response_with_invalid_token_error() {
 /// 测试 to_api_response 处理 TokenRevoked 错误（401 + TOKEN_REVOKED）。
 #[test]
 fn test_to_api_response_with_token_revoked_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> =
         Err(GarrisonError::TokenRevoked("revoked-token".to_string()));
     let resp = to_api_response(result);
@@ -993,6 +1002,7 @@ fn test_to_api_response_with_token_revoked_error() {
 /// 测试 to_api_response 处理 Config 错误（500 + CONFIG_ERROR）。
 #[test]
 fn test_to_api_response_with_config_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> =
         Err(GarrisonError::Config("invalid config".to_string()));
     let resp = to_api_response(result);
@@ -1004,6 +1014,7 @@ fn test_to_api_response_with_config_error() {
 /// 测试 to_api_response 处理 Session 错误（500 + SESSION_ERROR）。
 #[test]
 fn test_to_api_response_with_session_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> =
         Err(GarrisonError::Session("session expired".to_string()));
     let resp = to_api_response(result);
@@ -1015,6 +1026,7 @@ fn test_to_api_response_with_session_error() {
 /// 测试 to_api_response 处理 Network 错误（502 + NETWORK_ERROR）。
 #[test]
 fn test_to_api_response_with_network_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> = Err(GarrisonError::Network("timeout".to_string()));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
@@ -1025,6 +1037,7 @@ fn test_to_api_response_with_network_error() {
 /// 测试 to_api_response 处理 NotImplemented 错误（501 + NOT_IMPLEMENTED）。
 #[test]
 fn test_to_api_response_with_not_implemented_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> =
         Err(GarrisonError::NotImplemented("not yet".to_string()));
     let resp = to_api_response(result);
@@ -1036,6 +1049,7 @@ fn test_to_api_response_with_not_implemented_error() {
 /// 测试 to_api_response 处理 FirewallBlocked 错误（403 + FIREWALL_BLOCKED）。
 #[test]
 fn test_to_api_response_with_firewall_blocked_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> =
         Err(GarrisonError::FirewallBlocked("bruteforce".to_string()));
     let resp = to_api_response(result);
@@ -1047,6 +1061,7 @@ fn test_to_api_response_with_firewall_blocked_error() {
 /// 测试 to_api_response 处理 DisableService 错误（403 + DISABLE_SERVICE）。
 #[test]
 fn test_to_api_response_with_disable_service_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> = Err(GarrisonError::DisableService {
         service: "default".to_string(),
         until: None,
@@ -1060,6 +1075,7 @@ fn test_to_api_response_with_disable_service_error() {
 /// 测试 to_api_response 处理 NotSafe 错误（400 + NOT_SAFE）。
 #[test]
 fn test_to_api_response_with_not_safe_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> = Err(GarrisonError::NotSafe {
         reason: "MFA_REQUIRED".to_string(),
     });
@@ -1075,6 +1091,7 @@ fn test_to_api_response_with_not_safe_error() {
 /// 测试 to_api_response 处理 SmsRateLimitExceeded 错误（429 + SMS_RATE_LIMIT_EXCEEDED）。
 #[test]
 fn test_to_api_response_with_sms_rate_limit_exceeded_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> = Err(GarrisonError::SmsRateLimitExceeded {
         window: "hourly".to_string(),
     });
@@ -1087,6 +1104,7 @@ fn test_to_api_response_with_sms_rate_limit_exceeded_error() {
 /// 测试 to_api_response 处理 SmsVerifyMaxAttempts 错误（400 + SMS_VERIFY_MAX_ATTEMPTS）。
 #[test]
 fn test_to_api_response_with_sms_verify_max_attempts_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> = Err(GarrisonError::SmsVerifyMaxAttempts);
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
@@ -1100,6 +1118,7 @@ fn test_to_api_response_with_sms_verify_max_attempts_error() {
 /// 测试 to_api_response 处理 SmsCodeNotFound 错误（400 + SMS_CODE_NOT_FOUND）。
 #[test]
 fn test_to_api_response_with_sms_code_not_found_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> = Err(GarrisonError::SmsCodeNotFound);
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
@@ -1113,6 +1132,7 @@ fn test_to_api_response_with_sms_code_not_found_error() {
 /// 测试 to_api_response 处理 SmsChannelRecycled 错误（403 + SMS_CHANNEL_RECYCLED）。
 #[test]
 fn test_to_api_response_with_sms_channel_recycled_error() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     let result: Result<i32, GarrisonError> = Err(GarrisonError::SmsChannelRecycled);
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
@@ -1123,6 +1143,7 @@ fn test_to_api_response_with_sms_channel_recycled_error() {
 /// 测试 to_api_response 处理 Exception(code=-1) 错误（401 + NOT_LOGIN + exception_code）。
 #[test]
 fn test_to_api_response_with_exception_not_login() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     use crate::exception::GarrisonException;
     let result: Result<i32, GarrisonError> = Err(GarrisonError::Exception(Box::new(
         GarrisonException::new(-1, "请先登录"),
@@ -1136,6 +1157,7 @@ fn test_to_api_response_with_exception_not_login() {
 /// 测试 to_api_response 处理 Exception(code=-2) 错误（403 + NOT_PERMISSION + exception_code）。
 #[test]
 fn test_to_api_response_with_exception_not_permission() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     use crate::exception::GarrisonException;
     let result: Result<i32, GarrisonError> = Err(GarrisonError::Exception(Box::new(
         GarrisonException::new(-2, "无权限"),
@@ -1149,6 +1171,7 @@ fn test_to_api_response_with_exception_not_permission() {
 /// 测试 to_api_response 处理 Exception(其他 code) 错误（500 + EXCEPTION + exception_code）。
 #[test]
 fn test_to_api_response_with_exception_other_code() {
+    let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
     use crate::exception::GarrisonException;
     let result: Result<i32, GarrisonError> = Err(GarrisonError::Exception(Box::new(
         GarrisonException::new(1001, "业务异常"),

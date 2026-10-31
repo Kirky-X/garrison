@@ -16,10 +16,10 @@
 | OIDC | `protocol::oauth2::oidc` | `protocol-oidc` | `OidcHandler`（sign_id_token / verify_id_token / discovery） | 0.4.0 |
 | ScopeHandler | `protocol::oauth2::scope` | `oauth2-scope-handler` | `ScopeHandler` trait + `ScopeRegistry` | 0.4.0 |
 | SsoServer | `protocol::sso::server` | `protocol-sso-server` | `SsoServer` trait + `DefaultSsoServer` + `CenterIdConverter` | 0.4.0 |
-| QRLogin | `protocol::qrlogin` | `protocol-qrlogin` | `QrLoginService`（create/scan/confirm/poll 两票分离状态机 + bind_token 双票兑换）+ `QrLoginSessionIssuer` 端口 | Unreleased |
+| QRLogin | `protocol::qrlogin` | `protocol-qrlogin` | `QrLoginService`（create/scan/confirm/poll 两票分离状态机 + bind_token 双票兑换）+ `QrLoginSessionIssuer` 端口 | 0.9.0-rc.3 |
 | Invitation | `protocol::invitation` | `protocol-invitation` | `InvitationHandler` + `InvitationSpec`（一次性/N 次、TTL、吊销、防爆破） | — |
 | Social | `protocol::social` | 核心无门控；内置 provider 需 `social-wechat` / `social-alipay` | `SocialLoginProvider` trait + `SocialLoginService`（微信/支付宝登录） | 0.5.0 |
-| WebAuthn | `protocol::webauthn` | `protocol-webauthn` | `WebauthnService` + `WebauthnCredential`（Passkey 注册/认证仪式） | Unreleased |
+| WebAuthn | `protocol::webauthn` | `protocol-webauthn` | `WebauthnService` + `WebauthnCredential`（Passkey 注册/认证仪式） | 0.9.0-rc.3 |
 <!-- AloneCache 和 ParameterQuery 属于扩展层而非协议层，详见 architecture.md 扩展层章节 -->
 
 ## JWT（HS256 / HS384 / HS512 / RS256 / ES256 / EdDSA）

@@ -65,16 +65,18 @@ services:
       retries: 3
       start_period: 10s
 
-  # Redis（可选，当前仅配置校验语义，不改变限流实现）
+  # Redis（可选：rc.4 起限流后端 redis 真实驱动切换；会话/DAO 侧 Redis L2 仍未接线）
   # ⚠️ 接线范围如实说明，勿照抄本块假设：
-  #   - GARRISON_RATE_LIMIT_BACKEND 当前仅作配置占位 + 启动期 fail-closed 校验
-  #     （未知值拒绝启动；backend=redis 须配 GARRISON_REDIS_URL；需构建时传
-  #     args: { FEATURES: "auth-server,cache-memory,server-health-check,tracing-log,rate-limit-redis" }），
-  #     不驱动限流实现切换：限流实现统一跟随 GarrisonDao 后端（本示例为进程内
-  #     oxcache，多实例限流计数不共享）。
-  #   - 会话/DAO 侧的 Redis L2 尚未接线（oxcache with_redis_config 未被
-  #     auth_server 调用）：多实例会话共享当前不可用，本示例不构成
-  #     Redis 会话存储方案；分布式限流需部署方自备 Redis 后端 DAO。
+  #   - GARRISON_RATE_LIMIT_BACKEND=redis 时，登录防火墙 hook 与 RateLimitStrategy
+  #     切换到独立 Redis 限流运行时（oxcache RedisBackend + limiteron Lua 原子计数/滑窗），
+  #     多实例限流计数共享；启动连接失败 fail-closed 拒绝启动，运行期 Redis 错误向上
+  #     传播（登录 fail-closed），不静默回退内存。前置条件：backend=redis 须配
+  #     GARRISON_REDIS_URL；需构建时传
+  #     args: { FEATURES: "auth-server,cache-memory,server-health-check,tracing-log,rate-limit-redis" }；
+  #     开发用 redis://（非 TLS）需显式设 OXCACHE_ALLOW_INSECURE_REDIS=I_UNDERSTAND_THE_RISKS。
+  #   - 会话/DAO 侧的 Redis L2 尚未接线（oxcache with_redis_config 仅存储配置，
+  #     auth_server 未调用）：多实例会话共享当前不可用，本示例不构成
+  #     Redis 会话存储方案；跨实例会话请用 sticky session 或 stateless JWT。
   # 满足上述条件后取消下方注释，并给 auth-server 追加：
   #   environment:
   #     GARRISON_RATE_LIMIT_BACKEND: redis

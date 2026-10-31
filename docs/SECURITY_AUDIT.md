@@ -66,7 +66,7 @@
 
 - **输入来源**：内部审查（diting / tiangang）、外部安全审计结论、CodeQL/Semgrep 告警、依赖通告、模糊测试崩溃、社区报告。
 - **分级**：CRITICAL / HIGH / MEDIUM / LOW；CRITICAL/HIGH 阻断发布，必须有修复 + 回归测试 + CHANGELOG 记录。
-- **闭环要求**：每条发现需有「现象 → 根因 → 修复 → 回归证据 → 影响面」；已整改批次见 [CHANGELOG](./CHANGELOG.md)（rc.2 / rc.3 / rc.4 Unreleased）。
+- **闭环要求**：每条发现需有「现象 → 根因 → 修复 → 回归证据 → 影响面」；已整改批次见 [CHANGELOG](./CHANGELOG.md)（rc.2 / rc.3 / rc.4，均已发布）。
 - **例外管理**：确需豁免的依赖通告走 `deny.toml` / `supply-chain/config.toml`，附理由与复核日期；禁止无记录豁免。
 
 ---

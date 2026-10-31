@@ -447,6 +447,7 @@ mod tests {
     /// scan 无 Bearer → 401 且错误含 app session token 语义。
     #[tokio::test]
     async fn scan_without_bearer_is_401() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let app = make_app();
         let (_, _bind_token, qr_content) = create_session(app.clone()).await;
         let (status, json) = post_json(
@@ -569,6 +570,7 @@ mod tests {
     /// 伪造票据 scan（持有效 Bearer）→ 400。
     #[tokio::test]
     async fn scan_forged_ticket_is_400() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let app = make_app();
         let (status, json) = post_json(
             app,
@@ -628,6 +630,7 @@ mod tests {
     /// 身份绑定：Bearer 用户 B（user-2）确认 A（user-1）的扫码 → 400。
     #[tokio::test]
     async fn confirm_by_other_user_is_400() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
         let app = make_app();
         let (_, _bind_token, qr_content) = create_session(app.clone()).await;
         let (_, scan_json) = post_json(

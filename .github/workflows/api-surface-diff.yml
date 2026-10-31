@@ -44,7 +44,7 @@ jobs:
           toolchain: nightly
 
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # protoc
+        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # protoc
         with:
           tool: protoc
 
