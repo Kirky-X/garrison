@@ -36,6 +36,7 @@ jobs:
           persist-credentials: false
       - name: Setup Rust toolchain (nightly)
         run: bash scripts/setup_rust.sh nightly
+        shell: bash
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
       - name: Fuzz deep scan (10 minutes)

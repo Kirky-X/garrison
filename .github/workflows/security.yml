@@ -73,6 +73,7 @@ jobs:
           persist-credentials: false
       - name: Setup Rust toolchain (1.97.1)
         run: bash scripts/setup_rust.sh 1.97.1
+        shell: bash
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-vet
@@ -95,6 +96,7 @@ jobs:
           persist-credentials: false
       - name: Setup Rust toolchain (1.97.1)
         run: bash scripts/setup_rust.sh 1.97.1
+        shell: bash
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-cyclonedx
@@ -121,6 +123,7 @@ jobs:
           persist-credentials: false
       - name: Setup Rust toolchain (nightly)
         run: bash scripts/setup_rust.sh nightly
+        shell: bash
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
       - name: Fuzz corpus smoke (60s per target)
@@ -141,6 +144,7 @@ jobs:
           persist-credentials: false
       - name: Setup Rust toolchain (1.97.1)
         run: bash scripts/setup_rust.sh 1.97.1
+        shell: bash
       # --frozen 禁网络,而 runner 的 registry 缓存为空,须先经 fetch 落盘依赖
       # (一次联网解析+下载),否则离线解析直接报 no matching package
       - name: Fetch dependencies

@@ -51,12 +51,17 @@ if [[ "$TOOLCHAIN" == nightly && ${#flags[@]} -gt 0 ]]; then
 fi
 set +f
 
+# bash 3.2（macOS 自带）下，`set -u` 遇空数组的 "${flags[@]}" 会报 unbound variable。
+# 用 ${flags[@]+"${flags[@]}"} 展开：数组为空时展开为空、非空时逐个成词，
+# 两种 bash 版本行为一致（CI 的 ubuntu/macos/windows 三档皆命中）。
+RUSTUP_FLAGS=(${flags[@]+"${flags[@]}"})
+
 # 官方发布服务器更新期间可能校验和失败，重试（对齐 action 的 5 次重试）。
 log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
 status=0
 for attempt in 1 2 3 4 5; do
-  if RUSTUP_PERMIT_COPY_RENAME=1 rustup toolchain install "$TOOLCHAIN" "${flags[@]}" \
+  if RUSTUP_PERMIT_COPY_RENAME=1 rustup toolchain install "$TOOLCHAIN" ${RUSTUP_FLAGS[@]+"${RUSTUP_FLAGS[@]}"} \
       --profile minimal --no-self-update --force-non-host 2>&1 | tee "$log"; then
     status=0
     break
@@ -72,16 +77,19 @@ for attempt in 1 2 3 4 5; do
   sleep 30
 done
 
-# 设为默认。与 action 不同，这里不吞掉失败：默认工具链没切过去，后续 cargo 会
-# 静默用 runner 预装的 stable 编译——那正是本仓最忌讳的静默版本漂移。
+# 设为默认。失败不中断：上游 action 同样标 continue-on-error（issue #127，
+# 根因是残留的 rustup override 让 `rustup default` 报错）。但仅靠 default 不足以
+# 保证工具链正确，所以下面额外写 RUSTUP_TOOLCHAIN —— 该环境变量优先级高于
+# rustup default 与目录级 rust-toolchain.toml（本地实测：目录内 rust-toolchain.toml
+# 声明 stable 时，RUSTUP_TOOLCHAIN=1.97.1 仍使 rustc 报 1.97.1），是真正兜住
+# 「静默用错工具链」的那道锁。default 失败仅告警，不阻断。
 if ! rustup default "$TOOLCHAIN" --force-non-host; then
-  echo "[setup-rust] 错误：无法将 $TOOLCHAIN 设为默认工具链" >&2
-  exit 1
+  echo "::warning::[setup-rust] rustup default $TOOLCHAIN 失败（残留 override？）——已改由 RUSTUP_TOOLCHAIN 钉住工具链，构建仍用 $TOOLCHAIN" >&2
 fi
 
 if [[ -n "${GITHUB_ENV:-}" ]]; then
   # 显式钉住工具链：后续步骤的 cargo/rustc 必定走该工具链，
-  # 不受目录级 rust-toolchain.toml 影响。
+  # 不受目录级 rust-toolchain.toml 与残余 override 影响（优先级已实测）。
   echo "RUSTUP_TOOLCHAIN=$TOOLCHAIN" >>"$GITHUB_ENV"
   # 关闭增量编译（action 同款）：CI 全量构建不需要增量产物。
   if [[ -z "${CARGO_INCREMENTAL+set}" ]]; then

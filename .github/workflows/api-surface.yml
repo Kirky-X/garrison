@@ -34,6 +34,7 @@ jobs:
           persist-credentials: false
       - name: Setup Rust toolchain (nightly-2026-10-29)
         run: bash scripts/setup_rust.sh "$TOOLCHAIN"
+        shell: bash
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
