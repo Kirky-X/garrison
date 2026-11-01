@@ -31,19 +31,22 @@ jobs:
           - fuzz_jwt_verify
           - fuzz_http_auth_headers
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@f0d5300ba8908d942c808f4d31c08471d7798ba3 # nightly 分支快照（声明 toolchain 输入）, nosemgrep
-        with:
-          toolchain: nightly
+      - name: Setup Rust toolchain (nightly)
+        run: bash scripts/setup_rust.sh nightly
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
       - name: Fuzz deep scan (10 minutes)
-        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=600
+        env:
+          # 经 env 传入而非直接内插 ${{ }}：内插到 run 里会被 zizmor 判为
+          # template-injection（matrix.target 是本文件里的静态矩阵，非攻击者可控）
+          FUZZ_TARGET: ${{ matrix.target }}
+        run: cargo +nightly fuzz run "$FUZZ_TARGET" -- -max_total_time=600
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # line-pinned
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-crash-${{ matrix.target }}
           path: |

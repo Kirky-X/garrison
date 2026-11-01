@@ -21,24 +21,30 @@ jobs:
     name: Public API baseline (report-only)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # nightly 钉到具体日期而非滚动通道：rustdoc JSON 必须用 nightly（-Zunstable-options），
+    # 而滚动 nightly 会随上游 rustc 变更漂移——2026-10-31 nightly 在编译依赖
+    # sea-orm 2.0.4 时触发 E0391（async drop 查询环），导致本 job 成败随日期随机。
+    # 钉日期即拿到可复现结果（与仓库 Reproducible Build 门禁同一原则）。
+    # 升级 nightly 时改这里一处；已知可用：2026-10-29（PR #68 实测通过）。
+    env:
+      TOOLCHAIN: nightly-2026-10-29
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@f0d5300ba8908d942c808f4d31c08471d7798ba3 # nightly 分支快照（声明 toolchain 输入）, nosemgrep
-        with:
-          toolchain: nightly
+      - name: Setup Rust toolchain (nightly-2026-10-29)
+        run: bash scripts/setup_rust.sh "$TOOLCHAIN"
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: ci-api-surface
       - name: Generate public API baseline
         run: bash scripts/api_surface.sh
       - name: Upload API surface artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # line-pinned
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: api-surface
           path: logs/api-surface.txt

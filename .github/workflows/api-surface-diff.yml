@@ -27,33 +27,40 @@ jobs:
     # report-only：任何失败都不作为合并门禁；真实构建失败仍会在日志中可见。
     continue-on-error: true
     timeout-minutes: 45
+    # nightly 钉到具体日期而非滚动通道：rustdoc JSON 必须用 nightly（-Zunstable-options），
+    # 而滚动 nightly 会随上游 rustc 变更漂移——2026-10-31 nightly 在编译依赖
+    # sea-orm 2.0.4 时触发 E0391（async drop 查询环），导致本 job 成败随日期随机
+    # （2026-10-29 nightly 实测通过）。钉日期即拿到可复现结果。
+    # 升级 nightly 时改这里一处。
+    env:
+      TOOLCHAIN: nightly-2026-10-29
     steps:
       - name: Checkout PR head
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: pr
           persist-credentials: false
 
       - name: Checkout PR base
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@f0d5300ba8908d942c808f4d31c08471d7798ba3 # nightly
-        with:
-          toolchain: nightly
-
+      # 本 workflow 的 checkout 落在 pr/ 与 base/ 子目录，脚本从 pr/ 取
+      - name: Setup Rust toolchain (nightly-2026-10-29)
+        working-directory: pr
+        run: bash scripts/setup_rust.sh "$TOOLCHAIN"
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: protoc
 
       - name: Generate base public API
         working-directory: base
         run: |
-          cargo +nightly rustdoc --features full --lib -- \
+          cargo "+${TOOLCHAIN}" rustdoc --features full --lib -- \
             -Zunstable-options --output-format json
           python3 ../pr/scripts/api_surface.py target/doc/garrison.json \
             > /tmp/api-surface.baseline.txt
@@ -64,7 +71,7 @@ jobs:
 
       - name: Upload API diff artifacts
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # line-pinned
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: api-surface-diff
           path: |

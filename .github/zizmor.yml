@@ -1,0 +1,21 @@
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
+#
+# zizmor（GitHub Actions 安全审计）配置。
+#
+# 作用：把「第三方 action 必须按完整 commit SHA 钉位」这条策略显式写死在仓内。
+# 该策略本就是 zizmor v1.20.0 起的默认值，但默认值随上游版本漂移；写进本文件后，
+# 策略变更必须经由本仓的显式升级流程（与 action SHA 钉位同一哲学），不会静默生效。
+#
+# 配套约定（CI 里 zizmor 为阻断式，见 .github/workflows/security.yml）：
+# - 钉位行尾注释必须恰为上游 tag（如 `# v7.0.1`），否则触发 ref-version-mismatch；
+#   注释须与 pin 同时更新，Dependabot 会一并维护。
+# - 第三方 action 仓库若无版本 tag、或每次发布强推重写分支（dtolnay/rust-toolchain
+#   即此类），其 SHA 钉位会脱离上游 ref 历史，触发 impostor-commit /
+#   stale-action-refs —— 这类 action 不适合 SHA 钉位，须改用 runner 内建能力
+#   （如 rustup）替代。
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "*": hash-pin

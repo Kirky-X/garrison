@@ -35,7 +35,7 @@ jobs:
     container:
       image: semgrep/semgrep@sha256:59fbed6127ea7c5dde3ba6a85142733bb20ea9aaa36120c953904f1539aaf66e # line-pinned
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Run semgrep (block on findings)
@@ -50,11 +50,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # line-pinned
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG_FILE: .gitleaks.toml
@@ -68,11 +68,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # cargo-vet
+      - name: Setup Rust toolchain (1.97.1)
+        run: bash scripts/setup_rust.sh 1.97.1
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-vet
       # 仓库已提交 Cargo.lock（与全仓 --locked 构建一致性约定同步），vet 按锁定的
@@ -89,11 +90,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # cargo-cyclonedx
+      - name: Setup Rust toolchain (1.97.1)
+        run: bash scripts/setup_rust.sh 1.97.1
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-cyclonedx
       - name: Generate Cargo.lock (library crate, not committed)
@@ -101,7 +103,7 @@ jobs:
       - name: Generate SBOM (all features)
         run: cargo cyclonedx -f json --all-features
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # line-pinned
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sbom-cyclonedx
           path: garrison.cdx.json
@@ -114,12 +116,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@f0d5300ba8908d942c808f4d31c08471d7798ba3 # nightly 分支快照（声明 toolchain 输入）, nosemgrep
-        with:
-          toolchain: nightly
+      - name: Setup Rust toolchain (nightly)
+        run: bash scripts/setup_rust.sh nightly
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
       - name: Fuzz corpus smoke (60s per target)
@@ -135,10 +136,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定
+      - name: Setup Rust toolchain (1.97.1)
+        run: bash scripts/setup_rust.sh 1.97.1
       # --frozen 禁网络,而 runner 的 registry 缓存为空,须先经 fetch 落盘依赖
       # (一次联网解析+下载),否则离线解析直接报 no matching package
       - name: Fetch dependencies
@@ -225,7 +227,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: actionlint
@@ -238,15 +240,24 @@ jobs:
           # 风格级（SC2086/SC2034 等）不阻断，避免打断既有流水线。
           args: -color -shellcheck=error
       - name: zizmor (GitHub Actions 安全审计)
-        # 首轮为非阻断基线：既有 workflow 存在一批 unpinned-uses / cache-poisoning /
-        # template-injection 发现，阻断式会直接打断现有流水线。backlog 清零后
-        # 把 continue-on-error 删掉即可转为阻断。
+        # 阻断式（2026-11-01 起）：积压的 zizmor 告警已清零并根治成因，本步改为
+        # 阻断——今后新增的 unpinned-uses / ref-version-mismatch / template-injection
+        # 等发现在 CI 就红，不再攒成待分诊的 code scanning 告警。
         #
+        # 根治的三条成因（详见 .github/zizmor.yml 与 scripts/setup_rust.sh）：
+        # 1) 第三方 action 钉 SHA 且行尾注释恰为上游 tag（ref-version-mismatch 归零，
+        #    且 Dependabot 会同步维护 SHA + 注释，不再漂移）；
+        # 2) 移除 dtolnay/rust-toolchain（该仓仅 1 个 tag、每次发布强推重写分支，
+        #    SHA 钉位必然脱离上游历史，impostor-commit / stale-action-refs 结构性不可满足）；
+        # 3) 静态矩阵值经 env 传入 run 块，不再内插 ${{ }}（template-injection 归零）。
+        #
+        # persona 显式钉 regular：与产生历史告警的档位一致（regular 报 mismatched
+        # 版本注释，pedantic 额外报「缺版本注释」这类噪声）。
         # 版本修正（外部事实）：`v0.12.0` 在 zizmorcore/zizmor-action 仓库不存在
         # （API tags 最高为 v0.7.1）。引用不存在的 action 在 step 调度期
         # （"Getting action download info" 阶段）即失败，step 级
         # continue-on-error 拦不住该阶段，job 以 setup 失败收场，
         # 本仓 Security workflow 因此长红（run 39447128551 及 rerun 实证）。
-        # 写法对齐 vecboost 仓（同一 SHA + 注释），仍保持非阻断基线语义不变。
-        continue-on-error: true
-        uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # line-pinned
+        uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
+        with:
+          persona: regular

@@ -36,17 +36,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定, nosemgrep
-        with:
-          components: rustfmt, clippy
+      - name: Setup Rust toolchain (1.97.1)
+        run: bash scripts/setup_rust.sh 1.97.1 rustfmt,clippy
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: release-full-deps
           lookup-only: true
@@ -61,17 +60,16 @@ jobs:
     # CI 冷缓存下 lib+E2E 全量曾超 20m 被取消,放宽到 45m
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定, nosemgrep
-        with:
-          components: rustfmt, clippy
+      - name: Setup Rust toolchain (1.97.1)
+        run: bash scripts/setup_rust.sh 1.97.1 rustfmt,clippy
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: release-full-deps
           lookup-only: true
@@ -88,13 +86,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # cargo-deny 已覆盖漏洞/许可证/禁用源/重复依赖检查，配置统一在 deny.toml 管理
       # 删除 cargo-audit，避免维护两份忽略列表（audit.toml + deny.toml）
       - name: Cargo deny check (advisory/license/ban/source)
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # line-pinned
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           arguments: --all-features
 
@@ -105,15 +103,16 @@ jobs:
     env:
       RUSTDOCFLAGS: "-D warnings"
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定, nosemgrep
+      - name: Setup Rust toolchain (1.97.1)
+        run: bash scripts/setup_rust.sh 1.97.1
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: release-full-deps
           lookup-only: true
@@ -131,7 +130,7 @@ jobs:
       version: ${{ steps.extract-version.outputs.version }}
       body: ${{ steps.changelog-body.outputs.body }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0 # 完整历史，用于读取 CHANGELOG
@@ -213,15 +212,16 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定, nosemgrep
+      - name: Setup Rust toolchain (1.97.1)
+        run: bash scripts/setup_rust.sh 1.97.1
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: release-full-deps
           lookup-only: true
@@ -230,7 +230,7 @@ jobs:
       # crates.io 必须先有 garrison-macros 0.9.0-rc.3，否则 cargo publish --package garrison
       # 会因依赖版本约束无法解析而失败。
       # crates.io trusted publishing（OIDC）：官方 auth-action 以 Actions OIDC 换取短时发布凭证
-      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9  # line-pinned
+      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
         id: auth
       - name: Publish garrison-macros to crates.io（幂等：已发布则跳过）
         env:
@@ -268,7 +268,7 @@ jobs:
     permissions:
       contents: write # 创建 Release 需要
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -288,20 +288,33 @@ jobs:
           fi
 
       # Release 资产：仅 GitHub 自动生成的源码压缩包。
+      # 用 runner 预装的 gh 取代 softprops/action-gh-release：后者与 runner 自带能力
+      # 重复（zizmor superfluous-actions），多一个第三方 action 即多一份供应链面。
+      #
+      # upsert 语义与 softprops 一致：同 tag 已有 release 时改写而非新建。
+      # 唯一差异（刻意保留）：`gh release edit` 没有 --generate-notes，故重跑时
+      # **保留既有 release notes**；softprops 的 generate_release_notes 会在重跑时
+      # 重新生成 notes。保留优于重写——重跑不应覆盖已发布的说明文本。
+      # 失败路径 fail-closed：view 误判成功时 `gh release create` 会因 tag 已存在而
+      # 非零退出，后续 uniqueness 断言再兜一层，不会静默产生重复 release。无 try/catch 也不留转移。
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # line-pinned
-        with:
-          tag_name: v${{ needs.version-consistency.outputs.version }}
-          name: Release v${{ needs.version-consistency.outputs.version }}
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ steps.meta.outputs.PRERELEASE }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ needs.version-consistency.outputs.version }}
+          TITLE: Release v${{ needs.version-consistency.outputs.version }}
+          PRERELEASE: ${{ steps.meta.outputs.PRERELEASE }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release for ${TAG} 已存在，改写之（upsert，保留既有 notes）"
+            gh release edit "$TAG" --title "$TITLE" --prerelease="$PRERELEASE"
+          else
+            gh release create "$TAG" --title "$TITLE" --generate-notes --prerelease="$PRERELEASE"
+          fi
 
-      # softprops 对同 tag 已有 release 为 upsert 语义（重跑改写而非新建），
+      # 创建步对同 tag 已有 release 为 upsert 语义（重跑改写而非新建），
       # uniqueness 断言钉住恰好 1 个。
-      # TAG 取 version-consistency 输出（与创建步 tag_name 同源）：
+      # TAG 取 version-consistency 输出（与创建步 TAG 同源）：
       # 手动触发时 GITHUB_REF 是分支 ref，按 GITHUB_REF 剥前缀会得到错误 tag
       - name: Verify release uniqueness (idempotency guard)
         env:
@@ -323,7 +336,7 @@ jobs:
     timeout-minutes: 10
     needs: [github-release, publish-crates-io]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
