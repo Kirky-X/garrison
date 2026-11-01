@@ -30,21 +30,23 @@ jobs:
     strategy:
       fail-fast: false
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+        with:
+          persist-credentials: false
 
       # 不传 languages → CodeQL 自动检测仓库语言
       # 使用 .github/codeql-config.yml 配置 paths-ignore 排除测试文件
       # （测试代码中的硬编码密码/nonce 是预期行为，非真实漏洞）
       # codeql-action 用 SHA pin 防供应链攻击（与 ci.yml/docs.yml 策略一致）
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1, nosemgrep
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # line-pinned, nosemgrep
         with:
           config-file: .github/codeql-config.yml
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1, nosemgrep
+        uses: github/codeql-action/autobuild@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # line-pinned, nosemgrep
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1, nosemgrep
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # line-pinned, nosemgrep
         with:
           category: "/language:autodetect"

@@ -30,17 +30,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # line-pinned, nosemgrep
         with:
           components: rustfmt, clippy
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
         with:
           shared-key: ci-default-deps
+          lookup-only: true
       - name: Check (default features)
         run: cargo check --locked
       - name: Build (default features)
@@ -52,17 +55,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # line-pinned, nosemgrep
         with:
           components: rustfmt, clippy
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
         with:
           shared-key: ci-full-deps
+          lookup-only: true
       - name: Check (full)
         run: cargo check --features "full" --locked
       - name: Build (full)
@@ -76,17 +82,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # line-pinned, nosemgrep
         with:
           components: rustfmt, clippy
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
         with:
           shared-key: ci-prod-deps
+          lookup-only: true
       - name: Check (production features)
         run: cargo check --features "production" --locked
       - name: Check (examples, all features)
@@ -98,8 +107,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # line-pinned, nosemgrep
         with:
           components: rustfmt
       - name: Check formatting
@@ -111,17 +122,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # line-pinned, nosemgrep
         with:
           components: clippy
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
         with:
           shared-key: ci-full-deps
+          lookup-only: true
       - name: Clippy (default)
         run: cargo clippy --no-default-features --features "default" -- -D warnings
       - name: Clippy (full)
@@ -156,7 +170,9 @@ jobs:
           - os: macos-latest
             rust: beta
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+        with:
+          persist-credentials: false
       # 矩阵腿工具链按腿安装：版本分支快照（如 1.97.1）在源码内硬编码工具链、不声明
       # toolchain 输入（传入会被 runner 忽略并告警，实测致三档腿全部回退同一工具链）；
       # stable 分支快照声明 toolchain 输入，按 ${{ matrix.rust }} 逐腿安装。
@@ -185,9 +201,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "vcpkg install openssl failed" }
           "VCPKG_ROOT=$env:VCPKG_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "VCPKGRS_TRIPLET=x64-windows-static-md" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
         with:
           shared-key: ci-test-deps-${{ matrix.rust }}
+          lookup-only: true
       - name: Test (default)
         run: cargo test --no-default-features --features "default" --lib --locked
       - name: Test (full)
@@ -245,7 +262,9 @@ jobs:
           - name: oauth2-redis
             flags: --no-default-features --features oauth2-server,cache-redis
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+        with:
+          persist-credentials: false
       # runner 默认可用磁盘 ~14GB，workspace-under-full 的测试编译（本 job 的
       # default 组合第二步骤）会耗尽——预清理预装工具链释放 ~25GB
       - name: Free disk space
@@ -255,14 +274,15 @@ jobs:
             /usr/local/share/boost /usr/share/swift || true
           sudo docker image prune --all --force > /dev/null 2>&1 || true
           df -h /
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # line-pinned, nosemgrep
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
         with:
           shared-key: ci-guard-deps
+          lookup-only: true
       - name: Compile tests (lib + integration, no run)
         run: cargo test --no-run ${{ matrix.flags }} --locked
       # default 组合额外做 workspace 全量验证：先清掉组合编译产物，再以
@@ -282,15 +302,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # line-pinned, nosemgrep
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
         with:
           shared-key: ci-full-deps
+          lookup-only: true
       - name: Build docs
         run: cargo doc --no-deps --features "full"
       - name: Install cargo-deadlinks
@@ -340,8 +363,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # line-pinned, nosemgrep
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.88.0 (cargo-deny)
         with:
           tool: cargo-deny
@@ -385,15 +410,18 @@ jobs:
           --health-retries 5
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # line-pinned, nosemgrep
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
         with:
           shared-key: ci-full-deps
+          lookup-only: true
       - name: Integration tests (full features)
         # 用 --tests 而非 --test '*'：--test '*' 会显式展开所有 [[test]] target，
         # 遇到 required-features 不满足的（如 db_mysql_testcontainers 需要 db-mysql）会报错。
@@ -438,15 +466,18 @@ jobs:
           --health-retries 5
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # 1.97.1, nosemgrep
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # line-pinned, nosemgrep
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
         with:
           shared-key: ci-coverage-deps
+          lookup-only: true
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # cargo-llvm-cov
         with:
@@ -457,7 +488,7 @@ jobs:
         if: always()
         run: cargo llvm-cov report --summary-only
       - name: Upload coverage
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # line-pinned
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./lcov.info
@@ -472,7 +503,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+        with:
+          persist-credentials: false
       # 镜像构建（cargo 全量 release 依赖编译）会占用大量磁盘，与
       # test-compile-guard 同款预清理释放 ~25GB
       - name: Free disk space
@@ -483,9 +516,9 @@ jobs:
           sudo docker image prune --all --force > /dev/null 2>&1 || true
           df -h /
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # line-pinned
       - name: Build debian-slim image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # line-pinned
         with:
           context: .
           file: ./docker/Dockerfile
@@ -531,7 +564,7 @@ jobs:
         if: always()
         run: docker rm -f smoke-debian || true
       - name: Build distroless image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # line-pinned
         with:
           context: .
           file: ./docker/Dockerfile.distroless

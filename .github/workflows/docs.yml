@@ -18,8 +18,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: "pages"
@@ -31,10 +29,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
+        with:
+          persist-credentials: false
 
       - name: Install mdbook
-        uses: peaceiris/actions-mdbook@ee69d230fe19748b7abf22df32acaa93833fad08 # v2.0.0
+        uses: peaceiris/actions-mdbook@ee69d230fe19748b7abf22df32acaa93833fad08 # line-pinned
         with:
           mdbook-version: "0.5.3"
 
@@ -44,7 +44,7 @@ jobs:
       - name: Upload artifact
         # v5.0.0: 默认排除 dotfiles；显式启用 include-hidden-files 保留 .nojekyll
         # .nojekyll 是 GitHub Pages 必需文件，禁用 Jekyll 处理避免破坏静态资源
-        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # line-pinned
         with:
           path: mdbook/book
           include-hidden-files: true
@@ -52,6 +52,10 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     needs: build
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -61,4 +65,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # line-pinned

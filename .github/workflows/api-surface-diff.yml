@@ -29,15 +29,17 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout PR head
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
         with:
           path: pr
+          persist-credentials: false
 
       - name: Checkout PR base
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@f0d5300ba8908d942c808f4d31c08471d7798ba3 # nightly
         with:
@@ -62,7 +64,7 @@ jobs:
 
       - name: Upload API diff artifacts
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # line-pinned
         with:
           name: api-surface-diff
           path: |

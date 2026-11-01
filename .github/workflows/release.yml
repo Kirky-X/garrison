@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定, nosemgrep
@@ -46,9 +46,10 @@ jobs:
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
         with:
           shared-key: release-full-deps
+          lookup-only: true
       - name: Rustfmt check
         run: cargo fmt --all -- --check
       - name: Clippy (full features)
@@ -60,7 +61,7 @@ jobs:
     # CI 冷缓存下 lib+E2E 全量曾超 20m 被取消,放宽到 45m
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定, nosemgrep
@@ -70,9 +71,10 @@ jobs:
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
         with:
           shared-key: release-full-deps
+          lookup-only: true
       - name: Lib tests
         run: cargo test --features full --lib
       - name: E2E tests
@@ -86,13 +88,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
         with:
           persist-credentials: false
       # cargo-deny 已覆盖漏洞/许可证/禁用源/重复依赖检查，配置统一在 deny.toml 管理
       # 删除 cargo-audit，避免维护两份忽略列表（audit.toml + deny.toml）
       - name: Cargo deny check (advisory/license/ban/source)
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # line-pinned
         with:
           arguments: --all-features
 
@@ -103,7 +105,7 @@ jobs:
     env:
       RUSTDOCFLAGS: "-D warnings"
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定, nosemgrep
@@ -111,9 +113,10 @@ jobs:
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
         with:
           shared-key: release-full-deps
+          lookup-only: true
       - name: Build docs (zero warnings)
         run: cargo doc --features full --no-deps
 
@@ -128,7 +131,7 @@ jobs:
       version: ${{ steps.extract-version.outputs.version }}
       body: ${{ steps.changelog-body.outputs.body }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
         with:
           persist-credentials: false
           fetch-depth: 0 # 完整历史，用于读取 CHANGELOG
@@ -210,7 +213,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@cf201f30d2291af293e25b32e435b13c42d51aaf # toolchain 线钉定, nosemgrep
@@ -218,15 +221,16 @@ jobs:
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # line-pinned
         with:
           shared-key: release-full-deps
+          lookup-only: true
       # 发布顺序：先 garrison-macros 后 garrison（workspace 依赖顺序）
       # garrison 依赖 garrison-macros "0.9.0-rc.3"（optional，annotation-macros feature），
       # crates.io 必须先有 garrison-macros 0.9.0-rc.3，否则 cargo publish --package garrison
       # 会因依赖版本约束无法解析而失败。
       # crates.io trusted publishing（OIDC）：官方 auth-action 以 Actions OIDC 换取短时发布凭证
-      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9  # v1.0.6
+      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9  # line-pinned
         id: auth
       - name: Publish garrison-macros to crates.io（幂等：已发布则跳过）
         env:
@@ -264,7 +268,7 @@ jobs:
     permissions:
       contents: write # 创建 Release 需要
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -285,7 +289,7 @@ jobs:
 
       # Release 资产：仅 GitHub 自动生成的源码压缩包。
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # line-pinned
         with:
           tag_name: v${{ needs.version-consistency.outputs.version }}
           name: Release v${{ needs.version-consistency.outputs.version }}
@@ -319,7 +323,7 @@ jobs:
     timeout-minutes: 10
     needs: [github-release, publish-crates-io]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # line-pinned
         with:
           persist-credentials: false
 
