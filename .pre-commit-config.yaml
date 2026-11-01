@@ -104,7 +104,7 @@ repos:
 
   # Markdown 检查（仅检查 Garrison 文档，跳过 archive/temp）
   - repo: https://github.com/igorshubovych/markdownlint-cli
-    rev: v0.43.0
+    rev: v0.50.0
     hooks:
       - id: markdownlint
         # 钉 node 版本：nodeenv 解析 'latest' 时会命中 dist 索引的 alpha 预发布串
