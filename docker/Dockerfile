@@ -21,7 +21,7 @@
 #   不用 full/production：会拉入 bin 不消费的 db-postgres/cedar 等重依赖；
 #   需要更强 feature 面时覆盖：--build-arg FEATURES=production
 
-# 在 chef 基座层补装 stable（对应仓库 rust-toolchain.toml 的 channel 声明），
+# 在 chef 基座层补装 stable（对应仓库 MSRV 声明通道），
 # 将工具链安装固定在 chef 缓存层——planner/builder 共享该层、不逐阶段重装；
 # --profile minimal 跳过 rust-docs 等组件，省数百 MB
 ARG CHEF_IMAGE=lukemathwalker/cargo-chef:latest-rust-1

@@ -7,7 +7,7 @@
 #   migrations/     src/dao/dbnexus_impl.rs include_dir! 编译期打包
 #   examples/       workspace member（cargo-chef recipe 需要）
 #   macros/         workspace member（proc-macro 依赖）
-#   Cargo.toml / Cargo.lock / rust-toolchain.toml
+#   Cargo.toml / Cargo.lock
 #   tests/ benches/ recipe 生成期需枚举全部 target，缺失会引入一致性风险
 
 # 版本控制与 CI

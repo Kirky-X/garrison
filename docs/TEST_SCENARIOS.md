@@ -1,6 +1,6 @@
 # 🧪 Garrison 测试场景矩阵
 
-> 适用版本：Garrison **0.9.0-rc.4**（MSRV 1.97.1——`Cargo.toml` 的 `rust-version`，见下表硬约束；仓库无 `rust-toolchain.toml`（rc.3 已删除），本地工具链由 rustup 默认通道决定，CI 经 `dtolnay/rust-toolchain` 逐工作流 pin：主 job 钉 1.97.1，测试矩阵腿为 `1.97.1 / stable / beta`）
+> 适用版本：Garrison **0.9.0-rc.4**（MSRV 1.97.1——`Cargo.toml` 的 `rust-version`，见下表硬约束；仓库无 `rust-toolchain.toml`（rc.3 已删除），本地工具链由 rustup 默认通道决定，CI 逐工作流经 `scripts/setup_rust.sh` pin：主 job 钉 1.97.1，测试矩阵腿为 `1.97.1 / stable / beta`）
 > 编写依据（只读核对）：`Cargo.toml [features]` 与 `[[test]]` 注册、`tests/acceptance.rs` 域入口、`tests/acceptance/*.rs`、`tests/acceptance/migrated/*.rs`、`examples/tests/`、`.github/workflows/ci.yml`、`.github/workflows/feature-matrix.yml`、`scripts/e2e_matrix.sh`、`scripts/e2e_run.sh`、`benches/garrison_benchmark.rs`。
 > 本文合并自原《E2E 特性组合测试套件》文档（`E2E_TESTING.md` 已删除），并补入基于真实测试套件的场景穷举。
 > 规模数字均为 `#[test]` / `#[tokio::test]` 属性的 grep 统计（含 `#[tokio::test(flavor = ...)]` 形态），截至 2026-09-15。

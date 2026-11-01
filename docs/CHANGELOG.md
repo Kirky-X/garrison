@@ -17,6 +17,22 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **GitHub Security 页告警清零（4 条 Dependabot + 111 条 code scanning）**：`fuzz/Cargo.lock` 的 rustls 停在 0.23.45，触发 4 条 GHSA（1 medium + 3 low，含 master secret 泄露、Brotli 解压内存耗尽、ECH 拒绝后应用数据外泄、KX 组降级）——主 crate 早已是 0.23.46，仅 fuzz 子 crate 漏更新，`build(deps): bump rustls from 0.23.45 to 0.23.46 in /fuzz`（PR #68）补齐，4 条告警全部转 `fixed`。111 条 code scanning 告警全来自 zizmor，三类成因逐条定性并根治：
+  - `ref-version-mismatch` ×90（**真缺陷**）：上一轮把 action 钉位注释清成 `# line-pinned`，注释与 pin 不匹配——Dependabot 据此**静默不更新**该注释，版本标注会持续漂移。现 92 处钉位行尾注释改为上游真实 tag（逐条用 `git ls-remote --tags` 核验 SHA↔tag 对应），注释随 SHA 由 Dependabot 一并维护。
+  - `impostor-commit` ×24（**误报**，证据：作者/提交者均为 `David Tolnay <dtolnay@gmail.com>`、提交信息与用途吻合、`git fetch origin <sha>` 可从上游直取；只是已不在任何当前 ref 历史里——`dtolnay/rust-toolchain` 全仓仅 1 个 tag `v1`、无任何版本 tag，且每次 Rust 发布都 force-push 重写全部分支，SHA 钉位必然脱离上游 ref 历史，`impostor-commit`（要求可达）与 `stale-action-refs`（要求指向 tag）两条规则**结构性不可满足**）：改用 runner 内建 rustup 装工具链，从根上取消该 action。
+  - `superfluous-actions` ×1（note 级）：`softprops/action-gh-release` 与 runner 预装的 `gh` 重复，改用 `gh release create/edit`。
+  - 另补 `template-injection` 3 处：静态矩阵值（`matrix.rust` / `matrix.flags` / `matrix.target`）改为经 `env:` 传入 run 块，不再内插 `${{ }}`。
+- **PR 级公共 API 差异 job 随 nightly 漂移随机失败**：`api-surface.yml` / `api-surface-diff.yml` 用的是**未钉版的滚动 `nightly`**，成败取决于当天 nightly——2026-10-31 nightly（1.101.0-nightly f9ceb4a4d）在编译依赖 `sea-orm 2.0.4` 时触发 `error[E0391]`（async drop 查询环），cargo 退出 101，PR #69 因此带红叉（该 job 为 report-only，不阻断合并）。现钉到 `nightly-2026-10-29`（PR #68 实测通过的 nightly），rustdoc JSON 所需 nightly 能力不受影响，结果可复现（与仓库 Reproducible Build 门禁同一原则）。
+
+### Changed
+
+- **CI 工具链改由 `scripts/setup_rust.sh` 安装（移除 `dtolnay/rust-toolchain`）**：24 处调用点（7 个 workflow）改为 `bash scripts/setup_rust.sh <toolchain> [components...]`，脚本行为对齐被移除 action 的 composite 步骤（安装 `--profile minimal` → 装组件 → 设为默认 → 关增量编译 → 开彩色输出），并额外写 `RUSTUP_TOOLCHAIN` 显式钉住工具链（不受将来目录级 `rust-toolchain.toml` 覆盖影响——该文件曾因目录级 `channel="stable"` 静默覆盖所有 workflow pin 而被删除）。供应链面同时少一个第三方 action。**根因**：该 action 仓库无版本 tag 且每次发布强推重写分支，按 SHA 钉它必然脱离上游 ref 历史，供应链审计无法通过——只有换成 runner 内建能力才谈得上根治。
+- **第三方 action 钉位行尾注释改为上游真实 tag**（92 处）：zizmor 要求注释恰为版本号（`# v7.0.1`），带任何后缀（`# v7.0.1, nosemgrep`）都会被判为「注释不含版本」；原 `# v2.88.0 (cargo-deny)` 一类注释与实际 tag（v2.87.29）不符，已一并纠正。
+- **`softprops/action-gh-release` 改为 runner 内建 `gh release`**：保持 softprops 的 upsert 语义（tag 上已有 release 则改写而非新建），后续 uniqueness 断言仍钉住恰好 1 个 release。
+- **zizmor 由非阻断基线转为阻断门禁**：清零后去掉 `continue-on-error`，今后新增的 unpinned-uses / ref-version-mismatch / template-injection 等发现在 CI 就红，不再攒成待分诊告警；新增 `.github/zizmor.yml` 把「第三方 action 必须按完整 commit SHA 钉位」显式写死在仓内（该策略本就是上游默认值，写进仓内后其变更须经本仓的显式升级流程，不会静默生效）。
+
 ## [0.9.0-rc.5] - 2026-11-01
 
 ### Fixed
