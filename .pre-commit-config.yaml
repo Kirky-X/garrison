@@ -104,13 +104,17 @@ repos:
 
   # Markdown 检查（仅检查 Garrison 文档，跳过 archive/temp）
   - repo: https://github.com/igorshubovych/markdownlint-cli
-    rev: v0.43.0
+    rev: v0.50.0
     hooks:
       - id: markdownlint
         # 钉 node 版本：nodeenv 解析 'latest' 时会命中 dist 索引的 alpha 预发布串
         # （patch 段 "0-alpha" int() 崩溃），钉稳定版绕开且构建可复现
         language_version: 26.12.1
-        args: [--disable=MD013,--disable=MD024,--disable=MD033]
+        # MD060（table-column-style）是 v0.44+ 新增的表格对齐风格规则：
+        # 要求表格分隔行与单元格的空格布局统一，与仓库既有表格写法全面冲突
+        # （实测 44 个文件 1284 条）。本仓表格以可读性优先，不做机械对齐，
+        # 故与 MD013/MD024/MD033 同列为风格类豁免——降噪不关检。
+        args: [--disable=MD013,--disable=MD024,--disable=MD033,--disable=MD060]
         exclude: '^(docs/archive|temp|\.github|mdbook/src/SUMMARY\.md)(/.*)?$'
 
   # 提交完成后清理本地编译产物（post-commit 阶段；启用: pre-commit install -t post-commit）
