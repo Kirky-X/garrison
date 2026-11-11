@@ -5,8 +5,8 @@
 //!
 //! - `GarrisonLocale`：支持的语言枚举（默认 `En`，英文）
 //! - thread_local 栈式 scope：`set_locale()` 返回 RAII guard，drop 时自动 pop
-//! - `OnceLock` 缓存 `FluentBundle`：首次访问时加载 .ftl 资源，后续零开销
-//! - `translate_error(&GarrisonError) -> String`：依据当前 locale 查询 fluent bundle
+//! - FTL 词条经 `include_str!` 编译期内嵌，懒加载注册进 sdforge i18n 宿主注册表（`register_translation`），查询走其 `translate_for` 链
+//! - `translate_error(&GarrisonError) -> String`：依据当前 locale 经 sdforge i18n 解析
 //!
 //! ## 使用示例
 //!
@@ -25,11 +25,8 @@
 //! // guard drop 后自动恢复中文
 //! ```
 use crate::error::GarrisonError;
-use fluent::concurrent::FluentBundle;
-use fluent::{FluentArgs, FluentResource};
 use std::cell::RefCell;
 use std::sync::OnceLock;
-use unic_langid::LanguageIdentifier;
 
 /// 构造本地化错误文案：按 `key` 查 FTL 翻译，缺 key 或格式化失败回退 `$fallback`，`$fallback` 为空串时返回 `key` 本身（既有调用点传 `""` 时输出与旧行为一致）。
 ///
@@ -72,15 +69,11 @@ pub enum GarrisonLocale {
 }
 
 impl GarrisonLocale {
-    /// 返回对应的 BCP-47 语言标签。
-    fn as_lang_id(self) -> LanguageIdentifier {
+    /// 返回对应的 BCP-47 语言标签（同时用作 sdforge i18n 注册桶键）。
+    fn as_language_tag(self) -> &'static str {
         match self {
-            GarrisonLocale::Zh => "zh"
-                .parse()
-                .expect("valid BCP-47 language identifier; 若失败请报告 bug"),
-            GarrisonLocale::En => "en"
-                .parse()
-                .expect("valid BCP-47 language identifier; 若失败请报告 bug"),
+            GarrisonLocale::Zh => "zh-CN",
+            GarrisonLocale::En => "en",
         }
     }
 }
@@ -185,94 +178,175 @@ impl Drop for LocaleGuard {
     }
 }
 
-// FluentBundle 单例缓存（OnceLock，首次访问加载 .ftl 资源）
+// sdforge i18n 宿主注册（FTL 真源 include_str! 编译期内嵌，懒加载注册一次）
 
-static ZH_BUNDLE: OnceLock<FluentBundle<FluentResource>> = OnceLock::new();
-static EN_BUNDLE: OnceLock<FluentBundle<FluentResource>> = OnceLock::new();
+/// FTL 词条注册标记（进程级一次）。
+static I18N_REGISTERED: OnceLock<()> = OnceLock::new();
 
-/// 获取指定 locale 的 FluentBundle（懒加载，首次访问时构造）。
-fn get_bundle(locale: GarrisonLocale) -> &'static FluentBundle<FluentResource> {
-    match locale {
-        GarrisonLocale::Zh => ZH_BUNDLE.get_or_init(|| build_bundle(GarrisonLocale::Zh)),
-        GarrisonLocale::En => EN_BUNDLE.get_or_init(|| build_bundle(GarrisonLocale::En)),
+/// 结算一条 FTL 条目：去前导空行、剥非空行公共缩进（fluent 多行语义）、
+/// 还原 fluent 转义括号 `{"{"}`/`{"}"}` 为字面 `{`/`}`、去尾部空行。
+fn flush_ftl_entry(
+    key: &mut Option<String>,
+    lines: &mut Vec<String>,
+    out: &mut Vec<(String, String)>,
+) {
+    if let Some(key) = key.take() {
+        // `key =` 空值条目：首物理行为空占位，移除后其余行全部是续行；
+        // `key = 内容` 条目：lines[0] 是 `=` 行本身，永不剥缩进
+        let had_inline = lines.first().is_some_and(|l| !l.is_empty());
+        if !had_inline && lines.first().is_some_and(|l| l.is_empty()) {
+            lines.remove(0);
+        }
+        while lines.last().is_some_and(|l| l.is_empty()) {
+            lines.pop();
+        }
+        // fluent 规则：公共缩进以首个非空续行为基准，仅剥「确实以该前缀开头」的续行；
+        // `=` 行（had_inline 时 lines[0]）与不成前缀的行原样保留
+        let cont_start = usize::from(had_inline);
+        let common = lines
+            .iter()
+            .skip(cont_start)
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.len() - l.trim_start().len())
+            .min()
+            .unwrap_or(0);
+        let prefix = " ".repeat(common);
+        let value = lines
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                let stripped = if i >= cont_start && common > 0 && l.starts_with(prefix.as_str()) {
+                    &l[common..]
+                } else {
+                    l
+                };
+                stripped.replace("{\"{\"}", "{").replace("{\"}\"}", "}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        out.push((key, value));
+        lines.clear();
     }
 }
 
-/// 构造 FluentBundle（从 include_str! 加载 .ftl 资源）。
-fn build_bundle(locale: GarrisonLocale) -> FluentBundle<FluentResource> {
-    let ftl = match locale {
-        GarrisonLocale::Zh => include_str!("../locales/zh.ftl"),
-        GarrisonLocale::En => include_str!("../locales/en.ftl"),
-    };
-    let resource = FluentResource::try_new(ftl.to_string())
-        .expect("Garrison .ftl 资源解析失败（编译期已固化，不应失败；若触发请报告 bug）");
-    let lang_id = locale.as_lang_id();
-    let mut bundle = FluentBundle::new_concurrent(vec![lang_id]);
-    // 关闭 FSI/PDI 隔离标记（U+2068/U+2069），保持错误消息纯净
-    bundle.set_use_isolating(false);
-    bundle
-        .add_resource(resource)
-        .expect("Garrison .ftl 资源添加到 bundle 失败（资源键冲突不应发生；若触发请报告 bug）");
-    bundle
+/// 归一 FTL 源：占位符跨行断开（`{$` 行尾折行）时丢弃占位符内部的换行——
+/// fluent 词法允许 placeable 内部换行（换行归属表达式空白，不进入渲染值）。
+/// 花括号计数在 `{"{"}` 转义序列上配对平衡，不影响该规则。
+fn normalize_ftl_placeholders(ftl: &str) -> String {
+    if !ftl.contains("{$") {
+        return ftl.to_string();
+    }
+    let mut out = String::with_capacity(ftl.len());
+    let mut in_placeholder = false;
+    for ch in ftl.chars() {
+        match ch {
+            '{' => {
+                in_placeholder = true;
+                out.push(ch);
+            },
+            '}' => {
+                in_placeholder = false;
+                out.push(ch);
+            },
+            '\n' if in_placeholder => {},
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
-// 错误翻译：依据当前 locale 查询 fluent bundle
+/// 解析 FTL 文本为 (key, value) 条目（fluent 语义）：`key = value` 起条（首行内容可为空），
+/// 其后的缩进续行与空行并入 value 直至下一个条目/注释；`#` 注释行跳过。
+/// 与 locales/*.ftl 真源一一对应（纯文本消息，无 selector/term 语法）。
+fn parse_ftl_entries(ftl: &str) -> Vec<(String, String)> {
+    let ftl = &normalize_ftl_placeholders(ftl);
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut cur_key: Option<String> = None;
+    let mut cur_lines: Vec<String> = Vec::new();
+    for line in ftl.lines() {
+        if cur_key.is_some() && (line.starts_with([' ', '\t']) || line.trim().is_empty()) {
+            // 当前条目的续行或段内空行
+            cur_lines.push(line.to_string());
+            continue;
+        }
+        // 到达新条目/注释/顶层空行：结算当前条目
+        flush_ftl_entry(&mut cur_key, &mut cur_lines, &mut out);
+        if line.trim().is_empty() || line.trim_start().starts_with('#') {
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            cur_key = Some(k.trim().to_string());
+            cur_lines.push(v.trim().to_string());
+        }
+    }
+    flush_ftl_entry(&mut cur_key, &mut cur_lines, &mut out);
+    out
+}
 
-/// 将 `GarrisonError` 翻译为当前 locale 的本地化字符串：按 `current_locale()` 选 bundle 查 message key 与 args；缺失 key 时回退硬编码英文（与 `locales/en.ftl` 模板一致）。
+/// 将两份 FTL 真源注册进 sdforge i18n 宿主注册表（懒加载，进程级一次）。
+fn ensure_registered() {
+    I18N_REGISTERED.get_or_init(|| {
+        for (tag, ftl) in [
+            ("zh-CN", include_str!("../locales/zh.ftl")),
+            ("en", include_str!("../locales/en.ftl")),
+        ] {
+            for (key, value) in parse_ftl_entries(ftl) {
+                sdforge::i18n::register_translation(tag, &key, &value);
+            }
+        }
+    });
+}
+
+/// 按 (locale tag, key, args) 解析；命中返回渲染文本，未命中返回 `None`。
+///
+/// 渲染结果仍含 `{$name}` 形态占位符视为未命中：与旧 fluent 引擎的格式错误语义对齐
+/// （缺变量 ⇒ 格式失败 ⇒ 调用方回退），避免把残缺模板直接透给用户。
+fn lookup(tag: &str, key: &str, args: &[(&str, &str)]) -> Option<String> {
+    ensure_registered();
+    let sd_args: Vec<(&str, String)> = args.iter().map(|(k, v)| (*k, (*v).to_string())).collect();
+    let rendered = sdforge::i18n::translate_for(tag, key, &sd_args);
+    if rendered == key || rendered.contains("{$") || rendered.contains("{ $") {
+        None
+    } else {
+        Some(rendered)
+    }
+}
+
+// 错误翻译：依据当前 locale 经 sdforge i18n 解析
+
+/// 将 `GarrisonError` 翻译为当前 locale 的本地化字符串：按 `current_locale()` 经 sdforge i18n 查 key 与 args；当前语言缺失时回退 en 词条，en 亦缺失时回退硬编码英文（与 `locales/en.ftl` 模板一致）。
 pub fn translate_error(err: &GarrisonError) -> String {
-    let locale = current_locale();
-    let bundle = get_bundle(locale);
+    let tag = current_locale().as_language_tag();
     let (key, args) = error_to_key_args(err);
-    match bundle.get_message(key) {
-        Some(msg) => match msg.value() {
-            Some(pattern) => {
-                let mut fluent_args = FluentArgs::new();
-                for (k, v) in args {
-                    fluent_args.set(k, v);
+    let args_ref: Vec<(&str, &str)> = args.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    match lookup(tag, key, &args_ref) {
+        Some(value) => value,
+        None => {
+            if tag != "en" {
+                if let Some(value) = lookup("en", key, &args_ref) {
+                    return value;
                 }
-                let mut errors = vec![];
-                let value = bundle.format_pattern(pattern, Some(&fluent_args), &mut errors);
-                if errors.is_empty() {
-                    value.into_owned()
-                } else {
-                    // 翻译失败回退到硬编码英文
-                    fallback_display(err)
-                }
-            },
-            None => fallback_display(err),
+            }
+            // 翻译缺失回退到硬编码英文
+            fallback_display(err)
         },
-        None => fallback_display(err),
     }
 }
 
 /// 按 key + args 翻译为当前 locale 的本地化字符串；不依赖 `GarrisonError`，供 `loc!` 宏与社交登录 / Keycloak 等模块按需翻译异常 detail。
 /// 未找到 key 或格式化出错返回 `key` 本身（[`loc!`] 在此基础上应用调用方 fallback，空时保持 key）。
 pub fn translate_detail(key: &str, args: &[(&str, &str)]) -> String {
-    let locale = current_locale();
-    let bundle = get_bundle(locale);
-    match bundle.get_message(key) {
-        Some(msg) => match msg.value() {
-            Some(pattern) => {
-                let mut errors = vec![];
-                // args 为空时短路，避免无意义的 FluentArgs 分配
-                let value = if args.is_empty() {
-                    bundle.format_pattern(pattern, None, &mut errors)
-                } else {
-                    let mut fluent_args = FluentArgs::new();
-                    for (k, v) in args {
-                        fluent_args.set(*k, (*v).to_string());
-                    }
-                    bundle.format_pattern(pattern, Some(&fluent_args), &mut errors)
-                };
-                if errors.is_empty() {
-                    value.into_owned()
-                } else {
-                    key.to_string()
-                }
-            },
-            None => key.to_string(),
+    let tag = current_locale().as_language_tag();
+    match lookup(tag, key, args) {
+        Some(value) => value,
+        None => {
+            if tag != "en" {
+                // 当前语言缺词条时回退 en 束（与 sdforge i18n 的 zh→en 回退链一致）
+                lookup("en", key, args).unwrap_or_else(|| key.to_string())
+            } else {
+                key.to_string()
+            }
         },
-        None => key.to_string(),
     }
 }
 
@@ -472,59 +546,64 @@ fn fallback_display(err: &GarrisonError) -> String {
     }
 }
 
-// ICU4X 增强层（feature = "i18n-icu"）
+// ICU4X 增强层（feature = "i18n-icu"，ICU4X 经 trait-kit "i18n" feature 统一供给）
 
-/// ICU4X 增强模块（仅 `i18n-icu` feature 编译）：复数规则、日期/数字本地化，不影响现有翻译逻辑。
+/// locale 感知格式化增强模块（仅 `i18n-icu` feature 编译）：复数规则、日期/数字本地化，
+/// 底层统一走 trait-kit `I18nFormatter`（ICU4X 单一来源），不影响现有翻译逻辑。
 #[cfg(feature = "i18n-icu")]
 pub mod icu_enhanced {
     use crate::i18n::{current_locale, GarrisonLocale};
     use chrono::{Datelike, Timelike};
-    use fixed_decimal::Decimal;
-    use icu_datetime::fieldsets;
-    use icu_datetime::DateTimeFormatter;
-    use icu_decimal::DecimalFormatter;
-    use icu_locale_core::{locale, Locale};
-    use icu_plurals::{PluralCategory, PluralRules};
 
-    /// 将 `GarrisonLocale` 转为 ICU `Locale`。
-    fn to_icu_locale(l: GarrisonLocale) -> Locale {
-        match l {
-            GarrisonLocale::Zh => locale!("zh"),
-            GarrisonLocale::En => locale!("en"),
+    /// 当前 locale 的 trait-kit 格式化器（zh-CN/en 恒可构造）。
+    fn formatter() -> trait_kit::i18n::I18nFormatter {
+        let tag = match current_locale() {
+            GarrisonLocale::Zh => "zh-CN",
+            GarrisonLocale::En => "en",
+        };
+        trait_kit::i18n::I18nFormatter::new(tag)
+            .expect("trait-kit I18nFormatter 对 zh-CN/en 恒可构造；若失败请报告 bug")
+    }
+
+    /// `PluralCategory` 的 Debug 形态 → 小写类别名（trait-kit 未重导出该类型，经字符串映射解耦）。
+    fn plural_to_str(debug: &str) -> &'static str {
+        match debug {
+            "Zero" => "zero",
+            "One" => "one",
+            "Two" => "two",
+            "Few" => "few",
+            "Many" => "many",
+            _ => "other",
         }
     }
 
-    /// 当前 locale 下 `count` 的复数类别（Cardinal），用于选择正确复数形式。
-    pub fn plural_category(count: usize) -> PluralCategory {
-        let rules =
-            PluralRules::try_new(to_icu_locale(current_locale()).into(), Default::default())
-                .expect("ICU PluralRules compiled_data 已编译，不应失败");
-        rules.category_for(count)
+    /// 当前 locale 下 `count` 的复数类别名（Cardinal，小写：zero/one/two/few/many/other），用于选择正确复数形式。
+    pub fn plural_category(count: usize) -> &'static str {
+        match formatter().plural_category(count as u64) {
+            Ok(cat) => plural_to_str(&format!("{cat:?}")),
+            Err(_) => "other",
+        }
     }
 
-    /// 格式化 `chrono::DateTime` 为当前 locale 的本地化字符串（替代 `{:?}` Debug 格式，如 "2026年1月1日" / "Jan 1, 2026"）。
+    /// 格式化 `chrono::DateTime` 为当前 locale 的本地化字符串：日期经 trait-kit ICU4X
+    /// （如 "2026年1月1日" / "Jan 1, 2026"），时间部分与 locale 无关，附固定 24 小时制 `HH:MM:SS`。
     pub fn format_datetime_locale(dt: &chrono::DateTime<chrono::Utc>) -> String {
-        let icu_locale = to_icu_locale(current_locale());
-        // YMDT fieldset：年月日+时间，medium 长度（如 "Jan 1, 2026, 12:00:00 AM"）
-        let formatter = DateTimeFormatter::try_new(icu_locale.into(), fieldsets::YMDT::medium())
-            .expect("ICU DateTimeFormatter compiled_data 已编译，不应失败");
-        let date = icu_calendar::Date::try_new_iso(dt.year(), dt.month() as u8, dt.day() as u8)
-            .expect("chrono 日期转 ICU Date 不应失败");
-        let time =
-            icu_time::Time::try_new(dt.hour() as u8, dt.minute() as u8, dt.second() as u8, 0)
-                .expect("chrono 时间转 ICU Time 不应失败");
-        // DateTime 是 #[allow(clippy::exhaustive_structs)] 的公开结构体，可直接构造
-        let datetime = icu_datetime::input::DateTime { date, time };
-        formatter.format(&datetime).to_string()
+        let date = formatter()
+            .format_date(dt.year(), dt.month() as u8, dt.day() as u8)
+            .expect("trait-kit format_date 对合法日历日期不应失败");
+        format!(
+            "{date} {:02}:{:02}:{:02}",
+            dt.hour(),
+            dt.minute(),
+            dt.second()
+        )
     }
 
-    /// 格式化整数为当前 locale 的本地化字符串（千分位/数字系统，如 en "1,000,000" / ar "١٬٠٠٠٬٠٠٠"）。
+    /// 格式化整数为当前 locale 的本地化字符串（千分位/数字系统，如 en "1,000,000"，经 trait-kit ICU4X）。
     pub fn format_number_locale(n: i64) -> String {
-        let decimal = Decimal::from(n);
-        let formatter =
-            DecimalFormatter::try_new(to_icu_locale(current_locale()).into(), Default::default())
-                .expect("ICU DecimalFormatter compiled_data 已编译，不应失败");
-        formatter.format_to_string(&decimal)
+        formatter()
+            .format_number(n as f64)
+            .expect("trait-kit format_number 不应失败")
     }
 }
 
@@ -544,9 +623,9 @@ mod tests {
     }
 
     #[test]
-    fn as_lang_id_returns_correct_identifier() {
-        assert_eq!(GarrisonLocale::Zh.as_lang_id().to_string(), "zh");
-        assert_eq!(GarrisonLocale::En.as_lang_id().to_string(), "en");
+    fn as_language_tag_returns_correct_tag() {
+        assert_eq!(GarrisonLocale::Zh.as_language_tag(), "zh-CN");
+        assert_eq!(GarrisonLocale::En.as_language_tag(), "en");
     }
 
     // current_locale / set_locale 测试
@@ -843,11 +922,14 @@ mod tests {
     }
 
     #[test]
-    fn get_bundle_returns_cached_instance() {
-        let b1 = get_bundle(GarrisonLocale::Zh);
-        let b2 = get_bundle(GarrisonLocale::Zh);
-        // 指针相等表示同一实例
-        assert!(std::ptr::eq(b1, b2));
+    fn ensure_registered_is_idempotent_and_populates_registry() {
+        ensure_registered();
+        ensure_registered();
+        // 注册表已含 zh 词条：zh 查询命中（未注册则 lookup 返回 None）
+        assert!(
+            lookup("zh-CN", "not-login", &[("detail", "x")]).is_some(),
+            "zh 注册后 lookup 应命中"
+        );
     }
 
     // translate_detail 测试（loc! 宏底层调用）
@@ -1357,10 +1439,12 @@ mod tests {
     }
 
     #[test]
-    fn get_bundle_en_returns_cached_instance() {
-        let b1 = get_bundle(GarrisonLocale::En);
-        let b2 = get_bundle(GarrisonLocale::En);
-        assert!(std::ptr::eq(b1, b2), "英文 bundle 应为同一缓存实例");
+    fn lookup_en_returns_registered_entry() {
+        ensure_registered();
+        assert!(
+            lookup("en", "not-login", &[("detail", "x")]).is_some(),
+            "en 注册后 lookup 应命中"
+        );
     }
 
     // translate_detail 测试
@@ -1394,7 +1478,7 @@ mod tests {
     fn icu_plural_category_en_one() {
         let _guard = set_locale(GarrisonLocale::En);
         let cat = icu_enhanced::plural_category(1);
-        assert_eq!(cat, icu_plurals::PluralCategory::One);
+        assert_eq!(cat, "one");
     }
 
     #[cfg(feature = "i18n-icu")]
@@ -1402,7 +1486,7 @@ mod tests {
     fn icu_plural_category_en_other() {
         let _guard = set_locale(GarrisonLocale::En);
         let cat = icu_enhanced::plural_category(2);
-        assert_eq!(cat, icu_plurals::PluralCategory::Other);
+        assert_eq!(cat, "other");
     }
 
     #[cfg(feature = "i18n-icu")]

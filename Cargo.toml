@@ -108,8 +108,6 @@ tonic = { optional = true, default-features = false, features = ["transport"], w
 tonic-health = { version = "0.14", optional = true, default-features = false }
 # grpc：GarrisonGrpcAuthLayer 的 tower Layer/Service；#[forge] 路由共用 tonic 栈
 tower = { version = "0.5", optional = true, default-features = false }
-fluent = { version = "0.17", default-features = false }
-unic-langid = { version = "0.9", default-features = false }
 # 系统语言探测：i18n detect_locale 检测链末端（env 链未命中时读取 OS locale）
 sys-locale = { version = "0.3", default-features = false }
 miette = { version = "7.6", optional = true, default-features = false }
@@ -133,16 +131,9 @@ inklog = { version = "0.3.0-rc.12", default-features = false, optional = true }
 limiteron = { version = "0.3.0-rc.10", default-features = false, features = ["distributed", "retry"] }
 # sdforge 运行时（必需）：cli feature 供单根二进制的 CLI 面（CliBuilder/dispatch，轻量，
 # 不拉 http）；#[forge] 宏在 garrison 上下文求值 cfg，auth-server-sdforge 再透传 sdforge/http
-sdforge = { version = "0.5.0-rc.10", default-features = false, features = ["cli"] }
-trait-kit = { version = "0.5.0-rc.10", default-features = false, features = ["async"] }
+sdforge = { version = "0.5.0-rc.11", default-features = false, features = ["cli"] }
+trait-kit = { version = "0.5.0-rc.13", default-features = false, features = ["async"] }
 cedar-policy = { version = "4.14", default-features = false, optional = true }
-icu_plurals = { version = "2.4", default-features = false, features = ["compiled_data"], optional = true }
-icu_datetime = { version = "2.4", default-features = false, features = ["compiled_data"], optional = true }
-icu_decimal = { version = "2.4", default-features = false, features = ["compiled_data", "alloc"], optional = true }
-icu_locale_core = { version = "2.4", default-features = false, optional = true }
-icu_calendar = { version = "2.4", default-features = false, features = ["compiled_data"], optional = true }
-icu_time = { version = "2.4", default-features = false, features = ["compiled_data"], optional = true }
-fixed_decimal = { version = "0.7", optional = true, default-features = false }
 percent-encoding = { version = "2.3", optional = true, default-features = false }
 hkdf = { version = "0.13", optional = true, default-features = false }
 # pkcs1/pkcs8：JWT RS 系验证路径从私钥 PEM 提取公钥组件（n,e）；纯 DER 解析库（无 RSA 运算，与 RUSTSEC-2023-0071 无关），本为 rsa 传递依赖
@@ -495,10 +486,8 @@ metrics-prometheus = ["dep:prometheus", "dep:tracing-subscriber"]
 otlp = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-subscriber"]
 grpc = ["dep:tonic", "dep:tonic-health", "dep:tower", "sdforge/grpc"]
 # ICU4X 增强层：复数规则 + 日期/数字本地化
-i18n-icu = [
-    "dep:icu_plurals", "dep:icu_datetime", "dep:icu_decimal",
-    "dep:icu_locale_core", "dep:icu_calendar", "dep:icu_time", "dep:fixed_decimal",
-]
+# ICU4X 统一经 trait-kit "i18n" feature 供给（I18nFormatter 复数/日期/数字），本仓不再直依赖 icu_* 组件
+i18n-icu = ["trait-kit/i18n"]
 # 启用后 GarrisonError 实现 miette::Diagnostic trait（保留 thiserror::Error derive）
 miette = ["dep:miette"]
 garrison-testing = ["authorize-api"]
