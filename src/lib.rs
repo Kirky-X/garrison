@@ -205,6 +205,10 @@ pub mod config;
 /// 健康检查模块，提供 liveness/readiness 探针与依赖项健康检测。
 pub mod health;
 
+/// 单根二进制的 CLI 面（sdforge CliBuilder + inventory 注册 + dispatch）：
+/// `healthcheck`（无条件）/ `serve`（auth-server）/ 运维命令组（cli-ops）。
+pub mod cli;
+
 /// 上下文模块，提供请求/响应/存储上下文抽象。
 pub mod context;
 

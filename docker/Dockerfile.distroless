@@ -8,7 +8,7 @@
 #     必须用 cc 变体（含 libgcc/libstdc++）而非 static；镜像自带
 #     65532:65532 nonroot 用户与 ca-certificates，无 apt/useradd/shell
 #   - 无符号链接可用，HEALTHCHECK 与编排平台探针一律用绝对路径
-#     /app/garrison-healthcheck（distroless 的 PATH 不含 /app）
+#     /app/garrison healthcheck（distroless 的 PATH 不含 /app）
 #
 # feature 门禁与构建示例见 Dockerfile 头注释，两变体保持一致。
 
@@ -33,10 +33,10 @@ ARG FEATURES=auth-server,cache-memory,server-health-check,tracing-log
 COPY --from=planner /app/recipe.json recipe.json
 COPY --from=planner /app/Cargo.lock Cargo.lock
 RUN cargo chef cook --release --locked --recipe-path recipe.json \
-    --features "${FEATURES}" --bin auth_server --bin garrison-healthcheck
+    --features "${FEATURES}" --bin garrison
 COPY . .
 RUN cargo build --release --locked --features "${FEATURES}" \
-    --bin auth_server --bin garrison-healthcheck
+    --bin garrison
 
 FROM gcr.io/distroless/cc-debian12:nonroot AS runner
 ARG VERSION=dev
@@ -51,7 +51,7 @@ LABEL org.opencontainers.image.title="garrison" \
     org.opencontainers.image.revision="${GIT_SHA}"
 
 WORKDIR /app
-COPY --from=builder /app/target/release/auth_server /app/target/release/garrison-healthcheck /app/
+COPY --from=builder /app/target/release/garrison /app/garrison
 
 # GAR-30：容器内端口必须绑 0.0.0.0 才能被 docker ports 映射（bin 缺省
 # 127.0.0.1 仅限宿主直跑的 secure-by-default）；对外暴露面由 ports 映射/
@@ -62,6 +62,8 @@ ENV GARRISON_EXTERNAL_BIND=0.0.0.0 \
 USER nonroot:nonroot
 EXPOSE 8080 8081
 # 探测本容器外网端口的 sdforge liveness 探针（恒 200）；目标端口随
-# GARRISON_EXTERNAL_PORT 环境变量自动对齐（见 src/bin/garrison-healthcheck.rs）
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/app/garrison-healthcheck"]
-ENTRYPOINT ["/app/auth_server"]
+# GARRISON_EXTERNAL_PORT 环境变量自动对齐（见 src/cli/mod.rs healthcheck 子命令）
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/app/garrison", "healthcheck"]
+# 单根二进制：ENTRYPOINT 固定 garrison，缺省子命令 serve（原 auth_server 行为）
+ENTRYPOINT ["/app/garrison"]
+CMD ["serve"]

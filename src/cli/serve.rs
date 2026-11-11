@@ -1,75 +1,91 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! GarrisonAuthServer 二进制入口。
+//! `garrison serve` 子命令——双端口 axum 认证服务器（原 `auth_server` bin 迁入）。
 //!
-//! 启动双端口 axum 认证服务器：
-//! - 外网端口（默认 8080）：login / logout / refresh
-//! - 内网端口（默认 8081）：check-* / get-* / kickout 等（需 X-API-Key）
+//! 门控 `auth-server` + `cache-memory`（镜像原 `[[bin]] auth_server` 的
+//! required-features；`GarrisonDaoOxcache` 依赖 `cache-memory`）。sdforge 声明式
+//! 路由装配保持在库层 server 模块（`#[forge]` 路由经 inventory 注册，随
+//! `auth-server-sdforge` feature 激活），本模块只做 env 引导装配与启动。
 //!
 //! # 环境变量
 //!
 //! - `GARRISON_EXTERNAL_PORT`：外网端口（默认 8080）
 //! - `GARRISON_INTERNAL_PORT`：内网端口（默认 8081）
-//! - `GARRISON_EXTERNAL_BIND`：外网端口绑定地址（IPv4/IPv6 字面量，默认
-//!   **127.0.0.1**，secure-by-default，仅本机可达）。容器内须为 `0.0.0.0`
-//!   才能被端口映射（镜像已内置该 ENV）；非回环绑定 + 开启外网登录时还须
-//!   提供 `GARRISON_EXTERNAL_LOGIN_ACK`。非法值拒绝启动（fail-closed）
-//! - `GARRISON_INTERNAL_BIND`：内网端口绑定地址（默认 **127.0.0.1**，语义同上）
+//! - `GARRISON_EXTERNAL_BIND` / `GARRISON_INTERNAL_BIND`：绑定地址（IPv4/IPv6 字面量，
+//!   默认 **127.0.0.1**，secure-by-default）。容器内须为 `0.0.0.0` 才能被端口映射
+//!   （镜像已内置该 ENV）；非回环绑定 + 开启外网登录时还须提供
+//!   `GARRISON_EXTERNAL_LOGIN_ACK`。非法值拒绝启动（fail-closed）
 //! - `GARRISON_RATE_LIMIT`：外网每 IP 限速（默认 100，必须 > 0，为 0 时拒绝启动）
 //! - `GARRISON_INTERNAL_API_KEY`：内网 API Key（必须配置，无默认值，fail-closed）。
 //!   长度下限由库层 `MIN_INTERNAL_API_KEY_LEN`（32 字节）统一强制，建议
 //!   `openssl rand -hex 32` 生成
 //! - `GARRISON_TRUSTED_PROXIES`：可信代理 IP 列表（逗号分隔，默认空）。
 //!   仅当部署在可信反代之后才配置；配置后 XFF 解析（限速键 / 客户端 IP）才启用。
-//!   仅接受回环/内网地址（与框架 `AuthServerConfig::validate` 同策略），
-//!   非法或公网值拒绝启动
-//! - `GARRISON_MAX_LOGIN_COUNT`：同账号最大并发会话数（默认 **10**，超出时
-//!   踢出最早登录的会话；显式传 0 = 不限制）
+//!   仅接受回环/内网地址（与框架 `AuthServerConfig::validate` 同策略），非法或
+//!   公网值拒绝启动
+//! - `GARRISON_MAX_LOGIN_COUNT`：同账号最大并发会话数（默认 **10**，超出时踢出
+//!   最早登录的会话；显式传 0 = 不限制）
 //! - `GARRISON_EXTERNAL_LOGIN_ENABLED`：是否启用外网登录端点（默认 **false**）。
 //!   框架 login 不校验凭证（职责边界：凭证校验属业务层，框架只签发会话），
-//!   业务方注入凭证校验后才应设为 `true`；默认关闭时 `POST /api/v1/auth/login` 返回 404。
-//!   **开启前业务层必须已注入凭证校验**；开启且外网绑定为非回环地址时，
+//!   业务方注入凭证校验后才应设为 `true`；默认关闭时 `POST /api/v1/auth/login`
+//!   返回 404。**开启前业务层必须已注入凭证校验**；开启且外网绑定为非回环地址时，
 //!   还须显式设置 `GARRISON_EXTERNAL_LOGIN_ACK` 才能启动
 //! - `GARRISON_EXTERNAL_LOGIN_ACK`：上述场景的显式风险确认，取值必须精确为
 //!   `i-understand-no-credential-check`，否则拒绝启动（fail-closed）
-//! - `GARRISON_STRICT_SECURITY`：严格安全档（默认 **true**）。参考部署始终 fail-closed：
-//!   密钥不足下限、外网登录暴露未 ACK 均在 `setup_garrison_manager` 之前由库层
-//!   `AuthServerConfig::validate()` 拒绝启动。`false` 仅作为密钥尚未轮换时的
-//!   一次性逃生阀（同条件降级为库层告警，即棘轮的非严格档）。本路径经 confers
-//!   只接受 `true`/`false`（大小写不敏感），非法值拒绝启动——与库层
-//!   `AuthServerConfig::default()` 的 `env_flag` 语义不同（后者非法值告警后
-//!   回退库层缺省 `false`，以保证不经 bin 的存量部署零行为变化）
+//! - `GARRISON_STRICT_SECURITY`：严格安全档（默认 **true**）。参考部署始终
+//!   fail-closed：密钥不足下限、外网登录暴露未 ACK 均在 `setup_garrison_manager`
+//!   之前由库层 `AuthServerConfig::validate()` 拒绝启动。`false` 仅作为密钥尚未
+//!   轮换时的一次性逃生阀（同条件降级为库层告警，即棘轮的非严格档）。本路径经
+//!   confers 只接受 `true`/`false`（大小写不敏感），非法值拒绝启动
 //! - `GARRISON_FIELD_ENCRYPTION_KEYS`：落库敏感字段静态加密密钥表
 //!   （`field-encryption` feature，逗号分隔 `key_id:hex64`，首项为主钥）；
 //!   feature 启用时必填——未配置即拒绝启动（fail-closed）
 //! - `GARRISON_FIELD_ENCRYPTION_TENANT`：字段加密 AAD 租户段（默认 "default"）
-//! - `GARRISON_WORKER_THREADS`：Tokio worker 线程数（默认 = CPU 核数）
-//! - `GARRISON_MAX_BLOCKING_THREADS`：Tokio blocking 线程上限（默认 512）
 //!
 //! # 使用
 //!
 //! ```sh
-//! cargo run --features auth-server --bin auth_server
+//! cargo run --features auth-server,cache-memory --bin garrison -- serve
 //! ```
+
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use garrison::backend::embedded::BackendEmbedded;
-use garrison::backend::AuthBackend;
-use garrison::config::GarrisonConfig;
-use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
-use garrison::error::{GarrisonError, GarrisonResult};
-use garrison::manager::GarrisonManager;
-use garrison::server::is_private_proxy_addr;
-use garrison::server::{AuthServerConfig, GarrisonAuthServer};
-use garrison::stp::GarrisonInterface;
-use mimalloc::MiMalloc;
+use sdforge::cli::{CliCommandRegistration, CliHandlerRegistration};
+use sdforge::core::{ApiError, HandlerArgs, HandlerFuture, HandlerState};
+use sdforge::inventory;
 
-#[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
+use crate::backend::embedded::BackendEmbedded;
+use crate::backend::AuthBackend;
+use crate::dao::{GarrisonDao, GarrisonDaoOxcache};
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::manager::GarrisonManager;
+use crate::server::is_private_proxy_addr;
+use crate::server::{AuthServerConfig, GarrisonAuthServer};
+use crate::stp::GarrisonInterface;
 
-/// 内网 API 空权限/空角色 interface（生产 bin 不应依赖 test-only mock）：
+inventory::submit! {
+    CliCommandRegistration::new(
+        "serve",
+        env!("CARGO_PKG_VERSION"),
+        "Run the dual-port Garrison auth server (env-driven; external 8080 / internal 8081 by default)",
+        "handle_serve_cmd",
+    )
+    .with_args(&[])
+}
+inventory::submit! { CliHandlerRegistration { name: "serve", handler: handle_serve_cmd } }
+
+fn handle_serve_cmd(_args: HandlerArgs, _state: HandlerState) -> HandlerFuture {
+    Box::pin(async move {
+        serve_main()
+            .await
+            .map(|()| serde_json::Value::Null)
+            .map_err(|e| ApiError::internal_error(e.to_string(), "garrison.serve"))
+    })
+}
+
+/// 内网 API 空权限/空角色 interface（生产部署不应依赖 test-only mock）：
 /// 所有 login_id 返回空列表，`check_permission` / `check_role` 一律拒绝；
 /// 真实生产应替换为业务方 RBAC 实现。
 struct SimpleInterface;
@@ -79,26 +95,27 @@ impl GarrisonInterface for SimpleInterface {
     async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
+
     async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
 }
 
-/// auth_server 启动引导配置。
+/// serve 启动引导配置。
 ///
 /// 经 confers 派生宏从 `GARRISON_*` 环境变量加载（env 覆盖 + 默认值），
 /// 字段名按大写映射环境变量（`external_port` → `GARRISON_EXTERNAL_PORT`）。
 ///
 /// fail-closed 语义：`internal_api_key` 无默认值（未配置即拒绝启动）；密钥长度、
 /// 绑定地址与可信代理解析、外网登录暴露确认在加载后统一执行（见
-/// [`resolve_bootstrap_security`]），`rate_limit=0` 检查见 `async_main`；
+/// [`resolve_bootstrap_security`]），`rate_limit=0` 检查见 [`serve_main`]；
 /// `field-encryption` feature 启用时密钥表为空即拒绝启动。
 ///
 /// `GARRISON_EXTERNAL_LOGIN_ENABLED` 仅接受 `true`/`false`（大小写不敏感），
 /// 不再接受 `1`；非法值启动失败而非静默忽略。
 #[derive(Debug, Clone, serde::Deserialize, confers::Config)]
 #[config(env_prefix = "GARRISON_")]
-struct AuthServerBootstrapConfig {
+pub struct AuthServerBootstrapConfig {
     #[config(default = 8080)]
     external_port: u16,
     #[config(default = 8081)]
@@ -195,7 +212,7 @@ fn parse_trusted_proxies(spec: &str) -> GarrisonResult<Vec<IpAddr>> {
 /// 严格档装配成完整 `AuthServerConfig`，并在触碰任何外部依赖（DAO / 迁移）
 /// 之前调用库层 `validate()` 提前 fail-closed。
 ///
-/// 护栏判定全部在库层（`garrison::server`），bin 不持有阈值常量与判定函数副本；
+/// 护栏判定全部在库层（`garrison::server`），本模块不持有阈值常量与判定函数副本；
 /// 严格档由 bootstrap 显式带入（缺省 `true`），覆盖库层缺省 `false`。
 fn resolve_bootstrap_security(
     bootstrap: &AuthServerBootstrapConfig,
@@ -219,14 +236,14 @@ fn resolve_bootstrap_security(
         strict_security: bootstrap.strict_security,
         ..AuthServerConfig::default()
     };
-    // 先校验后启动：失败映射为 Config 错误，调用方保持 eprintln + exit(1)
+    // 先校验后启动：失败映射为 Config 错误，调用方保持 FATAL 输出 + 退出码 1
     // （快速退出不依赖建库与迁移）。
     config.validate().map_err(GarrisonError::Config)?;
     Ok(config)
 }
 
 /// 参考部署的会话策略收口：框架 `default_config()` 的 `max_login_count=0`
-/// （不互踢）在 bin 层覆盖为 bootstrap 值（默认 10，超出踢最早会话），显式传 0
+/// （不互踢）在 serve 侧覆盖为 bootstrap 值（默认 10，超出踢最早会话），显式传 0
 /// 仍表示不限制（保留运维出口）；`seed_primary_amr` 从 bootstrap 接入配置，
 /// 安全敏感部署可关闭主认证 amr 播种。`rate_limit_backend`（rc.4）从环境变量
 /// 写入配置，使 manager 的限流运行时切换真正生效（此前仅校验不落地）。
@@ -234,10 +251,10 @@ fn assemble_garrison_config(
     max_login_count: u32,
     seed_primary_amr: bool,
     #[cfg(feature = "rate-limit-redis")] rate_limit_backend: Option<
-        garrison::strategy::rate_limiter_backend::RateLimitBackend,
+        crate::strategy::rate_limiter_backend::RateLimitBackend,
     >,
-) -> GarrisonConfig {
-    let mut config = GarrisonConfig::default_config();
+) -> crate::config::GarrisonConfig {
+    let mut config = crate::config::GarrisonConfig::default_config();
     config.max_login_count = max_login_count;
     config.seed_primary_amr = seed_primary_amr;
     #[cfg(feature = "rate-limit-redis")]
@@ -285,7 +302,7 @@ async fn setup_garrison_manager(
     max_login_count: u32,
     seed_primary_amr: bool,
     #[cfg(feature = "rate-limit-redis")] rate_limit_backend: Option<
-        garrison::strategy::rate_limiter_backend::RateLimitBackend,
+        crate::strategy::rate_limiter_backend::RateLimitBackend,
     >,
 ) -> GarrisonResult<()> {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
@@ -297,8 +314,8 @@ async fn setup_garrison_manager(
                 "auth-server-field-encryption-no-keys::".to_string(),
             ));
         }
-        let cipher = garrison::secure::encryption::FieldCipher::from_key_entries(&entries)?;
-        let wrapped = garrison::secure::encryption::FieldEncryptionDao::new(
+        let cipher = crate::secure::encryption::FieldCipher::from_key_entries(&entries)?;
+        let wrapped = crate::secure::encryption::FieldEncryptionDao::new(
             dao,
             Arc::new(cipher),
             field_encryption_tenant,
@@ -309,7 +326,7 @@ async fn setup_garrison_manager(
     if !field_encryption_keys.is_empty() {
         eprintln!(
             "{}",
-            garrison::i18n::translate_detail("cli-field-encryption-feature-disabled", &[])
+            crate::i18n::translate_detail("cli-field-encryption-feature-disabled", &[])
         );
     }
     let config = Arc::new(assemble_garrison_config(
@@ -328,69 +345,45 @@ async fn setup_garrison_manager(
     Ok(())
 }
 
-fn main() -> GarrisonResult<()> {
-    // 显式构建 Tokio runtime，支持通过环境变量调优线程参数
-    let worker_threads = std::env::var("GARRISON_WORKER_THREADS")
-        .ok()
-        .and_then(|s| s.parse().ok());
-    let max_blocking_threads = std::env::var("GARRISON_MAX_BLOCKING_THREADS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(512);
-
-    let mut runtime_builder = tokio::runtime::Builder::new_multi_thread();
-    runtime_builder
-        .enable_all()
-        .max_blocking_threads(max_blocking_threads);
-    if let Some(threads) = worker_threads {
-        runtime_builder.worker_threads(threads);
-    }
-
-    let runtime = runtime_builder
-        .build()
-        .expect("failed to build Tokio runtime");
-
-    runtime.block_on(async_main())
-}
-
-async fn async_main() -> GarrisonResult<()> {
+/// serve 主流程（原 `auth_server` bin 的 `async_main` 迁入；Tokio runtime 由
+/// `src/main.rs` 统一构建，支持 `GARRISON_WORKER_THREADS` /
+/// `GARRISON_MAX_BLOCKING_THREADS` 调优）。启动失败沿原语义：配置类失败
+/// FATAL 输出 stderr 后以非零退出码终止（经 `ApiError` 上抛，main 层统一 exit 1）。
+pub async fn serve_main() -> GarrisonResult<()> {
     // 启动配置：confers 派生宏统一加载（env 覆盖 + 默认值 + 必填缺失即失败）
     let bootstrap = match AuthServerBootstrapConfig::load_sync() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!(
-                "FATAL: failed to load auth_server bootstrap config from GARRISON_* env vars: {e}"
-            );
-            std::process::exit(1);
+            return Err(GarrisonError::Config(format!(
+                "auth-server-bootstrap-load::{e}"
+            )));
         },
     };
     // 拒绝 0 值：rate_limit=0 会让限速器拒绝所有请求（全部 429）；
     // 负值在解析阶段即失败退出，无需额外校验。
     if bootstrap.rate_limit == 0 {
-        eprintln!(
-            "FATAL: GARRISON_RATE_LIMIT=0 would reject every request (all 429); \
-             set a positive value (e.g. 100), refusing to start"
-        );
-        std::process::exit(1);
+        return Err(GarrisonError::Config(
+            "auth-server-rate-limit-zero::GARRISON_RATE_LIMIT=0 would reject every request (all 429); set a positive value (e.g. 100), refusing to start".to_string(),
+        ));
     }
     // 限流后端环境变量 fail-closed 校验（与库层 `parse_rate_limit_backend_env` 同源单点，
     // 保持在 setup_garrison_manager 之前——DAO / 迁移不因配置错误被触碰）：
     // 未知值拒绝启动；backend=redis 须配非空 GARRISON_REDIS_URL（对齐 validate_rate_limit_redis）。
     #[cfg(feature = "rate-limit-redis")]
-    let rate_limit_backend = match garrison::config::impls::parse_rate_limit_backend_env() {
-        Ok(Some(garrison::strategy::rate_limiter_backend::RateLimitBackend::Redis {
-            redis_url,
-        })) if redis_url.trim().is_empty() => {
-            eprintln!(
-                "FATAL: GARRISON_RATE_LIMIT_BACKEND=redis requires a non-empty \
-                 GARRISON_REDIS_URL; refusing to start"
-            );
-            std::process::exit(1);
+    let rate_limit_backend = match crate::config::impls::parse_rate_limit_backend_env() {
+        Ok(Some(crate::strategy::rate_limiter_backend::RateLimitBackend::Redis { redis_url }))
+            if redis_url.trim().is_empty() =>
+        {
+            return Err(GarrisonError::Config(
+                "auth-server-rate-limit-redis-url-empty::GARRISON_RATE_LIMIT_BACKEND=redis requires a non-empty GARRISON_REDIS_URL; refusing to start"
+                    .to_string(),
+            ));
         },
         Ok(backend) => backend,
         Err(e) => {
-            eprintln!("FATAL: {e}; refusing to start");
-            std::process::exit(1);
+            return Err(GarrisonError::Config(format!(
+                "auth-server-rate-limit-backend::{e}; refusing to start"
+            )));
         },
     };
     // 绑定地址 / 可信代理 / 密钥强度 / 外网登录暴露确认统一交由库层
@@ -400,25 +393,24 @@ async fn async_main() -> GarrisonResult<()> {
         Ok(c) => c,
         Err(e) => {
             let reason = e.to_string();
-            eprintln!(
-                "{}",
-                garrison::i18n::translate_detail("auth-server-fatal", &[("arg0", reason.as_str())])
-            );
-            std::process::exit(1);
+            return Err(GarrisonError::Config(crate::i18n::translate_detail(
+                "auth-server-fatal",
+                &[("arg0", reason.as_str())],
+            )));
         },
     };
     // C-1: 外网登录端点默认关闭（secure-by-default）；业务方注入凭证校验后显式开启
     if config.external_login_enabled {
         eprintln!(
             "WARN: external login endpoint ENABLED (GARRISON_EXTERNAL_LOGIN_ENABLED=true); \
-             auth_server does NOT verify credentials — ensure the business layer \
+             serve does NOT verify credentials — ensure the business layer \
              validates credentials before exposing the external port"
         );
     }
 
     // 初始化 tracing subscriber，避免所有 tracing::info!/error! 静默丢弃
     #[cfg(feature = "audit-inklog")]
-    let _logger = garrison::observability::init_inklog_logging_with_fallback().await;
+    let _logger = crate::observability::init_inklog_logging_with_fallback().await;
 
     // 无 audit-inklog 时，若 metrics-prometheus 或 tracing-log 启用，内联初始化 JSON 日志
     #[cfg(all(
@@ -483,9 +475,9 @@ async fn async_main() -> GarrisonResult<()> {
 mod bootstrap_tests {
     use super::*;
     // 库层阈值常量仅在本模块的行为测试中引用（护栏判定全部在库层），因此
-    // 由本模块引入；顶层 `use` 保留给非测试代码实际使用的 `is_private_proxy_addr`，
-    // 否则非测试构建会产生 unused import 告警。
-    use garrison::server::{EXTERNAL_LOGIN_ACK, MIN_INTERNAL_API_KEY_LEN};
+    // 由本模块引入；非测试代码实际使用的 `is_private_proxy_addr` 已在顶层
+    // `use` 引入。
+    use crate::server::{EXTERNAL_LOGIN_ACK, MIN_INTERNAL_API_KEY_LEN};
 
     /// 32 字节合规测试占位串（非真实凭据）。
     const TEST_KEY: &str = "test-only-not-a-real-key-0123456789abcdef";
@@ -532,12 +524,12 @@ mod bootstrap_tests {
 
     /// 严格档缺省即开启（fail-closed 基线），且恒取 bootstrap 值——
     /// `..AuthServerConfig::default()` 的库层缺省 `false` 必须被显式字段覆盖，
-    /// 否则 bin 退化为只告警。
+    /// 否则 serve 退化为只告警。
     #[test]
-    fn strict_security_defaults_on_in_bin() {
+    fn strict_security_defaults_on_in_serve() {
         assert!(
             AuthServerBootstrapConfig::default().strict_security,
-            "bin 缺省严格档（GARRISON_STRICT_SECURITY 缺省 true）"
+            "serve 缺省严格档（GARRISON_STRICT_SECURITY 缺省 true）"
         );
         let resolved =
             resolve_bootstrap_security(&secure_defaults()).expect("默认引导配置应通过安全装配");
@@ -580,8 +572,8 @@ mod bootstrap_tests {
         assert!(parse_trusted_proxies("8.8.8.8").is_err());
     }
 
-    /// 严格档下的密钥长度下限由**库层** `validate()` 强制（bin 不再自带判定副本），
-    /// 非严格档（逃生阀）同输入只告警不拒绝——棘轮的非破坏语义。
+    /// 严格档下的密钥长度下限由**库层** `validate()` 强制（serve 侧不再自带
+    /// 判定副本），非严格档（逃生阀）同输入只告警不拒绝——棘轮的非破坏语义。
     #[test]
     fn internal_api_key_min_length_enforced() {
         let mut b = secure_defaults();
@@ -600,7 +592,7 @@ mod bootstrap_tests {
         );
     }
 
-    /// 外网登录暴露确认：判定在库层 `validate()`，bin 只负责装配与 fail-closed。
+    /// 外网登录暴露确认：判定在库层 `validate()`，serve 侧只负责装配与 fail-closed。
     #[test]
     fn external_login_ack_gate() {
         let mut b = secure_defaults();
@@ -680,7 +672,7 @@ mod bootstrap_tests {
     #[cfg(feature = "rate-limit-redis")]
     #[test]
     fn rate_limit_backend_applied_to_config() {
-        use garrison::strategy::rate_limiter_backend::RateLimitBackend;
+        use crate::strategy::rate_limiter_backend::RateLimitBackend;
 
         let backend = RateLimitBackend::Redis {
             redis_url: "rediss://redis.example:6380/0".to_string(),

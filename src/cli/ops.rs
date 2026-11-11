@@ -1,161 +1,169 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! `garrison-cli`——独立运维工具 bin，门控在 `cli-ops` feature 后（clap 派生
-//! API），**不进入默认容器镜像**（两个 Dockerfile 的 build 目标只有
-//! `auth_server` 与 `garrison-healthcheck`）。
+//! garrison 运维命令组（原 `garrison-cli` bin 迁入，`cli-ops` 及依赖 feature 门控）。
 //!
-//! # 子命令
+//! 命令经 sdforge CLI 面（inventory `CliCommandRegistration` / `CliHandlerRegistration`）
+//! 注册进单根 `garrison` 二进制；参数以 string 形态进 handler（`HandlerArgs`），
+//! 数值/布尔在本模块显性解析（非法值报错而非静默忽略）。`--key` 由可重复参数
+//! 改为逗号分隔 `--keys id1:hex1,id2:hex2`（key_id 与 hex 均不含逗号，语义无损）；
+//! `GARRISON_FIELD_ENCRYPTION_KEYS` 环境变量回退保持。
 //!
-//! - `healthcheck`：存活探测（/healthz，与 `garrison-healthcheck` 探针共用
-//!   同一判定函数，见 `garrison::health::probe`）
-//! - `key-rotate`：生成新签名密钥并输出可直接粘贴的配置片段
-//! - `user-hash`：生成 Argon2id 密码哈希并输出 env/CLI/YAML 三种配置片段
-//! - `one-time-access-token`：为指定用户签发短时效一次性登录凭据
-//! - `change-key` / `check-key`：字段静态加密的主钥重加密与可解密性校验
-//! - `vacuum-kv`：清理 garrison_kv 表中已过期行（含升级遗留 raw key 行收敛）
+//! 输出契约：handler 自行 println 报告并返回 `Value::Null`（sdforge dispatch 的
+//! 「子命令已自行输出」哨兵）；失败上抛 `ApiError` 由 main 层统一非零退出。
 //!
-//! # 用法
+//! # 使用
 //!
 //! ```sh
-//! cargo build --bins --features cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption,dao-key-index
-//! ./target/debug/garrison-cli --help
+//! cargo run --features "cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption,dao-key-index" --bin garrison -- key-rotate
 //! ```
-//! 缺 `dao-key-index` 时 `[[bin]] required-features` 不满足，Cargo 跳过本 bin
-//! （`./target/debug/garrison-cli` 不存在），且 `change-key` / `check-key` /
-//! `vacuum-kv --sweep-legacy-session-keys` 依赖的 `keys()` 只有该 feature 编译。
-use clap::{Parser, Subcommand};
-use garrison::error::{GarrisonError, GarrisonResult};
-use garrison::i18n::translate_detail;
-use garrison::GarrisonDao;
+//! 缺依赖 feature 时本模块被 `cfg` 裁剪，对应子命令报 unrecognized（显性失败）；
+//! `change-key` / `check-key` / `vacuum-kv --sweep-legacy-session-keys` 依赖的
+//! `keys()` 只有 `dao-key-index` feature 编译。
 
-/// garrison-cli 命令行入口。
-#[derive(Parser, Debug)]
-#[command(
-    name = "garrison-cli",
-    version,
-    about = translate_detail("cli-about", &[]),
-    long_about = None
-)]
-struct Cli {
-    #[command(subcommand)]
-    command: Command,
+use sdforge::cli::{CliArgInfo, CliArgType, CliCommandRegistration, CliHandlerRegistration};
+use sdforge::core::{ApiError, HandlerArgs, HandlerFuture, HandlerState};
+use sdforge::inventory;
+
+use crate::error::{GarrisonError, GarrisonResult};
+use crate::i18n::translate_detail;
+use crate::GarrisonDao;
+
+// ---- 参数解析辅助（sdforge CLI 面 string 进 handler，显性解析） ----
+
+/// 解析 bool 型 CLI 参数：仅接受 `true`/`false`（大小写不敏感），缺参回退
+/// `default`；其余值显性报错（fail-closed，不静默取默认）。
+fn parse_bool_arg(args: &HandlerArgs, name: &str, default: bool) -> GarrisonResult<bool> {
+    match args.get(name).map(|s| s.to_ascii_lowercase()).as_deref() {
+        None => Ok(default),
+        Some("true") => Ok(true),
+        Some("false") => Ok(false),
+        Some(raw) => Err(GarrisonError::InvalidParam(format!(
+            "cli-arg-bool-invalid::{name}::{raw}::expected true|false"
+        ))),
+    }
 }
 
-#[derive(Subcommand, Debug)]
-enum Command {
-    /// 对本机 auth_server 外网端口执行存活探测（/healthz）
-    Healthcheck {
-        /// 探测端口（缺省读 GARRISON_EXTERNAL_PORT，未设置回退 8080）
-        #[arg(long)]
-        port: Option<u16>,
-    },
-    /// 生成新签名密钥并输出可直接粘贴的配置片段
-    KeyRotate {
-        /// 额外独立生成一把会话密钥（当前版本会话令牌与 JWT 共用 jwt_secret 槽位；独立值供会话层单独密封的拆分部署使用）
-        #[arg(long)]
-        session_key: bool,
-    },
-    /// 生成 Argon2id 密码哈希并输出 env/CLI/YAML 三种配置片段
-    UserHash {
-        /// 用户名（不可为空、不可含 ':'——凭据串以 ':' 分隔用户与哈希）
-        #[arg(long)]
-        user: String,
-        /// 明文密码（哈希后即丢弃；也可经 GARRISON_CLI_PASSWORD 传入避免进 shell history）
-        #[arg(long)]
-        password: Option<String>,
-        /// Argon2 并发令牌池大小（0 由 with_pool 钳制为 1）
-        #[arg(long, default_value_t = 1)]
-        pool_size: usize,
-        /// env 片段中的 '$' 转义为 '$$'（docker-compose 变量插值场景；CLI/YAML 片段不受影响）
-        #[arg(long)]
-        escape_dollar: bool,
-    },
-    /// 为指定用户签发短时效一次性登录凭据
-    OneTimeAccessToken {
-        /// 数据库连接 URL（如 sqlite:///var/lib/garrison/garrison.db 或 postgres://...；sqlite 文件必须已存在，驱动不为其自动建库；凭据登记与用户查询都在该库）
-        #[arg(long)]
-        db_url: String,
-        /// 目标用户名（不可为空）
-        #[arg(long)]
-        user: String,
-        /// 租户 ID（0 = 默认租户）
-        #[arg(long, default_value_t = 0)]
-        tenant_id: i64,
-        /// 凭据有效期秒数（0 < ttl ≤ 86400）
-        #[arg(long, default_value_t = 300)]
-        ttl_seconds: u64,
-        /// 签名密钥（缺省读 GARRISON_JWT_SECRET；两处都未设置则显性报错）
-        #[arg(long)]
-        secret: Option<String>,
-        /// 对目标库执行 core 迁移（默认关闭——对生产库是写副作用，须显式开启；库未初始化时签发显性失败）
-        #[arg(long, default_value_t = false)]
-        migrate: bool,
-        /// 迁移脚本基目录（仅 --migrate 时使用）
-        #[arg(long, default_value = "migrations/sqlite")]
-        migrations_dir: String,
-    },
-    /// 字段静态加密：全量重加密到新主钥（事务批处理，change-key）
-    ChangeKey {
-        /// 数据库连接 URL（sqlite 文件必须已存在）
-        #[arg(long)]
-        db_url: String,
-        /// 租户标识（AAD 绑定成分，须与运行时配置一致）
-        #[arg(long, default_value = "default")]
-        tenant: String,
-        /// 新密钥集，格式 `key_id:hex`（hex 恰 64 字符 = 32 字节），可重复传递多把；第一把为主钥（新写入用它加密）
-        #[arg(long = "key")]
-        keys: Vec<String>,
-        /// 批处理大小（每批扫描的敏感命名空间 key 数，必须 > 0）
-        #[arg(long, default_value_t = 200)]
-        batch_size: usize,
-    },
-    /// 字段静态加密：可解密性校验（check-key，不改动任何行）
-    CheckKey {
-        /// 数据库连接 URL（sqlite 文件必须已存在）
-        #[arg(long)]
-        db_url: String,
-        /// 租户标识（AAD 绑定成分，须与运行时配置一致）
-        #[arg(long, default_value = "default")]
-        tenant: String,
-        /// 密钥集，格式 `key_id:hex`（hex 恰 64 字符 = 32 字节），可重复传递
-        #[arg(long = "key")]
-        keys: Vec<String>,
-        /// 敏感命名空间 glob（缺省全量扫描）
-        #[arg(long, default_value = "*")]
-        pattern: String,
-    },
-    /// 清理 garrison_kv 表中已过期的行（vacuum-kv，不触碰未过期行）
-    VacuumKv {
-        /// 数据库连接 URL（sqlite 文件必须已存在）
-        #[arg(long)]
-        db_url: String,
-        /// 额外清扫会话 key 摘要化升级后遗留的 raw key 行（`token:session:` 前缀下余段非 64 位小写 hex 的行）
-        #[arg(long)]
-        sweep_legacy_session_keys: bool,
-    },
+/// 解析数值型 CLI 参数：缺参回退 `default`；非数值 / 越界显性报错。
+fn parse_num_arg<T: std::str::FromStr>(
+    args: &HandlerArgs,
+    name: &str,
+    default: T,
+) -> GarrisonResult<T> {
+    match args.get(name) {
+        None => Ok(default),
+        Some(raw) => raw.parse::<T>().map_err(|_| {
+            GarrisonError::InvalidParam(format!("cli-arg-numeric-invalid::{name}::{raw}"))
+        }),
+    }
 }
 
-fn main() -> GarrisonResult<()> {
-    let cli = Cli::parse();
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| GarrisonError::Internal(format!("cli-runtime-build::{}", e)))?;
-    runtime.block_on(dispatch(cli.command))
+/// 解析必填 string 参数：缺失显性报错。
+fn require_str_arg(args: &HandlerArgs, name: &str) -> GarrisonResult<String> {
+    args.get(name)
+        .filter(|s| !s.trim().is_empty())
+        .cloned()
+        .ok_or_else(|| GarrisonError::InvalidParam(format!("cli-arg-missing::{name}::required")))
 }
 
-async fn dispatch(command: Command) -> GarrisonResult<()> {
-    match command {
-        Command::Healthcheck { port } => run_healthcheck(port).await,
-        Command::KeyRotate { session_key } => run_key_rotate(session_key).await,
-        Command::UserHash {
-            user,
-            password,
-            pool_size,
-            escape_dollar,
-        } => run_user_hash(user, password, pool_size, escape_dollar).await,
-        Command::OneTimeAccessToken {
+/// 解析可选 string 参数（空串视为未提供）。
+fn optional_str_arg(args: &HandlerArgs, name: &str) -> Option<String> {
+    args.get(name).filter(|s| !s.trim().is_empty()).cloned()
+}
+
+// ---- 命令注册与 handler ----
+
+// key-rotate：生成新签名密钥并输出可直接粘贴的配置片段
+inventory::submit! {
+    CliCommandRegistration::new(
+        "key-rotate",
+        env!("CARGO_PKG_VERSION"),
+        "Generate a new 256-bit signing key and print ready-to-paste config fragments",
+        "handle_key_rotate_cmd",
+    )
+    .with_args(&[CliArgInfo::new(
+        "session-key",
+        "Also generate an independent session key (for split deployments sealing the session layer separately)",
+        CliArgType::Body,
+        false,
+        Some("false"),
+    )])
+}
+inventory::submit! { CliHandlerRegistration { name: "key-rotate", handler: handle_key_rotate_cmd } }
+
+fn handle_key_rotate_cmd(args: HandlerArgs, _state: HandlerState) -> HandlerFuture {
+    Box::pin(async move {
+        let session_key = parse_bool_arg(&args, "session-key", false).map_err(cli_api_error)?;
+        run_key_rotate(session_key)
+            .await
+            .map(|_| serde_json::Value::Null)
+            .map_err(cli_api_error)
+    })
+}
+
+// user-hash：生成 Argon2id 密码哈希并输出 env/CLI/YAML 三种配置片段
+inventory::submit! {
+    CliCommandRegistration::new(
+        "user-hash",
+        env!("CARGO_PKG_VERSION"),
+        "Create an Argon2id password hash and print env/CLI/YAML install fragments",
+        "handle_user_hash_cmd",
+    )
+    .with_args(&[
+        CliArgInfo::new("user", "Username (non-empty, must not contain ':' — the credential string separates user and hash with ':')", CliArgType::Body, true, None),
+        CliArgInfo::new("password", "Plaintext password (omit to read GARRISON_CLI_PASSWORD and keep it out of shell history)", CliArgType::Body, false, None),
+        CliArgInfo::new("pool-size", "Argon2 concurrent token pool size (0 is clamped to 1 by with_pool)", CliArgType::Body, false, Some("1")),
+        CliArgInfo::new("escape-dollar", "Escape '$' as '$$' in the env fragment (docker-compose interpolation; CLI/YAML fragments unaffected)", CliArgType::Body, false, Some("false")),
+    ])
+}
+inventory::submit! { CliHandlerRegistration { name: "user-hash", handler: handle_user_hash_cmd } }
+
+fn handle_user_hash_cmd(args: HandlerArgs, _state: HandlerState) -> HandlerFuture {
+    Box::pin(async move {
+        let user = require_str_arg(&args, "user").map_err(cli_api_error)?;
+        let password = optional_str_arg(&args, "password");
+        let pool_size = parse_num_arg::<usize>(&args, "pool-size", 1).map_err(cli_api_error)?;
+        let escape_dollar = parse_bool_arg(&args, "escape-dollar", false).map_err(cli_api_error)?;
+        run_user_hash(user, password, pool_size, escape_dollar)
+            .await
+            .map(|_| serde_json::Value::Null)
+            .map_err(cli_api_error)
+    })
+}
+
+// one-time-access-token：为指定用户签发短时效一次性登录凭据
+inventory::submit! {
+    CliCommandRegistration::new(
+        "one-time-access-token",
+        env!("CARGO_PKG_VERSION"),
+        "Issue a short-lived one-time login credential for a user",
+        "handle_one_time_access_token_cmd",
+    )
+    .with_args(&[
+        CliArgInfo::new("db-url", "Database URL (e.g. sqlite:///var/lib/garrison/garrison.db or postgres://...; the sqlite file must already exist; credential registry and user lookup both run against this DB)", CliArgType::Body, true, None),
+        CliArgInfo::new("user", "Target username (non-empty)", CliArgType::Body, true, None),
+        CliArgInfo::new("tenant-id", "Tenant ID (0 = default tenant)", CliArgType::Body, false, Some("0")),
+        CliArgInfo::new("ttl-seconds", "Credential validity in seconds (0 < ttl <= 86400)", CliArgType::Body, false, Some("300")),
+        CliArgInfo::new("secret", "Signing key (default: GARRISON_JWT_SECRET; an explicit error when neither is set)", CliArgType::Body, false, None),
+        CliArgInfo::new("migrate", "Run core migrations against the target DB first (off by default — a write side effect on production DBs; issuance fails explicitly when the DB is uninitialized)", CliArgType::Body, false, Some("false")),
+        CliArgInfo::new("migrations-dir", "Migration script base directory (only used with --migrate)", CliArgType::Body, false, Some("migrations/sqlite")),
+    ])
+}
+inventory::submit! { CliHandlerRegistration { name: "one-time-access-token", handler: handle_one_time_access_token_cmd } }
+
+fn handle_one_time_access_token_cmd(args: HandlerArgs, _state: HandlerState) -> HandlerFuture {
+    Box::pin(async move {
+        let db_url = require_str_arg(&args, "db-url").map_err(cli_api_error)?;
+        let user = require_str_arg(&args, "user").map_err(cli_api_error)?;
+        let tenant_id = parse_num_arg::<i64>(&args, "tenant-id", 0).map_err(cli_api_error)?;
+        let ttl_seconds = parse_num_arg::<u64>(&args, "ttl-seconds", 300).map_err(cli_api_error)?;
+        let secret = optional_str_arg(&args, "secret");
+        let migrate = parse_bool_arg(&args, "migrate", false).map_err(cli_api_error)?;
+        let migrations_dir = args
+            .get("migrations-dir")
+            .cloned()
+            .unwrap_or_else(|| "migrations/sqlite".to_string());
+        run_one_time_access_token(
             db_url,
             user,
             tenant_id,
@@ -163,36 +171,119 @@ async fn dispatch(command: Command) -> GarrisonResult<()> {
             secret,
             migrate,
             migrations_dir,
-        } => {
-            run_one_time_access_token(
-                db_url,
-                user,
-                tenant_id,
-                ttl_seconds,
-                secret,
-                migrate,
-                migrations_dir,
-            )
-            .await
-        },
-        Command::ChangeKey {
-            db_url,
-            tenant,
-            keys,
-            batch_size,
-        } => run_change_key(db_url, tenant, keys, batch_size).await,
-        Command::CheckKey {
-            db_url,
-            tenant,
-            keys,
-            pattern,
-        } => run_check_key(db_url, tenant, keys, pattern).await,
-        Command::VacuumKv {
-            db_url,
-            sweep_legacy_session_keys,
-        } => run_vacuum_kv(db_url, sweep_legacy_session_keys).await,
-    }
+        )
+        .await
+        .map(|_| serde_json::Value::Null)
+        .map_err(cli_api_error)
+    })
 }
+
+// change-key：字段静态加密全量重加密到新主钥
+inventory::submit! {
+    CliCommandRegistration::new(
+        "change-key",
+        env!("CARGO_PKG_VERSION"),
+        "Re-encrypt all field-encrypted rows to a new primary key (transactional batches)",
+        "handle_change_key_cmd",
+    )
+    .with_args(&[
+        CliArgInfo::new("db-url", "Database URL (the sqlite file must already exist)", CliArgType::Body, true, None),
+        CliArgInfo::new("tenant", "Tenant identifier (AAD binding component; must match the runtime configuration)", CliArgType::Body, false, Some("default")),
+        CliArgInfo::new("keys", "Comma-separated key set, entries `key_id:hex` (hex exactly 64 chars = 32 bytes); the first entry is the primary key (new writes encrypt with it); empty falls back to GARRISON_FIELD_ENCRYPTION_KEYS", CliArgType::Body, false, None),
+        CliArgInfo::new("batch-size", "Batch size (sensitive-namespace keys scanned per batch, must be > 0)", CliArgType::Body, false, Some("200")),
+    ])
+}
+inventory::submit! { CliHandlerRegistration { name: "change-key", handler: handle_change_key_cmd } }
+
+fn handle_change_key_cmd(args: HandlerArgs, _state: HandlerState) -> HandlerFuture {
+    Box::pin(async move {
+        let db_url = require_str_arg(&args, "db-url").map_err(cli_api_error)?;
+        let tenant = args
+            .get("tenant")
+            .cloned()
+            .unwrap_or_else(|| "default".to_string());
+        let keys = optional_str_arg(&args, "keys")
+            .map(|spec| spec.split(',').map(str::to_string).collect())
+            .unwrap_or_default();
+        let batch_size = parse_num_arg::<usize>(&args, "batch-size", 200).map_err(cli_api_error)?;
+        run_change_key(db_url, tenant, keys, batch_size)
+            .await
+            .map(|_| serde_json::Value::Null)
+            .map_err(cli_api_error)
+    })
+}
+
+// check-key：可解密性校验（不改动任何行）
+inventory::submit! {
+    CliCommandRegistration::new(
+        "check-key",
+        env!("CARGO_PKG_VERSION"),
+        "Verify field-encryption decryptability (read-only, touches no rows)",
+        "handle_check_key_cmd",
+    )
+    .with_args(&[
+        CliArgInfo::new("db-url", "Database URL (the sqlite file must already exist)", CliArgType::Body, true, None),
+        CliArgInfo::new("tenant", "Tenant identifier (AAD binding component; must match the runtime configuration)", CliArgType::Body, false, Some("default")),
+        CliArgInfo::new("keys", "Comma-separated key set, entries `key_id:hex`; empty falls back to GARRISON_FIELD_ENCRYPTION_KEYS", CliArgType::Body, false, None),
+        CliArgInfo::new("pattern", "Sensitive-namespace glob (default scans everything)", CliArgType::Body, false, Some("*")),
+    ])
+}
+inventory::submit! { CliHandlerRegistration { name: "check-key", handler: handle_check_key_cmd } }
+
+fn handle_check_key_cmd(args: HandlerArgs, _state: HandlerState) -> HandlerFuture {
+    Box::pin(async move {
+        let db_url = require_str_arg(&args, "db-url").map_err(cli_api_error)?;
+        let tenant = args
+            .get("tenant")
+            .cloned()
+            .unwrap_or_else(|| "default".to_string());
+        let keys = optional_str_arg(&args, "keys")
+            .map(|spec| spec.split(',').map(str::to_string).collect())
+            .unwrap_or_default();
+        let pattern = args
+            .get("pattern")
+            .cloned()
+            .unwrap_or_else(|| "*".to_string());
+        run_check_key(db_url, tenant, keys, pattern)
+            .await
+            .map(|_| serde_json::Value::Null)
+            .map_err(cli_api_error)
+    })
+}
+
+// vacuum-kv：清理 garrison_kv 表中已过期的行
+inventory::submit! {
+    CliCommandRegistration::new(
+        "vacuum-kv",
+        env!("CARGO_PKG_VERSION"),
+        "Delete expired rows from the garrison_kv table (untouched rows stay)",
+        "handle_vacuum_kv_cmd",
+    )
+    .with_args(&[
+        CliArgInfo::new("db-url", "Database URL (the sqlite file must already exist)", CliArgType::Body, true, None),
+        CliArgInfo::new("sweep-legacy-session-keys", "Also sweep legacy raw-key rows left over from the session-key digest migration (rows under `token:session:` whose remainder is not 64-char lowercase hex)", CliArgType::Body, false, Some("false")),
+    ])
+}
+inventory::submit! { CliHandlerRegistration { name: "vacuum-kv", handler: handle_vacuum_kv_cmd } }
+
+fn handle_vacuum_kv_cmd(args: HandlerArgs, _state: HandlerState) -> HandlerFuture {
+    Box::pin(async move {
+        let db_url = require_str_arg(&args, "db-url").map_err(cli_api_error)?;
+        let sweep_legacy =
+            parse_bool_arg(&args, "sweep-legacy-session-keys", false).map_err(cli_api_error)?;
+        run_vacuum_kv(db_url, sweep_legacy)
+            .await
+            .map(|_| serde_json::Value::Null)
+            .map_err(cli_api_error)
+    })
+}
+
+/// 运维命令错误统一映射（error_id 固定 `garrison.cli`，message 携带结构化原因）。
+fn cli_api_error(e: GarrisonError) -> ApiError {
+    ApiError::internal_error(e.to_string(), "garrison.cli")
+}
+
+// ---- 业务实现（原 garrison-cli bin 迁移） ----
 
 /// 解析 `key_id:hex` 参数表（hex 恰 64 字符 = 32 字节），供 FieldCipher 装配。
 fn parse_key_entries(specs: &[String]) -> GarrisonResult<Vec<(String, String)>> {
@@ -229,20 +320,20 @@ async fn run_change_key(
 ) -> GarrisonResult<()> {
     let entries = resolve_key_entries(key_specs)?;
     // from_key_entries 语义：首把即主钥（新写入用它加密）
-    let cipher = garrison::secure::encryption::FieldCipher::from_key_entries(&entries)?;
-    let pool = garrison::dao::init_dbnexus(&db_url).await?;
+    let cipher = crate::secure::encryption::FieldCipher::from_key_entries(&entries)?;
+    let pool = crate::dao::init_dbnexus(&db_url).await?;
     // KV 委托 SQL 持久化层（garrison_kv 表）：离线命令跨进程读取落库密文行
-    let kv = garrison::dao::DbnexusKvDao::new(pool.clone());
+    let kv = crate::dao::DbnexusKvDao::new(pool.clone());
     kv.ensure_table().await?;
-    let inner: std::sync::Arc<dyn garrison::dao::GarrisonDao> = std::sync::Arc::new(
-        garrison::dao::GarrisonDaoDbnexus::new(pool, std::sync::Arc::new(kv)),
+    let inner: std::sync::Arc<dyn GarrisonDao> = std::sync::Arc::new(
+        crate::dao::GarrisonDaoDbnexus::new(pool, std::sync::Arc::new(kv)),
     );
-    let dao = garrison::secure::encryption::FieldEncryptionDao::new(
+    let dao = crate::secure::encryption::FieldEncryptionDao::new(
         inner.clone(),
         std::sync::Arc::new(cipher.clone()),
         &tenant,
     )?;
-    let new_cipher = garrison::secure::encryption::FieldCipher::from_key_entries(&entries)?;
+    let new_cipher = crate::secure::encryption::FieldCipher::from_key_entries(&entries)?;
     let report = dao.change_key(new_cipher, batch_size).await?;
     let batch = batch_size.to_string();
     let scanned = report.scanned.to_string();
@@ -303,15 +394,15 @@ async fn run_check_key(
     pattern: String,
 ) -> GarrisonResult<()> {
     let entries = resolve_key_entries(key_specs)?;
-    let cipher = garrison::secure::encryption::FieldCipher::from_key_entries(&entries)?;
-    let pool = garrison::dao::init_dbnexus(&db_url).await?;
+    let cipher = crate::secure::encryption::FieldCipher::from_key_entries(&entries)?;
+    let pool = crate::dao::init_dbnexus(&db_url).await?;
     // KV 委托 SQL 持久化层（garrison_kv 表）：离线命令跨进程读取落库密文行
-    let kv = garrison::dao::DbnexusKvDao::new(pool.clone());
+    let kv = crate::dao::DbnexusKvDao::new(pool.clone());
     kv.ensure_table().await?;
-    let inner: std::sync::Arc<dyn garrison::dao::GarrisonDao> = std::sync::Arc::new(
-        garrison::dao::GarrisonDaoDbnexus::new(pool, std::sync::Arc::new(kv)),
+    let inner: std::sync::Arc<dyn GarrisonDao> = std::sync::Arc::new(
+        crate::dao::GarrisonDaoDbnexus::new(pool, std::sync::Arc::new(kv)),
     );
-    let dao = garrison::secure::encryption::FieldEncryptionDao::new(
+    let dao = crate::secure::encryption::FieldEncryptionDao::new(
         inner,
         std::sync::Arc::new(cipher),
         &tenant,
@@ -367,8 +458,8 @@ async fn run_check_key(
 /// `expire_at IS NULL` 永久行不动）；`--sweep-legacy-session-keys` 额外清除会话 key 摘要化
 /// 升级后遗留的 raw key 行（永久驻留的遗留行不会被过期清理收敛，须显性清扫）。
 async fn run_vacuum_kv(db_url: String, sweep_legacy: bool) -> GarrisonResult<()> {
-    let pool = garrison::dao::init_dbnexus(&db_url).await?;
-    let kv = garrison::dao::DbnexusKvDao::new(pool);
+    let pool = crate::dao::init_dbnexus(&db_url).await?;
+    let kv = crate::dao::DbnexusKvDao::new(pool);
     kv.ensure_table().await?;
     let deleted = kv.vacuum_expired().await?;
     let count = deleted.to_string();
@@ -412,14 +503,16 @@ async fn sweep_legacy_session_keys(dao: &dyn GarrisonDao) -> GarrisonResult<u64>
     Ok(removed)
 }
 
-/// 密钥来源解析：`--key` 显式传参优先；否则回退 GARRISON_FIELD_ENCRYPTION_KEYS 环境变量（与服务端同格式）——主钥不应走 argv（CWE-214：shell history / /proc cmdline 泄露面），argv 仅留低敏场景。
+/// 密钥来源解析：`--keys` 显式传参优先；否则回退 GARRISON_FIELD_ENCRYPTION_KEYS 环境变量
+/// （与服务端同格式）——主钥不应走 argv（CWE-214：shell history / /proc cmdline 泄露面），
+/// argv 仅留低敏场景。
 fn resolve_key_entries(explicit: Vec<String>) -> GarrisonResult<Vec<(String, String)>> {
     if !explicit.is_empty() {
         return parse_key_entries(&explicit);
     }
     let spec = std::env::var("GARRISON_FIELD_ENCRYPTION_KEYS").map_err(|_| {
         GarrisonError::InvalidParam(
-            "cli-key-source-missing::pass --key or set GARRISON_FIELD_ENCRYPTION_KEYS".to_string(),
+            "cli-key-source-missing::pass --keys or set GARRISON_FIELD_ENCRYPTION_KEYS".to_string(),
         )
     })?;
     let specs: Vec<String> = spec.split(',').map(str::to_string).collect();
@@ -441,11 +534,11 @@ fn generate_signing_key() -> GarrisonResult<String> {
 /// key-rotate 报告：新签名密钥 + 可直接粘贴的安装片段。
 ///
 /// 轮换无并存验签窗口：签名密钥来自配置（`jwt_secret`，无独立密钥库），轮换即「生成新钥 → 运维安装进配置 → 重启」；重启后旧钥签发的 token 立即验证失败（密钥无版本化存储）。
-/// `with_session_key = true` 时额外生成会话密钥：当前版本会话令牌与 JWT 共用 `jwt_secret` 槽位，标准部署装签名片段即可；独立值供会话层单独密封的拆分部署。
+/// `--session-key true` 时额外生成会话密钥：当前版本会话令牌与 JWT 共用 `jwt_secret` 槽位，标准部署装签名片段即可；独立值供会话层单独密封的拆分部署。
 fn key_rotate_report(with_session_key: bool) -> GarrisonResult<String> {
     // 生成的密钥经 JwtSecret 持有（protocol-zeroize 下离开作用域自动清零缓冲），报告文本是唯一交付面
     let signing = generate_signing_key()?;
-    let signing_secret = garrison::config::JwtSecret::from(signing);
+    let signing_secret = crate::config::JwtSecret::from(signing);
     let mut report = String::new();
     report.push_str(
         "Generated new signing key (256-bit, OS CSPRNG).\n\
@@ -462,14 +555,12 @@ fn key_rotate_report(with_session_key: bool) -> GarrisonResult<String> {
     report.push_str(&format!("jwt_secret = \"{}\"\n", signing_secret.as_str()));
     if with_session_key {
         let session = generate_signing_key()?;
-        let session_secret = garrison::config::JwtSecret::from(session);
+        let session_secret = crate::config::JwtSecret::from(session);
         report.push_str("\nsession key (--session-key, generated independently):\n");
         report.push_str(&format!("{}\n", session_secret.as_str()));
         report.push_str(
             "\n  note: session tokens (simple/jwt token_style) are signed with\n  \
-             jwt_secret in this version - stock deployments only need the\n  \
-             signing fragment above; use this value when the session layer\n  \
-             is sealed with a separate key in split deployments.\n",
+             jwt_secret in this version - stock deployments only need the\n  signing fragment above; use this value when the session layer\n  is sealed with a separate key in split deployments.\n",
         );
     }
     Ok(report)
@@ -480,42 +571,6 @@ async fn run_key_rotate(with_session_key: bool) -> GarrisonResult<()> {
     Ok(())
 }
 
-/// healthcheck 子命令：与 garrison-healthcheck 探针 bin 共用 `garrison::health::probe` 判定函数，行为一致。
-async fn run_healthcheck(port_override: Option<u16>) -> GarrisonResult<()> {
-    let port = match port_override {
-        Some(p) => p,
-        None => garrison::health::probe::parse_port(
-            std::env::var("GARRISON_EXTERNAL_PORT").ok().as_deref(),
-        )
-        .map_err(GarrisonError::InvalidParam)?,
-    };
-    // 探针为阻塞式 std socket I/O，移入 blocking 线程避免占用 runtime worker
-    let result = tokio::task::spawn_blocking(move || garrison::health::probe::probe(port))
-        .await
-        .map_err(|e| GarrisonError::Internal(format!("cli-healthcheck-join::{}", e)))?;
-    match result {
-        Ok(code) if garrison::health::probe::is_healthy(code) => {
-            let port_arg = port.to_string();
-            let code_arg = code.to_string();
-            println!(
-                "{}",
-                translate_detail(
-                    "cli-healthcheck-healthy",
-                    &[("port", port_arg.as_str()), ("code", code_arg.as_str())]
-                )
-            );
-            Ok(())
-        },
-        Ok(code) => Err(GarrisonError::Internal(format!(
-            "cli-healthcheck-status::{port}::{code}"
-        ))),
-        Err(reason) => Err(GarrisonError::Internal(format!(
-            "cli-healthcheck-failed::{reason}"
-        ))),
-    }
-}
-
-// 其余子命令按依赖任务逐个接线；未接线前显性报错而非静默退出。
 async fn run_user_hash(
     user: String,
     password: Option<String>,
@@ -565,7 +620,7 @@ fn user_hash_report(
             "cli-user-hash-password-empty::".to_string(),
         ));
     }
-    use garrison::account::credential::password::{Argon2Hasher, PasswordHasher as _};
+    use crate::account::credential::password::{Argon2Hasher, PasswordHasher as _};
     let hasher = Argon2Hasher::default().with_pool(pool_size);
     let hash = hasher.hash(password)?;
     let credential = format!("{user}:{hash}");
@@ -624,8 +679,8 @@ impl std::fmt::Debug for IssuedOneTimeToken {
 ///
 /// 重复签发覆盖旧登记行（upsert 语义，last-issuance-wins），旧 token 本体在 exp 前仍可通过验签，须立即吊销时换发或等待过期。
 async fn issue_one_time_access_token(
-    users: &dyn garrison::dao::repository::UserRepository,
-    ext: &dyn garrison::dao::repository::UserExtRepository,
+    users: &dyn crate::dao::repository::UserRepository,
+    ext: &dyn crate::dao::repository::UserExtRepository,
     tenant_id: i64,
     username: &str,
     ttl_seconds: u64,
@@ -657,7 +712,7 @@ async fn issue_one_time_access_token(
     }
 
     // 过期时间从签发设施解码取回（不本地重算），保证登记值与凭据一致
-    let handler = garrison::protocol::jwt::JwtHandler::new(signing_secret);
+    let handler = crate::protocol::jwt::JwtHandler::new(signing_secret);
     let token = handler.sign(&user.id, ttl_seconds as i64)?;
     let claims = handler.verify(&token)?;
     let jti = claims.jti.clone().ok_or_else(|| {
@@ -707,17 +762,17 @@ async fn run_one_time_access_token(
             GarrisonError::InvalidParam("cli-one-time-secret-missing::".to_string())
         })?,
     };
-    let pool = garrison::dao::init_dbnexus(&db_url).await?;
+    let pool = crate::dao::init_dbnexus(&db_url).await?;
     if migrate {
         let migration =
-            garrison::dao::GarrisonMigration::with_base_dir(pool.clone(), migrations_dir.into());
+            crate::dao::GarrisonMigration::with_base_dir(pool.clone(), migrations_dir.into());
         migration
             .migrate_core()
             .await
             .map_err(|e| GarrisonError::Config(format!("cli-one-time-migrate::{e}")))?;
     }
-    let users = garrison::dao::repository::sqlite::DbnexusUserRepository::new(pool.clone());
-    let ext = garrison::dao::repository::sqlite::DbnexusUserExtRepository::new(pool);
+    let users = crate::dao::repository::sqlite::DbnexusUserRepository::new(pool.clone());
+    let ext = crate::dao::repository::sqlite::DbnexusUserExtRepository::new(pool);
     let issued =
         issue_one_time_access_token(&users, &ext, tenant_id, &user, ttl_seconds, &signing_secret)
             .await?;
@@ -746,95 +801,129 @@ async fn run_one_time_access_token(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::CommandFactory;
 
+    /// 注册面守卫：6 个运维命令（healthcheck 已合并至顶层子命令，原 7 命令面减一）。
     #[test]
-    fn subcommand_surface_is_the_four_ops_commands() {
-        let cmd = Cli::command();
-        let names: Vec<&str> = cmd
-            .get_subcommands()
-            .map(|s| s.get_name())
-            .filter(|n| *n != "help")
+    fn ops_command_surface_is_six_commands() {
+        let names: Vec<&str> = sdforge::inventory::iter::<CliCommandRegistration>()
+            .map(|r| r.name)
             .collect();
-        assert_eq!(
-            names,
-            vec![
-                "healthcheck",
-                "key-rotate",
-                "user-hash",
-                "one-time-access-token",
-                "change-key",
-                "check-key",
-                "vacuum-kv"
-            ],
-            "子命令面必须与运维需求一一对应（help 为 clap 自动附加，不计入）"
+        for expected in [
+            "key-rotate",
+            "user-hash",
+            "one-time-access-token",
+            "change-key",
+            "check-key",
+            "vacuum-kv",
+        ] {
+            assert!(
+                names.contains(&expected),
+                "缺少子命令 {expected}: {names:?}"
+            );
+        }
+        assert!(
+            !names.contains(&"healthcheck")
+                || names.iter().filter(|n| **n == "healthcheck").count() == 1,
+            "healthcheck 只允许顶层一处注册: {names:?}"
         );
     }
 
+    /// 命令与 handler 注册一一对应。
     #[test]
-    fn subcommand_names_are_kebab_case() {
-        let cmd = Cli::command();
-        for sub in cmd.get_subcommands().filter(|s| s.get_name() != "help") {
-            assert!(
-                sub.get_name()
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c == '-'),
-                "子命令名 {} 应为 kebab-case",
-                sub.get_name()
-            );
+    fn ops_handlers_match_command_registrations() {
+        let commands: std::collections::BTreeSet<&str> =
+            sdforge::inventory::iter::<CliCommandRegistration>()
+                .map(|r| r.name)
+                .collect();
+        let handlers: std::collections::BTreeSet<&str> =
+            sdforge::inventory::iter::<CliHandlerRegistration>()
+                .map(|r| r.name)
+                .collect();
+        for cmd in [
+            "key-rotate",
+            "user-hash",
+            "one-time-access-token",
+            "change-key",
+            "check-key",
+            "vacuum-kv",
+            "healthcheck",
+            "serve",
+        ] {
+            if commands.contains(cmd) {
+                assert!(handlers.contains(cmd), "{cmd} 注册了命令但缺 handler");
+            }
         }
     }
 
-    /// 起本地一次性 HTTP 假服务端，返回其临时端口。
-    fn serve_once(response: &'static str) -> u16 {
-        use std::io::{Read, Write};
-        use std::net::TcpListener;
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-        let port = listener.local_addr().expect("local addr").port();
-        std::thread::spawn(move || {
-            let (mut conn, _) = listener.accept().expect("accept");
-            let mut buf = [0u8; 1024];
-            let _ = conn.read(&mut buf);
-            conn.write_all(response.as_bytes()).expect("write response");
-        });
-        port
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn healthcheck_ok_on_live_target() {
-        let port = serve_once("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
-        run_healthcheck(Some(port))
-            .await
-            .expect("live target must be reported healthy");
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn healthcheck_fails_on_non_2xx() {
-        let port = serve_once("HTTP/1.1 503 Service Unavailable\r\n\r\n");
-        let err = run_healthcheck(Some(port))
-            .await
-            .expect_err("503 must not be reported healthy");
-        let reason = err.to_string();
+    /// bool 参数解析：合法值大小写不敏感、缺参回退默认、非法值显性报错。
+    #[test]
+    fn parse_bool_arg_semantics() {
+        let mut args = HandlerArgs::new();
+        assert!(parse_bool_arg(&args, "flag", true).unwrap(), "缺参回退默认");
+        args.insert("flag".to_string(), "TRUE".to_string());
+        assert!(parse_bool_arg(&args, "flag", false).unwrap());
+        args.insert("flag".to_string(), "False".to_string());
+        assert!(!parse_bool_arg(&args, "flag", true).unwrap());
+        args.insert("flag".to_string(), "yes".to_string());
         assert!(
-            reason.contains("503"),
-            "错误原因必须携带状态码，实际: {reason}"
+            parse_bool_arg(&args, "flag", true)
+                .unwrap_err()
+                .to_string()
+                .contains("cli-arg-bool-invalid"),
+            "非法 bool 值必须显性报错"
         );
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn healthcheck_fails_on_dead_port() {
-        use std::net::TcpListener;
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-        let port = listener.local_addr().expect("local addr").port();
-        drop(listener);
-        let err = run_healthcheck(Some(port))
-            .await
-            .expect_err("dead port must fail");
-        let reason = err.to_string();
-        assert!(
-            reason.contains("connect 127.0.0.1"),
-            "连接失败必须显性报错，实际: {reason}"
+    /// 数值参数解析：缺参回退默认、非法值显性报错。
+    #[test]
+    fn parse_num_arg_semantics() {
+        let mut args = HandlerArgs::new();
+        assert_eq!(
+            parse_num_arg::<u64>(&args, "ttl-seconds", 300).unwrap(),
+            300
         );
+        args.insert("ttl-seconds".to_string(), "120".to_string());
+        assert_eq!(
+            parse_num_arg::<u64>(&args, "ttl-seconds", 300).unwrap(),
+            120
+        );
+        args.insert("ttl-seconds".to_string(), "soon".to_string());
+        assert!(
+            parse_num_arg::<u64>(&args, "ttl-seconds", 300)
+                .unwrap_err()
+                .to_string()
+                .contains("cli-arg-numeric-invalid"),
+            "非法数值必须显性报错"
+        );
+    }
+
+    /// 必填参数缺失/空白显性报错；可选参数空白视为未提供。
+    #[test]
+    fn require_and_optional_str_arg_semantics() {
+        let mut args = HandlerArgs::new();
+        assert!(require_str_arg(&args, "db-url")
+            .unwrap_err()
+            .to_string()
+            .contains("cli-arg-missing"));
+        args.insert("db-url".to_string(), "  ".to_string());
+        assert!(require_str_arg(&args, "db-url").is_err(), "空白串视为缺失");
+        assert_eq!(optional_str_arg(&args, "db-url"), None);
+        args.insert("db-url".to_string(), "sqlite::memory:".to_string());
+        assert_eq!(require_str_arg(&args, "db-url").unwrap(), "sqlite::memory:");
+    }
+
+    /// --keys 逗号分隔拆分语义（经 handler 装配路径验证）。
+    #[test]
+    fn comma_separated_keys_split() {
+        let mut args = HandlerArgs::new();
+        args.insert(
+            "keys".to_string(),
+            "k1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef,k2:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210".to_string(),
+        );
+        let keys = optional_str_arg(&args, "keys")
+            .map(|spec| spec.split(',').map(str::to_string).collect::<Vec<_>>())
+            .unwrap_or_default();
+        assert_eq!(keys.len(), 2, "逗号分隔应拆为两把钥");
     }
 
     #[test]
@@ -879,7 +968,7 @@ mod tests {
     /// 轮换语义验收：新钥安装后旧钥 token 必须验证失败、新钥 token 必须验证成功（JwtHandler 为既有签名设施，此处不改其行为）。
     #[test]
     fn key_rotation_rejects_old_key_tokens_and_accepts_new() {
-        use garrison::protocol::jwt::JwtHandler;
+        use crate::protocol::jwt::JwtHandler;
 
         let old_key = generate_signing_key().expect("old keygen");
         let new_key = key_rotate_report(false)
@@ -936,7 +1025,7 @@ mod tests {
             hash.starts_with("$argon2id$"),
             "必须是 Argon2id PHC 格式，实际: {hash}"
         );
-        use garrison::account::credential::password::{Argon2Hasher, PasswordHasher as _};
+        use crate::account::credential::password::{Argon2Hasher, PasswordHasher as _};
         let verifier = Argon2Hasher::default();
         assert!(
             verifier
@@ -1101,9 +1190,9 @@ mod tests {
         );
     }
 
-    use garrison::dao::repository::sqlite::{DbnexusUserExtRepository, DbnexusUserRepository};
-    use garrison::dao::repository::{NewUser, UserExtRepository, UserRepository};
-    use garrison::dao::{init_dbnexus, GarrisonMigration};
+    use crate::dao::repository::sqlite::{DbnexusUserExtRepository, DbnexusUserRepository};
+    use crate::dao::repository::{NewUser, UserExtRepository, UserRepository};
+    use crate::dao::{init_dbnexus, GarrisonMigration};
 
     const ONE_TIME_SECRET: &str = "one-time-access-token-test-secret-0123456789abcdef";
 
@@ -1148,7 +1237,7 @@ mod tests {
             .expect("issuance must succeed");
 
         // exp 属性从签发设施验证：exp = iat + ttl，且窗口正确
-        let handler = garrison::protocol::jwt::JwtHandler::new(ONE_TIME_SECRET);
+        let handler = crate::protocol::jwt::JwtHandler::new(ONE_TIME_SECRET);
         let claims = handler
             .verify(&issued.token)
             .expect("issued token must verify");
@@ -1263,8 +1352,8 @@ mod tests {
     /// change-key / check-key 真实 sqlite 端到端（file DB + Dbnexus 栈，与命令实现同构）。
     mod field_crypto_tests {
         use super::*;
-        use garrison::dao::GarrisonDao;
-        use garrison::secure::encryption::{FieldCipher, FieldEncryptionDao};
+        use crate::dao::GarrisonDao;
+        use crate::secure::encryption::{FieldCipher, FieldEncryptionDao};
         use std::sync::Arc;
 
         /// 非退化测试钥材（hex 64 字符 = 32 字节，字节各异以通过退化钥检测；oldk 加密存量行，newk 为轮换目标主钥）。
@@ -1293,13 +1382,11 @@ mod tests {
                 .migrate_core()
                 .await
                 .expect("migrate_core must succeed");
-            let kv = Arc::new(garrison::dao::DbnexusKvDao::new(pool.clone()));
+            let kv = Arc::new(crate::dao::DbnexusKvDao::new(pool.clone()));
             kv.ensure_table().await.expect("ensure_table must succeed");
             let kv: Arc<dyn GarrisonDao> = kv;
-            let inner: Arc<dyn GarrisonDao> = Arc::new(garrison::dao::GarrisonDaoDbnexus::new(
-                pool,
-                Arc::clone(&kv),
-            ));
+            let inner: Arc<dyn GarrisonDao> =
+                Arc::new(crate::dao::GarrisonDaoDbnexus::new(pool, Arc::clone(&kv)));
             let old_hex = key_spec("oldk", 0xaa)
                 .split_once(':')
                 .expect("spec must contain ':'")
@@ -1475,7 +1562,7 @@ mod tests {
         std::fs::File::create(&db_path).expect("create sqlite file");
         let db_url = format!("sqlite://{}", db_path.display());
         let pool = init_dbnexus(&db_url).await.expect("init_dbnexus 应成功");
-        let kv = garrison::dao::DbnexusKvDao::new(pool);
+        let kv = crate::dao::DbnexusKvDao::new(pool);
         kv.ensure_table().await.expect("ensure_table 应成功");
         // 预置：遗留 raw 永久行、摘要形态永久行、account 命名空间永久行（ttl=0 永久驻留）
         kv.set("token:session:legacy-raw-token", "x", 0)

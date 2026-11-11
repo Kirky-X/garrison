@@ -1535,19 +1535,21 @@ async fn acc_srv_018_revoke_then_introspect_inactive() {
     assert_eq!(resp.status(), 400, "revoke 客户端认证失败应返回 400");
 }
 
-// auth_server 二进制 smoke（#[cfg(feature = "auth-server")]）
+// `garrison serve` 子命令 smoke（#[cfg(feature = "auth-server")]）
 //
-// `src/bin/auth_server.rs` 是自含二进制：从环境变量装配
+// 单根二进制 `src/main.rs` 的 `serve` 子命令（处理器在库层
+// `garrison::cli::serve`，原 `auth_server` bin 迁入）：从环境变量装配
 // `GarrisonAuthServer::new(backend).with_*_port().with_rate_limit()
 // .with_internal_api_key()` 后以 bin 侧 bind+serve 启动（自含配置校验 +
 // 路由构建 + 端口绑定，不依赖 GarrisonManager 全局初始化）；fail-closed：
 // `GARRISON_INTERNAL_API_KEY` 缺失 / 空串 / 长度不足 32 字节、绑定地址或
 // 可信代理解析失败、外网登录非回环绑定未确认（GARRISON_EXTERNAL_LOGIN_ACK）
-// 时均 `std::process::exit(1)`。
+// 时均以非零退出码终止。
 //
 // 实现说明：
-// - 经 `CARGO_BIN_EXE_auth_server` 定位二进制（bin 的 required-features =
-// auth-server ⊂ 本 target 的 full，测试构建时必然已编译）；
+// - 经 `CARGO_BIN_EXE_garrison` 定位单根二进制并传 `serve` 子命令
+// （serve 处理器门控 auth-server+cache-memory ⊂ 本 target 的 full，
+// 测试构建时 bin 必然已编译）；
 // - tokio 的 `process` feature 在依赖图中未启用（不为此新增依赖），故用
 // `std::process::Command` 同步子进程 + 异步 reqwest 轮询的组合，
 // 退出等待以 `try_wait()` 轮询模拟 `tokio::process` 语义；
@@ -1565,10 +1567,10 @@ fn probe_free_port() -> u16 {
         .port()
 }
 
-/// 测试占位字段加密密钥（非真实钥材）：bin 在 `field-encryption` feature 下
-/// 启动期 fail-closed 校验 `GARRISON_FIELD_ENCRYPTION_KEYS`（`key_id:hex64`，
-/// hex64 = 32 字节 AES-256 钥材 hex 编码，key_id 非空且不含冒号），缺失即
-/// exit 1（src/bin/auth_server.rs `setup_garrison_manager`）。
+/// 测试占位字段加密密钥（非真实钥材）：serve 子命令在 `field-encryption`
+/// feature 下启动期 fail-closed 校验 `GARRISON_FIELD_ENCRYPTION_KEYS`
+/// （`key_id:hex64`，hex64 = 32 字节 AES-256 钥材 hex 编码，key_id 非空
+/// 且不含冒号），缺失即 exit 1（`garrison::cli::serve::setup_garrison_manager`）。
 /// acc_srv_019（成功路径烟测）与 acc_srv_022/032/033（要求失败仅来自
 /// 端口冲突 / ACK 语义）必须注入使语义成立；acc_srv_020/021/030/031 在
 /// 该校验之前即被 bootstrap 安全装配 gate 拒绝，无需注入。
@@ -1581,14 +1583,15 @@ const TEST_FIELD_ENCRYPTION_KEYS: &str =
 #[cfg(feature = "auth-server")]
 const TEST_API_KEY: &str = "test-only-not-a-real-key-0123456789abcdef";
 
-/// 以给定 env 覆盖 / 移除项启动 auth_server 子进程（stdout/stderr 置空，
+/// 以给定 env 覆盖 / 移除项启动 `garrison serve` 子进程（stdout/stderr 置空，
 /// 避免污染测试输出；其余环境继承自测试进程）。
 #[cfg(feature = "auth-server")]
 fn spawn_auth_server_process(
     env_overrides: &[(&str, &str)],
     env_removals: &[&str],
 ) -> std::process::Child {
-    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_auth_server"));
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_garrison"));
+    cmd.arg("serve");
     for &(key, value) in env_overrides {
         cmd.env(key, value);
     }
@@ -1597,7 +1600,7 @@ fn spawn_auth_server_process(
     }
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());
-    cmd.spawn().expect("auth_server 子进程应成功启动")
+    cmd.spawn().expect("garrison serve 子进程应成功启动")
 }
 
 /// 轮询等待子进程退出（`try_wait` 每 100ms 一次），返回退出状态。

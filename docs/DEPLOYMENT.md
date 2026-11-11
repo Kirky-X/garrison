@@ -282,7 +282,7 @@ docker compose -f docker/docker-compose.example.yml up -d
 docker compose -f docker/docker-compose.example.yml ps   # STATUS 应为 healthy
 ```
 
-> ⚠️ 换用 distroless 变体时，compose 的 healthcheck 命令需改为绝对路径 `/app/garrison-healthcheck`（distroless 无 `/usr/local/bin` 符号链接，PATH 亦不含 `/app`）。协议联调用的外部依赖编排见 `docker-compose.e2e.yml`。
+> ⚠️ 两变体的 healthcheck 均使用绝对路径 `/app/garrison healthcheck`（distroless 无 `/usr/local/bin` 符号链接，PATH 亦不含 `/app`）。协议联调用的外部依赖编排见 `docker-compose.e2e.yml`。
 
 ### 自定义 feature 面
 

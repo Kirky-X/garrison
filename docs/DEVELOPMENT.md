@@ -160,10 +160,11 @@ garrison/
 │   ├── i18n.rs               # 国际化（fluent-rs）
 │   ├── error.rs              # 错误类型定义
 │   ├── prelude.rs            # 预导出
-│   ├── bin/                  # 二进制入口
-│   │   ├── auth_server.rs    # GarrisonAuthServer 独立运行入口（v0.7.0 新增，需 auth-server feature）
-│   │   ├── garrison-cli.rs   # garrison-cli 运维 CLI（需 cli-ops feature，不进默认容器镜像）
-│   │   └── garrison-healthcheck.rs # 容器 HEALTHCHECK 探针（零依赖零 feature）
+│   ├── cli/                  # 单根二进制的 CLI 面（sdforge CliBuilder + inventory 注册）
+│   │   ├── mod.rs            # healthcheck 子命令（无条件注册）
+│   │   ├── serve.rs          # serve 子命令（原 auth_server bin 迁入，需 auth-server + cache-memory）
+│   │   └── ops.rs            # 运维命令组（原 garrison-cli bin 迁入，需 cli-ops + 依赖 feature）
+│   ├── main.rs               # 单根二进制入口（Tokio runtime + sdforge dispatch 薄壳）
 │   └── lib.rs                # crate 入口
 ├── tests/                    # 集成测试
 ├── examples/                 # 示例代码（独立 workspace member）
@@ -510,13 +511,13 @@ cargo doc --no-deps --features full --open
 
 ---
 
-## 🛠️ garrison-cli 运维子命令
+## 🛠️ 运维子命令（garrison 单根二进制）
 
-独立运维 bin `src/bin/garrison-cli.rs`（feature `cli-ops` + 相关特性面）。**与 R03 容器化决策的兼容论证**：R03「不引入 clap」限定的是 `auth_server` 与 `garrison-healthcheck` 探针（distroless 主镜像零依赖）；garrison-cli 是独立运维工具 bin，**不进入默认容器镜像**（两个 Dockerfile 的 build 目标不变），clap（default-features=false）仅在此 bin 的依赖面内。
+运维命令组驻留库层 `src/cli/ops.rs`（原独立 bin `garrison-cli` 迁入，feature `cli-ops` + 相关特性面），经 sdforge CLI 面（inventory 注册 + `CliBuilder` dispatch）挂进单根 `garrison` 二进制；参数解析走 sdforge 的 `cli` feature（其传递 clap），garrison 不再直接依赖 clap。缺 feature 的子命令被 `cfg` 裁剪，敲入时报 unrecognized（显性失败）。
 
 | 子命令 | 功能 | 关键参数 |
 |--------|------|---------|
-| `healthcheck` | 对本机 auth_server `/healthz` 存活探测（与 `garrison-healthcheck` 探针共用同一纯 std 判定函数，见 `src/health/probe.rs`） | `--port`（缺省读 `GARRISON_EXTERNAL_PORT`，回退 8080） |
+| `healthcheck` | 对本机 serve 外网端口 `/healthz` 存活探测（原 `garrison-healthcheck` 探针 bin 与 `garrison-cli healthcheck` 合并为顶层子命令，判定函数见 `src/health/probe.rs`） | `--port`（缺省读 `GARRISON_EXTERNAL_PORT`，回退 8080） |
 | `key-rotate` | 生成新签名密钥（OS CSPRNG 256-bit）并输出可直接粘贴的 env/CLI 配置片段；`--session-key` 额外独立生成会话密钥 | — |
 | `user-hash` | 生成 Argon2id 密码哈希（`Argon2Hasher::with_pool`，复用 R02 并发令牌池），输出 env/CLI/YAML 三种配置片段（对齐 tinyauth `create_user.go:85-128`） | `--user` `--password`（或 `GARRISON_CLI_PASSWORD`） `--pool-size` `--escape-dollar` |
 | `one-time-access-token` | 为指定用户签发短时效登录凭据（写入 `app_user_ext` 登记行；**一次性消费语义需业务方在登录路径接线登记行原子删除**，未接线时为 TTL 内可重放的 bearer 凭据） | `--db-url` `--user` `--tenant-id` `--ttl-seconds`（≤ 86400） `--secret` `--migrate` `--migrations-dir` |
@@ -528,7 +529,7 @@ cargo doc --no-deps --features full --open
 
 ```bash
 cargo build --features cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption,dao-key-index --bins
-cargo run --features cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption,dao-key-index --bin garrison-cli -- user-hash --user admin
+cargo run --features cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption,dao-key-index --bin garrison -- user-hash --user admin
 ```
 
 `export/import` 子命令明确不做（R16 范围决策）。

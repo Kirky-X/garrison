@@ -10,8 +10,8 @@
 #   docker compose -f docker-compose.example.yml ps   # STATUS 应为 healthy
 #
 # 镜像变体：默认 debian-slim；改用 distroless 时将 dockerfile 改为
-# docker/Dockerfile.distroless，并把下方 healthcheck 的命令改为绝对路径
-# /app/garrison-healthcheck（distroless 无 /usr/local/bin 符号链接）。
+# docker/Dockerfile.distroless（两变体的 healthcheck 均已用绝对路径
+# /app/garrison healthcheck，distroless 无 /usr/local/bin 符号链接）。
 
 name: garrison
 
@@ -59,7 +59,7 @@ services:
     healthcheck:
       # 探测本容器外网端口的 sdforge liveness 探针（进程存活恒 200），
       # 目标端口自动跟随 GARRISON_EXTERNAL_PORT
-      test: ["CMD", "garrison-healthcheck"]
+      test: ["CMD", "/app/garrison", "healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3

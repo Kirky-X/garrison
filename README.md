@@ -274,7 +274,7 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 <tr><td><code>audit-log</code></td><td align="center">❌</td><td>审计日志（落库 + HMAC 防篡改事件链）</td></tr>
 <tr><td><code>audit-inklog</code> / <code>audit-inklog-http</code> / <code>audit-inklog-siem</code></td><td align="center">❌</td><td>inklog 结构化审计日志 / HTTP / SIEM 外送</td></tr>
 <tr><td><code>alone-cache</code> / <code>parameter-query</code></td><td align="center">❌</td><td>DAO 单飞缓存（防击穿）/ STP 参数化查询</td></tr>
-<tr><td><code>api-docs</code> / <code>cli-ops</code></td><td align="center">❌</td><td>OpenAPI 文档 / garrison-cli 运维子命令</td></tr>
+<tr><td><code>api-docs</code> / <code>cli-ops</code></td><td align="center">❌</td><td>OpenAPI 文档 / 运维子命令（garrison 单根二进制）</td></tr>
 <tr><td><code>data-erasure</code></td><td align="center">❌</td><td>数据主体擦除编排（GDPR / 个保法删除权）</td></tr>
 <tr><td><code>authorize-api</code> / <code>manager-explicit</code></td><td align="center">❌</td><td>核心扩展：请求对象式授权 API / 显式 Manager API</td></tr>
 <tr><td><code>miette</code> / <code>embedded-migrations</code></td><td align="center">❌</td><td>富诊断错误（miette::Diagnostic）/ 嵌入式迁移文件</td></tr>

@@ -14,11 +14,11 @@
 #     --build-arg GIT_SHA=$(git rev-parse HEAD) \
 #     -t garrison-auth:local .
 #
-# feature 门禁（对齐 Cargo.toml [[bin]] required-features，保持最小依赖面）：
-#   auth-server + cache-memory  auth_server 的 required-features
+# feature 门禁（对齐单根二进制 serve 子命令的 cfg 门控，保持最小依赖面）：
+#   auth-server + cache-memory  `garrison serve` 子命令的编译门控
 #   server-health-check         /healthz liveness 探针路由（HEALTHCHECK 依赖）
 #   tracing-log                 stdout 结构化 JSON 日志
-#   不用 full/production：会拉入 bin 不消费的 db-postgres/cedar 等重依赖；
+#   不用 full/production：会拉入 serve/healthcheck 不消费的 db-postgres/cedar 等重依赖；
 #   需要更强 feature 面时覆盖：--build-arg FEATURES=production
 
 # 在 chef 基座层补装 stable（对应仓库 MSRV 声明通道），
@@ -45,10 +45,10 @@ COPY --from=planner /app/recipe.json recipe.json
 # 依赖版本与最终 build 完全一致（依赖缓存才有效）
 COPY --from=planner /app/Cargo.lock Cargo.lock
 RUN cargo chef cook --release --locked --recipe-path recipe.json \
-    --features "${FEATURES}" --bin auth_server --bin garrison-healthcheck
+    --features "${FEATURES}" --bin garrison
 COPY . .
 RUN cargo build --release --locked --features "${FEATURES}" \
-    --bin auth_server --bin garrison-healthcheck
+    --bin garrison
 
 FROM debian:bookworm-slim AS runner
 ARG VERSION=dev
@@ -65,11 +65,10 @@ LABEL org.opencontainers.image.title="garrison" \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --uid 1000 --no-create-home garrison \
-    && ln -s /app/garrison-healthcheck /usr/local/bin/garrison-healthcheck
+    && useradd --uid 1000 --no-create-home garrison
 
 WORKDIR /app
-COPY --from=builder /app/target/release/auth_server /app/target/release/garrison-healthcheck /app/
+COPY --from=builder /app/target/release/garrison /app/garrison
 
 # GAR-30：容器内端口必须绑 0.0.0.0 才能被 docker ports 映射（bin 缺省
 # 127.0.0.1 仅限宿主直跑的 secure-by-default）；对外暴露面由 ports 映射/
@@ -80,6 +79,9 @@ ENV GARRISON_EXTERNAL_BIND=0.0.0.0 \
 USER 1000
 EXPOSE 8080 8081
 # 探测本容器外网端口的 sdforge liveness 探针（恒 200）；目标端口随
-# GARRISON_EXTERNAL_PORT 环境变量自动对齐（见 src/bin/garrison-healthcheck.rs）
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/app/garrison-healthcheck"]
-ENTRYPOINT ["/app/auth_server"]
+# GARRISON_EXTERNAL_PORT 环境变量自动对齐（见 src/cli/mod.rs healthcheck 子命令）
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/app/garrison", "healthcheck"]
+# 单根二进制：ENTRYPOINT 固定 garrison，缺省子命令 serve（原 auth_server 行为）；
+# 运维侧可用 `docker run --entrypoint /app/garrison <img> healthcheck` 等覆写
+ENTRYPOINT ["/app/garrison"]
+CMD ["serve"]

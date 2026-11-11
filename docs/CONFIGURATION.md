@@ -565,7 +565,7 @@ GARRISON_REDIS_URL=redis://127.0.0.1:6379/0
 
 ---
 
-## 六点五、auth_server 二进制环境变量（src/bin/auth_server.rs）
+## 六点五、serve 子命令环境变量（src/cli/serve.rs，原 auth_server bin）
 
 经 confers 派生宏从 `GARRISON_*` 读取（`#[config(env_prefix = "GARRISON_")]`，字段名大写映射）。容器部署的逐项注意见 [🚀 部署指南 · 运行环境变量（容器）](./DEPLOYMENT.md#运行环境变量容器)。
 

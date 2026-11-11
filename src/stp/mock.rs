@@ -224,6 +224,9 @@ impl MockUserRepository {
         self.users.lock().insert(user.username.clone(), user);
     }
     /// 注入 update 持久化失败（此后 `update` 返回 `Internal`，直至再次置空）。
+    // 唯一调用方在 password.rs default_impl_coverage 测试（门控 account-credential + db-sqlite + listener）：
+    // 无 listener 的组合（如 cli-ops lib 测试面）中编译但无调用方，定向豁免 dead_code。
+    #[cfg_attr(not(feature = "listener"), allow(dead_code))]
     pub fn set_update_error(&self, msg: &str) {
         *self.update_error.lock() = Some(msg.to_string());
     }

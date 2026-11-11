@@ -335,9 +335,13 @@ mod tests {
     use std::sync::Arc;
 
     /// 构造 GarrisonLogicDefault（不注入 hasher/repo，测试 Config 错误路径），供 default_impl_coverage 与顶层锁定回归测试共用（锁定测试不能依赖 listener 门）。
-    // 使用方测试均门控在 account-credential + db-sqlite（部分再加 firewall-bruteforce/listener）之下：缺者的 compile 矩阵组合中助手编译但无调用方，按仓库 cfg_attr 先例定向豁免 dead_code。
+    // 使用方测试门控在 account-credential + db-sqlite 再加 firewall-bruteforce（顶层锁定回归）或 listener（default_impl_coverage）之下：任一缺失的组合（如 cli-ops lib 测试面）中助手编译但无调用方，按仓库 cfg_attr 先例定向豁免 dead_code。
     #[cfg_attr(
-        not(all(feature = "account-credential", feature = "db-sqlite")),
+        not(all(
+            feature = "account-credential",
+            feature = "db-sqlite",
+            any(feature = "firewall-bruteforce", feature = "listener")
+        )),
         allow(dead_code)
     )]
     fn make_logic_without_creds() -> GarrisonLogicDefault {
@@ -360,9 +364,13 @@ mod tests {
         )
     }
 
-    // 同 make_logic_without_creds：缺组合时定向豁免 dead_code。
+    // 同 make_logic_without_creds：调用方门控含 firewall-bruteforce/listener，缺者的组合定向豁免 dead_code。
     #[cfg_attr(
-        not(all(feature = "account-credential", feature = "db-sqlite")),
+        not(all(
+            feature = "account-credential",
+            feature = "db-sqlite",
+            any(feature = "firewall-bruteforce", feature = "listener")
+        )),
         allow(dead_code)
     )]
     fn make_user_row(login_id: &str, password_hash: &str) -> UserRow {

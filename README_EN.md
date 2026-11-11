@@ -274,7 +274,7 @@ The table below summarizes the main `[features]` of `Cargo.toml` grouped by capa
 <tr><td><code>audit-log</code></td><td align="center">❌</td><td>Audit logging (DB persistence + HMAC tamper-evident event chain)</td></tr>
 <tr><td><code>audit-inklog</code> / <code>audit-inklog-http</code> / <code>audit-inklog-siem</code></td><td align="center">❌</td><td>inklog structured audit logging / HTTP / SIEM export</td></tr>
 <tr><td><code>alone-cache</code> / <code>parameter-query</code></td><td align="center">❌</td><td>DAO single-flight cache (breakdown protection) / STP parameterized query</td></tr>
-<tr><td><code>api-docs</code> / <code>cli-ops</code></td><td align="center">❌</td><td>OpenAPI docs / garrison-cli ops subcommands</td></tr>
+<tr><td><code>api-docs</code> / <code>cli-ops</code></td><td align="center">❌</td><td>OpenAPI docs / ops subcommands (single garrison binary)</td></tr>
 <tr><td><code>data-erasure</code></td><td align="center">❌</td><td>Data-subject erasure orchestration (GDPR / PIPL right-to-delete)</td></tr>
 <tr><td><code>authorize-api</code> / <code>manager-explicit</code></td><td align="center">❌</td><td>Core extensions: request-object authorization API / explicit Manager API</td></tr>
 <tr><td><code>miette</code> / <code>embedded-migrations</code></td><td align="center">❌</td><td>Rich diagnostic errors (miette::Diagnostic) / embedded migration files</td></tr>
