@@ -186,6 +186,12 @@ criteria = "safe-to-deploy"
 version = "0.5.0-rc.10"
 notes = "多协议 API forge（sdforge 系）。自审通过（同作者系 CodeNexus 自研库）；rc.10 相对 rc.9：list_tools 改 with_all_items（MCP 协议 2026-07-28 resultType 合规）、自研依赖地板对齐、e2e 背压断言校准。"
 
+[[audits.sdforge]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.5.0-rc.11"
+notes = "声明式路由运行时（sdforge 系），HTTP/gRPC 路由注册。自审通过（同作者系 CodeNexus 自研库）；rc.11 相对 rc.10 为 i18n 桥接增量（kit feature 开启时翻译存储委托 trait-kit I18nManager，公共 API 不变，占位符语法桥接转换，双态测试）与 install-action/rmcp 依赖升级（RUSTSEC-2026-0462 修复）。"
+
 [[audits.sdforge-macros]]
 who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
@@ -227,3 +233,9 @@ who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
 version = "0.5.0-rc.12"
 notes = "typestate DI 构建器（trait-kit 系），生命周期与健康检查。自审通过（同作者系 CodeNexus 自研库）；rc.12 相对 rc.11 为 masking 承载与依赖地板对齐的增量演进。"
+
+[[audits.trait-kit]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.5.0-rc.13"
+notes = "typestate DI 构建器（trait-kit 系），生命周期与健康检查。自审通过（同作者系 CodeNexus 自研库）；rc.13 相对 rc.12 为 I18nManager 宿主注册 API 增量（register_translation/clear_registered_translations，注册覆盖→内置→键回退链，含 8 条单测）与 rustdoc 链接修复，无新外部依赖面。"
