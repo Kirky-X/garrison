@@ -25,6 +25,12 @@ criteria = "safe-to-deploy"
 version = "0.6.0-rc.12"
 notes = "配置加载框架（confers 系），声明式配置解析与校验。自审通过（同作者系 CodeNexus 自研库）；rc.12 相对 rc.11：macOS FSEvents Create 吞后续 Modify/Remove 与 TMPDIR symlink 聋化修复（tls-watch 热重载依赖），无新外部面。"
 
+[[audits.confers]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.6.0-rc.13"
+notes = "配置中心（confers 系）。自审通过（同作者系 CodeNexus 自研库）；rc.13 相对 rc.12 为增量演进（rc 线内兼容）。"
+
 [[audits.confers-macros]]
 who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
@@ -42,6 +48,12 @@ who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
 version = "0.6.0-rc.11"
 notes = "confers 过程宏，无网络/文件系统副作用。自审通过（同作者系 CodeNexus 自研库）；rc.11 相对 rc.10 源码零差异，仅版本与包元数据变更。"
+
+[[audits.confers-macros]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.6.0-rc.13"
+notes = "confers 派生宏（confers 系）。自审通过（同作者系 CodeNexus 自研库）；随 rc.13 增量演进。"
 
 [[audits.dbnexus]]
 who = "Kirky-X <Kirky-X@outlook.com>"
@@ -84,6 +96,12 @@ who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
 version = "0.6.0-rc.10"
 notes = "dbnexus 过程宏，生成 DAO 样板代码。自审通过（同作者系 CodeNexus 自研库）；rc.10 相对 rc.9 源码零差异，仅版本与包元数据变更。"
+
+[[audits.granit-parser]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "2.1.0"
+notes = "granit 语法解析器（confers rc.13 传递引入）。自审通过：仅解析面，无网络/文件系统副作用。"
 
 [[audits.inklog]]
 who = "Kirky-X <Kirky-X@outlook.com>"
@@ -210,6 +228,12 @@ criteria = "safe-to-deploy"
 version = "0.5.0-rc.9"
 notes = "sdforge 过程宏，#[forge] 路由注册代码生成。自审通过（同作者系 CodeNexus 自研库）；rc.9 相对 rc.8 源码零差异，仅版本与包元数据变更。"
 
+[[audits.serde-saphyr]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "2.1.1"
+notes = "YAML 序列化（confers rc.13 传递引入，serde_yaml 维护延续线）。自审通过：纯序列化面。"
+
 [[audits.trait-kit]]
 who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
@@ -239,3 +263,9 @@ who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
 version = "0.5.0-rc.13"
 notes = "typestate DI 构建器（trait-kit 系），生命周期与健康检查。自审通过（同作者系 CodeNexus 自研库）；rc.13 相对 rc.12 为 I18nManager 宿主注册 API 增量（register_translation/clear_registered_translations，注册覆盖→内置→键回退链，含 8 条单测）与 rustdoc 链接修复，无新外部依赖面。"
+
+[[audits.trait-kit]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.5.0-rc.14"
+notes = "typestate DI 构建器（trait-kit 系），生命周期与健康检查。自审通过（同作者系 CodeNexus 自研库）；rc.14 相对 rc.13 为 i18n 模块 PluralCategory 类型重导出增量（下游无需自持 icu 依赖面即可命名复数类别），无新外部依赖面。"
