@@ -175,26 +175,18 @@ jobs:
         run: |
           set -uo pipefail
           repo="${{ github.repository }}"
-          echo "=== GraphQL 探针（node id + resolve 变更）==="
-          gh api graphql -f query='query { repository(owner: "Kirky-X", name: "garrison") { codeScanningAlerts(first: 3, states: OPEN) { nodes { id number } } } }' 2>&1 | head -5 || true
-          first_gid="$(gh api graphql -f query='query { repository(owner: "Kirky-X", name: "garrison") { codeScanningAlerts(first: 1, states: OPEN) { nodes { id number } } } }' --jq '.data.repository.codeScanningAlerts.nodes[0].id' 2>&1 || echo GQL-FAIL)"
-          first_num="$(gh api graphql -f query='query { repository(owner: "Kirky-X", name: "garrison") { codeScanningAlerts(first: 1, states: OPEN) { nodes { id number } } } }' --jq '.data.repository.codeScanningAlerts.nodes[0].number' 2>&1 || echo '?')"
-          echo "first_gid=$first_gid first_num=$first_num"
-          if [ -n "$first_gid" ] && [ "$first_gid" != "GQL-FAIL" ]; then
-            gh api graphql -f query='mutation($alert: ID!) { resolveSecurityAlert(input: {alertId: $alert, state: DISMISSED, reason: USED_IN_TESTS, comment: "诊断：测试夹具占位密钥（非真实凭证）。"}) { alert { state } } }' -f alert="$first_gid" 2>&1 | head -6 || true
-          fi
+          # 2026-11-14 API 漂移对齐（0.9.0 发布轮实测）：
+          #   1) GraphQL 侧 `Repository.codeScanningAlerts` 与 `Mutation.resolveSecurityAlert`
+          #      均已不在当前 schema（undefinedField），探针与 mutation 路径整体移除；
+          #   2) PATCH 端点仅接受 `state` + `dismissed_reason`（注意过去分词 dismissed），
+          #      `dismissal_reason` / `dismissal_comment` 均报 422 not permitted——豁免理由
+          #      改为写进运行日志（本步骤输出即留痕），API 侧不再携带 comment。
+          #   3) PUT 形（REST 文档旧示例）实测 404，仍只用 PATCH。
           echo "=== GET 诊断（状态行 + 令牌权限头）==="
           gh api -i "repos/$repo/code-scanning/alerts?state=open&per_page=2" 2>&1 | grep -E "^HTTP|x-github-token-permissions|message" | head -6 || true
           alerts="$(gh api "repos/$repo/code-scanning/alerts?state=open&per_page=100" \
             --jq '.[] | [.number, .rule.id, .most_recent_instance.location.path, .most_recent_instance.location.start_line] | @tsv' 2>&1)" || {
             echo "GET 失败，原样输出："; echo "$alerts" | tail -5; exit 1; }
-          first="$(echo "$alerts" | head -1 | cut -f1)"
-          if [ -n "$first" ]; then
-            echo "=== PUT 诊断（首条告警 #$first，含状态行与响应体）==="
-            gh api -i -X PUT "repos/$repo/code-scanning/alerts/$first" \
-              -f state=dismissed -f dismissal_reason=used_in_tests \
-              -f dismissal_comment="诊断：测试夹具占位密钥（非真实凭证）。" 2>&1 | head -30 || true
-          fi
           count=0
           while IFS=$'\t' read -r num rule path line; do
             [ -n "$num" ] || continue
@@ -205,12 +197,10 @@ jobs:
                 continue
                 ;;
             esac
-            # 注意：该端点的可用语义是 PATCH + 空格形 reason（"used in tests"）；
-            # REST 文档的 PUT/JSON 形（dismissal_reason=used_in_tests）实测一律 404。
+            echo "豁免理由（API 已不支持 dismissal_comment，留痕于此）：[$rule] 测试夹具/测试代码（$path:$line，已逐条人工核实）：固定占位密钥与本地化错误文案断言，非真实凭证泄漏；生产路径敏感值由 mask_metadata 与 inklog secret-scan 出站门控覆盖。"
             if gh api -X PATCH "repos/$repo/code-scanning/alerts/$num" \
               -f state=dismissed \
               -f dismissed_reason="used in tests" \
-              -f dismissal_comment="[$rule] 测试夹具/测试代码（$path:$line，已逐条人工核实）：固定占位密钥与本地化错误文案断言，非真实凭证泄漏；生产路径敏感值由 mask_metadata 与 inklog secret-scan 出站门控覆盖。" \
               --silent; then
               count=$((count + 1))
               echo "dismissed #$num $rule $path:$line"
