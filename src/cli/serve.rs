@@ -108,7 +108,7 @@ impl GarrisonInterface for SimpleInterface {
 ///
 /// fail-closed 语义：`internal_api_key` 无默认值（未配置即拒绝启动）；密钥长度、
 /// 绑定地址与可信代理解析、外网登录暴露确认在加载后统一执行（见
-/// [`resolve_bootstrap_security`]），`rate_limit=0` 检查见 [`serve_main`]；
+/// `resolve_bootstrap_security`），`rate_limit=0` 检查见 [`serve_main`]；
 /// `field-encryption` feature 启用时密钥表为空即拒绝启动。
 ///
 /// `GARRISON_EXTERNAL_LOGIN_ENABLED` 仅接受 `true`/`false`（大小写不敏感），

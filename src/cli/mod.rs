@@ -13,7 +13,7 @@
 //!
 //! 缺 feature 的子命令注册被 `cfg` 裁剪，用户敲入时 clap 报 unrecognized subcommand（显性失败）。
 //!
-//! [`build_root_command`] 供 `src/main.rs` 装配；handler 返回 `Value::Null` 表示
+//! [`crate::cli::build_root_command`] 供 `src/main.rs` 装配；handler 返回 `Value::Null` 表示
 //! 「子命令已自行输出」（sdforge dispatch 契约），运维命令沿用既有 stdout 报告行为。
 
 use sdforge::cli::{CliBuilder, CliCommandRegistration, CliHandlerRegistration};
