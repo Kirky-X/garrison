@@ -37,7 +37,7 @@ jobs:
         run: bash scripts/setup_rust.sh 1.97.1 rustfmt,clippy
         shell: bash
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -62,7 +62,7 @@ jobs:
         run: bash scripts/setup_rust.sh 1.97.1 rustfmt,clippy
         shell: bash
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -89,7 +89,7 @@ jobs:
         run: bash scripts/setup_rust.sh 1.97.1 rustfmt,clippy
         shell: bash
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -129,7 +129,7 @@ jobs:
         run: bash scripts/setup_rust.sh 1.97.1 clippy
         shell: bash
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -182,7 +182,7 @@ jobs:
         run: bash scripts/setup_rust.sh "$RUST_TOOLCHAIN" rustfmt,clippy
         shell: bash
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: protoc
       # Windows runner 无系统 OpenSSL 开发文件：webauthn-rs 0.5.5 引入的
@@ -280,7 +280,7 @@ jobs:
         run: bash scripts/setup_rust.sh 1.97.1
         shell: bash
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -317,7 +317,7 @@ jobs:
         run: bash scripts/setup_rust.sh 1.97.1
         shell: bash
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -327,7 +327,7 @@ jobs:
       - name: Build docs
         run: cargo doc --no-deps --features "full"
       - name: Install cargo-deadlinks
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: cargo-deadlinks
       # 死链检查（显性化策略 — 规则 12：不掩盖，分类处理）
@@ -378,7 +378,7 @@ jobs:
       - name: Setup Rust toolchain (1.97.1)
         run: bash scripts/setup_rust.sh 1.97.1
         shell: bash
-      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: cargo-deny
       - name: Generate Cargo.lock (library crate, not committed)
@@ -428,7 +428,7 @@ jobs:
         run: bash scripts/setup_rust.sh 1.97.1
         shell: bash
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -486,7 +486,7 @@ jobs:
         run: bash scripts/setup_rust.sh 1.97.1
         shell: bash
       - name: Install protoc (sdforge build dep)
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: protoc
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -494,7 +494,7 @@ jobs:
           shared-key: ci-coverage-deps
           lookup-only: true
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: cargo-llvm-cov
       - name: Run coverage (fail under 95% lines)
