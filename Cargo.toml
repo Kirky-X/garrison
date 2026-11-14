@@ -1,8 +1,8 @@
 [package]
 name = "garrison"
-version = "0.9.0-rc.5"
+version = "0.9.0"
 edition = "2021"
-rust-version = "1.97.1"  # MSRV: 依赖面兄弟生态 rc 线（confers/oxcache/dbnexus/sdforge/limiteron/inklog/trait-kit）各自声明 rust-version = "1.97.1"，此为依赖图可满足的最低工具链；CI 测试矩阵 MSRV 腿同版验证
+rust-version = "1.97.1"  # MSRV: 依赖面兄弟生态稳定线（confers/oxcache/dbnexus/sdforge/limiteron/inklog/trait-kit）各自声明 rust-version = "1.97.1"，此为依赖图可满足的最低工具链；CI 测试矩阵 MSRV 腿同版验证
 authors = ["Kirky-X <Kirky-X@outlook.com>"]
 license = "Apache-2.0"
 description = "Garrison - 面向 Rust 生态的一站式身份认证鉴权框架"
@@ -17,7 +17,7 @@ members = [".", "examples", "macros"]
 resolver = "2"
 
 [workspace.package]
-version = "0.9.0-rc.5"
+version = "0.9.0"
 edition = "2021"
 rust-version = "1.97.1"
 authors = ["Kirky-X <Kirky-X@outlook.com>"]
@@ -27,13 +27,13 @@ documentation = "https://docs.rs/garrison"
 
 [workspace.dependencies]
 garrison = { path = ".", default-features = false }
-garrison-macros = { version = "0.9.0-rc.5", path = "macros", default-features = false }
+garrison-macros = { version = "0.9", path = "macros", default-features = false }
 axum = { version = "0.8", default-features = false, features = ["json"] }
 actix-web = { version = "4.18", default-features = false }
 warp = { version = "0.4", default-features = false }
 tonic = { version = "0.14", default-features = false, features = ["transport"] }
-oxcache = { version = "0.5.0-rc.10", default-features = false }
-dbnexus = { version = "0.6.0-rc.10", default-features = false }
+oxcache = { version = "0.5", default-features = false }
+dbnexus = { version = "0.6", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json", "env-filter"] }
 # thread_rng 蕴含 std + std_rng + sys_rng（rand 0.10.3），代码仅用 rand::rng()/RngExt，无需重复声明
 rand = { version = "0.10", default-features = false, features = ["thread_rng"] }
@@ -50,7 +50,7 @@ path = "src/lib.rs"
 # Required dependencies
 serde = { version = "1.0", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
-confers = { version = "0.6.0-rc.13", default-features = false }
+confers = { version = "0.6", default-features = false }
 tokio = { version = "1.54", default-features = false, features = ["sync", "macros", "rt-multi-thread", "time", "signal"] }
 inventory = { version = "0.3", default-features = false }
 thiserror = { version = "2.0", default-features = false, features = ["std"] }
@@ -94,7 +94,7 @@ getrandom = { version = "0.4", optional = true, default-features = false }
 zeroize = { version = "1.9", optional = true, default-features = false, features = ["derive", "serde"] }
 regex = { version = "1.13", optional = true, default-features = false }
 # optional：常驻使用点 three-tier-cache 显式 dep:oxcache；dao/oxcache_impl 与 abac 经 oxcache/* 引用自动激活
-oxcache = { version = "0.5.0-rc.10", default-features = false, optional = true }
+oxcache = { version = "0.5", default-features = false, optional = true }
 # dbnexus 0.4+ 强制至少一个驱动 feature，故必须 optional，由 db-base 透传
 dbnexus = { optional = true, default-features = false, workspace = true }
 # loom 竞态验证：用 feature 门控而非 RUSTFLAGS --cfg loom，避免 cfg 泄漏令 tokio 剔除 net
@@ -126,13 +126,13 @@ futures = { version = "0.3", default-features = false, features = ["std"] }
 # mimalloc 全局分配器（garrison 单根二进制的 serve 面使用，多线程分配性能优于系统默认分配器）
 mimalloc = { version = "0.1", optional = true, default-features = false }
 # optional 化：唯一使用点 observability/inklog（audit-inklog 门控），其 inklog/* 引用自动激活。
-inklog = { version = "0.3.0-rc.12", default-features = false, optional = true }
+inklog = { version = "0.3", default-features = false, optional = true }
 # retry 供 stp 会话 JWT 黑名单退避调度（delay_for_attempt，空 feature 零依赖）；distributed 供防火墙限流/双窗口限速的分布式滑窗桥接
-limiteron = { version = "0.3.0-rc.10", default-features = false, features = ["distributed", "retry"] }
+limiteron = { version = "0.3", default-features = false, features = ["distributed", "retry"] }
 # sdforge 运行时（必需）：cli feature 供单根二进制的 CLI 面（CliBuilder/dispatch，轻量，
 # 不拉 http）；#[forge] 宏在 garrison 上下文求值 cfg，auth-server-sdforge 再透传 sdforge/http
-sdforge = { version = "0.5.0-rc.11", default-features = false, features = ["cli"] }
-trait-kit = { version = "0.5.0-rc.14", default-features = false, features = ["async"] }
+sdforge = { version = "0.5", default-features = false, features = ["cli"] }
+trait-kit = { version = "0.5", default-features = false, features = ["async"] }
 cedar-policy = { version = "4.14", default-features = false, optional = true }
 percent-encoding = { version = "2.3", optional = true, default-features = false }
 hkdf = { version = "0.13", optional = true, default-features = false }

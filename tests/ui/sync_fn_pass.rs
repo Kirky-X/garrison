@@ -1,6 +1,5 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
-use axum::response::IntoResponse;
 
 use garrison::{
     check_abac, check_access_token, check_api_key, check_client_token, check_disable, check_login,

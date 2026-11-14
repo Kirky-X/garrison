@@ -15,13 +15,14 @@ version = "0.5.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.actix-http]]
-version = "3.20.0"
+version = "3.21.0"
 criteria = "safe-to-deploy"
 notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.actix-router]]
-version = "0.5.4"
+version = "0.5.5"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.actix-rt]]
 version = "2.15.0"
@@ -40,7 +41,7 @@ version = "3.0.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.actix-web]]
-version = "4.18.1"
+version = "4.19.0"
 criteria = "safe-to-deploy"
 notes = "backlog: 版本 bump 引入的新版本，待审计"
 
@@ -53,8 +54,9 @@ version = "0.6.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.aes]]
-version = "0.9.3"
+version = "0.9.4"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.aes-gcm]]
 version = "0.11.1"
@@ -85,7 +87,7 @@ version = "0.1.6"
 criteria = "safe-to-run"
 
 [[exemptions.annotate-snippets]]
-version = "0.12.17"
+version = "0.12.18"
 criteria = "safe-to-deploy"
 notes = "backlog: 版本 bump 引入的新版本，待审计"
 
@@ -98,12 +100,14 @@ version = "1.0.104"
 criteria = "safe-to-deploy"
 
 [[exemptions.ar_archive_writer]]
-version = "0.5.3"
+version = "0.5.5"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.arc-swap]]
-version = "1.9.3"
+version = "1.9.5"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.arcstr]]
 version = "1.2.0"
@@ -207,12 +211,14 @@ version = "0.6.4"
 criteria = "safe-to-run"
 
 [[exemptions.async-compression]]
-version = "0.4.51"
+version = "0.4.52"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.async-lock]]
-version = "3.4.2"
+version = "3.5.0"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.async-stream]]
 version = "0.3.6"
@@ -321,10 +327,6 @@ version = "0.9.1"
 criteria = "safe-to-run"
 
 [[exemptions.bitflags]]
-version = "1.3.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.bitflags]]
 version = "2.13.2"
 criteria = "safe-to-deploy"
 
@@ -373,8 +375,9 @@ version = "0.5.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.bumpalo]]
-version = "3.20.3"
+version = "3.20.4"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.byteorder]]
 version = "1.5.0"
@@ -385,8 +388,9 @@ version = "1.12.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.bytestring]]
-version = "1.5.1"
+version = "1.6.0"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.calendrical_calculations]]
 version = "0.2.4"
@@ -401,21 +405,24 @@ version = "0.2.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.cc]]
-version = "1.10.0"
+version = "1.11.2"
 criteria = "safe-to-deploy"
 notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.cedar-policy]]
-version = "4.14.0"
+version = "4.14.1"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.cedar-policy-core]]
-version = "4.14.0"
+version = "4.14.1"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.cedar-policy-formatter]]
-version = "4.14.0"
+version = "4.14.1"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.cfg-if]]
 version = "1.0.5"
@@ -486,25 +493,22 @@ version = "0.9.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.compression-codecs]]
-version = "0.4.46"
+version = "0.4.47"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.compression-core]]
 version = "0.4.34"
 criteria = "safe-to-deploy"
-
-[[exemptions.confers-macros]]
-version = "0.6.0-rc.12"
-criteria = "safe-to-deploy"
-notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.const-oid]]
 version = "0.9.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.const-oid]]
-version = "0.10.2"
+version = "0.10.3"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.const-random]]
 version = "0.1.18"
@@ -571,8 +575,9 @@ version = "0.4.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.crc32fast]]
-version = "1.5.3"
+version = "1.5.5"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.criterion]]
 version = "0.8.2"
@@ -585,11 +590,6 @@ criteria = "safe-to-run"
 [[exemptions.crossbeam-channel]]
 version = "0.5.17"
 criteria = "safe-to-deploy"
-
-[[exemptions.crossbeam-deque]]
-version = "0.8.8"
-criteria = "safe-to-run"
-notes = "backlog: criterion 0.8 升级带入的 dev 依赖（仅基准测试面），待审计"
 
 [[exemptions.crossbeam-epoch]]
 version = "0.9.21"
@@ -624,8 +624,9 @@ version = "0.10.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.ctutils]]
-version = "0.4.7"
+version = "0.4.8"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.curve25519-dalek]]
 version = "4.1.3"
@@ -685,18 +686,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.deadpool-runtime]]
 version = "0.1.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.defmt]]
-version = "1.2.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.defmt-macros]]
-version = "1.2.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.defmt-parser]]
-version = "1.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.der]]
@@ -785,8 +774,9 @@ version = "2.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.educe]]
-version = "0.8.1"
+version = "0.8.2"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.either]]
 version = "1.19.0"
@@ -797,8 +787,9 @@ version = "0.13.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.email-encoding]]
-version = "0.4.2"
+version = "0.4.3"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.email_address]]
 version = "0.2.9"
@@ -809,8 +800,9 @@ version = "0.14.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.encoding_rs]]
-version = "0.8.42"
+version = "0.8.44"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.encoding_rs_io]]
 version = "0.1.8"
@@ -830,8 +822,9 @@ version = "1.0.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.errno]]
-version = "0.3.14"
+version = "0.3.15"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.etcd-client]]
 version = "0.21.1"
@@ -851,8 +844,9 @@ version = "0.5.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.fancy-regex]]
-version = "0.20.0"
+version = "0.20.2"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.fastrand]]
 version = "2.5.0"
@@ -883,16 +877,14 @@ version = "0.7.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.fixedbitset]]
-version = "0.5.7"
+version = "0.5.9"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.flate2]]
-version = "1.1.10"
+version = "1.1.11"
 criteria = "safe-to-deploy"
-
-[[exemptions.fluent]]
-version = "0.17.0"
-criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.fluent-bundle]]
 version = "0.16.0"
@@ -946,10 +938,6 @@ criteria = "safe-to-deploy"
 version = "1.3.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.fsevent-sys]]
-version = "4.1.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.futures]]
 version = "0.3.34"
 criteria = "safe-to-deploy"
@@ -999,16 +987,19 @@ version = "0.23.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.garrison]]
-version = "0.9.0-rc.5"
+version = "0.9.0"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.garrison-macros]]
-version = "0.9.0-rc.5"
+version = "0.9.0"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.generator]]
-version = "0.8.11"
+version = "0.8.12"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.generic-array]]
 version = "0.14.9"
@@ -1183,23 +1174,11 @@ criteria = "safe-to-deploy"
 version = "0.1.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.icu]]
-version = "2.4.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.icu_calendar]]
 version = "2.4.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.icu_calendar_data]]
-version = "2.4.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.icu_casemap]]
-version = "2.4.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.icu_casemap_data]]
 version = "2.4.0"
 criteria = "safe-to-deploy"
 
@@ -1228,22 +1207,6 @@ version = "2.4.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.icu_decimal_data]]
-version = "2.4.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.icu_experimental]]
-version = "0.7.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.icu_experimental_data]]
-version = "0.7.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.icu_list]]
-version = "2.4.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.icu_list_data]]
 version = "2.4.0"
 criteria = "safe-to-deploy"
 
@@ -1299,14 +1262,6 @@ criteria = "safe-to-deploy"
 version = "2.4.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.icu_segmenter]]
-version = "2.4.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.icu_segmenter_data]]
-version = "2.4.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.icu_time]]
 version = "2.4.0"
 criteria = "safe-to-deploy"
@@ -1357,8 +1312,9 @@ version = "0.1.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.inout]]
-version = "0.2.5"
+version = "0.2.6"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.intl-memoizer]]
 version = "0.5.3"
@@ -1397,20 +1353,24 @@ version = "0.15.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.itoa]]
-version = "1.0.18"
+version = "1.0.19"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.jiff]]
-version = "0.2.38"
+version = "0.2.43"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.jiff-core]]
-version = "0.1.1"
+version = "0.1.5"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.jiff-static]]
-version = "0.2.38"
+version = "0.2.43"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.jiff-tzdb]]
 version = "0.1.9"
@@ -1441,8 +1401,9 @@ version = "0.1.35"
 criteria = "safe-to-deploy"
 
 [[exemptions.js-sys]]
-version = "0.3.106"
+version = "0.3.107"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.jsonwebtoken]]
 version = "11.1.0"
@@ -1546,8 +1507,9 @@ criteria = "safe-to-deploy"
 notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.local-waker]]
-version = "0.1.4"
+version = "0.1.5"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.lock_api]]
 version = "0.4.14"
@@ -1559,8 +1521,9 @@ version = "0.5.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.log]]
-version = "0.4.34"
+version = "0.4.35"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.logos]]
 version = "0.16.1"
@@ -1575,8 +1538,9 @@ version = "0.16.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.loom]]
-version = "0.7.2"
+version = "0.7.3"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.lru-slab]]
 version = "0.1.3"
@@ -1628,8 +1592,9 @@ version = "0.1.52"
 criteria = "safe-to-deploy"
 
 [[exemptions.mime]]
-version = "0.3.17"
+version = "0.3.18"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.mime_guess]]
 version = "2.0.5"
@@ -1644,8 +1609,9 @@ version = "0.9.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.mio]]
-version = "1.2.4"
+version = "1.2.5"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.mockall]]
 version = "0.15.0"
@@ -1693,16 +1659,18 @@ version = "0.12.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.notify]]
-version = "8.2.1"
+version = "8.2.2"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.notify-debouncer-full]]
 version = "0.7.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.notify-types]]
-version = "2.2.0"
+version = "2.3.0"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.nu-ansi-term]]
 version = "0.50.3"
@@ -1783,8 +1751,9 @@ version = "11.1.5"
 criteria = "safe-to-run"
 
 [[exemptions.openssl]]
-version = "0.10.81"
+version = "0.10.82"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.openssl-macros]]
 version = "0.1.1"
@@ -1795,8 +1764,9 @@ version = "0.2.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.openssl-sys]]
-version = "0.9.117"
+version = "0.9.118"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.opentelemetry]]
 version = "0.33.1"
@@ -1936,10 +1906,6 @@ criteria = "safe-to-deploy"
 version = "0.2.17"
 criteria = "safe-to-deploy"
 
-[[exemptions.pin-utils]]
-version = "0.1.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.pkcs1]]
 version = "0.7.5"
 criteria = "safe-to-deploy"
@@ -1951,18 +1917,6 @@ criteria = "safe-to-deploy"
 [[exemptions.pkg-config]]
 version = "0.3.34"
 criteria = "safe-to-deploy"
-
-[[exemptions.plotters]]
-version = "0.3.7"
-criteria = "safe-to-run"
-
-[[exemptions.plotters-backend]]
-version = "0.3.7"
-criteria = "safe-to-run"
-
-[[exemptions.plotters-svg]]
-version = "0.3.7"
-criteria = "safe-to-run"
 
 [[exemptions.pluralizer]]
 version = "0.5.0"
@@ -2020,6 +1974,11 @@ criteria = "safe-to-deploy"
 version = "0.2.37"
 criteria = "safe-to-deploy"
 
+[[exemptions.prettyplease]]
+version = "0.3.0"
+criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
+
 [[exemptions.primeorder]]
 version = "0.13.6"
 criteria = "safe-to-deploy"
@@ -2045,20 +2004,24 @@ version = "0.14.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.prost]]
-version = "0.14.4"
+version = "0.14.6"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.prost-build]]
-version = "0.14.4"
+version = "0.14.6"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.prost-derive]]
-version = "0.14.4"
+version = "0.14.6"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.prost-types]]
-version = "0.14.4"
+version = "0.14.6"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.protobuf]]
 version = "3.7.2"
@@ -2081,8 +2044,9 @@ version = "2.3.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.pulldown-cmark]]
-version = "0.13.5"
+version = "0.13.6"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.pulldown-cmark-to-cmark]]
 version = "22.0.3"
@@ -2156,16 +2120,6 @@ criteria = "safe-to-deploy"
 version = "0.10.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.rayon]]
-version = "1.12.0"
-criteria = "safe-to-run"
-notes = "backlog: criterion 0.8 升级带入的 dev 依赖（仅基准测试面），待审计"
-
-[[exemptions.rayon-core]]
-version = "1.13.0"
-criteria = "safe-to-run"
-notes = "backlog: criterion 0.8 升级带入的 dev 依赖（仅基准测试面），待审计"
-
 [[exemptions.rcgen]]
 version = "0.14.10"
 criteria = "safe-to-run"
@@ -2179,8 +2133,9 @@ version = "0.1.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.redis]]
-version = "1.8.0"
+version = "1.8.1"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.redox_syscall]]
 version = "0.5.18"
@@ -2264,8 +2219,9 @@ version = "0.8.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls-pki-types]]
-version = "1.15.1"
+version = "1.16.0"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.rustls-platform-verifier]]
 version = "0.7.1"
@@ -2276,8 +2232,9 @@ version = "0.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls-webpki]]
-version = "0.103.16"
+version = "0.103.17"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.rustversion]]
 version = "1.0.23"
@@ -2416,8 +2373,9 @@ version = "0.1.21"
 criteria = "safe-to-run"
 
 [[exemptions.serde_spanned]]
-version = "1.1.2"
+version = "1.1.3"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.serde_stacker]]
 version = "0.1.14"
@@ -2505,7 +2463,7 @@ version = "0.4.12"
 criteria = "safe-to-deploy"
 
 [[exemptions.smallvec]]
-version = "1.16.4"
+version = "1.16.5"
 criteria = "safe-to-deploy"
 notes = "backlog: 版本 bump 引入的新版本，待审计"
 
@@ -2602,7 +2560,7 @@ version = "2.0.119"
 criteria = "safe-to-deploy"
 
 [[exemptions.syn]]
-version = "3.0.9"
+version = "3.0.10"
 criteria = "safe-to-deploy"
 notes = "backlog: 版本 bump 引入的新版本，待审计"
 
@@ -2728,16 +2686,17 @@ criteria = "safe-to-deploy"
 notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.toml]]
-version = "1.1.8+spec-1.1.0"
+version = "1.2.1+spec-1.1.0"
 criteria = "safe-to-deploy"
 notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.toml_datetime]]
-version = "1.1.2+spec-1.1.0"
+version = "1.1.3+spec-1.1.0"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.toml_edit]]
-version = "0.25.17+spec-1.1.0"
+version = "0.25.19+spec-1.1.0"
 criteria = "safe-to-deploy"
 notes = "backlog: 版本 bump 引入的新版本，待审计"
 
@@ -2747,32 +2706,39 @@ criteria = "safe-to-deploy"
 notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.toml_writer]]
-version = "1.1.3+spec-1.1.0"
+version = "1.2.0+spec-1.1.0"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.tonic]]
-version = "0.14.8"
+version = "0.14.9"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.tonic-build]]
-version = "0.14.8"
+version = "0.14.9"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.tonic-health]]
-version = "0.14.8"
+version = "0.14.9"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.tonic-prost]]
-version = "0.14.8"
+version = "0.14.9"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.tonic-prost-build]]
-version = "0.14.8"
+version = "0.14.9"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.tonic-types]]
-version = "0.14.8"
+version = "0.14.9"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.totp-rs]]
 version = "6.0.0"
@@ -2876,16 +2842,19 @@ version = "0.1.26"
 criteria = "safe-to-deploy"
 
 [[exemptions.unicode-properties]]
-version = "0.1.4"
+version = "0.1.5"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.unicode-script]]
-version = "0.5.8"
+version = "0.5.9"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.unicode-security]]
-version = "0.1.2"
+version = "0.1.3"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.unicode-segmentation]]
 version = "1.13.3"
@@ -2921,12 +2890,19 @@ version = "2.5.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.utf16_iter]]
-version = "1.0.5"
+version = "1.1.0"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.utf8_iter]]
-version = "1.0.4"
+version = "1.1.0"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
+
+[[exemptions.utf_types]]
+version = "1.0.0"
+criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.utoipa]]
 version = "6.0.0"
@@ -2939,7 +2915,7 @@ criteria = "safe-to-deploy"
 notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.uuid]]
-version = "1.29.0"
+version = "1.29.2"
 criteria = "safe-to-deploy"
 notes = "backlog: 版本 bump 引入的新版本，待审计"
 
@@ -2972,8 +2948,9 @@ version = "0.3.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.warp]]
-version = "0.4.3"
+version = "0.4.4"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.wasi]]
 version = "0.11.1+wasi-snapshot-preview1"
@@ -2984,28 +2961,34 @@ version = "1.0.4+wasi-0.2.12"
 criteria = "safe-to-deploy"
 
 [[exemptions.wasm-bindgen]]
-version = "0.2.129"
+version = "0.2.130"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.wasm-bindgen-futures]]
-version = "0.4.79"
+version = "0.4.80"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.wasm-bindgen-macro]]
-version = "0.2.129"
+version = "0.2.130"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.wasm-bindgen-macro-support]]
-version = "0.2.129"
+version = "0.2.130"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.wasm-bindgen-shared]]
-version = "0.2.129"
+version = "0.2.130"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.web-sys]]
-version = "0.3.106"
+version = "0.3.107"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.web-time]]
 version = "1.1.0"
@@ -3028,12 +3011,14 @@ version = "0.5.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.webpki-root-certs]]
-version = "1.0.11"
+version = "1.0.12"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.webpki-roots]]
-version = "1.0.11"
+version = "1.0.12"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.whoami]]
 version = "2.1.3"
@@ -3059,25 +3044,55 @@ criteria = "safe-to-run"
 version = "0.62.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.windows-core]]
+version = "0.100.0"
+criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
+
 [[exemptions.windows-implement]]
 version = "0.60.2"
 criteria = "safe-to-deploy"
+
+[[exemptions.windows-implement]]
+version = "0.100.0"
+criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.windows-interface]]
 version = "0.59.3"
 criteria = "safe-to-deploy"
 
+[[exemptions.windows-interface]]
+version = "0.100.0"
+criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
+
 [[exemptions.windows-link]]
 version = "0.2.1"
 criteria = "safe-to-deploy"
+
+[[exemptions.windows-link]]
+version = "0.100.0"
+criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.windows-result]]
 version = "0.4.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.windows-result]]
+version = "0.100.0"
+criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
+
 [[exemptions.windows-strings]]
 version = "0.5.1"
 criteria = "safe-to-deploy"
+
+[[exemptions.windows-strings]]
+version = "0.100.0"
+criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.windows-sys]]
 version = "0.52.0"
@@ -3164,8 +3179,9 @@ version = "0.53.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.winnow]]
-version = "1.0.4"
+version = "1.0.5"
 criteria = "safe-to-deploy"
+notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.wiremock]]
 version = "0.6.5"
@@ -3256,16 +3272,16 @@ version = "1.0.23"
 criteria = "safe-to-deploy"
 
 [[exemptions.zstd]]
-version = "0.14.3"
+version = "0.14.4"
 criteria = "safe-to-deploy"
 notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.zstd-safe]]
-version = "8.2.0"
+version = "8.3.0"
 criteria = "safe-to-deploy"
 notes = "backlog: 版本 bump 引入的新版本，待审计"
 
 [[exemptions.zstd-sys]]
-version = "2.1.2+zstd.1.5.7"
+version = "2.1.3+zstd.1.5.7"
 criteria = "safe-to-deploy"
 notes = "backlog: 版本 bump 引入的新版本，待审计"

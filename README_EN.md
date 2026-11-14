@@ -96,7 +96,7 @@ Add the following to your `Cargo.toml` (`development` preset = in-memory cache D
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.4", features = ["development"] }
+garrison = { version = "0.9", features = ["development"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -509,6 +509,7 @@ For the full version history, see the [📋 Changelog](docs/CHANGELOG.md) (follo
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| 0.9.0 | 2026-11-14 | Stable release: self-family deps pinned to stable line (confers 0.6 / trait-kit 0.5 / oxcache 0.5 / dbnexus 0.6 / inklog 0.3 / sdforge 0.5 / limiteron 0.3), i18n unified via trait-kit, single-root garrison binary, CI supply-chain alerts cleared |
 | 0.9.0-rc.3 | 2026-10-14 | Security-audit remediation R01–R18: unified error model (request-id / Retry-After) / at-rest field encryption / WebAuthn / password reset / MFA orchestration / back-channel logout / multi-tenant hardening / garrison-cli |
 | 0.9.0-rc.2 | 2026-08-26 | Fail-closed security hardening (check_api_key / check_abac) |
 | 0.9.0-rc.1 | 2026-08-25 | Acceptance test system + DAO atomic contract + gRPC async auth layer |

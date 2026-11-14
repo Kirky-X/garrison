@@ -15,10 +15,20 @@ yanked = "deny"
 # 仅作为 testcontainers 0.28 的传递 dev-dependency 拉入（测试容器 tar 流拷贝），
 # 不进生产依赖图；官方口径无安全升级路径（Astral 停维，推荐替代 tar-codec 尚无
 # testcontainers 接线），随 testcontainers 上游迁移后解除本豁免。
+# libsqlite3-sys 0.37.0 的 RUSTSEC-2026-0459（bundled SQLite CVE-2026-119375，2026-11-12）显式忽略：
+# 受影响区间 0.6.0–0.38.2（bundled 源码编译面），修复需 ≥0.39.0（随 rusqlite 0.41 发布）；
+# 依赖链 sqlx-sqlite 0.9.0 声明 >=0.30.1,<0.38.0——sqlx/sea-orm/dbnexus 最新发布（0.9.0/2.0.4/0.6.0）
+# 均无法抵达 patched 版本，图内无 patched 路径。暴露分析：公告口径仅「打开由更低信任方可写入的
+# -wal 文件」的进程受影响，且系统链接 SQLite 的构建不受影响；garrison 的 db-sqlite 为嵌入式应用本地库
+# （同用户进程自建自读写），生产组合走 db-postgres 不触 sqlite 面。家族级豁免同 inklog/janvi/oxcache/
+# NebulaId（同源同因：sqlx-sqlite 0.9.0 硬帽，NebulaId 70ae6e2 口径）。解锁前提：sqlx 发布要求
+# libsqlite3-sys ≥0.39 的新版本后移除本条目并重跑 cargo deny——随 sqlx >0.9.0 或
+# dbnexus/sea-orm 迁移到 libsqlite3-sys ≥0.39 一线发布机械解除。
 ignore = [
     "RUSTSEC-2023-0071",
     "RUSTSEC-2026-0387",
     "RUSTSEC-2026-0440",
+    "RUSTSEC-2026-0459",
 ]
 
 [licenses]

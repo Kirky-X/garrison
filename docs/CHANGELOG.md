@@ -7,7 +7,8 @@
 
 ## 📋 目录
 
-- [Unreleased](#unreleased)
+- [0.9.0](#090---2026-11-14)
+- [0.9.0-rc.5](#090-rc5---2026-11-01)
 - [0.9.0-rc.4](#090-rc4---2026-10-20)
 - [0.9.0-rc.3](#090-rc3---2026-10-14)
 - [0.9.0-rc.2](#090-rc2---2026-08-26)
@@ -15,7 +16,22 @@
 
 ---
 
-## [Unreleased]
+## [0.9.0] - 2026-11-14
+
+0.9.0 正式版定版：API 与行为相对 0.9.0-rc.5 无破坏性变更。自研依赖面由 rc 线全部转稳定线（confers 0.6.0 / trait-kit 0.5.0 / oxcache 0.5.0 / dbnexus 0.6.0 / inklog 0.3.0 / sdforge 0.5.0 / limiteron 0.3.1），`garrison-macros` 钉版随定版转 `0.9`。
+
+### Changed
+
+- **自研依赖面稳定化（rc → 稳定线）**：七库钉版由 rc 全版本精度转 minor 精度——`confers "0.6"` / `trait-kit "0.5"` / `oxcache "0.5"` / `dbnexus "0.6"` / `inklog "0.3"` / `sdforge "0.5"` / `limiteron "0.3"`，解析落 confers 0.6.0 / trait-kit 0.5.0 / oxcache 0.5.0 / dbnexus 0.6.0 / inklog 0.3.0 / sdforge 0.5.0 / limiteron 0.3.1；`garrison-macros` workspace 钉版 `0.9.0-rc.5` → `0.9`；`fuzz` 子工作区锁定同步 0.9.0。MSRV 注释同步去 rc 措辞。
+- **供应链基线随依赖稳定化对齐（vet + deny）**：`supply-chain/audits.toml` 为 11 个自研 crate 稳定版补源码级自审条目——逐 crate 下载 rc↔stable crates.io 包逐文件 diff 取证：confers-macros / dbnexus-limiter-port / sdforge / trait-kit src 零差异，dbnexus-macros / sdforge-macros 仅注释分隔线清理，confers 为 i18n 基座例外注释与 cli main.rs 归位，dbnexus / inklog / limiteron / oxcache 为上游 CHANGELOG 定版节所载演进（外部连接记账 / 掩码下沉 trait-kit / sdforge 依赖 optional 化 / i18n 归一）；`supply-chain/config.toml` 豁免基线随 lock 对齐（86 条升版、92 条补缺、21 条出图清理，fluent / icu_* 出图与 i18n 归一一致）。`cargo vet check --locked` 绿（14 fully audited / 788 exempted）。
+- **libsqlite3-sys RUSTSEC-2026-0459 显式豁免（bundled SQLite CVE-2026-119375）**：受影响区间 0.6.0–0.38.2（bundled 面），修复需 ≥0.39.0，而依赖链 sqlx-sqlite 0.9.0 声明 `>=0.30.1,<0.38.0`，sqlx 0.9.0 / sea-orm 2.0.4 / dbnexus 0.6.0 均为最新发布——图内无 patched 路径。`deny.toml` [advisories] 按仓内先例（RUSTSEC-2026-0387 / RUSTSEC-2023-0071）登记豁免，附暴露分析（仅 bundled 构建且打开低信任方可写 -wal 的进程受影响；db-sqlite 为嵌入式应用本地库，生产组合走 db-postgres 不触 sqlite 面）与解除条件（sqlx >0.9.0 或 dbnexus/sea-orm 迁移 libsqlite3-sys ≥0.39 后机械移除）。`cargo deny --all-features --locked check` 四项全绿。
+- **i18n 归一（fluent 直连 → 家族统一供给）**：翻译层由 fluent 0.17 直连改为 sdforge::i18n 宿主注册，ICU 层自有 `icu_*`×6 依赖由 trait-kit `i18n` feature 统一供给（`i18n-icu` → trait-kit I18nFormatter 复数/日期/数字），本仓不再直依赖 icu_* 组件。
+- **单根 garrison 二进制**：serve / cli / healthcheck 三面合并为 sdforge CliBuilder 子命令（src/main.rs 单根自动发现，无 [[bin]] 段；子命令面按 feature 裁剪：serve=auth-server+cache-memory、运维组=cli-ops 及依赖、healthcheck 无条件，缺 feature 的子命令显性报 unrecognized）。
+
+- **CI 工具链改由 `scripts/setup_rust.sh` 安装（移除 `dtolnay/rust-toolchain`）**：24 处调用点（7 个 workflow）改为 `bash scripts/setup_rust.sh <toolchain> [components...]`，脚本行为对齐被移除 action 的 composite 步骤（安装 `--profile minimal` → 装组件 → 设为默认 → 关增量编译 → 开彩色输出），并额外写 `RUSTUP_TOOLCHAIN` 显式钉住工具链（不受将来目录级 `rust-toolchain.toml` 覆盖影响——该文件曾因目录级 `channel="stable"` 静默覆盖所有 workflow pin 而被删除）。供应链面同时少一个第三方 action。**根因**：该 action 仓库无版本 tag 且每次发布强推重写分支，按 SHA 钉它必然脱离上游 ref 历史，供应链审计无法通过——只有换成 runner 内建能力才谈得上根治。
+- **第三方 action 钉位行尾注释改为上游真实 tag**（92 处）：zizmor 要求注释恰为版本号（`# v7.0.1`），带任何后缀（`# v7.0.1, nosemgrep`）都会被判为「注释不含版本」；原 `# v2.88.0 (cargo-deny)` 一类注释与实际 tag（v2.87.29）不符，已一并纠正。
+- **`softprops/action-gh-release` 改为 runner 内建 `gh release`**：保持 softprops 的 upsert 语义（tag 上已有 release 则改写而非新建），后续 uniqueness 断言仍钉住恰好 1 个 release。
+- **zizmor 由非阻断基线转为阻断门禁**：清零后去掉 `continue-on-error`，今后新增的 unpinned-uses / ref-version-mismatch / template-injection 等发现在 CI 就红，不再攒成待分诊告警；新增 `.github/zizmor.yml` 把「第三方 action 必须按完整 commit SHA 钉位」显式写死在仓内（该策略本就是上游默认值，写进仓内后其变更须经本仓的显式升级流程，不会静默生效）。
 
 ### Fixed
 
@@ -25,13 +41,6 @@
   - `superfluous-actions` ×1（note 级）：`softprops/action-gh-release` 与 runner 预装的 `gh` 重复，改用 `gh release create/edit`。
   - 另补 `template-injection` 3 处：静态矩阵值（`matrix.rust` / `matrix.flags` / `matrix.target`）改为经 `env:` 传入 run 块，不再内插 `${{ }}`。
 - **PR 级公共 API 差异 job 随 nightly 漂移随机失败**：`api-surface.yml` / `api-surface-diff.yml` 用的是**未钉版的滚动 `nightly`**，成败取决于当天 nightly——2026-10-31 nightly（1.101.0-nightly f9ceb4a4d）在编译依赖 `sea-orm 2.0.4` 时触发 `error[E0391]`（async drop 查询环），cargo 退出 101，PR #69 因此带红叉（该 job 为 report-only，不阻断合并）。现钉到 `nightly-2026-10-29`（PR #68 实测通过的 nightly），rustdoc JSON 所需 nightly 能力不受影响，结果可复现（与仓库 Reproducible Build 门禁同一原则）。
-
-### Changed
-
-- **CI 工具链改由 `scripts/setup_rust.sh` 安装（移除 `dtolnay/rust-toolchain`）**：24 处调用点（7 个 workflow）改为 `bash scripts/setup_rust.sh <toolchain> [components...]`，脚本行为对齐被移除 action 的 composite 步骤（安装 `--profile minimal` → 装组件 → 设为默认 → 关增量编译 → 开彩色输出），并额外写 `RUSTUP_TOOLCHAIN` 显式钉住工具链（不受将来目录级 `rust-toolchain.toml` 覆盖影响——该文件曾因目录级 `channel="stable"` 静默覆盖所有 workflow pin 而被删除）。供应链面同时少一个第三方 action。**根因**：该 action 仓库无版本 tag 且每次发布强推重写分支，按 SHA 钉它必然脱离上游 ref 历史，供应链审计无法通过——只有换成 runner 内建能力才谈得上根治。
-- **第三方 action 钉位行尾注释改为上游真实 tag**（92 处）：zizmor 要求注释恰为版本号（`# v7.0.1`），带任何后缀（`# v7.0.1, nosemgrep`）都会被判为「注释不含版本」；原 `# v2.88.0 (cargo-deny)` 一类注释与实际 tag（v2.87.29）不符，已一并纠正。
-- **`softprops/action-gh-release` 改为 runner 内建 `gh release`**：保持 softprops 的 upsert 语义（tag 上已有 release 则改写而非新建），后续 uniqueness 断言仍钉住恰好 1 个 release。
-- **zizmor 由非阻断基线转为阻断门禁**：清零后去掉 `continue-on-error`，今后新增的 unpinned-uses / ref-version-mismatch / template-injection 等发现在 CI 就红，不再攒成待分诊告警；新增 `.github/zizmor.yml` 把「第三方 action 必须按完整 commit SHA 钉位」显式写死在仓内（该策略本就是上游默认值，写进仓内后其变更须经本仓的显式升级流程，不会静默生效）。
 
 ## [0.9.0-rc.5] - 2026-11-01
 

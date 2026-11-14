@@ -96,7 +96,7 @@
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.4", features = ["development"] }
+garrison = { version = "0.9", features = ["development"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -509,6 +509,7 @@ CI 与发布流程内置两道供应链门禁：`cargo deny check`（RustSec 公
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| 0.9.0 | 2026-11-14 | 正式版定版：自研依赖面转稳定线（confers 0.6 / trait-kit 0.5 / oxcache 0.5 / dbnexus 0.6 / inklog 0.3 / sdforge 0.5 / limiteron 0.3）、i18n 归一 trait-kit 供给、单根 garrison 二进制、CI 供应链告警清零 |
 | 0.9.0-rc.3 | 2026-10-14 | 安全审计整改 R01–R18：统一错误模型（request-id / Retry-After）/ 字段静态加密 / WebAuthn / 密码找回 / MFA 编排 / back-channel logout / 多租户强化 / garrison-cli |
 | 0.9.0-rc.2 | 2026-08-26 | fail-closed 安全加固（check_api_key / check_abac） |
 | 0.9.0-rc.1 | 2026-08-25 | 验收测试体系 + DAO 原子契约收严 + gRPC async 鉴权层 |

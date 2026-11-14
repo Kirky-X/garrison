@@ -321,7 +321,7 @@ mod tests {
 
         // 换盐重放：修改盐 → 派生密钥变化，链断裂
         let mut entries = chain.entries().to_vec();
-        entries[0].salt = hex::encode(&[9u8; CHAIN_SALT_LEN]);
+        entries[0].salt = hex::encode([9u8; CHAIN_SALT_LEN]);
         assert!(
             !AuditEventChain::verify_entries(&entries, b"key-1"),
             "salt swap must be detected"
