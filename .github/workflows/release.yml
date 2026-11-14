@@ -320,17 +320,30 @@ jobs:
       # uniqueness 断言钉住恰好 1 个。
       # TAG 取 version-consistency 输出（与创建步 TAG 同源）：
       # 手动触发时 GITHUB_REF 是分支 ref，按 GITHUB_REF 剥前缀会得到错误 tag
+      # 2026-11-14 实录：创建步成功（打印 release URL）后 6ms 内查询 releases 列表
+      # 读到 0（read-after-write 传播滞后），守卫误判——加有界重试（5×2s），
+      # 重试期内从 0 变 1 属传播收敛，非重复创建。
       - name: Verify release uniqueness (idempotency guard)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: v${{ needs.version-consistency.outputs.version }}
         run: |
-          COUNT=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate --jq "[.[] | select(.tag_name == \"${TAG}\")] | length")
-          echo "release objects for ${TAG}: ${COUNT}"
-          if [ "${COUNT}" != "1" ]; then
-            echo "::error::expected exactly 1 release for ${TAG}, found ${COUNT}; release state is not idempotent"
-            exit 1
-          fi
+          set -euo pipefail
+          COUNT=0
+          for i in 1 2 3 4 5; do
+            COUNT=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate --jq "[.[] | select(.tag_name == \"${TAG}\")] | length")
+            echo "attempt $i: release objects for ${TAG}: ${COUNT}"
+            if [ "${COUNT}" = "1" ]; then
+              echo "uniqueness guard 通过（恰好 1 个 release 对象）"
+              exit 0
+            fi
+            if [ "${COUNT}" -gt "1" ]; then
+              break
+            fi
+            sleep 2
+          done
+          echo "::error::expected exactly 1 release for ${TAG}, found ${COUNT}; release state is not idempotent"
+          exit 1
 
   # 阶段 5：发布后验证（GitHub Release + crates.io 双重验证）
 
