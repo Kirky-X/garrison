@@ -668,7 +668,7 @@ mod msrv_guard {
         );
         for (name, text) in [
             ("README.md", include_str!("../README.md")),
-            ("README_EN.md", include_str!("../README_EN.md")),
+            ("README_CN.md", include_str!("../README_CN.md")),
         ] {
             let badges = extract_values(text, "badge/rust-", "%2B");
             assert_eq!(
