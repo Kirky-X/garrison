@@ -56,7 +56,7 @@
 | 端到端安全面    | `bash scripts/e2e_run.sh`（含 `security::` 域）            | `logs/e2e_final_report.md` / `pentest_report.json` | 可复现                           |
 | 双实例限流      | `cargo test --features full --test redis_limiter_backend`  | 测试输出                                           | rc.4 新增                        |
 | ASVS 自评       | [SECURITY_ASVS.md](./SECURITY_ASVS.md)                     | 控制点映射                                         | 已建立（持续滚动）               |
-| ADR             | `docs/cn/adr-0001..adr-0004`                                       | 决策记录                                           | 已建立                           |
+| ADR             | `ADR-0001..ADR-0004`                                       | 决策记录                                           | 已建立（本地保留，不入库）         |
 | 发现账本        | `.mimosa/finding-ledger/v1`                                | JSON 账本                                          | 本地工具状态（不入库）           |
 | 审计证据摘要    | `bash scripts/security_evidence.sh`                        | `logs/security-evidence.md`                        | 本轮新增                         |
 
@@ -113,5 +113,5 @@
 | [🔒 安全策略](SECURITY.md)      | 漏洞报告渠道与支持版本                          |
 | [🛡️ ASVS 自评](./SECURITY_ASVS.md) | V2/V3 控制点映射                                |
 | [🎯 威胁模型](./THREAT.md)         | STRIDE 与信任边界                               |
-| [🧭 ADR-0001](adr-0001-argon2id-password-hashing.md) / [0002](adr-0002-csprng-policy.md) / [0003](adr-0003-constant-time-comparison.md) / [0004](adr-0004-unified-error-model-request-id-retry-after.md) | 密码哈希 / CSPRNG / 常量时间比较 / 统一错误模型 |
+| 🧭 ADR-0001 / 0002 / 0003 / 0004 | 密码哈希 / CSPRNG / 常量时间比较 / 统一错误模型 |
 | [🗺️ 路线图](./ROADMAP.md)          | v1.0 安全审计门禁状态                           |

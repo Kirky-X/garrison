@@ -1,6 +1,6 @@
 # Garrison v1.0 API Freeze Candidate List
 
-> This document is the companion review material for [API_STABILITY.md](./API_STABILITY.md): it itemizes "the surfaces protected by semver after 1.0" versus "the experimental surfaces that may still change". It is not an announcement that the freeze is complete; the current version is still `0.9.0-rc.x`, and the 0.x stage allows breaking changes.
+> This document is the companion review material for [API_STABILITY.md](./API_STABILITY.md): it itemizes "the surfaces protected by semver after 1.0" versus "the experimental surfaces that may still change". It is not an announcement that the freeze is complete; the current version is still `0.9.x`, and the 0.x stage allows breaking changes.
 
 ## Tiering Criteria
 
@@ -55,7 +55,7 @@
 | 1 | Tier every public item | `logs/api-surface.txt` + the tables in this document | In progress |
 | 2 | `#[non_exhaustive]` audit | Review records for `GarrisonError`, config enums, `RateLimitBackend` | To do |
 | 3 | Error-code freeze | Prefix-code list of `prefixed_code()` | To do |
-| 4 | Config-key freeze | Key-name list in `docs/CONFIGURATION.md` | To do |
+| 4 | Config-key freeze | Key-name list in `docs/en/CONFIGURATION.md` | To do |
 | 5 | Feature-name freeze | Public-surface list of `Cargo.toml [features]` | To do |
 | 6 | Storage key-format freeze | Session/rate-limit key format specification | To do |
 | 7 | MSRV policy | Window policy for `rust-version` changes | To do |

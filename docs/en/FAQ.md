@@ -3,7 +3,7 @@
 This file collects the questions most frequently asked about designing, using, and deploying the Garrison framework. If you are new to Garrison, we recommend reading this file before consulting the API docs.
 
 > Project repository: <https://github.com/Kirky-X/garrison>
-> Current version: 0.9.0-rc.4 (release candidate, 2026-10-20) | Next version: 1.0.0 (gates started, 2027 Q2)
+> Current version: 0.9.0 (2026-11-14) | Next version: 1.0.0 (gates started, 2027 Q2)
 
 ## 📋 Table of Contents
 
@@ -199,7 +199,7 @@ A: The aggregate feature `production` is recommended; it includes the following 
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.4", features = ["production"] }
+garrison = { version = "0.9.0", features = ["production"] }
 ```
 
 `production` aggregates the following 41 features (the authoritative list is `[features] production` in `Cargo.toml`):

@@ -2,7 +2,7 @@
 
 **Garrison** is a one-stop authentication and authorization framework for the Rust ecosystem: login authentication → permission checks → session management → route interception, out of the box. Implement one `GarrisonInterface` callback and inject one `GarrisonDao` storage backend to get the full auth capability; all optional capabilities (protocol layer, firewall, account security, etc.) are gated behind independent features, and compiled artifacts contain only what is enabled.
 
-> Applicable version: 0.9.0-rc.4 (MSRV 1.97.1, `rust-version` in `Cargo.toml`). This document covers "how to use it"; for architecture see the [🏗️ Architecture doc](ARCHITECTURE.md), and for the full config table see the [⚙️ Configuration Guide](CONFIGURATION.md).
+> Applicable version: 0.9.0 (MSRV 1.97.1, `rust-version` in `Cargo.toml`). This document covers "how to use it"; for architecture see the [🏗️ Architecture doc](ARCHITECTURE.md), and for the full config table see the [⚙️ Configuration Guide](CONFIGURATION.md).
 
 ## 📋 Table of Contents
 
@@ -34,7 +34,7 @@ Add the dependency in `Cargo.toml` (the `development` aggregate = in-memory cach
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.4", features = ["development"] }
+garrison = { version = "0.9.0", features = ["development"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -209,7 +209,7 @@ All protocol capabilities are feature-gated; once enabled, the APIs enter from t
 | TOTP | `secure-totp` | RFC 6238 dynamic verification codes | `totp_login.rs` |
 | Basic / Digest | `protocol-httpbasic` / `protocol-httpdigest` | Standard HTTP authentication | `httpbasic_login.rs` / `httpdigest_login.rs` |
 
-> Note: `protocol-sso` implies `protocol-jwt` (OIDC id_token mandatory verification, fail-closed); `db-sqlite` and `db-postgres`/`db-mysql` are mutually exclusive. All constraints are in [🧪 Test Scenarios · Hard constraints](TEST_SCENARIOS.md#-hard-constraints-the-combination-matrix-must-obey).
+> Note: `protocol-sso` implies `protocol-jwt` (OIDC id_token mandatory verification, fail-closed); `db-sqlite` and `db-postgres`/`db-mysql` are mutually exclusive. All constraints are in [🧪 Test Scenarios · Hard constraints](TEST_SCENARIOS.md#hard-constraints-the-combination-matrix-must-obey).
 
 ---
 

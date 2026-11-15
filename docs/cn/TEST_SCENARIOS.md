@@ -61,19 +61,19 @@
 
 ## 📊 测试规模统计
 
-> 单元与验收两列为 `cargo test -- --list` 在 CI 特性面（full / full+testing）下的实测计数，示例与过程宏为 `#[test]` / `#[tokio::test]` 属性静态计数；截至 2026-10-28（v0.9.0-rc.4 工作区实测）。
+> 单元与验收两列为 `cargo test -- --list` 在 CI 特性面（full / full+testing）下的实测计数，示例与过程宏为 `#[test]` / `#[tokio::test]` 属性静态计数；截至 2026-11-16（v0.9.0 工作区实测）。
 
 | 类别 | 位置 | 数量 |
 |------|------|------|
-| 单元测试 | `src/` 内联（`cargo test --features full --lib -- --list`） | 5454 |
+| 单元测试 | `src/` 内联（`cargo test --features full --lib -- --list`） | 5469 |
 | 验收 / 集成 / UI 测试 | `tests/`（`cargo test --test acceptance --features "full testing" -- --list`） | 416 |
 | 示例级集成测试 | `examples/tests/`（65 个文件，与示例 bin 一一对应） | 约 116 |
 | 过程宏测试 | `macros/` | 8 |
-| 合计 | — | **约 5994** |
+| 合计 | — | **约 6009** |
 | Criterion 基准 | `benches/garrison_benchmark.rs` | 6 场景 |
 | 行覆盖率门禁 | `ci.yml` coverage job | `--fail-under-lines 95`（2026-10-14 实测约 95.15%） |
 
-> 覆盖率沿用既有记录值；本轮已实测刷新测试计数（full 面 5454 / acceptance 面 416），行覆盖率未重测。
+> 覆盖率沿用既有记录值；本轮已实测刷新测试计数（full 面 5469 / acceptance 面 416），行覆盖率未重测。
 
 ---
 
@@ -91,7 +91,7 @@
 | `protocol_jwt.rs` | 19 | JWT 签发 / 验证 / refresh 轮换 |
 | `protocol_oauth2.rs` | 19 | OAuth2 四种 grant（打真实 Keycloak 26） |
 | `protocol_mixed.rs` | 23 | 多协议混合场景（JWT/OAuth2/SSO 交叉） |
-| `server.rs` | 22 | 独立认证服务器（auth-server 端点行为） |
+| `server.rs` | 34 | 独立认证服务器（auth-server 端点行为） |
 | `web_axum.rs` | 25 | axum 路由拦截与注解 |
 | `web_actix.rs` | 8 | actix-web 中间件 |
 | `web_warp.rs` | 6 | warp 过滤器 |
@@ -109,8 +109,8 @@
 | `security.rs` | 30 | 渗透测试攻击面（Token 伪造 / 注入 / CSRF，原 pentest 套件 ACC-SEC-021..030 并入） |
 | `resilience.rs` | 12 | 故障韧性（超时 / 断连 / 熔断 / fail-closed） |
 | `qrlogin.rs` | 7 | 第一方扫码登录（Web 扫码 + App 确认，两票分离） |
-| `concurrency.rs` | 9 | 竞争条件（含 8 个 `#[ignore]` 性能基线 `perf_*` 用例） |
-| `environment.rs` | 8 | 外部服务环境门控（Redis DAO / Postgres 迁移 / MySQL testcontainers，不可达自动 [SKIP]） |
+| `concurrency.rs` | 9 | 竞争条件（含 3 个 `#[ignore]` 性能基线 `perf_*` 用例） |
+| `environment.rs` | 10 | 外部服务环境门控（Redis DAO / Postgres 迁移 / MySQL testcontainers，不可达自动 [SKIP]） |
 
 ### 迁移归档域（`tests/acceptance/migrated/`）
 
@@ -147,7 +147,7 @@ dbnexus 以 `compile_error!` 禁止 embedded（sqlite）与 server-side（postgr
 ### 规模概览
 
 - `cargo metadata` 统计：**143 个具名 feature**，聚合特性
-  `full` 传递启用 104 项、`production` 41 项、`config-full` 13 项、`db-base` 14 项。
+  `full` 聚合 104 项、`production` 42 项、`config-full` 13 项、`db-base` 14 项。
 - 模块分层：核心（无开关，总编译）+ 9 大可选功能域 + 3 个聚合特性。
 
 ### 功能域与依赖结构
@@ -157,7 +157,7 @@ dbnexus 以 `compile_error!` 禁止 embedded（sqlite）与 server-side（postgr
                    session / config / context / json / exception / manager / plugin
 
 核心扩展 ── core-advanced ← authorize-api ← manager-explicit
-         └─ tenant-isolation ⇒ limiteron/multi-tenant（limiteron rc.7 已把 Identifier 导入门控改为 any(parallel-checker, ban-manager, multi-tenant)，无需伴随 feature 载体）
+         └─ tenant-isolation ⇒ limiteron/multi-tenant（limiteron 0.3 稳定线已把 Identifier 导入门控改为 any(parallel-checker, ban-manager, multi-tenant)，无需伴随 feature 载体）
 
 配置增强 ── config-{encryption,validation,hot-reload,interpolation,dynamic,
              toggle,yaml,audit,consul,etcd,distributed,schema} → confers/* 透传
@@ -246,7 +246,7 @@ i18n ── i18n（基础层无条件编译，feature 仅门控测试）⇒ i18n
 | `protocol-sso` ⇒ `protocol-jwt` | OIDC `exchange_code` 必须验签 `id_token`（安全审计 fail-open → fail-closed 修复） |
 | `http` 桥接 feature 不可改名 | sdforge `#[forge]` 宏硬编码 `#[cfg(feature = "http")]`，改名 = 全部动态路由 404 |
 | `security-alert` 必须落地 `security-extra` | 历史上为零依赖死 feature，导致 device-binding 单独启用编译失败 |
-| MSRV | 1.97.1（`Cargo.toml` 的 `rust-version`）——兄弟生态 crate（oxcache / dbnexus / confers / sdforge / limiteron / inklog / trait-kit 的 rc 线，rc.7–rc.10）要求 rustc ≥1.97.1，声明取该值；CI 矩阵 MSRV 腿与 `clippy.toml` 的 `msrv` 同值，由 `msrv_guard` 守卫测试断言 |
+| MSRV | 1.97.1（`Cargo.toml` 的 `rust-version`）——兄弟生态 crate（oxcache / dbnexus / confers / sdforge / limiteron / inklog / trait-kit 的稳定线）要求 rustc ≥1.97.1，声明取该值；CI 矩阵 MSRV 腿与 `clippy.toml` 的 `msrv` 同值，由 `msrv_guard` 守卫测试断言 |
 
 ---
 
@@ -385,7 +385,7 @@ EXAMPLE_INTERNAL_API_KEY=$(openssl rand -hex 16) bash scripts/e2e_run.sh
 ## 📝 已知问题与处置记录
 
 - **工具链**：兄弟生态 crate（confers / dbnexus / oxcache / sdforge / limiteron / inklog /
-  trait-kit 的 rc 线，rc.7–rc.10）要求 rustc ≥1.97.1；aliyun 镜像源可能滞后，需从官方源更新 stable
+  trait-kit 的稳定线）要求 rustc ≥1.97.1；aliyun 镜像源可能滞后，需从官方源更新 stable
   （`RUSTUP_DIST_SERVER=https://static.rust-lang.org rustup update stable`）。
 - **e2e target 残留**：迁移删除了 examples 的 `--test e2e`
   target，但 `scripts/e2e_run.sh` 仍引用之——已重写指向现行 `tests/acceptance`

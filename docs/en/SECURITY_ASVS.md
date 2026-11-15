@@ -105,6 +105,6 @@
 
 **Enhancement items closed this round**:
 
-- V3.4 cookie security attributes safe-by-default: delivered — cookie security defaults are consolidated into the single construction point `src/context/cookie.rs` (profile-aware `Secure`, constant `HttpOnly`, `SameSite=None` downgraded to `Lax` in non-Secure contexts, `production` prefix resolution); regression in `tests/web_security.rs`; the corresponding entry in the `docs/ROADMAP.md` candidate pool is marked delivered.
+- V3.4 cookie security attributes safe-by-default: delivered — cookie security defaults are consolidated into the single construction point `src/context/cookie.rs` (profile-aware `Secure`, constant `HttpOnly`, `SameSite=None` downgraded to `Lax` in non-Secure contexts, `production` prefix resolution); regression in `tests/web_security.rs`; the corresponding entry in the `docs/en/ROADMAP.md` candidate pool is marked delivered.
 
 **Explicitly out of framework scope**: the final application's user-UI interactions, deployment-layer TLS, and the business authorization rules themselves.

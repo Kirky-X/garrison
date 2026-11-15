@@ -29,7 +29,7 @@
 
 | 维度 | 内容 |
 |------|------|
-| 框架机制 | 密码哈希 Argon2id 默认（m=19456/t=2/p=1，OWASP 建议档，锁定测试 + [ADR-0001](adr-0001-argon2id-password-hashing.md)）；安全随机统一 `getrandom::fill` 直读 OS CSPRNG（[ADR-0002](adr-0002-csprng-policy.md)）；常量时间比较统一原语（`secure-ct-eq`，subtle，[ADR-0003](adr-0003-constant-time-comparison.md)）；API Key secret sha256 哈希存储（CWE-916，明文不落库）；JWT 算法白名单（HS 最小密钥长度 fail-fast + 非对称 `KeyMaterial` 类型绑定，RSA ≥2048 位 config 校验）；事件/日志 token 统一掩码（CWE-532，`secure-masking`） |
+| 框架机制 | 密码哈希 Argon2id 默认（m=19456/t=2/p=1，OWASP 建议档，锁定测试 + ADR-0001）；安全随机统一 `getrandom::fill` 直读 OS CSPRNG（ADR-0002）；常量时间比较统一原语（`secure-ct-eq`，subtle，ADR-0003）；API Key secret sha256 哈希存储（CWE-916，明文不落库）；JWT 算法白名单（HS 最小密钥长度 fail-fast + 非对称 `KeyMaterial` 类型绑定，RSA ≥2048 位 config 校验）；事件/日志 token 统一掩码（CWE-532，`secure-masking`） |
 | 业务方责任 | TLS 终止与证书管理（反代层，[SECURITY.md](SECURITY.md) 安全配置建议）；JWT 密钥的生成强度与 90 天轮换；敏感字段落库加密（下游存储加密不在框架管辖） |
 
 ## A03 – Injection（注入）
@@ -43,7 +43,7 @@
 
 | 维度 | 内容 |
 |------|------|
-| 框架机制 | 安全设计文档化：STRIDE 威胁模型（[THREAT.md](./THREAT.md)，六维 × 框架防御/业务方责任矩阵）；密码学选型论证（[ADR 三篇](adr-0001-argon2id-password-hashing.md)）；ASVS 4.0 V2/V3 逐条自评留档（[SECURITY_ASVS.md](./SECURITY_ASVS.md)）；safe-by-default 设计原则（外网登录端点默认关闭、Digest 默认 SHA-256、限流 fail-closed、SimpleToken 无签名 generate 返回 Err） |
+| 框架机制 | 安全设计文档化：STRIDE 威胁模型（[THREAT.md](./THREAT.md)，六维 × 框架防御/业务方责任矩阵）；密码学选型论证（ADR 三篇）；ASVS 4.0 V2/V3 逐条自评留档（[SECURITY_ASVS.md](./SECURITY_ASVS.md)）；safe-by-default 设计原则（外网登录端点默认关闭、Digest 默认 SHA-256、限流 fail-closed、SimpleToken 无签名 generate 返回 Err） |
 | 业务方责任 | 业务流程级威胁建模（ forgot-password / 邀请注册等编排的滥用分析）；将框架机制组合成完整认证流程时的设计评审 |
 
 ## A05 – Security Misconfiguration（安全配置错误）

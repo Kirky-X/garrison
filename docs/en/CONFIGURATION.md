@@ -2,7 +2,7 @@
 
 > Garrison configuration is managed uniformly by `GarrisonConfig`, supporting three-tier config-source merging and `tokio::sync::watch` hot reload.
 >
-> - Applicable version: 0.9.0-rc.4 (core config + the extension configs for JWT / signing / SSO / remember-me / Redis deployment modes / multi-tenancy / the account security engine / the microservice architecture / ABAC / the OAuth2 Server etc.; since rc.4 `rate_limit_backend` actually drives the rate-limit backend switch)
+> - Applicable version: 0.9.0 (core config + the extension configs for JWT / signing / SSO / remember-me / Redis deployment modes / multi-tenancy / the account security engine / the microservice architecture / ABAC / the OAuth2 Server etc.; since rc.4 `rate_limit_backend` actually drives the rate-limit backend switch)
 > - The config type: `GarrisonConfig`, implementing `serde::Serialize / Deserialize`
 > For architecture see the [🏗️ Architecture doc](./ARCHITECTURE.md); for deployment configuration see the [🚀 Deployment Guide](./DEPLOYMENT.md).
 
@@ -113,7 +113,7 @@ Bindings are written only at login time (`create_token_session_inner` writes the
 
 ### 2.5 Password-hashing configuration (password_hasher)
 
-The construction parameters driving `Argon2Hasher` / `BcryptHasher` (the `config.password_hasher.build_hasher()` factory, injected afterwards via `with_password_hasher`). The defaults equal the OWASP-recommended tier; the selection rationale is in [ADR-0001](adr-0001-argon2id-password-hashing.md).
+The construction parameters driving `Argon2Hasher` / `BcryptHasher` (the `config.password_hasher.build_hasher()` factory, injected afterwards via `with_password_hasher`). The defaults equal the OWASP-recommended tier; the selection rationale is in ADR-0001.
 
 | Field | Type | Default | Description |
 |--------|------|--------|------|
@@ -247,7 +247,7 @@ Create `garrison.toml` in the project root:
 
 ```toml
 # The Garrison configuration file
-# see docs/cn/CONFIGURATION.md for details
+# see docs/en/CONFIGURATION.md for details
 
 # Session policy
 timeout = 2592000            # session timeout 30 days
@@ -507,7 +507,7 @@ Mounting examples for the three frameworks:
 ```toml
 # Cargo.toml
 [dependencies]
-garrison = { version = "0.9.0-rc.4", features = ["web-axum"] } # or web-actix / web-warp
+garrison = { version = "0.9.0", features = ["web-axum"] } # or web-actix / web-warp
 ```
 
 ```rust,ignore
@@ -539,7 +539,7 @@ delta-seconds integers, floor 1).
 ```toml
 [dependencies]
 garrison = {
-    version = "0.9.0-rc.4",
+    version = "0.9.0",
     features = [
         "cache-memory",
         "cache-redis",

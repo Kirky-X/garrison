@@ -2,7 +2,7 @@
 
 > Garrison 配置由 `GarrisonConfig` 统一管理，支持三级配置源合并与 `tokio::sync::watch` 热更新能力。
 >
-> - 适用版本：0.9.0-rc.4（核心配置 + JWT / 签名 / SSO / remember-me / Redis 部署模式 / 多租户 / 账号安全引擎 / 微服务架构 / ABAC / OAuth2 Server 等扩展配置；rc.4 起 `rate_limit_backend` 真正驱动限流后端切换）
+> - 适用版本：0.9.0（核心配置 + JWT / 签名 / SSO / remember-me / Redis 部署模式 / 多租户 / 账号安全引擎 / 微服务架构 / ABAC / OAuth2 Server 等扩展配置；rc.4 起 `rate_limit_backend` 真正驱动限流后端切换）
 > - 配置类型：`GarrisonConfig`，实现 `serde::Serialize / Deserialize`
 > 架构设计详见 [🏗️ 架构文档](./ARCHITECTURE.md)；部署配置详见 [🚀 部署指南](./DEPLOYMENT.md)。
 
@@ -113,7 +113,7 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 
 ### 2.5 密码哈希配置（password_hasher）
 
-驱动 `Argon2Hasher` / `BcryptHasher` 的构造参数（`config.password_hasher.build_hasher()` 工厂，产出后经 `with_password_hasher` 注入）。默认值即 OWASP 建议档，选型论证见 [ADR-0001](adr-0001-argon2id-password-hashing.md)。
+驱动 `Argon2Hasher` / `BcryptHasher` 的构造参数（`config.password_hasher.build_hasher()` 工厂，产出后经 `with_password_hasher` 注入）。默认值即 OWASP 建议档，选型论证见 ADR-0001。
 
 | 字段名 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
@@ -507,7 +507,7 @@ Garrison 通过 feature flag 在编译期裁剪，不同 feature 下需要的配
 ```toml
 # Cargo.toml
 [dependencies]
-garrison = { version = "0.9.0-rc.4", features = ["web-axum"] } # 或 web-actix / web-warp
+garrison = { version = "0.9.0", features = ["web-axum"] } # 或 web-actix / web-warp
 ```
 
 ```rust,ignore
@@ -539,7 +539,7 @@ delta-seconds 整数秒，下限 1）。
 ```toml
 [dependencies]
 garrison = {
-    version = "0.9.0-rc.4",
+    version = "0.9.0",
     features = [
         "cache-memory",
         "cache-redis",

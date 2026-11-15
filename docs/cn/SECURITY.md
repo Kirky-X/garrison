@@ -183,7 +183,7 @@ Garrison 在 CI 与发布流程中内置多层供应链与安全门禁（发布�
 
 **基础卫生**：pre-commit 私钥扫描（gitleaks + `detect-private-key` 钩子互补）与 GitHub Actions 第三方 action 统一按 40 字符 commit SHA / 镜像 digest pin 引用（`ci.yml` / `security.yml` / `docs.yml` / `codeql.yml`），防 tag 替换类供应链攻击。
 
-威胁模型与攻防边界详见 [🛡️ 威胁模型](THREAT.md)；OWASP Top 10 逐类映射见 [🗺️ OWASP Top 10](OWASP_TOP10.md)；数据合规与删除权见 [📋 数据合规指南](DATA_COMPLIANCE.md)；密码学选型论证见 [ADR](adr-0001-argon2id-password-hashing.md)。
+威胁模型与攻防边界详见 [🛡️ 威胁模型](THREAT.md)；OWASP Top 10 逐类映射见 [🗺️ OWASP Top 10](OWASP_TOP10.md)；数据合规与删除权见 [📋 数据合规指南](DATA_COMPLIANCE.md)；密码学选型论证见 ADR-0001~0004（本地保留，不入库）。
 
 ---
 
@@ -233,7 +233,7 @@ Garrison 在 CI 与发布流程中内置多层供应链与安全门禁（发布�
 
 ### 6. YAML 解析后端依赖（unsafe-libyaml 已出图 / serde-saphyr 待审）风险接受说明
 
-- **旧链路已出图（RUSTSEC-2024-0449 豁免移除）**：`unsafe-libyaml` 0.2.11 的 RUSTSEC-2024-0449（unmaintained，上游仓库 2024-03-25 归档只读、无已公布可利用漏洞）原经 `unsafe-libyaml` ← `serde_yaml_ng` ← `confers` / `dbnexus` / `limiteron`（自研依赖）可达。自研 crate 升级到 `confers` 0.6.0-rc.11 / `dbnexus` 0.6.0-rc.10 / `limiteron` 0.3.0-rc.8 后，YAML 解析后端由 `serde_yaml_ng` 换为 `serde-saphyr`，`serde_yaml_ng` 与 `unsafe-libyaml` **已不在依赖图内**。
+- **旧链路已出图（RUSTSEC-2024-0449 豁免移除）**：`unsafe-libyaml` 0.2.11 的 RUSTSEC-2024-0449（unmaintained，上游仓库 2024-03-25 归档只读、无已公布可利用漏洞）原经 `unsafe-libyaml` ← `serde_yaml_ng` ← `confers` / `dbnexus` / `limiteron`（自研依赖）可达。自研 crate 升级到 `confers` 0.6.0 / `dbnexus` 0.6.0 / `limiteron` 0.3.1（稳定线）后，YAML 解析后端由 `serde_yaml_ng` 换为 `serde-saphyr`，`serde_yaml_ng` 与 `unsafe-libyaml` **已不在依赖图内**。
 - **处置**：该通告的忽略项已从 `deny.toml` [advisories] 与 `.cargo/audit.toml` 同步移除——保留会成为「未命中任何 crate」的死豁免，cargo-deny 对此报 `advisory-not-detected` 警告；`supply-chain/config.toml` 中 `serde_yaml_ng` / `unsafe-libyaml` 的过期豁免条目一并清理。
 - **新 YAML 栈（待审风险接受）**：当前依赖图内的 YAML 栈为 `serde-saphyr` 1.3.0 ← `confers` / `dbnexus` / `limiteron`，其传递依赖含 `granit-parser` 1.3.0、`annotate-snippets` 0.12.16、`arraydeque` 0.5.1、`encoding_rs_io` 0.1.8、`nohash-hasher` 0.2.0。**这些均为第三方 crate（作者 bourumir-wyngs / rust-lang / andylokandy / Andrew Gallant / Parity Technologies），仓库未做源码级审计**，在 `supply-chain/config.toml` 中以 `safe-to-deploy` 豁免记录并标注 backlog 待审；风险性质是「未经源码审计的第三方解析器」。
 - **影响评估**（依赖图与运行时调用点分列，不以「不在依赖图内」为前提）：

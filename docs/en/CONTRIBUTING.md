@@ -4,7 +4,7 @@
 
 First, thank you for your interest in and support of the Garrison project! This document walks you through the complete contribution workflow, from environment setup to submitting a Pull Request.
 
-Garrison is a one-stop authentication and authorization framework for the Rust ecosystem. The project follows a TDD (test-driven development) workflow with strict quality requirements: 5454 lib tests passing + doc-tests, 95%+ coverage, clippy zero warnings, and `///` doc comments on all public APIs.
+Garrison is a one-stop authentication and authorization framework for the Rust ecosystem. The project follows a TDD (test-driven development) workflow with strict quality requirements: 5469 lib tests passing + doc-tests, 95%+ coverage, clippy zero warnings, and `///` doc comments on all public APIs.
 
 > Related documents: [🛠️ Development Standards](./DEVELOPMENT.md) | [🏗️ Architecture](./ARCHITECTURE.md) | [⚙️ Configuration Guide](./CONFIGURATION.md)
 
@@ -85,7 +85,7 @@ The first build fetches and compiles all dependencies and may take a few minutes
 cargo test --features full
 ```
 
-Expected output: 5454 lib tests passing + all doc-tests passing.
+Expected output: 5469 lib tests passing + all doc-tests passing.
 
 ---
 

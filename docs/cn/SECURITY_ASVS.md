@@ -105,6 +105,6 @@
 
 **本轮已关闭的待增强项**：
 
-- V3.4 Cookie 安全属性 safe-by-default：已交付——Cookie 安全默认收进单一构建点 `src/context/cookie.rs`（profile 感知 `Secure`、恒定 `HttpOnly`、`SameSite=None` 非 Secure 上下文降级为 `Lax`、`production` 前缀解析），回归见 `tests/web_security.rs`；`docs/ROADMAP.md` 候选池对应条目已标注交付。
+- V3.4 Cookie 安全属性 safe-by-default：已交付——Cookie 安全默认收进单一构建点 `src/context/cookie.rs`（profile 感知 `Secure`、恒定 `HttpOnly`、`SameSite=None` 非 Secure 上下文降级为 `Lax`、`production` 前缀解析），回归见 `tests/web_security.rs`；`docs/cn/ROADMAP.md` 候选池对应条目已标注交付。
 
 **明示不属于框架**：最终应用的用户 UI 交互、部署层 TLS、业务授权规则本身。

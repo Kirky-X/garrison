@@ -53,7 +53,7 @@ This document describes Garrison's (the Rust authentication and authorization fr
 | 0.9.0-rc.2 | ✅ Completed | 2026-08-26 | fail-closed security hardening: `check_api_key` / `check_abac_with_policy` refuse when dependencies are missing instead of allowing by default; firewall auto-wiring; the `session::dao` crate-internal visibility expansion; the `firewall_hook_injected` marker |
 | 0.9.0-rc.3 | ✅ Completed | 2026-10-14 | The security-audit remediation batch R01–R18: the unified error model (request-id / Retry-After / module-prefixed codes) + the Argon2 concurrency token pool + at-rest field encryption (AES-256-GCM) + WebAuthn/Passkey + password reset + the MFA/step-up orchestration foundation + OIDC back-channel logout + OIDC discovery/multi-kid JWKS rotation + the refresh-reuse three-tier classification + multi-tenant hardening (session-tenant binding / the identifier registry / device interfaces) + the single Set-Cookie construction point + the garrison-cli ops face + tightened reference-deployment security baselines |
 | 0.9.0-rc.4 | ✅ Completed | 2026-10-20 | SHA-256-digested session keys + DAO atomic-contract fixes (set_if_absent expiry takeover / MySQL ensure_table) + the vacuum_expired primitive + release-pipeline convergence + the Redis rate-limit backend landed (candidate B) + the v1.0 gate repository-side artifacts (the API freeze candidate list / the API diff workflow / the performance baseline committed / cookie security defaults / RefreshTokenRotation concurrency verification) |
-| 1.0.0 | 📋 External to-dos (repository-side artifacts complete) | 2027 Q2 | The stable release: of the four gates — API freeze / performance baselines / production cases / security audit — the repository-side artifacts are complete and the third-party security audit is an external to-do; **this round releases 0.9.0-rc.4, not 1.0.0** |
+| 1.0.0 | 📋 External to-dos (repository-side artifacts complete) | 2027 Q2 | The stable release: of the four gates — API freeze / performance baselines / production cases / security audit — the repository-side artifacts are complete and the third-party security audit is an external to-do; **this round releases 0.9.0 (2026-11-14), not 1.0.0** |
 
 ---
 
@@ -551,7 +551,7 @@ The large-scale hardening batch R01–R18 driven by external security-audit conc
 - ✅ Tightened reference-deployment (the auth_server bin) security baseline + the credit activity write-path throttle aggregation (R13)
 - ✅ The constant-time comparison primitive choke-point closure (ADR-0003 decision 2)
 
-**Milestone significance**: focused on fail-closed semantics, at-rest encryption, multi-tenant isolation, the complete protocol ops face, and tightened reference-deployment baselines. Item-level details in [docs/CHANGELOG.md](CHANGELOG.md) · 0.9.0-rc.3.
+**Milestone significance**: focused on fail-closed semantics, at-rest encryption, multi-tenant isolation, the complete protocol ops face, and tightened reference-deployment baselines. Item-level details in [CHANGELOG.md](CHANGELOG.md) · 0.9.0-rc.3.
 
 #### Known limitations (0.9.0-rc.3)
 
@@ -587,9 +587,9 @@ Completed: 2026-10-20 (`0.9.0-rc.4`)
 
 #### The v1.0 gate repository-side artifacts (rc.4)
 
-- ✅ The API freeze candidate list: `docs/cn/API_FREEZE_CANDIDATES.md` (Stable / Stable-with-feature / Experimental / Internal tiers)
+- ✅ The API freeze candidate list: `docs/en/API_FREEZE_CANDIDATES.md` (Stable / Stable-with-feature / Experimental / Internal tiers)
 - ✅ The PR-level API diff: `.github/workflows/api-surface-diff.yml` (report-only, structured JSON artifacts)
-- ✅ The performance baseline committed: `docs/cn/benchmarks-v1.0-baseline.md` + `scripts/perf_compare.sh` (regression-threshold verdicts; reads the archived markdown baseline directly, no local criterion baseline directory needed)
+- ✅ The performance baseline committed: `docs/en/benchmarks-v1.0-baseline.md` + `scripts/perf_compare.sh` (regression-threshold verdicts; reads the archived markdown baseline directly, no local criterion baseline directory needed)
 - ✅ Cookie security defaults: non-`development` profiles default `Secure=true`, `HttpOnly`, `SameSite=Lax`, overridable via configuration
 - ✅ RefreshTokenRotation concurrency verification: under the `loom-test` feature, concurrent rotations of the same token have exactly one winner (16 rounds of dual threads + 4-party concurrency; **the verification means are real tokio threads + real SQLite race sampling, not `loom::model` interleaving exhaustion** — this path's atomicity is guaranteed by a database conditional UPDATE + the rows_affected verdict, a storage-layer CAS that `loom::model` cannot model since it cannot emulate a real database's write-transaction serialization; the pure in-process atomic-consumption paths remain covered by `loom::model` case exhaustion)
 
@@ -607,7 +607,7 @@ Completed: 2026-10-20 (`0.9.0-rc.4`)
 
 The following items come from the security self-assessment and audit conclusions, recorded as candidates for future changes:
 
-- **The web adapter layer's cookie safe-by-default**: delivered — cookie security defaults consolidated into the single construction point `src/context/cookie.rs` (`build_set_cookie_value` emits `HttpOnly` constantly; `Secure` follows `config.cookie_secure`, defaulting `true` for non-`development` profiles and `false` for `development`; `SameSite=None` downgrades to `Lax` in non-Secure contexts; `production` + Secure contexts resolve the `__Host-` / `__Secure-` prefixes); regression coverage in `tests/web_security.rs` (default tiers, explicit overrides, the None→Lax downgrade). The OWASP ASVS self-assessment V3.4 updated in sync (see `docs/cn/SECURITY_ASVS.md`).
+- **The web adapter layer's cookie safe-by-default**: delivered — cookie security defaults consolidated into the single construction point `src/context/cookie.rs` (`build_set_cookie_value` emits `HttpOnly` constantly; `Secure` follows `config.cookie_secure`, defaulting `true` for non-`development` profiles and `false` for `development`; `SameSite=None` downgrades to `Lax` in non-Secure contexts; `production` + Secure contexts resolve the `__Host-` / `__Secure-` prefixes); regression coverage in `tests/web_security.rs` (default tiers, explicit overrides, the None→Lax downgrade). The OWASP ASVS self-assessment V3.4 updated in sync (see `docs/en/SECURITY_ASVS.md`).
 - **The MFA orchestration foundation abstraction**: delivered (R09, the `stp::mfa` factor ledger + per-client chains + RequiredActionProvider + recovery codes); the TOTP/WebAuthn providers are wired; the remainder is extending to more authentication-factor providers.
 - **FIDO2/WebAuthn (Passkey) formal certification**: `protocol-webauthn` has merged (`src/protocol/webauthn/`, with challenge / credential / service complete); the remaining work is formal certification by an FIDO Alliance-accredited lab (a frequent enterprise-procurement question).
 - **The OIDC discovery endpoint**: delivered — both `/oauth2/jwks.json` and `/.well-known/openid-configuration` metadata endpoints have registered routes (`src/server/oauth2_routes.rs`, the latter controlled by the `enable_openid_configuration` switch).
@@ -625,11 +625,11 @@ Planned completion: 2027 Q2
 | Gate | Status | This round's starting artifacts |
 |------|------|-------------|
 | The API freeze (the semver stability promise) | ✅ Repository-side artifacts complete | [API stability tiers](API_STABILITY.md) · [the API freeze candidate list](API_FREEZE_CANDIDATES.md) · `scripts/api_surface.sh` · the PR diff workflow (report-only) |
-| Performance benchmarks | ✅ The repository-side baseline committed | `docs/cn/benchmarks-v1.0-baseline.md` · `scripts/perf_compare.sh` · [the Performance guide · v1.0 baseline capture](PERFORMANCE.md#-v10-performance-baseline-capture) |
+| Performance benchmarks | ✅ The repository-side baseline committed | `docs/en/benchmarks-v1.0-baseline.md` · `scripts/perf_compare.sh` · [the Performance guide · v1.0 baseline capture](PERFORMANCE.md#-v10-performance-baseline-capture) |
 | Production case documents | 📋 Self-hosted references (not customer cases) | [Reference production cases](PRODUCTION_CASES.md) |
 | Security audit | 📋 Third-party audit awaiting external | [The security audit readiness package](SECURITY_AUDIT.md) · `scripts/security_evidence.sh` |
 
-> This round releases **0.9.0-rc.4**; 1.0.0 ships separately once the third-party audit and external conditions complete.
+> This round releases **0.9.0**; 1.0.0 ships separately once the third-party audit and external conditions complete.
 >
 > Gate scope: this round delivers "reproducible baselines / templates / evidence packages" and does not claim the 1.0 API freeze or a third-party security audit is complete.
 
@@ -710,7 +710,7 @@ Every change must pass an impact analysis before merging; HIGH / CRITICAL risk c
 ---
 
 > This roadmap is a continuously rolling document; actual release timing and content may adjust with community feedback. Follow [GitHub Releases](https://github.com/Kirky-X/garrison/releases) for the latest.
-> Last synced: 2026-10-28 (0.9.0-rc.4 released).
+> Last synced: 2026-11-16 (0.9.0 released).
 
 ---
 
@@ -725,6 +725,6 @@ Every change must pass an impact analysis before merging; HIGH / CRITICAL risk c
 <tr><td align="center">✅</td><td>Security and protection</td><td>Account security engine / protection suite / firewall / multi-tenancy / audit logging</td></tr>
 <tr><td align="center">✅</td><td>Microservice architecture</td><td>backend-remote / Auth Server / ABAC / OAuth2 Server / gRPC</td></tr>
 <tr><td align="center">✅</td><td>Observability</td><td>tracing / metrics-prometheus / OTLP / i18n</td></tr>
-<tr><td align="center">✅</td><td>Security hardening (landed, shipping with next release)</td><td>Fail-closed acknowledgement for external login endpoints, password-login timing side-channel alignment, OAuth2 password grant rate-limit fail-closed, JWT blacklist write retry, SAML Destination/Audience strict by default, SSO secret ≥32 bytes + HMAC message envelope for pub/sub, check_safe/check_disable session preconditions, multi-tenant isolation hardening (session-tenant binding / identifier registry / device APIs). Scope note: the 127.0.0.1 default bind address and the ≥32-byte internal API key only constrain the reference <code>auth_server</code> binary — the library-level <code>AuthServerConfig</code> still defaults to 0.0.0.0 and only rejects an empty key, so tighten it explicitly (see [CHANGELOG.md](CHANGELOG.md) · 0.9.0-rc.3)</td></tr>
+<tr><td align="center">✅</td><td>Security hardening (landed, shipped with 0.9.0)</td><td>Fail-closed acknowledgement for external login endpoints, password-login timing side-channel alignment, OAuth2 password grant rate-limit fail-closed, JWT blacklist write retry, SAML Destination/Audience strict by default, SSO secret ≥32 bytes + HMAC message envelope for pub/sub, check_safe/check_disable session preconditions, multi-tenant isolation hardening (session-tenant binding / identifier registry / device APIs). Scope note: the 127.0.0.1 default bind address and the ≥32-byte internal API key only constrain the reference <code>auth_server</code> binary — the library-level <code>AuthServerConfig</code> still defaults to 0.0.0.0 and only rejects an empty key, so tighten it explicitly (see [CHANGELOG.md](CHANGELOG.md) · 0.9.0-rc.3)</td></tr>
 <tr><td align="center">📋</td><td>v1.0.0 Stable</td><td>API freeze + performance benchmarks + production case studies</td></tr>
 </table>

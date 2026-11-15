@@ -29,7 +29,7 @@ This document maps the ten risk categories of **OWASP Top 10 – 2021** one by o
 
 | Dimension | Content |
 |------|------|
-| Framework mechanisms | Argon2id password hashing by default (m=19456/t=2/p=1, the OWASP-recommended tier, locking tests + [ADR-0001](adr-0001-argon2id-password-hashing.md)); secure randomness uniformly reads the OS CSPRNG via `getrandom::fill` ([ADR-0002](adr-0002-csprng-policy.md)); the unified constant-time comparison primitive (`secure-ct-eq`, subtle, [ADR-0003](adr-0003-constant-time-comparison.md)); API Key secrets stored as sha256 hashes (CWE-916, plaintext never stored); JWT algorithm allowlist (fail-fast on minimum HS key length + asymmetric `KeyMaterial` type binding, RSA ≥2048 bits validated in config); unified masking of tokens in events/logs (CWE-532, `secure-masking`) |
+| Framework mechanisms | Argon2id password hashing by default (m=19456/t=2/p=1, the OWASP-recommended tier, locking tests + ADR-0001); secure randomness uniformly reads the OS CSPRNG via `getrandom::fill` (ADR-0002); the unified constant-time comparison primitive (`secure-ct-eq`, subtle, ADR-0003); API Key secrets stored as sha256 hashes (CWE-916, plaintext never stored); JWT algorithm allowlist (fail-fast on minimum HS key length + asymmetric `KeyMaterial` type binding, RSA ≥2048 bits validated in config); unified masking of tokens in events/logs (CWE-532, `secure-masking`) |
 | Business responsibilities | TLS termination and certificate management (reverse-proxy layer; see the [SECURITY.md](SECURITY.md) security-configuration recommendations); JWT key generation strength and 90-day rotation; encryption of sensitive fields at rest (downstream storage encryption is outside the framework's jurisdiction) |
 
 ## A03 – Injection
@@ -43,7 +43,7 @@ This document maps the ten risk categories of **OWASP Top 10 – 2021** one by o
 
 | Dimension | Content |
 |------|------|
-| Framework mechanisms | Security design documented: the STRIDE threat model ([THREAT.md](./THREAT.md), six dimensions × framework-defense/business-responsibility matrix); cryptographic selection rationale ([three ADRs](adr-0001-argon2id-password-hashing.md)); item-by-item ASVS 4.0 V2/V3 self-assessment on record ([SECURITY_ASVS.md](./SECURITY_ASVS.md)); safe-by-default design principles (external login endpoints off by default, Digest defaults to SHA-256, rate limiting fail-closed, SimpleToken generate returns Err when unsigned) |
+| Framework mechanisms | Security design documented: the STRIDE threat model ([THREAT.md](./THREAT.md), six dimensions × framework-defense/business-responsibility matrix); cryptographic selection rationale (three ADRs); item-by-item ASVS 4.0 V2/V3 self-assessment on record ([SECURITY_ASVS.md](./SECURITY_ASVS.md)); safe-by-default design principles (external login endpoints off by default, Digest defaults to SHA-256, rate limiting fail-closed, SimpleToken generate returns Err when unsigned) |
 | Business responsibilities | Business-flow-level threat modeling (abuse analysis of forgot-password / invitation-registration orchestration); design review when combining framework mechanisms into complete authentication flows |
 
 ## A05 – Security Misconfiguration

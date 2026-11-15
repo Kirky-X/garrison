@@ -31,10 +31,10 @@ Caused by:
 
 **原因**：早期版本（≤ 0.5.3）的 `Cargo.toml` 中 `oxcache` 使用本地 `path` 依赖，但该路径下不存在项目。0.9.0 起已切换为 crates.io 发布的 `oxcache`，不再需要本地 path 依赖。
 
-**解决**：升级到 0.9.0+，`Cargo.toml` 中 oxcache 已改为 crates.io 依赖（当前为 rc 预发布线，版本须写全）：
+**解决**：升级到 0.9.0+，`Cargo.toml` 中 oxcache 已改为 crates.io 依赖（当前为稳定线）：
 
 ```toml
-oxcache = { version = "0.5.0-rc.8", optional = true, default-features = false }
+oxcache = { version = "0.5", optional = true, default-features = false }
 ```
 
 > 注意：`"0.5"` 这类版本要求无法匹配预发布版本，写 `"0.5"` 会解析失败或落回旧版；rc 线必须显式写完整版本号（对照 `Cargo.toml` workspace 依赖声明）。

@@ -53,7 +53,7 @@
 | 0.9.0-rc.2 | ✅ 已完成 | 2026-08-26 | fail-closed 安全加固：`check_api_key` / `check_abac_with_policy` 缺依赖时拒绝放行而非默认放行；防火墙自动装配；`session::dao` crate 内可见性扩展；`firewall_hook_injected` 标记 |
 | 0.9.0-rc.3 | ✅ 已完成 | 2026-10-14 | 安全审计整改批次 R01–R18：统一错误模型（request-id / Retry-After / 模块前缀码）+ Argon2 并发令牌池 + 字段静态加密（AES-256-GCM）+ WebAuthn/Passkey + 密码找回 + MFA/step-up 编排基座 + OIDC back-channel logout + OIDC discovery/JWKS 多 kid 轮换 + Refresh 重用三级分类 + 多租户强化（会话-租户绑定/标识符注册表/设备接口）+ Set-Cookie 单一构建点 + garrison-cli 运维面 + 参考部署安全基线收紧 |
 | 0.9.0-rc.4 | ✅ 已完成 | 2026-10-20 | 会话 key SHA-256 摘要化 + DAO 原子契约修复（set_if_absent 过期接管 / MySQL ensure_table）+ vacuum_expired 原语 + 发布流水线收敛 + 限流后端 Redis 落地（候选 B）+ v1.0 门禁仓库侧产物（API 冻结候选清单 / API diff 工作流 / 性能基线入库 / Cookie 安全默认 / RefreshTokenRotation 并发验证） |
-| 1.0.0 | 📋 外部待办（仓库侧产物完成） | 2027 Q2 | 稳定版：API 冻结 / 性能基准 / 生产案例 / 安全审计四项门禁中，仓库侧产物已完成，第三方安全审计待外部；**本轮发布 0.9.0-rc.4，不发布 1.0.0** |
+| 1.0.0 | 📋 外部待办（仓库侧产物完成） | 2027 Q2 | 稳定版：API 冻结 / 性能基准 / 生产案例 / 安全审计四项门禁中，仓库侧产物已完成，第三方安全审计待外部；**本轮发布 0.9.0（2026-11-14），不发布 1.0.0** |
 
 ---
 
@@ -553,7 +553,7 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 - ✅ 参考部署（auth_server bin）安全基线收紧 + credit 活跃度写路径节流聚合（R13）
 - ✅ 常量时间比较统一原语收口（ADR-0003 决策 2）
 
-**里程碑意义**：聚焦 fail-closed 语义、静态加密、多租户隔离、协议完整运维面与参考部署基线收紧。逐项细节见 [docs/CHANGELOG.md](CHANGELOG.md) · 0.9.0-rc.3。
+**里程碑意义**：聚焦 fail-closed 语义、静态加密、多租户隔离、协议完整运维面与参考部署基线收紧。逐项细节见 [CHANGELOG.md](CHANGELOG.md) · 0.9.0-rc.3。
 
 #### 已知限制（0.9.0-rc.3）
 
@@ -589,7 +589,7 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 
 #### v1.0 门禁仓库侧产物（rc.4）
 
-- ✅ API 冻结候选清单：`docs/API_FREEZE_CANDIDATES.md`（Stable / Stable-with-feature / Experimental / Internal 分级）
+- ✅ API 冻结候选清单：`docs/cn/API_FREEZE_CANDIDATES.md`（Stable / Stable-with-feature / Experimental / Internal 分级）
 - ✅ PR 级 API diff：`.github/workflows/api-surface-diff.yml`（report-only，结构化 JSON 工件）
 - ✅ 性能基线入库：`docs/cn/benchmarks-v1.0-baseline.md` + `scripts/perf_compare.sh`（回归阈值判定；支持直接读归档 markdown 基线，无需本地 criterion 基线目录）
 - ✅ Cookie 安全默认：非 `development` profile 默认 `Secure=true`、`HttpOnly`、`SameSite=Lax`，配置可覆盖
@@ -609,7 +609,7 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 
 以下条目来自安全自评与审计结论，作为后续变更候选记录：
 
-- **Web 适配层 Cookie safe-by-default**：已交付——Cookie 安全默认收进单一构建点 `src/context/cookie.rs`（`build_set_cookie_value` 恒定 `HttpOnly`；`Secure` 取 `config.cookie_secure`，非 `development` profile 默认 `true`、`development` profile 默认 `false`；`SameSite=None` 在非 Secure 上下文降级为 `Lax`；`production` + Secure 上下文解析 `__Host-` / `__Secure-` 前缀）；回归覆盖 `tests/web_security.rs`（默认档位、显式覆盖、None→Lax 降级）。OWASP ASVS 自评 V3.4 已同步（见 `docs/SECURITY_ASVS.md`）。
+- **Web 适配层 Cookie safe-by-default**：已交付——Cookie 安全默认收进单一构建点 `src/context/cookie.rs`（`build_set_cookie_value` 恒定 `HttpOnly`；`Secure` 取 `config.cookie_secure`，非 `development` profile 默认 `true`、`development` profile 默认 `false`；`SameSite=None` 在非 Secure 上下文降级为 `Lax`；`production` + Secure 上下文解析 `__Host-` / `__Secure-` 前缀）；回归覆盖 `tests/web_security.rs`（默认档位、显式覆盖、None→Lax 降级）。OWASP ASVS 自评 V3.4 已同步（见 `docs/cn/SECURITY_ASVS.md`）。
 - **MFA 编排基座抽象**：已交付（R09，`stp::mfa` 因子账本 + per-client chain + RequiredActionProvider + 恢复码），TOTP/WebAuthn provider 已接线；剩余为更多认证因子 provider 扩展。
 - **FIDO2/WebAuthn（Passkey）正式认证**：`protocol-webauthn` 已合入（`src/protocol/webauthn/`，challenge / credential / service 齐备）；剩余工作是 FIDO Alliance 认可实验室的正式认证（企业采购高频问项）。
 - **OIDC discovery 端点**：已交付——`/oauth2/jwks.json` 与 `/.well-known/openid-configuration` 元数据端点均已注册路由（`src/server/oauth2_routes.rs`，后者由 `enable_openid_configuration` 开关控制）。
@@ -631,7 +631,7 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 | 生产案例文档 | 📋 自托管参考（非客户案例） | [参考生产案例](PRODUCTION_CASES.md) |
 | 安全审计 | 📋 第三方审计待外部 | [安全审计就绪包](SECURITY_AUDIT.md) · `scripts/security_evidence.sh` |
 
-> 本轮发布 **0.9.0-rc.4**；1.0.0 仅在第三方审计与外部条件完成后另行发布。
+> 本轮发布 **0.9.0**；1.0.0 仅在第三方审计与外部条件完成后另行发布。
 >
 > 门禁口径：本轮交付「可复现的基线 / 模板 / 证据包」，不宣称已完成 1.0 API 冻结或第三方安全审计。
 
@@ -712,7 +712,7 @@ explore → propose → apply → archive
 ---
 
 > 本路线图为持续滚动更新文档，实际发布时间与内容可能随社区反馈调整。最新进展请关注 [GitHub Releases](https://github.com/Kirky-X/garrison/releases)。
-> 最近同步：2026-10-28（0.9.0-rc.4 已发布）。
+> 最近同步：2026-11-16（0.9.0 已发布）。
 
 ---
 
@@ -727,6 +727,6 @@ explore → propose → apply → archive
 <tr><td align="center">✅</td><td>安全与防护</td><td>账号安全引擎 / 安全防护套件 / 防火墙 / 多租户 / 审计日志</td></tr>
 <tr><td align="center">✅</td><td>微服务架构</td><td>backend-remote / Auth Server / ABAC / OAuth2 Server / gRPC</td></tr>
 <tr><td align="center">✅</td><td>可观测性</td><td>tracing / metrics-prometheus / OTLP / i18n</td></tr>
-<tr><td align="center">✅</td><td>安全加固（已落地，随下一版本发布）</td><td>外网登录端点暴露确认 fail-closed、密码登录时序侧信道对齐、OAuth2 password grant 限流 fail-closed、JWT 黑名单写失败重试、SAML Destination/Audience 缺省 strict、SSO secret ≥32 字节 + pub/sub 消息 HMAC 信封、check_safe/check_disable 会话前置校验、多租户隔离强化（会话-租户绑定 / 标识符注册表 / 设备接口）。作用域提示：绑定地址缺省收敛 127.0.0.1 与内网 API Key 强制 ≥32 字节仅约束参考部署 <code>auth_server</code> bin，库层 <code>AuthServerConfig</code> 默认仍为 0.0.0.0 且只拒绝空 Key，须自行显式收口（见 [CHANGELOG.md](CHANGELOG.md) · 0.9.0-rc.3）</td></tr>
+<tr><td align="center">✅</td><td>安全加固（已落地，随 0.9.0 发布）</td><td>外网登录端点暴露确认 fail-closed、密码登录时序侧信道对齐、OAuth2 password grant 限流 fail-closed、JWT 黑名单写失败重试、SAML Destination/Audience 缺省 strict、SSO secret ≥32 字节 + pub/sub 消息 HMAC 信封、check_safe/check_disable 会话前置校验、多租户隔离强化（会话-租户绑定 / 标识符注册表 / 设备接口）。作用域提示：绑定地址缺省收敛 127.0.0.1 与内网 API Key 强制 ≥32 字节仅约束参考部署 <code>auth_server</code> bin，库层 <code>AuthServerConfig</code> 默认仍为 0.0.0.0 且只拒绝空 Key，须自行显式收口（见 [CHANGELOG.md](CHANGELOG.md) · 0.9.0-rc.3）</td></tr>
 <tr><td align="center">📋</td><td>v1.0.0 稳定版</td><td>API 冻结 + 性能基准 + 生产案例</td></tr>
 </table>

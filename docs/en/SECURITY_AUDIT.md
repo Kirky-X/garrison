@@ -56,7 +56,7 @@
 | End-to-end security surface    | `bash scripts/e2e_run.sh` (includes the `security::` domain)            | `logs/e2e_final_report.md` / `pentest_report.json` | Reproducible                           |
 | Dual-instance rate limiting      | `cargo test --features full --test redis_limiter_backend`  | Test output                                           | Added in rc.4                        |
 | ASVS self-assessment       | [SECURITY_ASVS.md](./SECURITY_ASVS.md)                     | Control mapping                                         | Established (rolling)               |
-| ADR             | `docs/cn/adr-0001..adr-0004`                                       | Decision records                                           | Established                           |
+| ADR             | `ADR-0001..ADR-0004`                                       | Decision records                                           | Established (kept locally, not committed)  |
 | Finding ledger        | `.mimosa/finding-ledger/v1`                                | JSON ledger                                          | Local tool state (not committed)           |
 | Audit evidence summary    | `bash scripts/security_evidence.sh`                        | `logs/security-evidence.md`                        | Added this round                         |
 
@@ -113,5 +113,5 @@ Before starting an external audit, prepare:
 | [🔒 Security policy](SECURITY.md)      | Vulnerability reporting channels and supported versions                          |
 | [🛡️ ASVS self-assessment](./SECURITY_ASVS.md) | V2/V3 control mapping                                |
 | [🎯 Threat model](./THREAT.md)         | STRIDE and trust boundaries                               |
-| [🧭 ADR-0001](adr-0001-argon2id-password-hashing.md) / [0002](adr-0002-csprng-policy.md) / [0003](adr-0003-constant-time-comparison.md) / [0004](adr-0004-unified-error-model-request-id-retry-after.md) | Password hashing / CSPRNG / constant-time comparison / unified error model |
+| 🧭 ADR-0001 / 0002 / 0003 / 0004 | Password hashing / CSPRNG / constant-time comparison / unified error model |
 | [🗺️ Roadmap](./ROADMAP.md)          | v1.0 security-audit gate status                           |

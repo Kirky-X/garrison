@@ -77,7 +77,7 @@ cargo build --features full
 # 全量编译
 cargo build --features full
 
-# 全量测试（5454 个 lib 测试应全部通过）
+# 全量测试（5469 个 lib 测试应全部通过）
 cargo test --features full
 
 # Lint（零警告）
@@ -344,7 +344,7 @@ Garrison 的覆盖率门禁为**行覆盖率 ≥ 95%**（CI 门禁 `cargo llvm-c
 | 协议/安全插件 | ≥ 90% |
 | Web 适配层 | 集成测试覆盖主要中间件路径即可 |
 
-- 5800+ 个测试通过（5454 lib + 416 验收 E2E，合计 5870）+ doc-tests（`cargo test --list` 实测，截至 2026-10-28）
+- 5800+ 个测试通过（5469 lib + 416 验收 E2E，合计 5885）+ doc-tests（`cargo test --list` 实测，截至 2026-11-16）
 - 不追求 100% 覆盖率，但每个分支必须有对应测试用例
 - 禁止通过「不写测试」来提高覆盖率的行为
 
@@ -807,4 +807,4 @@ cargo bench --bench garrison_benchmark --features full --locked -- --quick
 
 ### 📊 测试规模
 
-约 5994 个测试（lib 单元 5454 + 验收 / 集成 416 + 示例级 116 + 过程宏 8；lib 与验收数为 `cargo test --list` 实测，示例与过程宏为属性静态计数，截至 2026-10-28）与 6 个 Criterion 基准场景；覆盖率门禁为行覆盖率不低于 95%（2026-10-14 实测约 95.15%）。统计口径与明细见 [🧪 测试场景矩阵 · 测试规模统计](TEST_SCENARIOS.md#-测试规模统计)。
+约 6009 个测试（lib 单元 5469 + 验收 / 集成 416 + 示例级 116 + 过程宏 8；lib 与验收数为 `cargo test --list` 实测，示例与过程宏为属性静态计数，截至 2026-11-16）与 6 个 Criterion 基准场景；覆盖率门禁为行覆盖率不低于 95%（2026-10-14 实测约 95.15%）。统计口径与明细见 [🧪 测试场景矩阵 · 测试规模统计](TEST_SCENARIOS.md#-测试规模统计)。

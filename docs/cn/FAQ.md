@@ -3,7 +3,7 @@
 本文件汇总 Garrison 框架在设计、使用与部署过程中最常被问到的问题。如果你是初次接触 Garrison，建议先阅读本文件再查阅 API 文档。
 
 > 项目仓库：<https://github.com/Kirky-X/garrison>
-> 当前版本：0.9.0-rc.4（发布候选，2026-10-20）｜下一版本：1.0.0（门禁启动，2027 Q2）
+> 当前版本：0.9.0（2026-11-14）｜下一版本：1.0.0（门禁启动，2027 Q2）
 
 ## 📋 目录
 
@@ -199,7 +199,7 @@ A: 推荐使用聚合 feature `production`，它包含以下子特性：
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.4", features = ["production"] }
+garrison = { version = "0.9.0", features = ["production"] }
 ```
 
 `production` 聚合下列 41 个特性（权威列表见 `Cargo.toml` 的 `[features] production`）：

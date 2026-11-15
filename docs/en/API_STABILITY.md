@@ -1,6 +1,6 @@
 # 🧱 Garrison API Stability Tiers (v1.0 Gate Artifact Complete)
 
-> **Positioning statement**: this document is the **repository-side artifact** of the v1.0 "API freeze" gate (stability tiering, freeze checklist, public-surface baseline capture methodology, and PR-level report-only diff), and it is complete; **it does not mean the 1.0 API freeze has been declared** — the current version is still `0.9.0-rc.x`, the 0.x stage allows breaking changes per the [SemVer policy](./ROADMAP.md), and the 1.0.0 release must wait for external conditions such as a third-party audit (see the ROADMAP "v1.0.0 Stable" gate table). This document first writes "which surfaces are semver-protected after 1.0 and which remain experimental" into a reviewable checklist, and provides the capture methodology for the public-surface baseline.
+> **Positioning statement**: this document is the **repository-side artifact** of the v1.0 "API freeze" gate (stability tiering, freeze checklist, public-surface baseline capture methodology, and PR-level report-only diff), and it is complete; **it does not mean the 1.0 API freeze has been declared** — the current version is still `0.9.x`, the 0.x stage allows breaking changes per the [SemVer policy](./ROADMAP.md), and the 1.0.0 release must wait for external conditions such as a third-party audit (see the ROADMAP "v1.0.0 Stable" gate table). This document first writes "which surfaces are semver-protected after 1.0 and which remain experimental" into a reviewable checklist, and provides the capture methodology for the public-surface baseline.
 
 ## 📋 Table of Contents
 
@@ -56,7 +56,7 @@ Every item must be closed before 1.0; this round only establishes the checklist 
 - [ ] **Public-item list**: generate the baseline with `scripts/api_surface.sh` and mark each item Stable / Experimental / Internal.
 - [ ] **`#[non_exhaustive]` audit**: for public enums/structs that may gain variants (especially `GarrisonError`, config enums, `RateLimitBackend`), evaluate adding `#[non_exhaustive]`.
 - [ ] **Error-code freeze**: the prefix codes of `GarrisonError::prefixed_code()` (`stp-*` / `config-*` / `strategy-*` etc.) are frozen as a monitoring contract; new codes add but never change.
-- [ ] **Config-key freeze**: key names appearing in `docs/CONFIGURATION.md` are frozen; deprecated keys migrate via the R12 registry, and from 1.0 unmigrated keys are rejected.
+- [ ] **Config-key freeze**: key names appearing in `docs/en/CONFIGURATION.md` are frozen; deprecated keys migrate via the R12 registry, and from 1.0 unmigrated keys are rejected.
 - [ ] **Feature-name freeze**: the public feature names in `Cargo.toml [features]` are API; the internal `http` bridge feature is marked `[INTERNAL]` in the docs.
 - [ ] **Storage key-format freeze**: changes to session keys (`token:session:{sha256}`) and rate-limit keys (`fw:*` / `rl:*`) require a major + migration guide.
 - [ ] **MSRV policy**: `rust-version` changes only in minors; after 1.0 keep at least one minor as the upgrade window.

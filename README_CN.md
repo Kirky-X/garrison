@@ -68,7 +68,7 @@
 <td width="50%" style="vertical-align:top; padding: 12px">📊 <b>高可观测</b><br><span style="color:#64748B"><code>tracing</code> 日志 + <code>listener</code> 事件订阅 + <code>prometheus</code> 指标（可选）</span></td>
 </tr>
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>高覆盖</b><br><span style="color:#64748B">5990+ 个测试（lib 约 5454 + 验收/集成/示例约 540），95%+ 行覆盖率，clippy 零警告</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>高覆盖</b><br><span style="color:#64748B">6000+ 个测试（lib 约 5469 + 验收/集成/示例约 540），95%+ 行覆盖率，clippy 零警告</span></td>
 <td width="50%" style="vertical-align:top; padding: 12px">🌐 <b>Web 框架适配</b><br><span style="color:#64748B">axum/actix/warp 三框架注解式 extractor + 过程宏</span></td>
 </tr>
 </table>
@@ -199,7 +199,6 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 | [⚙️ 配置指南](docs/cn/CONFIGURATION.md) | 三级配置源、完整配置项与热更新 |
 | [⚡ 性能指南](docs/cn/PERFORMANCE.md) | 性能目标、基准测试与优化建议 |
 | [📊 性能基线](docs/cn/benchmarks-v1.0-baseline.md) | v1.0 前基准采集数据 |
-| [🧭 架构决策记录（ADR ×4）](docs/cn/adr-0001-argon2id-password-hashing.md) | Argon2id 选型 / CSPRNG / 常量时间比较 / 统一错误模型 |
 | [🧱 API 稳定性分级](docs/cn/API_STABILITY.md) | v1.0 稳定性层级、冻结清单与公共面基线 |
 | [🏭 参考生产案例](docs/cn/PRODUCTION_CASES.md) | 自托管参考部署案例与提交模板 |
 | [🔎 安全审计就绪包](docs/cn/SECURITY_AUDIT.md) | 审计范围、证据矩阵与第三方 RFP 清单 |

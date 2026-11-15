@@ -61,19 +61,19 @@ The three quality defense lines:
 
 ## 📊 Test Scale Statistics
 
-> The unit and acceptance columns are `cargo test -- --list` measured counts under the CI feature faces (full / full+testing); examples and proc macros are static counts of `#[test]` / `#[tokio::test]` attributes; as of 2026-10-28 (measured on the v0.9.0-rc.4 workspace).
+> The unit and acceptance columns are `cargo test -- --list` measured counts under the CI feature faces (full / full+testing); examples and proc macros are static counts of `#[test]` / `#[tokio::test]` attributes; as of 2026-11-16 (measured on the v0.9.0 workspace).
 
 | Category | Location | Count |
 |------|------|------|
-| Unit tests | `src/` inline (`cargo test --features full --lib -- --list`) | 5454 |
+| Unit tests | `src/` inline (`cargo test --features full --lib -- --list`) | 5469 |
 | Acceptance / integration / UI tests | `tests/` (`cargo test --test acceptance --features "full testing" -- --list`) | 416 |
 | Example-level integration tests | `examples/tests/` (65 files, one per example bin) | about 116 |
 | Proc-macro tests | `macros/` | 8 |
-| Total | — | **about 5994** |
+| Total | — | **about 6009** |
 | Criterion benchmarks | `benches/garrison_benchmark.rs` | 6 scenarios |
 | Line-coverage gate | the `ci.yml` coverage job | `--fail-under-lines 95` (measured about 95.15% on 2026-10-14) |
 
-> Coverage follows the existing recorded value; this round re-measured and refreshed the test counts (full face 5454 / acceptance face 416); line coverage was not re-measured.
+> Coverage follows the existing recorded value; this round re-measured and refreshed the test counts (full face 5469 / acceptance face 416); line coverage was not re-measured.
 
 ---
 
@@ -91,7 +91,7 @@ The three quality defense lines:
 | `protocol_jwt.rs` | 19 | JWT issuance / verification / refresh rotation |
 | `protocol_oauth2.rs` | 19 | OAuth2 four grants (against a real Keycloak 26) |
 | `protocol_mixed.rs` | 23 | Multi-protocol mixed scenarios (JWT/OAuth2/SSO crossings) |
-| `server.rs` | 22 | The standalone authentication server (auth-server endpoint behavior) |
+| `server.rs` | 34 | The standalone authentication server (auth-server endpoint behavior) |
 | `web_axum.rs` | 25 | axum route interception and annotations |
 | `web_actix.rs` | 8 | actix-web middleware |
 | `web_warp.rs` | 6 | warp filters |
@@ -109,8 +109,8 @@ The three quality defense lines:
 | `security.rs` | 30 | Penetration-test attack surfaces (token forgery / injection / CSRF; the former pentest suite ACC-SEC-021..030 merged in) |
 | `resilience.rs` | 12 | Failure resilience (timeouts / disconnections / circuit breaking / fail-closed) |
 | `qrlogin.rs` | 7 | First-party QR login (Web displays QR + App confirms, two-ticket separation) |
-| `concurrency.rs` | 9 | Race conditions (including 8 `#[ignore]` performance-baseline `perf_*` cases) |
-| `environment.rs` | 8 | External-service environment gates (Redis DAO / Postgres migrations / MySQL testcontainers, auto [SKIP] when unreachable) |
+| `concurrency.rs` | 9 | Race conditions (including 3 `#[ignore]` performance-baseline `perf_*` cases) |
+| `environment.rs` | 10 | External-service environment gates (Redis DAO / Postgres migrations / MySQL testcontainers, auto [SKIP] when unreachable) |
 
 ### Migrated archive domains (`tests/acceptance/migrated/`)
 
@@ -147,7 +147,7 @@ dbnexus uses `compile_error!` to forbid embedded (sqlite) and server-side (postg
 ### Scale overview
 
 - `cargo metadata` statistics: **143 named features**, with the aggregates
-  `full` transitively enabling 104 items, `production` 41, `config-full` 13, `db-base` 14.
+  `full` aggregating 104 items, `production` 42, `config-full` 13, `db-base` 14.
 - Module layering: core (no switches, always compiled) + 9 major optional domains + 3 aggregate features.
 
 ### Domains and dependency structure
@@ -157,7 +157,7 @@ Core (always on): core / stp / annotation / router / dao / strategy /
                    session / config / context / json / exception / manager / plugin
 
 Core extensions ── core-advanced ← authorize-api ← manager-explicit
-         └─ tenant-isolation ⇒ limiteron/multi-tenant (limiteron rc.7 changed the Identifier-import gating to any(parallel-checker, ban-manager, multi-tenant), no companion feature carrier needed)
+         └─ tenant-isolation ⇒ limiteron/multi-tenant (limiteron's 0.3 stable line changed the Identifier-import gating to any(parallel-checker, ban-manager, multi-tenant), no companion feature carrier needed)
 
 Config enhancements ── config-{encryption,validation,hot-reload,interpolation,dynamic,
              toggle,yaml,audit,consul,etcd,distributed,schema} → confers/* passthrough
@@ -246,7 +246,7 @@ Aggregates ── full (95 items) / production (35 items, db-postgres-oriented) 
 | `protocol-sso` ⇒ `protocol-jwt` | OIDC `exchange_code` must verify the `id_token` signature (a security-audit fail-open → fail-closed fix) |
 | The `http` bridge feature must not be renamed | The sdforge `#[forge]` macro hard-codes `#[cfg(feature = "http")]`; renaming = all dynamic routes 404 |
 | `security-alert` must land in `security-extra` | It was historically a zero-dependency dead feature, making device-binding fail to compile alone |
-| MSRV | 1.97.1 (`rust-version` in `Cargo.toml`) — the sibling-ecosystem crates (the rc lines of oxcache / dbnexus / confers / sdforge / limiteron / inklog / trait-kit, rc.7–rc.10) require rustc ≥1.97.1, hence the declaration; the CI matrix's MSRV leg and `clippy.toml`'s `msrv` share the value, asserted by the `msrv_guard` guard test |
+| MSRV | 1.97.1 (`rust-version` in `Cargo.toml`) — the sibling-ecosystem crates (the stable lines of oxcache / dbnexus / confers / sdforge / limiteron / inklog / trait-kit) require rustc ≥1.97.1, hence the declaration; the CI matrix's MSRV leg and `clippy.toml`'s `msrv` share the value, asserted by the `msrv_guard` guard test |
 
 ---
 
@@ -380,8 +380,8 @@ then `logs/e2e_matrix/<stage>.log`).
 
 ## 📝 Known Issues and Disposition Records
 
-- **Toolchain**: the sibling-ecosystem crates (the rc lines of confers / dbnexus / oxcache / sdforge / limiteron / inklog /
-  trait-kit, rc.7–rc.10) require rustc ≥1.97.1; the aliyun mirror may lag, so update stable from the official source
+- **Toolchain**: the sibling-ecosystem crates (the stable lines of confers / dbnexus / oxcache / sdforge / limiteron / inklog /
+  trait-kit) require rustc ≥1.97.1; the aliyun mirror may lag, so update stable from the official source
   (`RUSTUP_DIST_SERVER=https://static.rust-lang.org rustup update stable`).
 - **e2e target remnants**: the migration deleted examples' `--test e2e`
   target, but `scripts/e2e_run.sh` still referenced it — rewritten to point at the current `tests/acceptance`

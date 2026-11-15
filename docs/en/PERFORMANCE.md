@@ -2,7 +2,7 @@
 
 This guide summarizes Garrison's performance design points, benchmarking methodology, and optimization advice. Garrison's performance targets use the authentication framework's hot paths as the scope: the login chain (including password hashing) and per-request stateless verification (token validation, permission checks).
 
-> Applicable version: 0.9.0-rc.4 (rc.4 adds the Redis rate-limit backend). This document publishes no absolute timing figures (criterion interval estimates vary by machine); benchmarks are reproduced locally with `cargo bench`, and the acceptance performance baseline follows the `logs/perf.jsonl` produced by `scripts/e2e_run.sh`.
+> Applicable version: 0.9.0 (rc.4 adds the Redis rate-limit backend). This document publishes no absolute timing figures (criterion interval estimates vary by machine); benchmarks are reproduced locally with `cargo bench`, and the acceptance performance baseline follows the `logs/perf.jsonl` produced by `scripts/e2e_run.sh`.
 
 ## 📋 Table of Contents
 
@@ -143,11 +143,11 @@ The script records git SHA / rustc / cargo / CPU model, runs `cargo bench --feat
 ```bash
 bash scripts/perf_compare.sh                                  # default baseline v1.0-pre, threshold 10%
 BASELINE=v1.0-pre THRESHOLD=5 bash scripts/perf_compare.sh    # custom threshold
-BASELINE_MD=docs/cn/benchmarks-v1.0-baseline.md bash scripts/perf_compare.sh   # explicit archived baseline
+BASELINE_MD=docs/en/benchmarks-v1.0-baseline.md bash scripts/perf_compare.sh   # explicit archived baseline
 bash scripts/perf_compare.sh --help                           # usage and exit-code semantics
 ```
 
-The baseline source is resolved by priority: (1) the archived markdown named by `BASELINE_MD`; (2) a local criterion baseline (`target/criterion/**/<baseline>/estimates.json`, not committed); (3) when both are absent, an archived markdown is matched by "baseline name" under `docs/cn/` automatically. Hence after cloning the repository you can compare against the committed baseline without first running `perf_baseline.sh`.
+The baseline source is resolved by priority: (1) the archived markdown named by `BASELINE_MD`; (2) a local criterion baseline (`target/criterion/**/<baseline>/estimates.json`, not committed); (3) when both are absent, the script auto-matches an archived markdown by "baseline name" under `docs/benchmarks/` — that directory no longer exists after the bilingual docs reorganization, so the auto-match currently always fails (explicit exit 2); pass the committed baseline explicitly via `BASELINE_MD=docs/en/<baseline>.md` instead.
 
 Exit codes:
 
@@ -160,9 +160,9 @@ Exit codes:
 ### Baseline refresh and archiving SOP
 
 1. **Refresh**: on the target machine run `BASELINE=<new-baseline> bash scripts/perf_baseline.sh` (`--quick` for fast sampling, draft comparisons only); the artifact `logs/perf-baseline.md` records git SHA / toolchain / CPU.
-2. **Archive**: copy `logs/perf-baseline.md` to `docs/cn/<baseline>.md` (e.g. `docs/cn/benchmarks-v1.0-baseline.md`) and commit — the archived markdown's "baseline name" field is `perf_compare.sh`'s auto-match key.
-3. **Self-check**: run once with the archived baseline via `BASELINE_MD=docs/cn/<baseline>.md bash scripts/perf_compare.sh`, confirming a comparison table is produced and the exit code matches expectations (a baseline parse failure exits 2 explicitly).
-4. **Switching baselines**: when updating the default baseline name, also update `scripts/perf_compare.sh`'s `BASELINE` default, the archived file names under `docs/cn/`, and the baseline references in `docs/cn/ROADMAP.md` / `docs/cn/CHANGELOG.md`.
+2. **Archive**: copy `logs/perf-baseline.md` to `docs/en/<baseline>.md` (e.g. `docs/en/benchmarks-v1.0-baseline.md`) and commit — the archived markdown's "baseline name" field is `perf_compare.sh`'s auto-match key.
+3. **Self-check**: run once with the archived baseline via `BASELINE_MD=docs/en/<baseline>.md bash scripts/perf_compare.sh`, confirming a comparison table is produced and the exit code matches expectations (a baseline parse failure exits 2 explicitly).
+4. **Switching baselines**: when updating the default baseline name, also update `scripts/perf_compare.sh`'s `BASELINE` default, the archived file names under `docs/en/`, and the baseline references in `docs/en/ROADMAP.md` / `docs/en/CHANGELOG.md`.
 
 ---
 

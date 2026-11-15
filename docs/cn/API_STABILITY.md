@@ -1,6 +1,6 @@
 # 🧱 Garrison API 稳定性分级（v1.0 门禁产物完成）
 
-> **定位声明**：本文是 v1.0「API 冻结」门禁的**仓库侧产物**（稳定层级分级、冻结检查清单、公共面基线采集方法与 PR 级 report-only diff），已完成；**不等于 1.0 API 冻结已宣告**——当前版本仍为 `0.9.0-rc.x`，0.x 阶段按 [SemVer 策略](./ROADMAP.md) 允许破坏性变更；1.0.0 须待第三方审计等外部条件完成后另行发布（见 ROADMAP「v1.0.0 稳定版」门禁表）。本文先把「哪些面在 1.0 后受 semver 保护、哪些仍是实验面」写成可评审清单，并给出公共面基线的采集方法。
+> **定位声明**：本文是 v1.0「API 冻结」门禁的**仓库侧产物**（稳定层级分级、冻结检查清单、公共面基线采集方法与 PR 级 report-only diff），已完成；**不等于 1.0 API 冻结已宣告**——当前版本仍为 `0.9.x`，0.x 阶段按 [SemVer 策略](./ROADMAP.md) 允许破坏性变更；1.0.0 须待第三方审计等外部条件完成后另行发布（见 ROADMAP「v1.0.0 稳定版」门禁表）。本文先把「哪些面在 1.0 后受 semver 保护、哪些仍是实验面」写成可评审清单，并给出公共面基线的采集方法。
 
 ## 📋 目录
 
@@ -56,7 +56,7 @@
 - [ ] **公共项清单**：用 `scripts/api_surface.sh` 生成基线，逐项标注 Stable / Experimental / Internal。
 - [ ] **`#[non_exhaustive]` 审计**：对可能新增变体的公开 enum / struct（尤其 `GarrisonError`、配置枚举、`RateLimitBackend`）评估是否加 `#[non_exhaustive]`。
 - [ ] **错误码冻结**：`GarrisonError::prefixed_code()` 的前缀码（`stp-*` / `config-*` / `strategy-*` 等）作为监控契约冻结；新增码只增不改。
-- [ ] **配置键冻结**：`docs/CONFIGURATION.md` 中出现的键名冻结；弃用键经 R12 注册表迁移，1.0 起拒绝未迁移键。
+- [ ] **配置键冻结**：`docs/cn/CONFIGURATION.md` 中出现的键名冻结；弃用键经 R12 注册表迁移，1.0 起拒绝未迁移键。
 - [ ] **feature 名冻结**：`Cargo.toml [features]` 的公开 feature 名视为 API；内部 `http` 桥接 feature 在文档中标注 `[INTERNAL]`。
 - [ ] **存储 key 格式冻结**：会话 key（`token:session:{sha256}`）、限流 key（`fw:*` / `rl:*`）变更需 major + 迁移指南。
 - [ ] **MSRV 策略**：`rust-version` 变更只在 minor；1.0 后至少保留一个 minor 的升级窗口。

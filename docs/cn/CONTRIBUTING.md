@@ -4,7 +4,7 @@
 
 首先，感谢你对 Garrison 项目的关注与支持！本文档将引导你完成从环境搭建到提交 Pull Request 的完整贡献流程。
 
-Garrison 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 TDD（测试驱动开发）工作流，对代码质量有严格要求：5454 个 lib 测试通过 + doc-tests、95%+ 覆盖率、clippy 零警告、所有 public API 均带 `///` 文档注释。
+Garrison 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 TDD（测试驱动开发）工作流，对代码质量有严格要求：5469 个 lib 测试通过 + doc-tests、95%+ 覆盖率、clippy 零警告、所有 public API 均带 `///` 文档注释。
 
 > 相关文档：[🛠️ 开发规范](./DEVELOPMENT.md) | [🏗️ 架构设计](./ARCHITECTURE.md) | [⚙️ 配置指南](./CONFIGURATION.md)
 
@@ -85,7 +85,7 @@ cargo build --features full
 cargo test --features full
 ```
 
-预期输出：5454 个 lib 测试通过 + doc-tests 全部通过。
+预期输出：5469 个 lib 测试通过 + doc-tests 全部通过。
 
 ---
 

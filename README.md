@@ -68,7 +68,7 @@ Inject your dependencies into `GarrisonManager` once at startup — from login t
 <td width="50%" style="vertical-align:top; padding: 12px">📊 <b>High Observability</b><br><span style="color:#64748B"><code>tracing</code> logging + <code>listener</code> event subscriptions + <code>prometheus</code> metrics (optional)</span></td>
 </tr>
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>High Coverage</b><br><span style="color:#64748B">5990+ tests (≈5454 lib + ≈540 acceptance/integration/examples), 95%+ line coverage, clippy zero warnings</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>High Coverage</b><br><span style="color:#64748B">6000+ tests (≈5469 lib + ≈540 acceptance/integration/examples), 95%+ line coverage, clippy zero warnings</span></td>
 <td width="50%" style="vertical-align:top; padding: 12px">🌐 <b>Web Framework Adapters</b><br><span style="color:#64748B">axum/actix/warp annotation-style extractors + proc macros</span></td>
 </tr>
 </table>
@@ -199,7 +199,6 @@ For deeper coverage of the core concepts — global singleton + static API, toke
 | [⚙️ Configuration](docs/en/CONFIGURATION.md) | Three-tier config sources, full field reference, and hot-reload |
 | [⚡ Performance](docs/en/PERFORMANCE.md) | Performance targets, benchmarks, and optimization advice |
 | [📊 Performance Baseline](docs/en/benchmarks-v1.0-baseline.md) | Pre-v1.0 benchmark capture data |
-| [🧭 Architecture Decision Records (ADR ×4)](docs/en/adr-0001-argon2id-password-hashing.md) | Argon2id / CSPRNG / constant-time comparison / unified error model |
 | [🧱 API Stability](docs/en/API_STABILITY.md) | v1.0 stability tiers, freeze checklist, and public API baseline |
 | [🏭 Reference Deployments](docs/en/PRODUCTION_CASES.md) | Self-hosted reference cases and submission template |
 | [🔎 Security Audit Readiness](docs/en/SECURITY_AUDIT.md) | Audit scope, evidence matrix, and third-party RFP checklist |

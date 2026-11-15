@@ -77,7 +77,7 @@ cargo build --features full
 # full build
 cargo build --features full
 
-# full tests (all 5454 lib tests should pass)
+# full tests (all 5469 lib tests should pass)
 cargo test --features full
 
 # Lint (zero warnings)
@@ -343,7 +343,7 @@ The per-module figures below are target lines (expectations set by Kirky.X), **n
 | Protocol/security plugins | ≥ 90% |
 | Web adapter layer | Integration tests covering the main middleware paths suffice |
 
-- 5800+ tests passing (5454 lib + 416 acceptance E2E, 5870 total) + doc-tests (`cargo test --list` measured, as of 2026-10-28)
+- 5800+ tests passing (5469 lib + 416 acceptance E2E, 5885 total) + doc-tests (`cargo test --list` measured, as of 2026-11-16)
 - 100% coverage is not the goal, but every branch must have a corresponding test case
 - Raising coverage by "not writing tests" is forbidden
 
@@ -806,4 +806,4 @@ cargo bench --bench garrison_benchmark --features full --locked -- --quick
 
 ### 📊 Test scale
 
-About 5994 tests (5454 lib unit + 416 acceptance / integration + 116 example-level + 8 proc macros; lib and acceptance counts measured via `cargo test --list`, examples and proc macros counted statically by attribute, as of 2026-10-28) and 6 Criterion benchmark scenarios; the coverage gate is line coverage no lower than 95% (measured about 95.15% on 2026-10-14). For the counting methodology and details see [🧪 Test Scenarios · Test Scale](TEST_SCENARIOS.md#-test-scale-statistics).
+About 6009 tests (5469 lib unit + 416 acceptance / integration + 116 example-level + 8 proc macros; lib and acceptance counts measured via `cargo test --list`, examples and proc macros counted statically by attribute, as of 2026-11-16) and 6 Criterion benchmark scenarios; the coverage gate is line coverage no lower than 95% (measured about 95.15% on 2026-10-14). For the counting methodology and details see [🧪 Test Scenarios · Test Scale](TEST_SCENARIOS.md#-test-scale-statistics).

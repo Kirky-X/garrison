@@ -31,10 +31,10 @@ Caused by:
 
 **Cause**: in early versions (≤ 0.5.3) `Cargo.toml` used a local `path` dependency for `oxcache`, but no project existed at that path. Since 0.9.0 the published crates.io `oxcache` is used and no local path dependency is needed.
 
-**Fix**: upgrade to 0.9.0+; oxcache in `Cargo.toml` is now a crates.io dependency (currently on the rc prerelease line, so the version must be written in full):
+**Fix**: upgrade to 0.9.0+; oxcache in `Cargo.toml` is now a crates.io dependency (currently on the stable line):
 
 ```toml
-oxcache = { version = "0.5.0-rc.8", optional = true, default-features = false }
+oxcache = { version = "0.5", optional = true, default-features = false }
 ```
 
 > Note: version requirements like `"0.5"` cannot match prerelease versions; writing `"0.5"` fails to resolve or falls back to an older version. The rc line requires the full version number explicitly (see the `Cargo.toml` workspace dependency declarations).

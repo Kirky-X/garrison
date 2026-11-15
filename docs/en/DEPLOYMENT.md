@@ -127,7 +127,7 @@ With the `tls` feature, the Garrison Auth Server supports HTTPS/TLS termination 
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.4", features = ["tls", "auth-server"] }
+garrison = { version = "0.9.0", features = ["tls", "auth-server"] }
 ```
 
 ```rust
@@ -140,7 +140,7 @@ garrison = { version = "0.9.0-rc.4", features = ["tls", "auth-server"] }
 With `tls-cert-watch` enabled on top of `tls`, the framework watches the certificate and key files (200ms debounce) and swaps in the new configuration when the files change:
 
 ```toml
-garrison = { version = "0.9.0-rc.4", features = ["tls-cert-watch", "auth-server"] }
+garrison = { version = "0.9.0", features = ["tls-cert-watch", "auth-server"] }
 ```
 
 - Covers both "overwrite in place" and "write temp file + rename" certificate-replacement techniques; the external and internal ports share the configuration, new handshakes use the new certificate immediately, existing connections stay up, and the process does not restart.
@@ -220,13 +220,13 @@ Behaviors shared by both variants:
 ```bash
 # debian-slim variant (default)
 docker build \
-  --build-arg VERSION=0.9.0-rc.4 \
+  --build-arg VERSION=0.9.0 \
   --build-arg GIT_SHA=$(git rev-parse HEAD) \
   -t garrison-auth:local .
 
 # distroless variant
 docker build -f docker/Dockerfile.distroless \
-  --build-arg VERSION=0.9.0-rc.4 \
+  --build-arg VERSION=0.9.0 \
   --build-arg GIT_SHA=$(git rev-parse HEAD) \
   -t garrison-auth:local-distroless .
 ```

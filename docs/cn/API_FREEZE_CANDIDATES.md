@@ -1,6 +1,6 @@
 # Garrison v1.0 API 冻结候选清单
 
-> 本文是 [API_STABILITY.md](./API_STABILITY.md) 的配套评审材料：把「1.0 后受 semver 保护的面」与「仍可调整的实验面」逐项列出。它不是冻结完成的宣告；当前版本仍为 `0.9.0-rc.x`，0.x 阶段允许破坏性变更。
+> 本文是 [API_STABILITY.md](./API_STABILITY.md) 的配套评审材料：把「1.0 后受 semver 保护的面」与「仍可调整的实验面」逐项列出。它不是冻结完成的宣告；当前版本仍为 `0.9.x`，0.x 阶段允许破坏性变更。
 
 ## 分级口径
 
@@ -55,7 +55,7 @@
 | 1 | 公共项清单逐项分级 | `logs/api-surface.txt` + 本文表 | 进行中 |
 | 2 | `#[non_exhaustive]` 审计 | `GarrisonError`、配置枚举、`RateLimitBackend` 评审记录 | 待办 |
 | 3 | 错误码冻结 | `prefixed_code()` 前缀码清单 | 待办 |
-| 4 | 配置键冻结 | `docs/CONFIGURATION.md` 键名清单 | 待办 |
+| 4 | 配置键冻结 | `docs/cn/CONFIGURATION.md` 键名清单 | 待办 |
 | 5 | feature 名冻结 | `Cargo.toml [features]` 公开面清单 | 待办 |
 | 6 | 存储 key 格式冻结 | 会话/限流 key 格式说明 | 待办 |
 | 7 | MSRV 策略 | `rust-version` 变更窗口说明 | 待办 |
