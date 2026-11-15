@@ -258,7 +258,7 @@ For the detailed contribution workflow and code standards, see the [🤝 Contrib
 
 ### 🛠️ Development Environment
 
-For toolchain requirements, pre-commit checks (`cargo fmt` / `cargo clippy`), and the Conventional Commits message convention, see the [🤝 Contributing Guide · Development Environment](docs/en/CONTRIBUTING.md#-environment-setup).
+For toolchain requirements, pre-commit checks (`cargo fmt` / `cargo clippy`), and the Conventional Commits message convention, see the [🤝 Contributing Guide · Development Environment](docs/en/CONTRIBUTING.md#-development-environment-setup).
 
 ### 💖 Ways to Contribute
 
