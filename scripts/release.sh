@@ -49,7 +49,7 @@ cmd_check_version() {
     ok "Cargo.toml version: $cargo_version"
 
     # 2. 检查 CHANGELOG.md 是否有对应章节
-    if ! grep -qE "^## \[${version}\] " docs/CHANGELOG.md; then
+    if ! grep -qE "^## \[${version}\] " docs/cn/CHANGELOG.md; then
         fail "CHANGELOG.md 缺少 \"## [$version] - YYYY-MM-DD\" 章节"
         exit 1
     fi
@@ -206,7 +206,7 @@ cmd_precheck() {
     if ! validate_semver "$cargo_version"; then
         fail "Cargo.toml 版本号格式非法: $cargo_version"
         failures=$((failures + 1))
-    elif grep -qE "^## \[${cargo_version}\] " docs/CHANGELOG.md; then
+    elif grep -qE "^## \[${cargo_version}\] " docs/cn/CHANGELOG.md; then
         ok "CHANGELOG.md 包含 ## [$cargo_version] 章节"
     else
         fail "CHANGELOG.md 缺少 ## [$cargo_version] 章节"
@@ -250,7 +250,7 @@ Garrison Release 工作流本地预检查脚本
   $0 gen-changelog v0.7.0..HEAD 0.7.1
   $0 bump-version 0.7.1
 
-详见 docs/RELEASING.md
+详见 docs/cn/RELEASING.md
 EOF
             ;;
         *)
