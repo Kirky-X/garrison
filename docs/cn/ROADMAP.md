@@ -19,7 +19,7 @@
 
 <div align="center">
 
-<img src="assets/roadmap-timeline.svg" alt="版本路线图" width="800">
+<img src="../assets/roadmap-timeline.svg" alt="版本路线图" width="800">
 
 </div>
 

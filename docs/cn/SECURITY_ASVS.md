@@ -4,7 +4,7 @@
 >
 > 评级图例：✅ 满足（框架提供且经测试）｜🔶 部分满足（框架提供基座，需业务方配置/组合）｜⚪ 不适用（应用/部署方职责）
 >
-> 关联：[SECURITY.md](../SECURITY.md)｜[THREAT.md](./THREAT.md)｜ADR-0001/0002/0003（密码哈希 / CSPRNG / 常量时间比较）
+> 关联：[SECURITY.md](SECURITY.md)｜[THREAT.md](./THREAT.md)｜ADR-0001/0002/0003（密码哈希 / CSPRNG / 常量时间比较）
 
 ## V2 认证
 

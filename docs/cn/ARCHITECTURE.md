@@ -55,7 +55,7 @@ Garrison 分为四层模块，由 feature flag 控制编译裁剪：
 
 <div align="center">
 
-<img src="assets/module-layers.svg" alt="模块分层" width="800">
+<img src="../assets/module-layers.svg" alt="模块分层" width="800">
 
 </div>
 
@@ -240,7 +240,7 @@ Garrison 的核心抽象通过 trait 解耦，业务方实现 trait 即可接入
 
 <div align="center">
 
-<img src="assets/architecture-overview.svg" alt="架构总览" width="800">
+<img src="../assets/architecture-overview.svg" alt="架构总览" width="800">
 
 </div>
 
@@ -303,7 +303,7 @@ graph LR
 
 <div align="center">
 
-<img src="assets/request-flow.svg" alt="请求处理流程" width="800">
+<img src="../assets/request-flow.svg" alt="请求处理流程" width="800">
 
 </div>
 

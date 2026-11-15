@@ -3,7 +3,7 @@
 Garrison 是一个面向 Rust 生态的身份认证鉴权框架，安全是项目的核心价值之一。本文档说明支持的版本范围、漏洞报告流程、响应承诺与安全配置建议。
 
 > **协议与许可证**：项目以 Apache-2.0 协议开源。安全漏洞报告与披露遵循本文件描述的协调披露流程。
-> 部署安全加固详见 [🚀 部署指南](docs/DEPLOYMENT.md)；配置项说明详见 [⚙️ 配置指南](docs/CONFIGURATION.md)。
+> 部署安全加固详见 [🚀 部署指南](DEPLOYMENT.md)；配置项说明详见 [⚙️ 配置指南](CONFIGURATION.md)。
 
 ## 📋 目录
 
@@ -165,7 +165,7 @@ Garrison 的 API Key（`protocol-apikey`）采用以下安全设计：
 
 ## ⛓️ 供应链与门禁
 
-Garrison 在 CI 与发布流程中内置多层供应链与安全门禁（发布阶段门禁标准见 [📦 发布工作流](./docs/RELEASING.md)）：
+Garrison 在 CI 与发布流程中内置多层供应链与安全门禁（发布阶段门禁标准见 [📦 发布工作流](RELEASING.md)）：
 
 **依赖与发布门禁**：
 
@@ -183,7 +183,7 @@ Garrison 在 CI 与发布流程中内置多层供应链与安全门禁（发布�
 
 **基础卫生**：pre-commit 私钥扫描（gitleaks + `detect-private-key` 钩子互补）与 GitHub Actions 第三方 action 统一按 40 字符 commit SHA / 镜像 digest pin 引用（`ci.yml` / `security.yml` / `docs.yml` / `codeql.yml`），防 tag 替换类供应链攻击。
 
-威胁模型与攻防边界详见 [🛡️ 威胁模型](./docs/THREAT.md)；OWASP Top 10 逐类映射见 [🗺️ OWASP Top 10](./docs/OWASP_TOP10.md)；数据合规与删除权见 [📋 数据合规指南](./docs/DATA_COMPLIANCE.md)；密码学选型论证见 [ADR](./docs/adr/0001-argon2id-password-hashing.md)。
+威胁模型与攻防边界详见 [🛡️ 威胁模型](THREAT.md)；OWASP Top 10 逐类映射见 [🗺️ OWASP Top 10](OWASP_TOP10.md)；数据合规与删除权见 [📋 数据合规指南](DATA_COMPLIANCE.md)；密码学选型论证见 [ADR](adr-0001-argon2id-password-hashing.md)。
 
 ---
 

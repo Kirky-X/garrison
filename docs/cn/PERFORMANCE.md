@@ -18,7 +18,7 @@
 
 ## 🎯 性能目标
 
-以下目标定义于 [`benches/garrison_benchmark.rs`](../benches/garrison_benchmark.rs) 文件头（设计验收口径）：
+以下目标定义于 [`benches/garrison_benchmark.rs`](../../benches/garrison_benchmark.rs) 文件头（设计验收口径）：
 
 | 基准场景 | 目标 |
 |----------|------|

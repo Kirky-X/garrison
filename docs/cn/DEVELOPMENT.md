@@ -198,7 +198,7 @@ garrison/
 
 <div align="center">
 
-<img src="assets/tdd-workflow.svg" alt="TDD 工作流" width="800">
+<img src="../assets/tdd-workflow.svg" alt="TDD 工作流" width="800">
 
 </div>
 

@@ -16,7 +16,7 @@
 
 <div align="center">
 
-<img src="assets/release-flow.svg" alt="发布流程" width="800">
+<img src="../assets/release-flow.svg" alt="发布流程" width="800">
 
 </div>
 

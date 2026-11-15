@@ -4,7 +4,7 @@
 
 > 适用版本：0.9.0。威胁模型随版本演进更新；攻击面变化的变更（新协议、新解析入口）应在同一变更中更新本文档。
 >
-> 相关文档：[SECURITY.md](../SECURITY.md)（漏洞披露与 SLA）｜[OWASP_TOP10.md](./OWASP_TOP10.md)（Top 10 逐类映射）｜[ARCHITECTURE.md](./ARCHITECTURE.md)（分层架构）｜[DEPLOYMENT.md](./DEPLOYMENT.md)（部署加固）
+> 相关文档：[SECURITY.md](SECURITY.md)（漏洞披露与 SLA）｜[OWASP_TOP10.md](./OWASP_TOP10.md)（Top 10 逐类映射）｜[ARCHITECTURE.md](./ARCHITECTURE.md)（分层架构）｜[DEPLOYMENT.md](./DEPLOYMENT.md)（部署加固）
 
 ## 📋 目录
 
@@ -22,7 +22,7 @@
 | 应用进程内存 | 信任宿主机（不防御 root/内核级攻击、内存 dump 分析者可读未 zeroize 的密钥残留——建议启用 `credential-zeroize`/`protocol-zeroize`） |
 | 网络传输 | **不信任**——TLS 终止由反向代理负责（框架不处理 TLS），代理与框架间须为可信网络 |
 | 配置来源 | 信任启动配置的正确性（`config-security-rules` 提供加载期 fail-fast 校验：JWT 密钥强度+弱密钥黑名单、CORS 组合；SSRF/TLS 在 GarrisonConfig 中无对应配置对象，不做校验——TLS 由反向代理终止） |
-| 依赖图 | 部分信任——`cargo deny`（RustSec/许可证/禁用源）、gitleaks、cargo vet 审核记录与 SBOM 构成供应链门禁（见根目录 [SECURITY.md](../SECURITY.md) 供应链章节） |
+| 依赖图 | 部分信任——`cargo deny`（RustSec/许可证/禁用源）、gitleaks、cargo vet 审核记录与 SBOM 构成供应链门禁（见根目录 [SECURITY.md](SECURITY.md) 供应链章节） |
 | 密码学原语 | 信任 RustCrypto 栈（argon2/bcrypt/sha2/hmac/subtle/jsonwebtoken rust_crypto），不手写密码学原语 |
 | 客户端输入 | **完全不信任**——所有外部输入（HTTP 头/XML/JSON/JWT/SAML）按恶意输入处理 |
 
@@ -30,7 +30,7 @@
 
 <div align="center">
 
-<img src="assets/stride-matrix.svg" alt="STRIDE 威胁模型" width="800">
+<img src="../assets/stride-matrix.svg" alt="STRIDE 威胁模型" width="800">
 
 </div>
 
@@ -38,7 +38,7 @@
 
 | 框架防御 | 业务方责任 |
 |---------|-----------|
-| JWT 签名验证：密钥类型感知算法白名单（Secret→HS 系 / RSA PEM→RS 系 / EC PEM→ES 系 / Ed PEM→EdDSA，`validate_algorithm_match` 双重校验 + alg confusion 对抗测试）、HS 系密钥最小长度 ≥32 字节 fail-fast、`leeway=0` 严格过期、`nbf` 强制校验（`src/protocol/jwt/handler.rs`） | **JWT 密钥托管**：`GARRISON_JWT_SECRET` 环境变量注入、90 天轮换（[SECURITY.md](../SECURITY.md) 安全配置建议） |
+| JWT 签名验证：密钥类型感知算法白名单（Secret→HS 系 / RSA PEM→RS 系 / EC PEM→ES 系 / Ed PEM→EdDSA，`validate_algorithm_match` 双重校验 + alg confusion 对抗测试）、HS 系密钥最小长度 ≥32 字节 fail-fast、`leeway=0` 严格过期、`nbf` 强制校验（`src/protocol/jwt/handler.rs`） | **JWT 密钥托管**：`GARRISON_JWT_SECRET` 环境变量注入、90 天轮换（[SECURITY.md](SECURITY.md) 安全配置建议） |
 | HTTP Basic/Digest：RFC 7617/7616 解析与验证，Digest 默认 SHA-256（MD5 仅显式回退，见[已知安全考量](#-明确不防御的攻击)） | 下游身份源（LDAP/用户数据库）的账号安全由业务方保障 |
 | TOTP（RFC 6238 官方向量测试锁定，`src/secure/totp/`） | Authenticator App 分发与账号恢复流程 |
 | API Key：`sha256` 哈希存储（CWE-916）+ 常量时间比较（CWE-208）+ secret 一次性返回 | API Key 的分发渠道安全与 180 天轮换纪律 |
@@ -100,7 +100,7 @@
 | redirect_uri 前缀/通配绕过 | client 白名单精确匹配 | `tests/acceptance/protocol_oauth2.rs` |
 | refresh token 重放 | `RefreshTokenRotation` 三级重用分类（RecentPrev / OrphanedBranch / StaleLineage）+ 链式撤销（未注入时 warn 显性告警），处置见下表 | `src/protocol/jwt/refresh.rs` 内嵌测试 |
 | 状态参数伪造/重放 | OIDC `state` 一次性 + TTL（`protocol/sso/oidc.rs`） | oidc.rs 内嵌测试 |
-| API Key 泄露后的横向使用 | sha256 哈希存储 + IP 级失败限速 + namespace 隔离 | 根目录 [SECURITY.md](../SECURITY.md) API Key 安全节 |
+| API Key 泄露后的横向使用 | sha256 哈希存储 + IP 级失败限速 + namespace 隔离 | 根目录 [SECURITY.md](SECURITY.md) API Key 安全节 |
 | 定时侧信道（token 比较） | `secure-ct-eq` 常量时间公共原语（subtle） | `tests/acceptance/security.rs`（`acc_sec_020_ct_eq_constant_time_semantics`） |
 | XML 注入/畸形 SAML | 长度限制 + 特殊字符拒绝 + 签名 fail-closed + fuzz 回归 | `fuzz/fuzz_targets/fuzz_saml_xml.rs` |
 | Set-Cookie 属性注入（name/value 含 `;`、控制字符注入 `Domain=`/移除 HttpOnly） | `context::validate_cookie_name_value` 注入校验 + 单一构建点 `context::cookie::build_set_cookie_value`（三框架适配器 / 续签 / CSRF 写点统一经构建点产出，拒绝后不产出 Set-Cookie） | `src/context/cookie.rs`、`src/context/axum_adapter.rs` 内嵌测试 |
@@ -141,10 +141,10 @@
 3. **宿主机/内核级攻击**（root 提权后读内存、container escape）——进程隔离、加密 swap、最小权限容器运行时。
 4. **物理访问**（disk 拔取、RAM 冷启动）——磁盘加密、密钥不落盘（KMS/Vault 注入）。
 5. **业务逻辑授权缺陷**（业务规则本身的越权，如"只能删除自己的订单"未实现）——框架执行业务方定义的规则，规则缺失不归框架。
-6. **已弃用算法的显式启用**（如显式指定 HTTP Digest MD5）——框架提供 safe-by-default 并在 [SECURITY.md 已知安全考量](../SECURITY.md#️-已知安全考量)中警示，显式绕过属业务方决策。
+6. **已弃用算法的显式启用**（如显式指定 HTTP Digest MD5）——框架提供 safe-by-default 并在 [SECURITY.md 已知安全考量](SECURITY.md#️-已知安全考量)中警示，显式绕过属业务方决策。
 7. **社会工程与凭证钓鱼**——用户教育、MFA 强制（`secure-totp` 需业务方启用）。
 8. **供应链上游投毒**（crates.io 账号被盗后发布恶意版本）——`cargo vet` 审核记录 + SBOM + lockfile 提供检测与追溯，不提供事前绝对防御。
 
 ---
 
-发现威胁模型未覆盖的攻击面？请按 [SECURITY.md](../SECURITY.md) 流程私密报告（含"威胁模型缺口"标注）。
+发现威胁模型未覆盖的攻击面？请按 [SECURITY.md](SECURITY.md) 流程私密报告（含"威胁模型缺口"标注）。

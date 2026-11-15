@@ -22,7 +22,7 @@
 
 <div align="center">
 
-<img src="assets/deployment-modes.svg" alt="部署模式" width="800">
+<img src="../assets/deployment-modes.svg" alt="部署模式" width="800">
 
 </div>
 

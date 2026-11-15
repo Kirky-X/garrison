@@ -33,7 +33,7 @@
 
 <div align="center">
 
-<img src="assets/testing-pyramid.svg" alt="测试金字塔" width="800">
+<img src="../assets/testing-pyramid.svg" alt="测试金字塔" width="800">
 
 </div>
 

@@ -4,13 +4,13 @@ Garrison 的会话/缓存链路支持 Redis 后端（`cache-redis` / `rate-limit
 本文档记录 Redis 故障演练的执行方法、预期行为与判读标准，用于发布前的可靠
 性验证与客户环境的故障演练基线。
 
-> 关联：[SECURITY.md](../SECURITY.md)｜[CONFIGURATION.md](./CONFIGURATION.md)｜[THREAT.md](./THREAT.md)
+> 关联：[SECURITY.md](SECURITY.md)｜[CONFIGURATION.md](./CONFIGURATION.md)｜[THREAT.md](./THREAT.md)
 
 ## 1. 覆盖场景
 
 <div align="center">
 
-<img src="assets/reliability-scenarios.svg" alt="故障演练场景" width="800">
+<img src="../assets/reliability-scenarios.svg" alt="故障演练场景" width="800">
 
 </div>
 
@@ -113,4 +113,4 @@ scripts/chaos_redis.sh sentinel   # 仅场景 4（自动拉起 chaos profile 演
 1. `GARRISON_CHAOS_*` 环境变量指向目标实例（容器编排环境需将
    `docker exec` / `network` 操作替换为对应编排平台的等价指令）；
 2. 客户为金融/政务行业时，建议由客户或测评机构**现场见证**演练并留存
-   报告（自测报告的效力边界见 [SECURITY.md](../SECURITY.md) 供应链章节）。
+   报告（自测报告的效力边界见 [SECURITY.md](SECURITY.md) 供应链章节）。

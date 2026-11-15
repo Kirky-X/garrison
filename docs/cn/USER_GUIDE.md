@@ -100,7 +100,7 @@ async fn main() -> GarrisonResult<()> {
 }
 ```
 
-> 本示例已由 [`examples/tests/readme_quickstart.rs`](../examples/tests/readme_quickstart.rs) 持续验证（随 CI 运行），逐字对应，不会与 API 漂移。完整可运行版本见 [`examples/src/bin/basic_login.rs`](../examples/src/bin/basic_login.rs)。
+> 本示例已由 [`examples/tests/readme_quickstart.rs`](../../examples/tests/readme_quickstart.rs) 持续验证（随 CI 运行），逐字对应，不会与 API 漂移。完整可运行版本见 [`examples/src/bin/basic_login.rs`](../../examples/src/bin/basic_login.rs)。
 
 ---
 
@@ -148,7 +148,7 @@ Garrison 不把 token 串进每个函数签名，而是用 task_local 上下文�
 | `GarrisonUtil::refresh_token(token)` | RefreshToken 轮换（`protocol-jwt`） |
 | `GarrisonUtil::invalidate_sessions_after_password_change(...)` | 改密后批量失效会话 |
 
-登录风格（token 样式）由配置决定；`token_styles` 相关示例见 [`examples/src/bin/token_styles.rs`](../examples/src/bin/token_styles.rs)。
+登录风格（token 样式）由配置决定；`token_styles` 相关示例见 [`examples/src/bin/token_styles.rs`](../../examples/src/bin/token_styles.rs)。
 
 ---
 
@@ -185,7 +185,7 @@ async fn admin_write() -> &'static str { "ok" }
 
 **统一路由抽象**：`GarrisonRouter` 汇聚路由 → `GarrisonInterceptor` 拦截器 → `GarrisonUtil` 静态 API，三个框架共享同一条链路。
 
-完整可运行示例：[`axum_integration.rs`](../examples/src/web/axum_integration.rs)（213 行完整 Web 应用；`examples/src/bin/axum_integration.rs` 是调用它的 9 行 shim）、[`macro_annotations.rs`](../examples/src/bin/macro_annotations.rs)、[`web_actix_example.rs`](../examples/src/bin/web_actix_example.rs)、[`web_warp_example.rs`](../examples/src/bin/web_warp_example.rs)。
+完整可运行示例：[`axum_integration.rs`](../../examples/src/web/axum_integration.rs)（213 行完整 Web 应用；`examples/src/bin/axum_integration.rs` 是调用它的 9 行 shim）、[`macro_annotations.rs`](../../examples/src/bin/macro_annotations.rs)、[`web_actix_example.rs`](../../examples/src/bin/web_actix_example.rs)、[`web_warp_example.rs`](../../examples/src/bin/web_warp_example.rs)。
 
 ---
 
@@ -244,19 +244,19 @@ async fn admin_write() -> &'static str { "ok" }
 
 ## 📡 可观测性与扩展
 
-- **事件监听**（`listener`，31 个事件变体）：实现 `GarrisonListener` trait（单一 `async fn on_event` 回调，按 `GarrisonEvent` 变体分支）并经 `inventory::submit!` 编译期注册，登录 / 登出 / 踢出 / 替换 / 过期 / 刷新等事件实时回调。示例：[`event_listener.rs`](../examples/src/bin/event_listener.rs)、[`custom_plugin.rs`](../examples/src/bin/custom_plugin.rs)。
+- **事件监听**（`listener`，31 个事件变体）：实现 `GarrisonListener` trait（单一 `async fn on_event` 回调，按 `GarrisonEvent` 变体分支）并经 `inventory::submit!` 编译期注册，登录 / 登出 / 踢出 / 替换 / 过期 / 刷新等事件实时回调。示例：[`event_listener.rs`](../../examples/src/bin/event_listener.rs)、[`custom_plugin.rs`](../../examples/src/bin/custom_plugin.rs)。
 - **插件**：`GarrisonPlugin` trait + inventory 注册，可在生命周期钩子注入逻辑。
-- **tracing 日志**（`tracing-log`）、**Prometheus 指标**（`metrics-prometheus`）、**OTLP**（`otlp`）：示例 [`observability_setup.rs`](../examples/src/bin/observability_setup.rs)。
-- **gRPC 拦截器**（`grpc`）：tonic auth layer。示例 [`grpc_interceptor.rs`](../examples/src/bin/grpc_interceptor.rs)。
-- **i18n**（`i18n` / `i18n-icu`）：错误消息按 locale 切换中英文（fluent + FTL 资源，`locales/` 目录）。示例 [`i18n_usage.rs`](../examples/src/bin/i18n_usage.rs)。
-- **健康检查**（`server-health-check`）：`DbHealthCheck::with_pool` 执行真实 SQL 往返探测。示例 [`health_check.rs`](../examples/src/bin/health_check.rs)。
-- **微服务**：`backend-remote`（HTTP 调用远程 Auth Server + limiteron 熔断）、`auth-server`（独立认证服务器，sdforge 声明式路由 + TLS + 优雅停机）。示例 [`backend_remote.rs`](../examples/src/bin/backend_remote.rs)、[`auth_server.rs`](../examples/src/bin/auth_server.rs)。
+- **tracing 日志**（`tracing-log`）、**Prometheus 指标**（`metrics-prometheus`）、**OTLP**（`otlp`）：示例 [`observability_setup.rs`](../../examples/src/bin/observability_setup.rs)。
+- **gRPC 拦截器**（`grpc`）：tonic auth layer。示例 [`grpc_interceptor.rs`](../../examples/src/bin/grpc_interceptor.rs)。
+- **i18n**（`i18n` / `i18n-icu`）：错误消息按 locale 切换中英文（fluent + FTL 资源，`locales/` 目录）。示例 [`i18n_usage.rs`](../../examples/src/bin/i18n_usage.rs)。
+- **健康检查**（`server-health-check`）：`DbHealthCheck::with_pool` 执行真实 SQL 往返探测。示例 [`health_check.rs`](../../examples/src/bin/health_check.rs)。
+- **微服务**：`backend-remote`（HTTP 调用远程 Auth Server + limiteron 熔断）、`auth-server`（独立认证服务器，sdforge 声明式路由 + TLS + 优雅停机）。示例 [`backend_remote.rs`](../../examples/src/bin/backend_remote.rs)、[`auth_server.rs`](../../examples/src/bin/auth_server.rs)。
 
 ---
 
 ## 🧬 进阶认证能力（0.9.0-rc.3）
 
-以下能力随 rc.3 安全审计整改批次合入，按 feature 独立门控；配置项见 [⚙️ 配置指南](CONFIGURATION.md) 对应小节，公开 API 见 [📘 API 参考·rc.3 新增能力](API_REFERENCE.md)，端到端用法见 [examples/](../examples/)。
+以下能力随 rc.3 安全审计整改批次合入，按 feature 独立门控；配置项见 [⚙️ 配置指南](CONFIGURATION.md) 对应小节，公开 API 见 [📘 API 参考·rc.3 新增能力](API_REFERENCE.md)，端到端用法见 [examples/](../../examples/)。
 
 | 能力 | Feature | 模块 | 配置节 |
 |------|---------|------|--------|
@@ -292,4 +292,4 @@ async fn admin_write() -> &'static str { "ok" }
 | [🧪 测试场景矩阵](TEST_SCENARIOS.md) | 验收场景穷举与特性组合矩阵 |
 | [⚡ 性能指南](PERFORMANCE.md) | 性能目标、基准测试与优化建议 |
 | [🚀 部署指南](DEPLOYMENT.md) | 生产部署注意事项 |
-| [💻 示例目录](../examples/) | 65 个可运行示例（`cargo run -p garrison-examples --bin <名称> --features full`） |
+| [💻 示例目录](../../examples/) | 65 个可运行示例（`cargo run -p garrison-examples --bin <名称> --features full`） |

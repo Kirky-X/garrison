@@ -29,7 +29,7 @@
 
 <div align="center">
 
-<img src="assets/api-structure.svg" alt="API 结构" width="800">
+<img src="../assets/api-structure.svg" alt="API 结构" width="800">
 
 </div>
 

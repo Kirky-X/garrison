@@ -2,7 +2,7 @@
 
 本文档说明 Garrison 作为身份认证框架处理的**数据清单、保存期限、删除权（erasure）行使方式与数据本地化部署指引**，供业务方履行 GDPR / 《个人信息保护法》义务时使用。
 
-> 关联：[SECURITY.md](../SECURITY.md)（漏洞披露与安全配置）｜[THREAT.md](./THREAT.md)（威胁模型）｜[OWASP_TOP10.md](./OWASP_TOP10.md)
+> 关联：[SECURITY.md](SECURITY.md)（漏洞披露与安全配置）｜[THREAT.md](./THREAT.md)（威胁模型）｜[OWASP_TOP10.md](./OWASP_TOP10.md)
 >
 > **定位声明**：Garrison 是框架（SDK），不是数据处理者——最终应用才是与数据主体的关系方。本文描述框架管辖内数据的处置能力与业务方的剩余责任。
 
@@ -26,7 +26,7 @@
 
 <div align="center">
 
-<img src="assets/data-erasure-flow.svg" alt="数据擦除流程" width="800">
+<img src="../assets/data-erasure-flow.svg" alt="数据擦除流程" width="800">
 
 </div>
 
@@ -68,7 +68,7 @@ let ip_report = eraser.erase_ip_artifacts("203.0.113.7").await?;
 
 - **存储后端全可指定**：会话/令牌/限速/审计的存储经 `GarrisonDao` 抽象；缓存与限速后端由 `GARRISON_REDIS_URL` 指定，数据库 URL 则由宿主编程式传入（CLI `--db-url` → `garrison::dao::init_dbnexus(&db_url)`，框架不读取 `GARRISON_DB_URL` 环境变量），可将全部框架数据限定在特定司法辖区的基础设施内（自建 / 区域云 region）。
 - **无跨境外呼**：框架运行时不存在向第三方服务发送主体数据的行为（`policy-hibp` 的 HIBP k-anonymity 查询是唯一可选出站，仅发送 5 字符哈希前缀、不含明文密码；不启用 `policy-hibp` 则零出站）。
-- **依赖供应链可审计**：SBOM + 依赖清单公开（见 [SECURITY.md 供应链与门禁](../SECURITY.md)），可核验无隐蔽数据通道。
+- **依赖供应链可审计**：SBOM + 依赖清单公开（见 [SECURITY.md 供应链与门禁](SECURITY.md)），可核验无隐蔽数据通道。
 
 ## 4. 数据保护默认值
 

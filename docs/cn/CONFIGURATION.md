@@ -20,7 +20,7 @@
 
 <div align="center">
 
-<img src="assets/config-priority.svg" alt="配置优先级" width="800">
+<img src="../assets/config-priority.svg" alt="配置优先级" width="800">
 
 </div>
 
@@ -113,7 +113,7 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 
 ### 2.5 密码哈希配置（password_hasher）
 
-驱动 `Argon2Hasher` / `BcryptHasher` 的构造参数（`config.password_hasher.build_hasher()` 工厂，产出后经 `with_password_hasher` 注入）。默认值即 OWASP 建议档，选型论证见 [ADR-0001](./adr/0001-argon2id-password-hashing.md)。
+驱动 `Argon2Hasher` / `BcryptHasher` 的构造参数（`config.password_hasher.build_hasher()` 工厂，产出后经 `with_password_hasher` 注入）。默认值即 OWASP 建议档，选型论证见 [ADR-0001](adr-0001-argon2id-password-hashing.md)。
 
 | 字段名 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|

@@ -25,7 +25,7 @@ R04 吸收项落地前，`GarrisonError` 的 HTTP 错误响应只有 `error_code
 - `OAuth2` 变体的模块段为 `oauth`（非 `oauth2`）：`<module>` 段格式约束 `^[a-z]+(_[a-z]+)*$` 不含数字，故取协议域词根 `oauth`（`error_id` 为 `oauth.error`）。
 - **单一事实来源**：`parts_and_msg_key` 私有函数五元组扩为六元组（追加 `error_id: &'static str`），全部 arm **人工逐一显式静态书写**（不自动派生——派生规则会为 `EXCEPTION` 这类条件复用码产出歧义映射，且派生逻辑本身成为第二事实来源）。
 - `Exception` 变体的三个子 arm（业务 code -1 / -2 / 其他）的 `error_id` 分别为 `exception.not_login` / `exception.not_permission` / `exception.default`——不复用 `auth.*`（保证 `prefixed_code()` 全变体两两唯一，与 `code()` 固定 `EXCEPTION` 的既有先例同构）。
-- 旧 → 新对照表写入 [API_REFERENCE.md](../API_REFERENCE.md) 错误模型章节。
+- 旧 → 新对照表写入 [API_REFERENCE.md](API_REFERENCE.md) 错误模型章节。
 - 公开 API：`pub fn prefixed_code() -> &'static str`；`code()` 与 `response_parts` / `response_parts_i18n` 公开签名不变。
 
 ### 决策二：body 字段名 `request_id`，无 id 时省略（omitempty）
