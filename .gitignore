@@ -207,3 +207,7 @@ skills-lock.json
 .cargo/*
 !.cargo/audit.toml
 .workbuddy-ai/
+
+# ADR 文档禁止进仓（用户拍板 2026-11-16）
+docs/cn/adr-*.md
+docs/en/adr-*.md
