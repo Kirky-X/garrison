@@ -751,3 +751,60 @@ python3 scripts/e2e_analyze.py --log-dir logs
 ```
 
 > 更多 specmark 变更说明详见 `specmark/changes/e2e-pentest-observability/`。
+
+---
+
+<a id="ci-test-commands"></a>
+
+## 🧪 与 CI 一致的测试运行命令（自 README 迁入）
+
+测试按「单元 → 验收 / 集成 → 示例级集成」三层组织，场景穷举与真实服务矩阵见 [🧪 测试场景矩阵](TEST_SCENARIOS.md)。以下运行命令与 CI 一致：
+
+<details>
+<summary>📄 代码 · bash</summary>
+
+```bash
+# 单元测试（CI test job 的两种特性面）
+cargo test --no-default-features --features "default" --lib --locked
+cargo test --features "full" --lib --locked
+
+# 验收 / 集成测试（CI integration-test job；services 含 Redis 与 PostgreSQL）
+cargo test --features "full" --tests --no-fail-fast
+
+# 验收矩阵（full + testing 特性面）
+cargo test --test acceptance --features "full testing"
+
+# 性能基线（concurrency 域 #[ignore] 的 perf_* 用例）
+cargo test --test acceptance --features "full testing" perf_ -- \
+    --nocapture --test-threads=1 --ignored
+
+# 文档测试（CI Linux/MSRV 腿）
+cargo test --features "full" --doc --locked
+
+# 一键 E2E（auth_server_serve 冒烟 + 全量验收 + 性能基线 + 报告聚合）
+bash scripts/e2e_run.sh
+# 本地全量流水线（compose 真服务自举 + 静态门禁 + 全部测试 + 特性矩阵 + 基准）
+bash scripts/e2e_matrix.sh
+
+# Lint 与格式门禁
+cargo clippy --no-default-features --features "default" -- -D warnings
+cargo clippy --features "full" -- -D warnings
+cargo fmt --all -- --check
+
+# 覆盖率门禁：行覆盖率不低于 95%
+cargo llvm-cov --features "full" --fail-under-lines 95
+
+# 依赖安全门禁
+cargo deny --all-features --locked check
+
+# 基准测试（--bench 限定 criterion 目标，避免连带 lib unittest）
+cargo bench --bench garrison_benchmark --features full --locked -- --quick
+```
+
+</details>
+
+> 构建依赖：`protoc`（sdforge build script 需要，CI 经 taiki-e/install-action 安装）。
+
+### 📊 测试规模
+
+约 5994 个测试（lib 单元 5454 + 验收 / 集成 416 + 示例级 116 + 过程宏 8；lib 与验收数为 `cargo test --list` 实测，示例与过程宏为属性静态计数，截至 2026-10-28）与 6 个 Criterion 基准场景；覆盖率门禁为行覆盖率不低于 95%（2026-10-14 实测约 95.15%）。统计口径与明细见 [🧪 测试场景矩阵 · 测试规模统计](TEST_SCENARIOS.md#-测试规模统计)。

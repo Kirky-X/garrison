@@ -293,3 +293,11 @@ async fn admin_write() -> &'static str { "ok" }
 | [⚡ 性能指南](PERFORMANCE.md) | 性能目标、基准测试与优化建议 |
 | [🚀 部署指南](DEPLOYMENT.md) | 生产部署注意事项 |
 | [💻 示例目录](../../examples/) | 65 个可运行示例（`cargo run -p garrison-examples --bin <名称> --features full`） |
+
+---
+
+<a id="msrv-note"></a>
+
+## 📦 安装补充：MSRV 与工具链要求（自 README 迁入）
+
+要求 Rust **1.97.1 及以上**（`Cargo.toml` 的 `rust-version = "1.97.1"`）：依赖面中的兄弟生态 crate（confers / oxcache / dbnexus / sdforge / limiteron / inklog / trait-kit 的 rc 线）各自声明 `rust-version = "1.97.1"`，这是依赖图可满足的最低工具链，低于该版本 `cargo check` 直接拒绝构建（`rustc ... is not supported by the following packages`）；CI 测试矩阵按 `1.97.1`（MSRV 下限）/ `stable` / `beta` 三档显式验证。

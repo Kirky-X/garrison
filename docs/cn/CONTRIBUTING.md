@@ -332,3 +332,32 @@ cargo llvm-cov --features "full" --fail-under-lines 95
 ---
 
 再次感谢你的贡献！愿 Garrison 因你而更稳健。
+
+---
+
+<a id="acknowledgments"></a>
+
+## 🙏 致谢（自 README 迁入）
+
+### 🌟 核心依赖
+
+Garrison 站在以下优秀开源项目的肩膀上：
+
+<details>
+<summary>📋 表格</summary>
+
+| 依赖 | 用途 |
+|------|------|
+| [axum](https://github.com/tokio-rs/axum) | tokio 团队出品的 Rust Web 框架 |
+| [oxcache](https://github.com/Kirky-X/oxcache) | Rust 多级缓存库（L1 内存 + L2 redis） |
+| [dbnexus](https://github.com/Kirky-X/dbnexus) | Rust 数据库抽象层（SQLite / PostgreSQL / MySQL） |
+| [inventory](https://github.com/dtolnay/inventory) | David Tolnay 的编译期插件注册库 |
+| [confers](https://github.com/Kirky-X/confers) | Rust 配置管理库（零样板代码） |
+| [sdforge](https://github.com/Kirky-X/sdforge) | 声明式 Web 框架 |
+| [trait-kit](https://github.com/Kirky-X/trait-kit) | trait 工具集 |
+
+</details>
+
+### 💝 特别感谢
+
+- 感谢 Rust 社区与所有 [贡献者](https://github.com/Kirky-X/garrison/graphs/contributors)

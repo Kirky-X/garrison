@@ -5,7 +5,7 @@
 
 [![Rust 2021](https://img.shields.io/badge/Rust-2021-edded?logo=rust&style=for-the-badge)](https://www.rust-lang.org/) [![Rustc 1.97.1+](https://img.shields.io/badge/rust-1.97.1%2B-orange.svg?style=for-the-badge)](https://www.rust-lang.org/) [![crates.io](https://img.shields.io/crates/v/garrison?style=for-the-badge)](https://crates.io/crates/garrison) [![docs.rs](https://img.shields.io/docsrs/garrison?style=for-the-badge)](https://docs.rs/garrison) [![downloads](https://img.shields.io/crates/d/garrison?style=for-the-badge)](https://crates.io/crates/garrison) [![CI](https://img.shields.io/github/actions/workflow/status/Kirky-X/garrison/ci.yml?branch=main&label=CI&style=for-the-badge)](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml) [![coverage](https://img.shields.io/badge/coverage-95%25%2B-brightgreen.svg?style=for-the-badge)](https://github.com/Kirky-X/garrison) [![license](https://img.shields.io/crates/l/garrison?style=for-the-badge)](LICENSE)
 
-**中文** | [English](README_EN.md)
+[English](README.md) | 中文
 
 <b>面向 Rust 生态的一站式身份认证鉴权框架</b>
 
@@ -41,19 +41,11 @@
 
 - [✨ 功能特性](#-功能特性)
 - [🚀 快速开始](#-快速开始)
-- [🎨 特性标志](#-特性标志)
 - [📚 文档](#-文档)
 - [💻 示例](#-示例)
-- [🏗️ 架构](#️-架构)
-- [🧪 测试](#-测试)
-- [📊 性能](#-性能)
 - [🔒 安全](#-安全)
-- [🗺️ 开发路线图](#️-开发路线图)
 - [🤝 参与贡献](#-参与贡献)
-- [📋 更新日志](#-更新日志)
 - [📄 许可证](#-许可证)
-- [🙏 致谢](#-致谢)
-- [📞 联系与支持](#-联系与支持)
 - [⭐ Star 历史](#-star-历史)
 
 </details>
@@ -81,7 +73,7 @@
 </tr>
 </table>
 
-除上述核心能力外，其余能力（认证协议、防火墙、账号安全、多租户、可观测性、微服务组件等）也均以独立特性标志提供、按需编译；按能力域汇总的功能矩阵见 [🎨 特性标志](#-特性标志) 一节（完整清单以 `Cargo.toml` 的 `[features]` 为准）。
+除上述核心能力外，其余能力（认证协议、防火墙、账号安全、多租户、可观测性、微服务组件等）也均以独立特性标志提供、按需编译；按能力域汇总的功能矩阵见 [🎨 特性标志功能矩阵](docs/cn/API_REFERENCE.md#feature-matrix)（完整清单以 `Cargo.toml` 的 `[features]` 为准）。
 
 ---
 
@@ -103,7 +95,7 @@ tokio = { version = "1", features = ["full"] }
 
 </details>
 
-要求 Rust **1.97.1 及以上**（`Cargo.toml` 的 `rust-version = "1.97.1"`）：依赖面中的兄弟生态 crate（confers / oxcache / dbnexus / sdforge / limiteron / inklog / trait-kit 的 rc 线）各自声明 `rust-version = "1.97.1"`，这是依赖图可满足的最低工具链，低于该版本 `cargo check` 直接拒绝构建（`rustc ... is not supported by the following packages`）；CI 测试矩阵按 `1.97.1`（MSRV 下限）/ `stable` / `beta` 三档显式验证。
+要求 Rust **1.97.1 及以上**，MSRV 依据与 CI 三档验证矩阵见 [📖 用户指南 · 安装补充](docs/cn/USER_GUIDE.md#msrv-note)。
 
 > 预发布版本需显式写完整版本号，`"0.9"` 无法匹配 prerelease。如需启用全部协议层与安全模块：`features = ["full"]`。
 
@@ -190,109 +182,7 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 
 ### 🧭 核心概念
 
-- **全局单例 + 静态 API**：`GarrisonManager` 启动时一次性注入 dao / config / interface，业务代码经 `GarrisonUtil` 静态 API 零状态调用。
-- **token 上下文**：token 经 task_local 上下文（`garrison::stp::with_current_token`）携带，Web 中间件自动绑定，静态 API 自动读取当前 token。
-- **双模会话**：Account-Session（账号级）与 Token-Session（登录级）双会话由 `is_share` / `is_concurrent` 控制多端策略。
-- **特性门控**：全部可选能力均为独立 feature，编译产物只包含启用的部分。
-
-> token 上下文、双抽象层存储等概念详解见 [📖 用户指南 · 核心概念](docs/USER_GUIDE.md#-核心概念)。
-
----
-
-## 🎨 特性标志
-
-### 📋 功能矩阵
-
-下表按能力域汇总 `Cargo.toml` 的 `[features]` 主要特性（100+ 个 flag，完整清单以 `Cargo.toml` 的 `[features]` 为准），`default = ["backend-embedded"]`。
-
-<details>
-<summary>📋 表格</summary>
-
-<table style="width:100%; border-collapse: collapse">
-<tr><th style="text-align:left">特性</th><th style="text-align:center">默认</th><th style="text-align:left">说明</th></tr>
-<tr><td><code>backend-embedded</code></td><td align="center">✅</td><td>内嵌后端模式（进程内认证，委托 GarrisonManager）</td></tr>
-<tr><td><code>backend-remote</code></td><td align="center">❌</td><td>远程后端适配器（通过 HTTP 调用远程 Auth Server）</td></tr>
-<tr><td><code>backend-kit</code></td><td align="center">❌</td><td>trait-kit typestate DI 构建</td></tr>
-<tr><td><code>auth-server</code></td><td align="center">❌</td><td>独立认证服务器（sdforge 声明式路由 + TLS）</td></tr>
-<tr><td><code>abac</code></td><td align="center">❌</td><td>基于 Cedar DSL 的属性访问控制引擎</td></tr>
-<tr><td><code>oauth2-server</code></td><td align="center">❌</td><td>完整 OAuth2 Server 4 端点</td></tr>
-<tr><td><code>cache-memory</code></td><td align="center">❌</td><td>内存缓存后端（oxcache 内存层）</td></tr>
-<tr><td><code>cache-redis</code></td><td align="center">❌</td><td>Redis 缓存后端（oxcache L2）</td></tr>
-<tr><td><code>db-sqlite</code></td><td align="center">❌</td><td>SQLite 数据库后端</td></tr>
-<tr><td><code>db-postgres</code></td><td align="center">❌</td><td>PostgreSQL 后端</td></tr>
-<tr><td><code>db-mysql</code></td><td align="center">❌</td><td>MySQL 后端</td></tr>
-<tr><td><code>web-axum</code></td><td align="center">❌</td><td>axum Web 框架适配</td></tr>
-<tr><td><code>web-actix</code></td><td align="center">❌</td><td>actix-web Web 框架适配</td></tr>
-<tr><td><code>web-warp</code></td><td align="center">❌</td><td>warp Web 框架适配</td></tr>
-<tr><td><code>web-cors</code> / <code>web-csrf</code></td><td align="center">❌</td><td>CORS / CSRF 中间件（WAF 已并入 <code>firewall-waf</code>）</td></tr>
-<tr><td><code>protocol-jwt</code></td><td align="center">❌</td><td>JWT 签发与验证（HS256 / HS384 / HS512，另支持 RS / ES / EdDSA 非对称算法 + refresh）</td></tr>
-<tr><td><code>protocol-oauth2</code></td><td align="center">❌</td><td>OAuth2 四种模式</td></tr>
-<tr><td><code>protocol-sso</code> / <code>protocol-sso-server</code></td><td align="center">❌</td><td>SSO ticket / SSO Server 抽象</td></tr>
-<tr><td><code>protocol-sign</code></td><td align="center">❌</td><td>API 签名 + nonce 防重放</td></tr>
-<tr><td><code>protocol-apikey</code></td><td align="center">❌</td><td>API Key 认证</td></tr>
-<tr><td><code>protocol-temp</code></td><td align="center">❌</td><td>临时凭证</td></tr>
-<tr><td><code>protocol-qrlogin</code></td><td align="center">❌</td><td>第一方扫码登录（Web 扫码 + App 确认，两票分离）</td></tr>
-<tr><td><code>protocol-oidc</code></td><td align="center">❌</td><td>OIDC id_token 签发/验证 + discovery</td></tr>
-<tr><td><code>protocol-invitation</code></td><td align="center">❌</td><td>邀请码定向注册（一次性/N 次、TTL、吊销、防爆破）</td></tr>
-<tr><td><code>oauth2-scope-handler</code></td><td align="center">❌</td><td>OAuth2 Scope Handler 注册表（ScopeHandler trait + ScopeRegistry）</td></tr>
-<tr><td><code>protocol-httpbasic</code> / <code>protocol-httpdigest</code></td><td align="center">❌</td><td>HTTP Basic / Digest 认证</td></tr>
-<tr><td><code>protocol-saml</code></td><td align="center">❌</td><td>SAML 2.0 骨架</td></tr>
-<tr><td><code>protocol-zeroize</code></td><td align="center">❌</td><td>协议层密钥零化</td></tr>
-<tr><td><code>secure-totp</code></td><td align="center">❌</td><td>TOTP 动态验证码 (RFC 6238)</td></tr>
-<tr><td><code>secure-sign</code></td><td align="center">❌</td><td>HMAC-SHA256/SHA512 工具</td></tr>
-<tr><td><code>secure-confusable</code> / <code>secure-masking</code> / <code>secure-xss</code> / <code>secure-sanitize</code></td><td align="center">❌</td><td>安全工具集</td></tr>
-<tr><td><code>secure-simple-token</code> / <code>secure-ct-eq</code></td><td align="center">❌</td><td>签名 / 常量时间比较</td></tr>
-<tr><td><code>account-credential</code> / <code>account-policy</code> / <code>account-lockout</code> / <code>account-authflow</code></td><td align="center">❌</td><td>账号安全引擎</td></tr>
-<tr><td><code>firewall</code> / <code>firewall-*</code></td><td align="center">❌</td><td>安全防护套件（暴力破解/限流/异常/GeoIP/DDoS/WAF）</td></tr>
-<tr><td><code>listener</code></td><td align="center">❌</td><td>事件监听器（31 个事件变体）</td></tr>
-<tr><td><code>tracing-log</code> / <code>metrics-prometheus</code> / <code>otlp</code></td><td align="center">❌</td><td>可观测性</td></tr>
-<tr><td><code>annotation-macros</code></td><td align="center">❌</td><td>13 个属性宏</td></tr>
-<tr><td><code>tenant-isolation</code></td><td align="center">❌</td><td>多租户逻辑隔离</td></tr>
-<tr><td><code>social-wechat</code> / <code>social-alipay</code></td><td align="center">❌</td><td>社交登录</td></tr>
-<tr><td><code>core-advanced</code> / <code>session-extra</code></td><td align="center">❌</td><td>核心增强 / 会话增强合并</td></tr>
-<tr><td><code>email-verification</code> / <code>email-verification-smtp</code></td><td align="center">❌</td><td>邮箱验证码</td></tr>
-<tr><td><code>config-*</code></td><td align="center">❌</td><td>配置文件加密/校验/热更新/插值/动态/开关（confers 透传）</td></tr>
-<tr><td><code>i18n-icu</code></td><td align="center">❌</td><td>国际化（基础 i18n 层无需 feature，ICU 集成按此门控）</td></tr>
-<tr><td><code>protocol-webauthn</code></td><td align="center">❌</td><td>WebAuthn / Passkey 凭据注册与认证仪式（challenge 防重放 / sign_count 克隆检测）</td></tr>
-<tr><td><code>backchannel-logout</code></td><td align="center">❌</td><td>OIDC Back-Channel Logout（logout token 签发 + 持久化投递队列）</td></tr>
-<tr><td><code>keycloak-oidc</code></td><td align="center">❌</td><td>Keycloak OIDC 依赖方（RP）集成</td></tr>
-<tr><td><code>field-encryption</code></td><td align="center">❌</td><td>落库敏感字段 AES-256-GCM 静态加密（AAD 租户/表/键绑定 + 迁移期双读）</td></tr>
-<tr><td><code>mfa-recovery</code></td><td align="center">❌</td><td>MFA 恢复码管理器（SHA-256 哈希落库 + 原子消费）</td></tr>
-<tr><td><code>account-password-reset</code></td><td align="center">❌</td><td>找回密码流程（防枚举 / ActionToken 一次性消费 / 两段式防竞态）</td></tr>
-<tr><td><code>policy-hibp</code></td><td align="center">❌</td><td>HIBP 泄露密码检查（k-anonymity range search）</td></tr>
-<tr><td><code>credential-zeroize</code></td><td align="center">❌</td><td>凭据密钥零化（Drop 清零）</td></tr>
-<tr><td><code>tls</code></td><td align="center">❌</td><td>HTTPS/TLS 终止（axum-server + rustls）</td></tr>
-<tr><td><code>tls-cert-watch</code></td><td align="center">❌</td><td>TLS 证书进程内热重载（换证不重启进程，两端口新握手同时生效）</td></tr>
-<tr><td><code>server-health-check</code> / <code>server-graceful-shutdown</code></td><td align="center">❌</td><td>健康/就绪探针 / 优雅停机</td></tr>
-<tr><td><code>web-security</code> / <code>web-security-headers</code></td><td align="center">❌</td><td>Web 安全中间件聚合（CORS+CSRF+响应头）/ 独立安全响应头</td></tr>
-<tr><td><code>cache-lock</code> / <code>cache-batch</code> / <code>cache-invalidation</code> / <code>cache-audit</code> / <code>cache-hotkey</code> / <code>ban-sync</code></td><td align="center">❌</td><td>缓存增强：分布式锁 / 批量 / 跨实例失效 / 审计事件流 / 热 key 观测 / 封禁同步（oxcache 透传）</td></tr>
-<tr><td><code>db-retry</code> / <code>db-sharding</code> / <code>db-replica</code> / <code>db-saga</code></td><td align="center">❌</td><td>数据库增强：重试 / 分片 / 读写分离 / Saga（dbnexus 透传）</td></tr>
-<tr><td><code>three-tier-cache</code></td><td align="center">❌</td><td>三层缓存架构（L1 本地 + L2 redis + DB）</td></tr>
-<tr><td><code>security-alert</code> / <code>device-binding</code> / <code>session-hijack-detection</code></td><td align="center">❌</td><td>安全告警系统 / 设备绑定 / 会话劫持检测</td></tr>
-<tr><td><code>grpc</code></td><td align="center">❌</td><td>gRPC async 鉴权层（tonic 拦截器）</td></tr>
-<tr><td><code>credit-metering</code></td><td align="center">❌</td><td>信用/配额计量（活跃度写路径节流聚合）</td></tr>
-<tr><td><code>audit-log</code></td><td align="center">❌</td><td>审计日志（落库 + HMAC 防篡改事件链）</td></tr>
-<tr><td><code>audit-inklog</code> / <code>audit-inklog-http</code> / <code>audit-inklog-siem</code></td><td align="center">❌</td><td>inklog 结构化审计日志 / HTTP / SIEM 外送</td></tr>
-<tr><td><code>alone-cache</code> / <code>parameter-query</code></td><td align="center">❌</td><td>DAO 单飞缓存（防击穿）/ STP 参数化查询</td></tr>
-<tr><td><code>api-docs</code> / <code>cli-ops</code></td><td align="center">❌</td><td>OpenAPI 文档 / 运维子命令（garrison 单根二进制）</td></tr>
-<tr><td><code>data-erasure</code></td><td align="center">❌</td><td>数据主体擦除编排（GDPR / 个保法删除权）</td></tr>
-<tr><td><code>authorize-api</code> / <code>manager-explicit</code></td><td align="center">❌</td><td>核心扩展：请求对象式授权 API / 显式 Manager API</td></tr>
-<tr><td><code>miette</code> / <code>embedded-migrations</code></td><td align="center">❌</td><td>富诊断错误（miette::Diagnostic）/ 嵌入式迁移文件</td></tr>
-<tr><td><code>full</code> / <code>production</code> / <code>development</code></td><td align="center">❌</td><td>聚合特性</td></tr>
-</table>
-
-</details>
-
-> **v0.9.0 Feature 改名映射**：
->
-> | 旧名称 (≤0.8.x) | 新名称 (≥0.9.0) | 说明 |
-> |-----------------|-----------------|------|
-> | `secure-saml` | `protocol-saml` | SAML 2.0 签名验证 |
-> | `secure-httpbasic` | `protocol-httpbasic` | HTTP Basic 认证 |
-> | `secure-httpdigest` | `protocol-httpdigest` | HTTP Digest 认证 |
-> | `observability-otlp` | `otlp` | OpenTelemetry OTLP |
-> | `decision-trace` / `permission-registry` / `safe-defaults` | `core-advanced` | 核心增强合并 |
-> | `dynamic-active-timeout` / `login-token-map-persistence` / `anonymous-session` / `session-search` | `session-extra` | 会话增强合并 |
+全局单例 + 静态 API、token 上下文、双模会话、特性门控等核心概念详解见 [📖 用户指南 · 核心概念](docs/cn/USER_GUIDE.md#-核心概念)。
 
 ---
 
@@ -303,25 +193,27 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 
 | 文档 | 说明 |
 |------|------|
-| [📖 用户指南](docs/USER_GUIDE.md) | 从安装到进阶的完整使用教程 |
-| [📘 API 参考](docs/API_REFERENCE.md) | 公开 API 与模块参考 |
-| [🏗️ 架构文档](docs/ARCHITECTURE.md) | 设计原则、模块划分与数据流 |
-| [⚙️ 配置指南](docs/CONFIGURATION.md) | 三级配置源、完整配置项与热更新 |
-| [⚡ 性能指南](docs/PERFORMANCE.md) | 性能目标、基准测试与优化建议 |
-| [🧱 API 稳定性分级](docs/API_STABILITY.md) | v1.0 稳定性层级、冻结清单与公共面基线 |
-| [🏭 参考生产案例](docs/PRODUCTION_CASES.md) | 自托管参考部署案例与提交模板 |
-| [🔎 安全审计就绪包](docs/SECURITY_AUDIT.md) | 审计范围、证据矩阵与第三方 RFP 清单 |
-| [🧪 测试场景矩阵](docs/TEST_SCENARIOS.md) | 验收场景穷举、特性组合矩阵与质量门禁 |
-| [🔒 安全文档](SECURITY.md) | 安全策略、漏洞报告流程 |
-| [🛡️ 威胁模型](docs/THREAT.md) | STRIDE 分析、框架防御与业务方责任边界 |
-| [❓ FAQ](docs/FAQ.md) | 常见问题解答 |
-| [🔧 问题排查](docs/TROUBLESHOOTING.md) | 常见问题与解决方案 |
-| [🛠️ 开发规范](docs/DEVELOPMENT.md) | TDD 工作流、代码规范与调试技巧 |
-| [🚀 部署指南](docs/DEPLOYMENT.md) | 生产部署注意事项 |
-| [🗺️ 路线图](docs/ROADMAP.md) | 版本演进规划 |
-| [📦 发布工作流](docs/RELEASING.md) | 版本发布流程与门禁 |
-| [🤝 贡献指南](docs/CONTRIBUTING.md) | 如何参与项目开发 |
-| [📋 更新日志](docs/CHANGELOG.md) | 每个版本的变更记录 |
+| [📖 用户指南](docs/cn/USER_GUIDE.md) | 从安装到进阶的完整使用教程 |
+| [📘 API 参考](docs/cn/API_REFERENCE.md) | 公开 API 与模块参考（含特性标志功能矩阵） |
+| [🏗️ 架构文档](docs/cn/ARCHITECTURE.md) | 设计原则、模块划分与数据流 |
+| [⚙️ 配置指南](docs/cn/CONFIGURATION.md) | 三级配置源、完整配置项与热更新 |
+| [⚡ 性能指南](docs/cn/PERFORMANCE.md) | 性能目标、基准测试与优化建议 |
+| [📊 性能基线](docs/cn/benchmarks-v1.0-baseline.md) | v1.0 前基准采集数据 |
+| [🧭 架构决策记录（ADR ×4）](docs/cn/adr-0001-argon2id-password-hashing.md) | Argon2id 选型 / CSPRNG / 常量时间比较 / 统一错误模型 |
+| [🧱 API 稳定性分级](docs/cn/API_STABILITY.md) | v1.0 稳定性层级、冻结清单与公共面基线 |
+| [🏭 参考生产案例](docs/cn/PRODUCTION_CASES.md) | 自托管参考部署案例与提交模板 |
+| [🔎 安全审计就绪包](docs/cn/SECURITY_AUDIT.md) | 审计范围、证据矩阵与第三方 RFP 清单 |
+| [🧪 测试场景矩阵](docs/cn/TEST_SCENARIOS.md) | 验收场景穷举、特性组合矩阵与质量门禁 |
+| [🔒 安全文档](docs/cn/SECURITY.md) | 安全策略、漏洞报告流程 |
+| [🛡️ 威胁模型](docs/cn/THREAT.md) | STRIDE 分析、框架防御与业务方责任边界 |
+| [❓ FAQ](docs/cn/FAQ.md) | 常见问题解答 |
+| [🔧 问题排查](docs/cn/TROUBLESHOOTING.md) | 常见问题与解决方案 |
+| [🛠️ 开发规范](docs/cn/DEVELOPMENT.md) | TDD 工作流、代码规范与调试技巧（含与 CI 一致的测试命令） |
+| [🚀 部署指南](docs/cn/DEPLOYMENT.md) | 生产部署注意事项 |
+| [🗺️ 路线图](docs/cn/ROADMAP.md) | 版本演进规划 |
+| [📦 发布工作流](docs/cn/RELEASING.md) | 版本发布流程与门禁 |
+| [🤝 贡献指南](docs/cn/CONTRIBUTING.md) | 如何参与项目开发 |
+| [📋 更新日志](docs/cn/CHANGELOG.md) | 每个版本的变更记录 |
 | [📦 在线 API 文档](https://docs.rs/garrison) | docs.rs 自动生成的最新文档 |
 | [📦 crates.io](https://crates.io/crates/garrison) | 发布页面 |
 
@@ -348,124 +240,25 @@ cargo build -p garrison-examples --features full
 
 ---
 
-## 🏗️ 架构
-
-Garrison 采用**双抽象层 + 全局单例**架构：`GarrisonDao` trait 统一屏蔽 `dbnexus`（SQLite / PostgreSQL / MySQL）+ `oxcache`（L1 内存 / L2 redis）存储后端差异，核心模块 always on、可选能力（`protocol-*`、`secure-*`、`firewall-*`、`account-*`、`web-*` 等）按 feature 独立门控，核心数据通路为「业务代码 → `GarrisonUtil` → `GarrisonManager` 单例 → `GarrisonLogicDefault` → `GarrisonDao` / `GarrisonPermissionStrategy` → 存储后端」。
-
-模块分层、trait 关系与请求处理数据流的完整说明见 [🏗️ 架构文档](docs/ARCHITECTURE.md)。
-
----
-
-## 🧪 测试
-
-### 🎯 测试策略
-
-测试按「单元（`src/` 内联 `#[cfg(test)]`）→ 验收 / 集成（`tests/acceptance/` 按域组织 + db 专用 target + trybuild UI 测试）→ 示例级集成（`examples/tests/` 与示例 bin 一一对应）」三层组织，另有 Criterion 基准、文档测试与特性组合编译矩阵（`ci.yml` test-compile-guard + 每周 `feature-matrix.yml`）。场景穷举、真实服务矩阵（Redis / PostgreSQL / MySQL / Keycloak 26 / HIBP）与特性依赖分析见 [🧪 测试场景矩阵](docs/TEST_SCENARIOS.md)。
-
-### ▶️ 运行命令（与 CI 一致）
-
-<details>
-<summary>📄 代码 · bash</summary>
-
-```bash
-# 单元测试（CI test job 的两种特性面）
-cargo test --no-default-features --features "default" --lib --locked
-cargo test --features "full" --lib --locked
-
-# 验收 / 集成测试（CI integration-test job；services 含 Redis 与 PostgreSQL）
-cargo test --features "full" --tests --no-fail-fast
-
-# 验收矩阵（full + testing 特性面）
-cargo test --test acceptance --features "full testing"
-
-# 性能基线（concurrency 域 #[ignore] 的 perf_* 用例）
-cargo test --test acceptance --features "full testing" perf_ -- \
-    --nocapture --test-threads=1 --ignored
-
-# 文档测试（CI Linux/MSRV 腿）
-cargo test --features "full" --doc --locked
-
-# 一键 E2E（auth_server_serve 冒烟 + 全量验收 + 性能基线 + 报告聚合）
-bash scripts/e2e_run.sh
-# 本地全量流水线（compose 真服务自举 + 静态门禁 + 全部测试 + 特性矩阵 + 基准）
-bash scripts/e2e_matrix.sh
-
-# Lint 与格式门禁
-cargo clippy --no-default-features --features "default" -- -D warnings
-cargo clippy --features "full" -- -D warnings
-cargo fmt --all -- --check
-
-# 覆盖率门禁：行覆盖率不低于 95%
-cargo llvm-cov --features "full" --fail-under-lines 95
-
-# 依赖安全门禁
-cargo deny --all-features --locked check
-
-# 基准测试（--bench 限定 criterion 目标，避免连带 lib unittest）
-cargo bench --bench garrison_benchmark --features full --locked -- --quick
-```
-
-</details>
-
-> 构建依赖：`protoc`（sdforge build script 需要，CI 经 taiki-e/install-action 安装）。
-
-### 📊 测试规模
-
-约 5994 个测试（lib 单元 5454 + 验收 / 集成 416 + 示例级 116 + 过程宏 8；lib 与验收数为 `cargo test --list` 实测，示例与过程宏为属性静态计数，截至 2026-10-28）与 6 个 Criterion 基准场景；覆盖率门禁为行覆盖率不低于 95%（2026-10-14 实测约 95.15%）。统计口径与明细见 [🧪 测试场景矩阵 · 测试规模统计](docs/TEST_SCENARIOS.md#-测试规模统计)。
-
----
-
-## 📊 性能
-
-基准场景与目标定义于 [`benches/garrison_benchmark.rs`](benches/garrison_benchmark.rs)（`login_flow` / `token_verify_stateless` / `permission_check` / `oxcache_backend_switch` / `convert_placeholders` / `circuit_execute_closed_passthrough` 六个 Criterion 场景），以 `cargo bench` 在本机复现；验收层另有 HTTP 性能基线（P99 < 200ms / 1000 RPS），经 `scripts/e2e_run.sh` 采集并聚合报告。性能设计要点（单例无锁化、慢哈希 `spawn_blocking` 下沉、请求内快照复用、缓存 TTL 抖动、全量 feature 门控）与逐项优化建议见 [⚡ 性能指南](docs/PERFORMANCE.md)。
-
----
-
 ## 🔒 安全
 
-### 🛡️ 安全设计
+Garrison 围绕身份认证全生命周期做纵深防护：Argon2id / Bcrypt 慢哈希经 `spawn_blocking` 下沉、Token 常量时间比较（`secure-ct-eq`，CWE-208）、API Key 哈希存储与 IP 级限速（CWE-916 / CWE-307）、多租户 IDOR 防护、审计事件 token 统一掩码（CWE-532）、外网登录端点 fail-closed 等。逐项机制的代码级细节见 [🏗️ 架构文档](docs/cn/ARCHITECTURE.md) 与 [📖 用户指南 · 安全与防护](docs/cn/USER_GUIDE.md)，安全配置最佳实践与漏洞处理流程见 [🔒 安全文档](docs/cn/SECURITY.md)。
 
-Garrison 围绕身份认证全生命周期做纵深防护：Argon2id / Bcrypt 慢哈希经 `spawn_blocking` 下沉、Token 常量时间比较（`secure-ct-eq`，CWE-208）、API Key 哈希存储与 IP 级限速（CWE-916 / CWE-307）、多租户 IDOR 防护、审计事件 token 统一掩码（CWE-532）、外网登录端点 fail-closed 等。逐项机制的代码级细节见 [🏗️ 架构文档](docs/ARCHITECTURE.md) 与 [📖 用户指南 · 安全与防护](docs/USER_GUIDE.md)，安全配置最佳实践与漏洞处理流程见 [🔒 安全文档](SECURITY.md)。
-
-### ⛓️ 供应链与门禁
-
-CI 与发布流程内置两道供应链门禁：`cargo deny check`（RustSec 公告 / 许可证 / 禁用依赖 / 来源校验，`ci.yml` 与 `release.yml` 均执行）与 gitleaks 私钥扫描（pre-commit 覆盖 staged，CI 全量 git history）。`cargo audit` 不在 CI 中——cargo-deny 已覆盖同等漏洞检查，避免维护两份忽略列表；它仅作为本地发布 precheck 由 `scripts/release.sh` 执行。门禁标准与处置细节见 [🔒 安全文档 · 供应链与门禁](SECURITY.md)。
+CI 与发布流程内置两道供应链门禁（`cargo deny check` 与 gitleaks 私钥扫描），门禁标准与处置细节见 [🔒 安全文档 · 供应链与门禁](docs/cn/SECURITY.md)。
 
 ### 🚨 报告安全漏洞
 
-请勿通过公开 issue 报告安全漏洞。请优先使用 GitHub [Security Advisories](https://github.com/Kirky-X/garrison/security/policy) 私密披露通道提交报告（不可用时再发送邮件至 <Kirky-X@outlook.com>，受理人 Kirky.X）。项目承诺 48 小时内确认、7 天内给出初步评估。完整政策见 [SECURITY.md](SECURITY.md)。
-
----
-
-## 🗺️ 开发路线图
-
-<details>
-<summary>📋 表格</summary>
-
-<table style="width:100%; border-collapse: collapse">
-<tr><th style="text-align:center">状态</th><th style="text-align:left">方向</th><th style="text-align:left">条目</th></tr>
-<tr><td align="center">✅</td><td>核心引擎</td><td>登录认证 + 权限校验 + 双模会话 + axum/actix/warp 适配</td></tr>
-<tr><td align="center">✅</td><td>协议层</td><td>JWT / OAuth2 / SSO / OIDC / SAML 2.0 / API Key / TOTP / Basic / Digest / Sign</td></tr>
-<tr><td align="center">✅</td><td>安全与防护</td><td>账号安全引擎 / 安全防护套件 / 防火墙 / 多租户 / 审计日志</td></tr>
-<tr><td align="center">✅</td><td>微服务架构</td><td>backend-remote / Auth Server / ABAC / OAuth2 Server / gRPC</td></tr>
-<tr><td align="center">✅</td><td>可观测性</td><td>tracing / metrics-prometheus / OTLP / i18n</td></tr>
-<tr><td align="center">✅</td><td>安全加固（已落地，随下一版本发布）</td><td>外网登录端点暴露确认 fail-closed、密码登录时序侧信道对齐、OAuth2 password grant 限流 fail-closed、JWT 黑名单写失败重试、SAML Destination/Audience 缺省 strict、SSO secret ≥32 字节 + pub/sub 消息 HMAC 信封、check_safe/check_disable 会话前置校验、多租户隔离强化（会话-租户绑定 / 标识符注册表 / 设备接口）。作用域提示：绑定地址缺省收敛 127.0.0.1 与内网 API Key 强制 ≥32 字节仅约束参考部署 <code>auth_server</code> bin，库层 <code>AuthServerConfig</code> 默认仍为 0.0.0.0 且只拒绝空 Key，须自行显式收口（见 [docs/CHANGELOG.md](docs/CHANGELOG.md) · 0.9.0-rc.3）</td></tr>
-<tr><td align="center">📋</td><td>v1.0.0 稳定版</td><td>API 冻结 + 性能基准 + 生产案例</td></tr>
-</table>
-
-</details>
-
-完整规划见 [docs/ROADMAP.md](./docs/ROADMAP.md)。
+请勿通过公开 issue 报告安全漏洞。请优先使用 GitHub [Security Advisories](https://github.com/Kirky-X/garrison/security/policy) 私密披露通道提交报告（不可用时再发送邮件至 <Kirky-X@outlook.com>，受理人 Kirky.X）。项目承诺 48 小时内确认、7 天内给出初步评估。完整政策见 [🔒 安全文档](docs/cn/SECURITY.md)。
 
 ---
 
 ## 🤝 参与贡献
 
-详细的贡献流程与代码规范请参阅 [🤝 贡献指南](docs/CONTRIBUTING.md)。
+详细的贡献流程与代码规范请参阅 [🤝 贡献指南](docs/cn/CONTRIBUTING.md)。
 
 ### 🛠️ 开发环境
 
-工具链为 Rust 1.97.1+（兄弟生态依赖 rc 线要求 ≥ 1.97.1；CI 按 `1.97.1` / `stable` / `beta` 三档矩阵显式验证）；提交前运行 `cargo fmt --all -- --check` 与 `cargo clippy --features full --lib --tests -- -D warnings`（不可用 `--all-features`：它同时启用 db-sqlite 与 db-postgres，而 dbnexus 禁止 embedded×server-side 驱动共存，必然 compile_error）；提交信息遵循 Conventional Commits（`feat`、`fix`、`docs` 等）。完整环境搭建步骤见 [🤝 贡献指南 · 开发环境搭建](docs/CONTRIBUTING.md#-开发环境搭建)。
+工具链要求、提交前检查（`cargo fmt` / `cargo clippy`）与 Conventional Commits 提交规范见 [🤝 贡献指南 · 开发环境搭建](docs/cn/CONTRIBUTING.md#-开发环境搭建)。
 
 ### 💖 贡献方式
 
@@ -498,78 +291,15 @@ CI 与发布流程内置两道供应链门禁：`cargo deny check`（RustSec 公
 </tr>
 </table>
 
----
+### 🙏 致谢
 
-## 📋 更新日志
-
-完整版本历史见 [📋 更新日志](docs/CHANGELOG.md)（遵循 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 格式，语义化版本）。
-
-<details>
-<summary>📋 表格</summary>
-
-| 版本 | 日期 | 要点 |
-|------|------|------|
-| 0.9.0 | 2026-11-14 | 正式版定版：自研依赖面转稳定线（confers 0.6 / trait-kit 0.5 / oxcache 0.5 / dbnexus 0.6 / inklog 0.3 / sdforge 0.5 / limiteron 0.3）、i18n 归一 trait-kit 供给、单根 garrison 二进制、CI 供应链告警清零 |
-| 0.9.0-rc.3 | 2026-10-14 | 安全审计整改 R01–R18：统一错误模型（request-id / Retry-After）/ 字段静态加密 / WebAuthn / 密码找回 / MFA 编排 / back-channel logout / 多租户强化 / garrison-cli |
-| 0.9.0-rc.2 | 2026-08-26 | fail-closed 安全加固（check_api_key / check_abac） |
-| 0.9.0-rc.1 | 2026-08-25 | 验收测试体系 + DAO 原子契约收严 + gRPC async 鉴权层 |
-| 0.8.1 | 2026-07-24 | 审计日志 token 泄漏修复（CWE-532） |
-
-</details>
+核心依赖与特别感谢名单见 [🤝 贡献指南 · 致谢](docs/cn/CONTRIBUTING.md#acknowledgments)。
 
 ---
 
 ## 📄 许可证
 
 本项目基于 [Apache-2.0](LICENSE) 许可证开源。为何选择 Apache-2.0 而非 MIT：Apache-2.0 包含专利授权条款，更适合企业级框架使用。
-
----
-
-## 🙏 致谢
-
-### 🌟 核心依赖
-
-Garrison 站在以下优秀开源项目的肩膀上：
-
-<details>
-<summary>📋 表格</summary>
-
-| 依赖 | 用途 |
-|------|------|
-| [axum](https://github.com/tokio-rs/axum) | tokio 团队出品的 Rust Web 框架 |
-| [oxcache](https://github.com/Kirky-X/oxcache) | Rust 多级缓存库（L1 内存 + L2 redis） |
-| [dbnexus](https://github.com/Kirky-X/dbnexus) | Rust 数据库抽象层（SQLite / PostgreSQL / MySQL） |
-| [inventory](https://github.com/dtolnay/inventory) | David Tolnay 的编译期插件注册库 |
-| [confers](https://github.com/Kirky-X/confers) | Rust 配置管理库（零样板代码） |
-| [sdforge](https://github.com/Kirky-X/sdforge) | 声明式 Web 框架 |
-| [trait-kit](https://github.com/Kirky-X/trait-kit) | trait 工具集 |
-
-</details>
-
-### 💝 特别感谢
-
-- 感谢 Rust 社区与所有 [贡献者](https://github.com/Kirky-X/garrison/graphs/contributors)
-
----
-
-## 📞 联系与支持
-
-<table style="width:100%; max-width: 600px">
-<tr>
-<td align="center" width="33%">
-<a href="https://github.com/Kirky-X/garrison/issues"><b style="color:#991B1B">Issues</b></a><br>
-<span style="color:#64748B">报告问题和 Bug</span>
-</td>
-<td align="center" width="33%">
-<a href="docs/FAQ.md"><b style="color:#1E40AF">FAQ</b></a><br>
-<span style="color:#64748B">常见问题解答</span>
-</td>
-<td align="center" width="33%">
-<a href="https://github.com/Kirky-X/garrison"><b style="color:#1E293B">GitHub</b></a><br>
-<span style="color:#64748B">查看源代码</span>
-</td>
-</tr>
-</table>
 
 ---
 

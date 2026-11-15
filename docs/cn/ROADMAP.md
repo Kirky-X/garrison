@@ -713,3 +713,20 @@ explore → propose → apply → archive
 
 > 本路线图为持续滚动更新文档，实际发布时间与内容可能随社区反馈调整。最新进展请关注 [GitHub Releases](https://github.com/Kirky-X/garrison/releases)。
 > 最近同步：2026-10-28（0.9.0-rc.4 已发布）。
+
+---
+
+<a id="readme-roadmap-snapshot"></a>
+
+## 🗺️ README 路线图快照（自 README 迁入）
+
+<table style="width:100%; border-collapse: collapse">
+<tr><th style="text-align:center">状态</th><th style="text-align:left">方向</th><th style="text-align:left">条目</th></tr>
+<tr><td align="center">✅</td><td>核心引擎</td><td>登录认证 + 权限校验 + 双模会话 + axum/actix/warp 适配</td></tr>
+<tr><td align="center">✅</td><td>协议层</td><td>JWT / OAuth2 / SSO / OIDC / SAML 2.0 / API Key / TOTP / Basic / Digest / Sign</td></tr>
+<tr><td align="center">✅</td><td>安全与防护</td><td>账号安全引擎 / 安全防护套件 / 防火墙 / 多租户 / 审计日志</td></tr>
+<tr><td align="center">✅</td><td>微服务架构</td><td>backend-remote / Auth Server / ABAC / OAuth2 Server / gRPC</td></tr>
+<tr><td align="center">✅</td><td>可观测性</td><td>tracing / metrics-prometheus / OTLP / i18n</td></tr>
+<tr><td align="center">✅</td><td>安全加固（已落地，随下一版本发布）</td><td>外网登录端点暴露确认 fail-closed、密码登录时序侧信道对齐、OAuth2 password grant 限流 fail-closed、JWT 黑名单写失败重试、SAML Destination/Audience 缺省 strict、SSO secret ≥32 字节 + pub/sub 消息 HMAC 信封、check_safe/check_disable 会话前置校验、多租户隔离强化（会话-租户绑定 / 标识符注册表 / 设备接口）。作用域提示：绑定地址缺省收敛 127.0.0.1 与内网 API Key 强制 ≥32 字节仅约束参考部署 <code>auth_server</code> bin，库层 <code>AuthServerConfig</code> 默认仍为 0.0.0.0 且只拒绝空 Key，须自行显式收口（见 [CHANGELOG.md](CHANGELOG.md) · 0.9.0-rc.3）</td></tr>
+<tr><td align="center">📋</td><td>v1.0.0 稳定版</td><td>API 冻结 + 性能基准 + 生产案例</td></tr>
+</table>

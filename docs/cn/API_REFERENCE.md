@@ -40,7 +40,7 @@
 | **静态门面** | 业务代码只与 `GarrisonManager`（初始化一次）和 `GarrisonUtil`（静态方法）打交道 |
 | **回调注入** | 框架不假定数据来源，权限 / 角色数据经 `GarrisonInterface` 回调由业务方提供 |
 | **trait 可替换** | `GarrisonDao`、`GarrisonPermissionStrategy`、`GarrisonPlugin`、`GarrisonListener` 均可自定义实现替换默认行为 |
-| **feature 门控** | 可选能力（协议、防火墙、Web 适配等）按 feature 独立编译；功能矩阵见 [README · 特性标志](../README.md#-特性标志) |
+| **feature 门控** | 可选能力（协议、防火墙、Web 适配等）按 feature 独立编译；功能矩阵见 [README · 特性标志](#feature-matrix) |
 
 ### 导入方式
 
@@ -496,7 +496,7 @@ Display 行为：i18n 基础层无条件编译，`to_string()` 按线程本地 l
 
 ## 🗺️ 模块地图
 
-`src/lib.rs` 公开模块（无标注为总编译核心；其余按 feature 门控，功能矩阵见 [README · 特性标志](../README.md#-特性标志)）：
+`src/lib.rs` 公开模块（无标注为总编译核心；其余按 feature 门控，功能矩阵见 [README · 特性标志](#feature-matrix)）：
 
 | 模块 | 说明 |
 |------|------|
@@ -584,3 +584,100 @@ Display 行为：i18n 基础层无条件编译，`to_string()` 按线程本地 l
 | [⚙️ 配置指南](CONFIGURATION.md) | `GarrisonConfig` 全量配置项 |
 | [🧪 测试场景矩阵](TEST_SCENARIOS.md) | 验收场景穷举与特性组合矩阵 |
 | [💻 在线 API 文档](https://docs.rs/garrison) | docs.rs 自动生成的最新文档 |
+
+---
+
+<a id="feature-matrix"></a>
+
+## 🎨 特性标志功能矩阵（自 README 迁入）
+
+下表按能力域汇总 `Cargo.toml` 的 `[features]` 主要特性（100+ 个 flag，完整清单以 `Cargo.toml` 的 `[features]` 为准），`default = ["backend-embedded"]`。
+
+<details>
+<summary>📋 表格</summary>
+
+<table style="width:100%; border-collapse: collapse">
+<tr><th style="text-align:left">特性</th><th style="text-align:center">默认</th><th style="text-align:left">说明</th></tr>
+<tr><td><code>backend-embedded</code></td><td align="center">✅</td><td>内嵌后端模式（进程内认证，委托 GarrisonManager）</td></tr>
+<tr><td><code>backend-remote</code></td><td align="center">❌</td><td>远程后端适配器（通过 HTTP 调用远程 Auth Server）</td></tr>
+<tr><td><code>backend-kit</code></td><td align="center">❌</td><td>trait-kit typestate DI 构建</td></tr>
+<tr><td><code>auth-server</code></td><td align="center">❌</td><td>独立认证服务器（sdforge 声明式路由 + TLS）</td></tr>
+<tr><td><code>abac</code></td><td align="center">❌</td><td>基于 Cedar DSL 的属性访问控制引擎</td></tr>
+<tr><td><code>oauth2-server</code></td><td align="center">❌</td><td>完整 OAuth2 Server 4 端点</td></tr>
+<tr><td><code>cache-memory</code></td><td align="center">❌</td><td>内存缓存后端（oxcache 内存层）</td></tr>
+<tr><td><code>cache-redis</code></td><td align="center">❌</td><td>Redis 缓存后端（oxcache L2）</td></tr>
+<tr><td><code>db-sqlite</code></td><td align="center">❌</td><td>SQLite 数据库后端</td></tr>
+<tr><td><code>db-postgres</code></td><td align="center">❌</td><td>PostgreSQL 后端</td></tr>
+<tr><td><code>db-mysql</code></td><td align="center">❌</td><td>MySQL 后端</td></tr>
+<tr><td><code>web-axum</code></td><td align="center">❌</td><td>axum Web 框架适配</td></tr>
+<tr><td><code>web-actix</code></td><td align="center">❌</td><td>actix-web Web 框架适配</td></tr>
+<tr><td><code>web-warp</code></td><td align="center">❌</td><td>warp Web 框架适配</td></tr>
+<tr><td><code>web-cors</code> / <code>web-csrf</code></td><td align="center">❌</td><td>CORS / CSRF 中间件（WAF 已并入 <code>firewall-waf</code>）</td></tr>
+<tr><td><code>protocol-jwt</code></td><td align="center">❌</td><td>JWT 签发与验证（HS256 / HS384 / HS512，另支持 RS / ES / EdDSA 非对称算法 + refresh）</td></tr>
+<tr><td><code>protocol-oauth2</code></td><td align="center">❌</td><td>OAuth2 四种模式</td></tr>
+<tr><td><code>protocol-sso</code> / <code>protocol-sso-server</code></td><td align="center">❌</td><td>SSO ticket / SSO Server 抽象</td></tr>
+<tr><td><code>protocol-sign</code></td><td align="center">❌</td><td>API 签名 + nonce 防重放</td></tr>
+<tr><td><code>protocol-apikey</code></td><td align="center">❌</td><td>API Key 认证</td></tr>
+<tr><td><code>protocol-temp</code></td><td align="center">❌</td><td>临时凭证</td></tr>
+<tr><td><code>protocol-qrlogin</code></td><td align="center">❌</td><td>第一方扫码登录（Web 扫码 + App 确认，两票分离）</td></tr>
+<tr><td><code>protocol-oidc</code></td><td align="center">❌</td><td>OIDC id_token 签发/验证 + discovery</td></tr>
+<tr><td><code>protocol-invitation</code></td><td align="center">❌</td><td>邀请码定向注册（一次性/N 次、TTL、吊销、防爆破）</td></tr>
+<tr><td><code>oauth2-scope-handler</code></td><td align="center">❌</td><td>OAuth2 Scope Handler 注册表（ScopeHandler trait + ScopeRegistry）</td></tr>
+<tr><td><code>protocol-httpbasic</code> / <code>protocol-httpdigest</code></td><td align="center">❌</td><td>HTTP Basic / Digest 认证</td></tr>
+<tr><td><code>protocol-saml</code></td><td align="center">❌</td><td>SAML 2.0 骨架</td></tr>
+<tr><td><code>protocol-zeroize</code></td><td align="center">❌</td><td>协议层密钥零化</td></tr>
+<tr><td><code>secure-totp</code></td><td align="center">❌</td><td>TOTP 动态验证码 (RFC 6238)</td></tr>
+<tr><td><code>secure-sign</code></td><td align="center">❌</td><td>HMAC-SHA256/SHA512 工具</td></tr>
+<tr><td><code>secure-confusable</code> / <code>secure-masking</code> / <code>secure-xss</code> / <code>secure-sanitize</code></td><td align="center">❌</td><td>安全工具集</td></tr>
+<tr><td><code>secure-simple-token</code> / <code>secure-ct-eq</code></td><td align="center">❌</td><td>签名 / 常量时间比较</td></tr>
+<tr><td><code>account-credential</code> / <code>account-policy</code> / <code>account-lockout</code> / <code>account-authflow</code></td><td align="center">❌</td><td>账号安全引擎</td></tr>
+<tr><td><code>firewall</code> / <code>firewall-*</code></td><td align="center">❌</td><td>安全防护套件（暴力破解/限流/异常/GeoIP/DDoS/WAF）</td></tr>
+<tr><td><code>listener</code></td><td align="center">❌</td><td>事件监听器（31 个事件变体）</td></tr>
+<tr><td><code>tracing-log</code> / <code>metrics-prometheus</code> / <code>otlp</code></td><td align="center">❌</td><td>可观测性</td></tr>
+<tr><td><code>annotation-macros</code></td><td align="center">❌</td><td>13 个属性宏</td></tr>
+<tr><td><code>tenant-isolation</code></td><td align="center">❌</td><td>多租户逻辑隔离</td></tr>
+<tr><td><code>social-wechat</code> / <code>social-alipay</code></td><td align="center">❌</td><td>社交登录</td></tr>
+<tr><td><code>core-advanced</code> / <code>session-extra</code></td><td align="center">❌</td><td>核心增强 / 会话增强合并</td></tr>
+<tr><td><code>email-verification</code> / <code>email-verification-smtp</code></td><td align="center">❌</td><td>邮箱验证码</td></tr>
+<tr><td><code>config-*</code></td><td align="center">❌</td><td>配置文件加密/校验/热更新/插值/动态/开关（confers 透传）</td></tr>
+<tr><td><code>i18n-icu</code></td><td align="center">❌</td><td>国际化（基础 i18n 层无需 feature，ICU 集成按此门控）</td></tr>
+<tr><td><code>protocol-webauthn</code></td><td align="center">❌</td><td>WebAuthn / Passkey 凭据注册与认证仪式（challenge 防重放 / sign_count 克隆检测）</td></tr>
+<tr><td><code>backchannel-logout</code></td><td align="center">❌</td><td>OIDC Back-Channel Logout（logout token 签发 + 持久化投递队列）</td></tr>
+<tr><td><code>keycloak-oidc</code></td><td align="center">❌</td><td>Keycloak OIDC 依赖方（RP）集成</td></tr>
+<tr><td><code>field-encryption</code></td><td align="center">❌</td><td>落库敏感字段 AES-256-GCM 静态加密（AAD 租户/表/键绑定 + 迁移期双读）</td></tr>
+<tr><td><code>mfa-recovery</code></td><td align="center">❌</td><td>MFA 恢复码管理器（SHA-256 哈希落库 + 原子消费）</td></tr>
+<tr><td><code>account-password-reset</code></td><td align="center">❌</td><td>找回密码流程（防枚举 / ActionToken 一次性消费 / 两段式防竞态）</td></tr>
+<tr><td><code>policy-hibp</code></td><td align="center">❌</td><td>HIBP 泄露密码检查（k-anonymity range search）</td></tr>
+<tr><td><code>credential-zeroize</code></td><td align="center">❌</td><td>凭据密钥零化（Drop 清零）</td></tr>
+<tr><td><code>tls</code></td><td align="center">❌</td><td>HTTPS/TLS 终止（axum-server + rustls）</td></tr>
+<tr><td><code>tls-cert-watch</code></td><td align="center">❌</td><td>TLS 证书进程内热重载（换证不重启进程，两端口新握手同时生效）</td></tr>
+<tr><td><code>server-health-check</code> / <code>server-graceful-shutdown</code></td><td align="center">❌</td><td>健康/就绪探针 / 优雅停机</td></tr>
+<tr><td><code>web-security</code> / <code>web-security-headers</code></td><td align="center">❌</td><td>Web 安全中间件聚合（CORS+CSRF+响应头）/ 独立安全响应头</td></tr>
+<tr><td><code>cache-lock</code> / <code>cache-batch</code> / <code>cache-invalidation</code> / <code>cache-audit</code> / <code>cache-hotkey</code> / <code>ban-sync</code></td><td align="center">❌</td><td>缓存增强：分布式锁 / 批量 / 跨实例失效 / 审计事件流 / 热 key 观测 / 封禁同步（oxcache 透传）</td></tr>
+<tr><td><code>db-retry</code> / <code>db-sharding</code> / <code>db-replica</code> / <code>db-saga</code></td><td align="center">❌</td><td>数据库增强：重试 / 分片 / 读写分离 / Saga（dbnexus 透传）</td></tr>
+<tr><td><code>three-tier-cache</code></td><td align="center">❌</td><td>三层缓存架构（L1 本地 + L2 redis + DB）</td></tr>
+<tr><td><code>security-alert</code> / <code>device-binding</code> / <code>session-hijack-detection</code></td><td align="center">❌</td><td>安全告警系统 / 设备绑定 / 会话劫持检测</td></tr>
+<tr><td><code>grpc</code></td><td align="center">❌</td><td>gRPC async 鉴权层（tonic 拦截器）</td></tr>
+<tr><td><code>credit-metering</code></td><td align="center">❌</td><td>信用/配额计量（活跃度写路径节流聚合）</td></tr>
+<tr><td><code>audit-log</code></td><td align="center">❌</td><td>审计日志（落库 + HMAC 防篡改事件链）</td></tr>
+<tr><td><code>audit-inklog</code> / <code>audit-inklog-http</code> / <code>audit-inklog-siem</code></td><td align="center">❌</td><td>inklog 结构化审计日志 / HTTP / SIEM 外送</td></tr>
+<tr><td><code>alone-cache</code> / <code>parameter-query</code></td><td align="center">❌</td><td>DAO 单飞缓存（防击穿）/ STP 参数化查询</td></tr>
+<tr><td><code>api-docs</code> / <code>cli-ops</code></td><td align="center">❌</td><td>OpenAPI 文档 / 运维子命令（garrison 单根二进制）</td></tr>
+<tr><td><code>data-erasure</code></td><td align="center">❌</td><td>数据主体擦除编排（GDPR / 个保法删除权）</td></tr>
+<tr><td><code>authorize-api</code> / <code>manager-explicit</code></td><td align="center">❌</td><td>核心扩展：请求对象式授权 API / 显式 Manager API</td></tr>
+<tr><td><code>miette</code> / <code>embedded-migrations</code></td><td align="center">❌</td><td>富诊断错误（miette::Diagnostic）/ 嵌入式迁移文件</td></tr>
+<tr><td><code>full</code> / <code>production</code> / <code>development</code></td><td align="center">❌</td><td>聚合特性</td></tr>
+</table>
+
+</details>
+
+> **v0.9.0 Feature 改名映射**：
+>
+> | 旧名称 (≤0.8.x) | 新名称 (≥0.9.0) | 说明 |
+> |-----------------|-----------------|------|
+> | `secure-saml` | `protocol-saml` | SAML 2.0 签名验证 |
+> | `secure-httpbasic` | `protocol-httpbasic` | HTTP Basic 认证 |
+> | `secure-httpdigest` | `protocol-httpdigest` | HTTP Digest 认证 |
+> | `observability-otlp` | `otlp` | OpenTelemetry OTLP |
+> | `decision-trace` / `permission-registry` / `safe-defaults` | `core-advanced` | 核心增强合并 |
+> | `dynamic-active-timeout` / `login-token-map-persistence` / `anonymous-session` / `session-search` | `session-extra` | 会话增强合并 |
