@@ -591,7 +591,7 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 
 - ✅ API 冻结候选清单：`docs/API_FREEZE_CANDIDATES.md`（Stable / Stable-with-feature / Experimental / Internal 分级）
 - ✅ PR 级 API diff：`.github/workflows/api-surface-diff.yml`（report-only，结构化 JSON 工件）
-- ✅ 性能基线入库：`docs/benchmarks/v1.0-baseline.md` + `scripts/perf_compare.sh`（回归阈值判定；支持直接读归档 markdown 基线，无需本地 criterion 基线目录）
+- ✅ 性能基线入库：`docs/cn/benchmarks-v1.0-baseline.md` + `scripts/perf_compare.sh`（回归阈值判定；支持直接读归档 markdown 基线，无需本地 criterion 基线目录）
 - ✅ Cookie 安全默认：非 `development` profile 默认 `Secure=true`、`HttpOnly`、`SameSite=Lax`，配置可覆盖
 - ✅ RefreshTokenRotation 并发验证：`loom-test` feature 下同 token 并发轮换恰一成功（16 轮双线程 + 4 方并发；**验证手段为真实 tokio 线程 + 真实 SQLite 的竞态采样，非 `loom::model` 交错穷举**——本路径原子性由数据库条件 UPDATE + rows_affected 判定保证，属存储层 CAS，`loom::model` 无法建模真实数据库的写事务串行化；纯进程内原子消费路径仍由 `loom::model` 用例穷举覆盖）
 
@@ -627,7 +627,7 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 | 门禁 | 状态 | 本轮启动产物 |
 |------|------|-------------|
 | API 冻结（semver 稳定承诺） | ✅ 仓库侧产物完成 | [API 稳定性分级](API_STABILITY.md) · [API 冻结候选清单](API_FREEZE_CANDIDATES.md) · `scripts/api_surface.sh` · PR diff workflow（report-only） |
-| 性能基准测试 | ✅ 仓库侧基线入库 | `docs/benchmarks/v1.0-baseline.md` · `scripts/perf_compare.sh` · [性能指南 · v1.0 基线采集](PERFORMANCE.md#-v10-性能基线采集) |
+| 性能基准测试 | ✅ 仓库侧基线入库 | `docs/cn/benchmarks-v1.0-baseline.md` · `scripts/perf_compare.sh` · [性能指南 · v1.0 基线采集](PERFORMANCE.md#-v10-性能基线采集) |
 | 生产案例文档 | 📋 自托管参考（非客户案例） | [参考生产案例](PRODUCTION_CASES.md) |
 | 安全审计 | 📋 第三方审计待外部 | [安全审计就绪包](SECURITY_AUDIT.md) · `scripts/security_evidence.sh` |
 

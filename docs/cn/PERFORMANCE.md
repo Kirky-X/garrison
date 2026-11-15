@@ -142,11 +142,11 @@ BASELINE=v1.0-pre bash scripts/perf_baseline.sh --quick
 ```bash
 bash scripts/perf_compare.sh                                  # 默认基线 v1.0-pre，阈值 10%
 BASELINE=v1.0-pre THRESHOLD=5 bash scripts/perf_compare.sh    # 自定义阈值
-BASELINE_MD=docs/benchmarks/v1.0-baseline.md bash scripts/perf_compare.sh   # 显式指定归档基线
+BASELINE_MD=docs/cn/benchmarks-v1.0-baseline.md bash scripts/perf_compare.sh   # 显式指定归档基线
 bash scripts/perf_compare.sh --help                           # 用法与退出码语义
 ```
 
-基线来源按优先级判定：① `BASELINE_MD` 指定的归档 markdown；② 本地 criterion 基线（`target/criterion/**/<基线名>/estimates.json`，不入库）；③ 两者都无时，自动在 `docs/benchmarks/` 中按「基线名称」匹配归档 markdown。因此克隆仓库后无需先跑 `perf_baseline.sh` 即可对比入库基线。
+基线来源按优先级判定：① `BASELINE_MD` 指定的归档 markdown；② 本地 criterion 基线（`target/criterion/**/<基线名>/estimates.json`，不入库）；③ 两者都无时，自动在 `docs/cn/` 中按「基线名称」匹配归档 markdown。因此克隆仓库后无需先跑 `perf_baseline.sh` 即可对比入库基线。
 
 退出码：
 
@@ -159,9 +159,9 @@ bash scripts/perf_compare.sh --help                           # 用法与退出�
 ### 基线刷新与归档 SOP
 
 1. **刷新**：在目标机器上跑 `BASELINE=<新基线名> bash scripts/perf_baseline.sh`（`--quick` 为快速采样，仅供草稿对比），产物 `logs/perf-baseline.md` 记录 git SHA / 工具链 / CPU。
-2. **归档**：把 `logs/perf-baseline.md` 复制到 `docs/benchmarks/<基线名>.md`（如 `docs/benchmarks/v1.0-baseline.md`）并提交入库——归档 markdown 的「基线名称」字段即 `perf_compare.sh` 的自动匹配键。
-3. **自检**：用归档基线实跑一次 `BASELINE_MD=docs/benchmarks/<基线名>.md bash scripts/perf_compare.sh`，确认能产出对比表且退出码符合预期（基线解析失败会以退出码 2 显性报错）。
-4. **换基线**：更新默认基线名时同步改 `scripts/perf_compare.sh` 的 `BASELINE` 默认值、`docs/benchmarks/` 下的归档文件名与 `docs/ROADMAP.md` / `docs/CHANGELOG.md` 中的基线引用。
+2. **归档**：把 `logs/perf-baseline.md` 复制到 `docs/cn/<基线名>.md`（如 `docs/cn/benchmarks-v1.0-baseline.md`）并提交入库——归档 markdown 的「基线名称」字段即 `perf_compare.sh` 的自动匹配键。
+3. **自检**：用归档基线实跑一次 `BASELINE_MD=docs/cn/<基线名>.md bash scripts/perf_compare.sh`，确认能产出对比表且退出码符合预期（基线解析失败会以退出码 2 显性报错）。
+4. **换基线**：更新默认基线名时同步改 `scripts/perf_compare.sh` 的 `BASELINE` 默认值、`docs/cn/` 下的归档文件名与 `docs/ROADMAP.md` / `docs/CHANGELOG.md` 中的基线引用。
 
 ---
 
