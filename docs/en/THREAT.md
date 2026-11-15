@@ -141,7 +141,7 @@ The following attack surfaces are **outside the framework boundary** and must be
 3. **Host/kernel-level attacks** (memory reads after root escalation, container escape) — process isolation, encrypted swap, least-privilege container runtimes.
 4. **Physical access** (disk removal, RAM cold boot) — disk encryption, keys never on disk (KMS/Vault injection).
 5. **Business-logic authorization flaws** (privilege escalation in the business rules themselves, e.g. "only delete your own orders" not implemented) — the framework enforces rules the business defines; missing rules are not the framework's fault.
-6. **Explicit enablement of deprecated algorithms** (e.g. explicitly selecting HTTP Digest MD5) — the framework provides safe-by-default and warns in the [SECURITY.md known security considerations](SECURITY.md#️-已知安全考量); explicit bypass is a business decision.
+6. **Explicit enablement of deprecated algorithms** (e.g. explicitly selecting HTTP Digest MD5) — the framework provides safe-by-default and warns in the [SECURITY.md known security considerations](SECURITY.md#-known-security-considerations); explicit bypass is a business decision.
 7. **Social engineering and credential phishing** — user education, enforced MFA (`secure-totp` must be enabled by the business).
 8. **Supply-chain upstream poisoning** (malicious versions published after a crates.io account theft) — `cargo vet` audit records + SBOM + lockfile provide detection and traceability, not absolute a-priori defense.
 

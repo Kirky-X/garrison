@@ -209,7 +209,7 @@ All protocol capabilities are feature-gated; once enabled, the APIs enter from t
 | TOTP | `secure-totp` | RFC 6238 dynamic verification codes | `totp_login.rs` |
 | Basic / Digest | `protocol-httpbasic` / `protocol-httpdigest` | Standard HTTP authentication | `httpbasic_login.rs` / `httpdigest_login.rs` |
 
-> Note: `protocol-sso` implies `protocol-jwt` (OIDC id_token mandatory verification, fail-closed); `db-sqlite` and `db-postgres`/`db-mysql` are mutually exclusive. All constraints are in [🧪 Test Scenarios · Hard constraints](TEST_SCENARIOS.md#硬约束组合矩阵必须遵守).
+> Note: `protocol-sso` implies `protocol-jwt` (OIDC id_token mandatory verification, fail-closed); `db-sqlite` and `db-postgres`/`db-mysql` are mutually exclusive. All constraints are in [🧪 Test Scenarios · Hard constraints](TEST_SCENARIOS.md#-hard-constraints-the-combination-matrix-must-obey).
 
 ---
 
