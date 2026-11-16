@@ -6,8 +6,16 @@ name: CI
 on:
   push:
     branches: [main, develop, "release/*"]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".gitignore"
+      - "LICENSE*"
   pull_request:
     branches: [main, develop]
+  schedule:
+    # 每周一 03:00 UTC：全矩阵（含 macOS/Windows/beta 腿）兜底
+    - cron: "0 3 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -147,8 +155,37 @@ jobs:
   # 不用 action 的原因见 scripts/setup_rust.sh 头注：dtolnay/rust-toolchain 的
   # SHA 钉位会脱离上游 ref 历史，供应链审计无法通过。
   # protoc 用 taiki-e/install-action 跨平台统一安装（Linux/macOS/Windows 均支持）
+  # 测试矩阵计算：push/PR 只展开 ubuntu 非 beta 腿（macOS/Windows runner 计价
+  # 10 倍，降频为每周 schedule 兜底）；schedule/workflow_dispatch 展开全矩阵
+  # （含 ubuntu beta 腿）。matrix context 在 job 级 if 中不可用（actions/runner
+  # WorkflowTemplateConverter 的 s_jobIfNamedValues 仅允许 github/vars/inputs/
+  # needs，引用 matrix 会报 Unrecognized named-value 导致 startup_failure），
+  # 故裁剪逻辑放进 gate 输出的动态矩阵，行为与逐腿 job 级 if 等价。
+  test-matrix:
+    name: Compute test matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        # event_name 经 env 传入而非内插 run（同 setup_rust.sh 的 template-injection 口径）
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "schedule" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo 'matrix={"os":["ubuntu-latest","macos-latest","windows-latest"],"rust":["1.97.1","stable","beta"],"exclude":[{"os":"windows-latest","rust":"beta"},{"os":"macos-latest","rust":"beta"}]}' >> "$GITHUB_OUTPUT"
+          else
+            echo 'matrix={"os":["ubuntu-latest"],"rust":["1.97.1","stable"]}' >> "$GITHUB_OUTPUT"
+          fi
+
   test:
     name: Test (${{ matrix.os }} / Rust ${{ matrix.rust }})
+    needs:
+      - test-matrix
+    # job 级 if 覆盖默认门禁，显式声明依赖成功（needs.test-matrix 无 if 分支，
+    # result 恒为 success，此处显式化与默认门禁等价）
+    if: needs.test-matrix.result == 'success'
     runs-on: ${{ matrix.os }}
     # Windows 腿需要更长时限：vcpkg 源码编译 openssl（webauthn attestation-ca
     # 依赖）+ 全特性面冷编译 ~20min，25min 上限两轮实测均到点被杀
@@ -161,14 +198,7 @@ jobs:
       GARRISON_TEST_SQLITE_MEMORY: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [1.97.1, stable, beta]
-        exclude:
-          - os: windows-latest
-            rust: beta
-          - os: macos-latest
-            rust: beta
+      matrix: ${{ fromJSON(needs.test-matrix.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
