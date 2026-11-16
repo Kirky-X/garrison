@@ -19,6 +19,11 @@ updates:
         update-types: ["patch"]
       minor:
         update-types: ["minor"]
+    # patch 级版本更新关闭自动 PR（2026-11-16）
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-patch"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
@@ -34,6 +39,11 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+    # patch 级版本更新关闭自动 PR（2026-11-16）
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-patch"
 
   # pre-commit hooks
   - package-ecosystem: "pre-commit"
@@ -43,3 +53,8 @@ updates:
     labels: ["dependencies", "tooling"]
     cooldown:
       default-days: 7
+    # patch 级版本更新关闭自动 PR（2026-11-16）
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-patch"
