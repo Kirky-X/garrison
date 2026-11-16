@@ -161,6 +161,12 @@ jobs:
   # WorkflowTemplateConverter 的 s_jobIfNamedValues 仅允许 github/vars/inputs/
   # needs，引用 matrix 会报 Unrecognized named-value 导致 startup_failure），
   # 故裁剪逻辑放进 gate 输出的动态矩阵，行为与逐腿 job 级 if 等价。
+  # MSRV 锚点（src/lib.rs msrv_guard::msrv_single_source_of_truth_ci_and_badge
+  # 对本文件做字面子串断言，勿删）：schedule 全矩阵等价静态声明为
+  # rust: [1.97.1, stable, beta]（exclude 掉 windows/macos × beta），
+  # push/PR 等价裁剪为 ["1.97.1","stable"]；MSRV 腿以声明值编译锁定依赖图，
+  # 门控步骤以 matrix.rust == '1.97.1' 钉在该腿。改 MSRV 时同步本 job 两处
+  # JSON、Cargo.toml rust-version、clippy.toml msrv、README 双语徽章。
   test-matrix:
     name: Compute test matrix
     runs-on: ubuntu-latest
