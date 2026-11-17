@@ -8,8 +8,8 @@ edition = "2021"
 cargo-fuzz = true
 
 [dependencies]
-# 必须保留默认特性 link_libfuzzer：fuzz target 均 `#![no_main]`，libfuzzer 的 main 由该特性经 build.rs 编译链接
-# 关闭后 `cargo build --bin <target>` 报 undefined symbol: main，fuzz 回归全部无法构建
+# 必须保留默认特性 link_libfuzzer：fuzz target 均 #![no_main]，main 由该特性经 build.rs 链接
+# 关闭后 cargo build --bin <target> 报 undefined symbol: main，fuzz 回归全部无法构建
 libfuzzer-sys = "0.4"
 # block_on async trait 方法（fuzz_saml_xml）
 tokio = { version = "1", default-features = false, features = ["rt"] }

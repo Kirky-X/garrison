@@ -1,8 +1,7 @@
 # Copyright (c) 2026 Kirky.X🌠
 # SPDX-License-Identifier: Apache-2.0
 
-# Garrison 官方示例集（workspace member，不发布到 crates.io）
-# 每个 bin 演示 Garrison 的一个特性模块，配套 tests/<name>.rs 独立测试。
+# Garrison 官方示例集（workspace member，不发布到 crates.io）每个 bin 演示 Garrison 的一个特性模块，配套 tests/<name>.rs 独立测试。
 
 [package]
 name = "garrison-examples"
@@ -20,8 +19,7 @@ tokio = { version = "1.54", default-features = false, features = ["macros", "net
 async-trait = { version = "0.1", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
-# httpdigest_login 直接使用 SHA256 计算摘要（MD5 由 garrison 内部 protocol-httpdigest 处理）；
-# 0.11 与主 crate 统一，避免 sha2 双版本共存
+# httpdigest_login 直接使用 SHA256 计算摘要（MD5 由 garrison 内部 protocol-httpdigest 处理）；0.11 与主 crate 统一，避免 sha2 双版本共存
 sha2 = { version = "0.11", default-features = false }
 # 直接被 sso_flow 使用（InMemoryDao 内部 Mutex）
 parking_lot = { version = "0.13", default-features = false }
@@ -33,8 +31,7 @@ axum = { default-features = false, features = ["json", "tokio", "http1"], option
 actix-web = { default-features = false, optional = true, workspace = true }
 # 直接被 web_warp_example 使用（warp 集成，test 供 warp::test 模块）
 warp = { default-features = false, features = ["test"], optional = true, workspace = true }
-# 直接被 grpc_interceptor 使用（tonic Interceptor + MetadataMap）
-# 与主 crate 保持 0.14 一致，避免双版本共存导致 MetadataMap 类型不匹配
+# 直接被 grpc_interceptor 使用（tonic Interceptor + MetadataMap）与主 crate 保持 0.14 一致，避免双版本共存导致 MetadataMap 类型不匹配
 tonic = { default-features = false, features = ["transport"], optional = true, workspace = true }
 # 直接被 cache_redis 使用（RedisBackend L2 后端配置）
 oxcache = { optional = true, workspace = true }
@@ -51,16 +48,14 @@ tempfile = { workspace = true }
 # 直接被 observability_setup 使用（内联 JSON 日志初始化，与 garrison 的 metrics-prometheus feature 门控一致）
 tracing-subscriber = { optional = true, features = ["fmt", "json", "env-filter"], workspace = true }
 
-# 串行化依赖 std::env::set_var / 全局单例的集成测试（auth_server_serve、
-# web_*_example、grpc_interceptor 等 12 个 tests/*.rs 的 #[serial]）
+# 串行化依赖 std::env::set_var / 全局单例的集成测试（auth_server_serve、web_*_example、grpc_interceptor 等 12 个 tests/*.rs 的 #[serial]）
 [dev-dependencies]
 serial_test = { version = "4.0", default-features = false, features = ["async"] }
 
 [features]
 default = []
 
-# 聚合特性：启用 garrison 全部特性 + axum 依赖 + 所有转发特性
-# 必须显式列出所有转发特性，否则 tests/<name>.rs 中的 #![cfg(feature = "...")] 不会生效
+# 聚合特性：启用 garrison 全部特性 + axum 依赖 + 所有转发特性必须显式列出所有转发特性，否则 tests/<name>.rs 中的 #![cfg(feature = "...")] 不会生效
 full = [
     "garrison/full", "dep:axum",
     "secure-sign", "protocol-httpbasic", "protocol-httpdigest", "secure-totp",
@@ -110,7 +105,6 @@ protocol-sso-server = ["garrison/protocol-sso-server"]
 alone-cache = ["garrison/alone-cache"]
 parameter-query = ["garrison/parameter-query"]
 
-# 新增框架集成 / 可观测性 / 缓存特性
 web-actix = ["garrison/web-actix", "dep:actix-web"]
 web-warp = ["garrison/web-warp", "dep:warp"]
 grpc = ["garrison/grpc", "dep:tonic"]
@@ -121,14 +115,12 @@ cache-redis = ["garrison/cache-redis", "dep:oxcache", "oxcache/redis"]
 # 新增：过程宏注解（#[check_login]/#[check_permission]/#[check_role]）
 annotation-macros = ["garrison/annotation-macros"]
 
-# 新增：多租户隔离 / 审计日志 / 决策溯源 / Keycloak OIDC RP / 微信社交登录
 tenant-isolation = ["garrison/tenant-isolation"]
 audit-log = ["garrison/audit-log"]
 core-advanced = ["garrison/core-advanced"]
 keycloak-oidc = ["garrison/keycloak-oidc"]
 social-wechat = ["garrison/social-wechat"]
 
-# 新增特性转发
 abac = ["garrison/abac"]
 backend-embedded = ["garrison/backend-embedded"]
 backend-remote = ["garrison/backend-remote"]
@@ -138,7 +130,6 @@ secure-xss = ["garrison/secure-xss"]
 secure-sanitize = ["garrison/secure-sanitize"]
 secure-confusable = ["garrison/secure-confusable"]
 
-# 新增特性转发（防火墙 / OAuth2 Server / Web 安全）
 firewall-bruteforce = ["garrison/firewall-bruteforce"]
 firewall-ratelimit = ["garrison/firewall-ratelimit"]
 firewall-ddos = ["garrison/firewall-ddos"]
@@ -146,7 +137,6 @@ oauth2-server = ["garrison/oauth2-server"]
 web-cors = ["garrison/web-cors"]
 web-csrf = ["garrison/web-csrf"]
 
-# 补充特性转发（用户可接触的完整功能面）
 secure-ct-eq = ["garrison/secure-ct-eq"]
 firewall-anomalous = ["garrison/firewall-anomalous"]
 firewall-geoip = ["garrison/firewall-geoip"]
@@ -161,8 +151,8 @@ three-tier-cache = ["garrison/three-tier-cache"]
 protocol-invitation = ["garrison/protocol-invitation"]
 email-verification = ["garrison/email-verification"]
 
-# Feature-gated bins（required-features 防止 feature 关闭时编译失败）
-# always-on bins 显式声明（无 required-features），与无 cfg 门控的 tests/<name>.rs 对应。
+# Feature-gated bins 用 required-features 防止关闭 feature 时编译失败
+# always-on bins 显式声明（无 required-features），对应无 cfg 门控的 tests/<name>.rs
 
 [[bin]]
 name = "sign_utils"
@@ -313,7 +303,6 @@ name = "cache_redis"
 required-features = ["cache-redis"]
 path = "src/bin/cache_redis.rs"
 
-# 新增示例（gap closure）
 
 [[bin]]
 name = "password_login"
@@ -350,7 +339,6 @@ name = "macro_annotations"
 required-features = ["annotation-macros", "cache-memory", "web-axum"]
 path = "src/bin/macro_annotations.rs"
 
-# 新增示例
 
 [[bin]]
 name = "v0_5_0_demo"
@@ -361,7 +349,6 @@ required-features = [
 ]
 path = "src/bin/v0_5_0_demo.rs"
 
-# 新增示例
 
 [[bin]]
 name = "abac_policy"
@@ -398,7 +385,6 @@ name = "email_verification"
 required-features = ["email-verification"]
 path = "src/bin/email_verification.rs"
 
-# 新增示例（防火墙防护 / OAuth2 Server / Web 安全 / 状态机 / 健康检查）
 
 [[bin]]
 name = "firewall_defense"
@@ -424,7 +410,6 @@ name = "health_check"
 required-features = ["cache-memory", "db-sqlite"]
 path = "src/bin/health_check.rs"
 
-# 补充示例（用户可接触的完整功能面）
 
 [[bin]]
 name = "credit_metering"
