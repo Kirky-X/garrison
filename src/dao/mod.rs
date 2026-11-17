@@ -32,7 +32,7 @@ pub(crate) use macros::dao_session;
 /// | `compare_and_swap` | CAS 语义，并发不覆盖中间值 |
 ///
 /// 遗漏实现将在**编译期**报错，而非运行时静默竞态；内置实现
-///（`MockDao` / `GarrisonDaoOxcache` / `GarrisonDaoDbnexus` / `AloneCache`）均以进程内锁或后端原语满足原子性。
+/// （`MockDao` / `GarrisonDaoOxcache` / `GarrisonDaoDbnexus` / `AloneCache`）均以进程内锁或后端原语满足原子性。
 #[async_trait]
 pub trait GarrisonDao: Send + Sync {
     /// 获取指定键的值；键不存在或已过期返回 `None`。
@@ -1232,7 +1232,7 @@ pub mod tests {
         }
 
         /// 10 个并发对同一 key 调用 set_if_absent，仅 1 个返回 true
-        ///（验证 Moka `_sync` 后端下锁 + 写后立即读的可见性）。
+        /// （验证 Moka `_sync` 后端下锁 + 写后立即读的可见性）。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_set_if_absent_concurrent_only_one_succeeds() {
             let dao = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
@@ -1460,7 +1460,7 @@ pub mod tests {
     // decr 并发原子性测试
 
     /// MockDao::decr 并发原子性：10 个 task 并发 decr 同一 key（初始 5），恰好 5 次生效
-    ///（4 次返回非 0 + 1 次 1→0 删 key），其余 5 次返回 0（key 已删除）。
+    /// （4 次返回非 0 + 1 次 1→0 删 key），其余 5 次返回 0（key 已删除）。
     ///
     /// 修复前 `get → parse → update/delete` 跨 await 组合允许 incr 插入（"跨越式递减"）；
     /// 修复后单次锁作用域内完成。

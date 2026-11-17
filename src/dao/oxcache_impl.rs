@@ -28,7 +28,7 @@ fn prefixed_key(key: &str) -> String {
 }
 
 /// 通配符匹配（`*` 任意字符序列 / `?` 单字符），委托 [`crate::dao::in_memory::glob_match`]
-///（单一事实来源，O(n+m) 双指针算法）与 `InMemoryDao::keys`、Redis `KEYS` 语义一致。
+/// （单一事实来源，O(n+m) 双指针算法）与 `InMemoryDao::keys`、Redis `KEYS` 语义一致。
 ///
 /// # Feature gate
 /// 使用 `dao-key-index`（由 `protocol-apikey` / `anomalous-detector-dual` 传递），
@@ -455,7 +455,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
     }
 
     /// `parking_lot::Mutex` + `_sync` API 保护（进程内原子）：不存在视 0，`new_value > current` 时写入
-    ///（已存在保留剩余 TTL）；用于 HTTP Digest nc 单调性校验（RFC 7616 §3.4.6）。跨进程共享 Redis L2 仍有 TOCTOU（待 Lua 修复）。
+    /// （已存在保留剩余 TTL）；用于 HTTP Digest nc 单调性校验（RFC 7616 §3.4.6）。跨进程共享 Redis L2 仍有 TOCTOU（待 Lua 修复）。
     async fn compare_and_update_if_greater(
         &self,
         key: &str,

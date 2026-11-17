@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Token 抽象模块：定义 Token 生成 / 验证 / 解析的 trait 与 4 种风格实现
-//!（uuid / random_64 / simple / jwt），框架内部经 `Token` trait 切换风格。
-
+//! （uuid / random_64 / simple / jwt），框架内部经 `Token` trait 切换风格。
 use crate::error::{GarrisonError, GarrisonResult};
 use serde::{Deserialize, Serialize};
 

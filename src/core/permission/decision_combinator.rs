@@ -13,7 +13,7 @@ pub struct DecisionCombinator;
 
 impl DecisionCombinator {
     /// 聚合多个决策为单个最终决策，优先级 Forbid > Deny > Allow：遇第一个 Forbid 立即返回
-    ///（短路），否则返回第一个 Deny，否则 Allow。
+    /// （短路），否则返回第一个 Deny，否则 Allow。
     ///
     /// 空列表返回 `Decision::deny(ExplicitDeny)`（fail-closed）：空列表通常表示策略未填充的
     /// bug，fail-closed 确保不因 bug 导致权限绕过。

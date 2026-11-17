@@ -21,7 +21,7 @@ use crate::relay::SendRelayRetry;
 use std::time::Duration;
 
 /// Keycloak 根地址：`GARRISON_TEST_KEYCLOAK_URL` 可覆盖
-///（默认 compose 映射的 `http://127.0.0.1:18090`）。
+/// （默认 compose 映射的 `http://127.0.0.1:18090`）。
 pub(crate) fn keycloak_base() -> String {
     std::env::var("GARRISON_TEST_KEYCLOAK_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:18090".to_string())

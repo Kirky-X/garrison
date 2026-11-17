@@ -23,7 +23,7 @@ fn tcp_probe(addr: &str) -> bool {
 }
 
 /// redis 探活/连接地址：`GARRISON_TEST_REDIS_ADDR` 可覆盖
-///（默认 `127.0.0.1:6379`；E2E 套件经此指向 compose 拉起的隔离实例）。
+/// （默认 `127.0.0.1:6379`；E2E 套件经此指向 compose 拉起的隔离实例）。
 fn redis_addr() -> String {
     std::env::var("GARRISON_TEST_REDIS_ADDR").unwrap_or_else(|_| "127.0.0.1:6379".to_string())
 }
@@ -56,7 +56,7 @@ fn pg_available() -> bool {
 }
 
 /// docker 是否可用（MySQL testcontainers 前置）：`docker info` 成功
-///（daemon 存活）视为可用，否则跳过 MySQL 场景。
+/// （daemon 存活）视为可用，否则跳过 MySQL 场景。
 #[cfg(feature = "db-mysql")]
 fn docker_available() -> bool {
     std::process::Command::new("docker")
@@ -95,7 +95,7 @@ impl Drop for EnvGuard {
 
 /// （正常）：`redis_available()` 探测语义——
 /// `GARRISON_TEST_REDIS=1` 强制可用；未设置时与 TCP 探活结果一致
-///（不自欺：探测结果就是环境事实）。
+/// （不自欺：探测结果就是环境事实）。
 #[tokio::test]
 #[serial]
 async fn acc_env_001_redis_probe_helper_semantics() {

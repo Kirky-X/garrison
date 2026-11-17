@@ -294,7 +294,7 @@ async fn acc_oauth2_005_introspect_active_token() {
 
 /// （异常）：token 被撤销后 introspection 返回 active=false——fixture 直连
 /// 真实 RFC 7009 /revoke 端点吊销有效 token，验证内省状态真实翻转
-///（active=true → 吊销 → false）。
+/// （active=true → 吊销 → false）。
 /// 注：OAuth2Client 无 revoke API（RFC 7009 属授权服务器职责），见文件头偏差记录。
 #[tokio::test]
 #[serial]

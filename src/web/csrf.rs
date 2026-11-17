@@ -80,7 +80,7 @@ pub fn generate_csrf_token() -> GarrisonResult<String> {
 }
 
 /// 校验 CSRF token（常量时间比较，防时序攻击）：长度 + 逐字节比较统一委托
-/// [`crate::secure::ct_eq::constant_time_eq`]（ADR-0003 决策 2：消除本地第二实现，不提前返回）；
+/// [`crate::secure::ct_eq::constant_time_eq`]（消除本地第二实现，不提前返回）；
 /// 任一 token 为空视为非法输入返回 `false`，否则长度一致且逐字节匹配返回 `true`。
 pub fn validate_csrf_token(header_token: &str, cookie_token: &str) -> bool {
     let h = header_token.as_bytes();

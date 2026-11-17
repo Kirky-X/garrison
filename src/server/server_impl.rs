@@ -70,7 +70,7 @@ pub fn to_api_response<T>(result: Result<T, GarrisonError>) -> ApiResponse<T> {
 
 /// OAuth2 启动期维护：reconcile 引用已删 client 的孤儿 consent 行。
 ///
-/// `listen()` 在监听端口前调用（R-consent-004），内联 await 保证清理在首个 authorize 请求前完成
+/// `listen()` 在监听端口前调用，内联 await 保证清理在首个 authorize 请求前完成
 /// （确定性语义；代价是启动耗时受 consent 键数量约束，低频启动路径可接受）。维护性操作 fail-open：
 /// 失败仅告警不阻断启动——孤儿行只是垃圾数据（已删 client 的 authorize 过不了 client 存活校验），
 /// 下次启动或显式调用 `AuthorizeHandler::reconcile_consents` 可重试。
@@ -1053,7 +1053,7 @@ mod oauth2_startup_reconcile_tests {
     }
 
     /// listen() 启动接线的实测：删除 client 后启动清理对应 consent 行，存活 client 的记录原样保留
-    /// （R-consent-004 的启动路径用例；reconcile 本体分支语义见 authorize.rs 的
+    /// （启动路径用例；reconcile 本体分支语义见 authorize.rs 的
     /// `reconcile_removes_orphan_consent_and_keeps_live`）。
     #[tokio::test]
     async fn startup_reconcile_removes_orphan_and_keeps_live() {

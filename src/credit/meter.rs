@@ -784,7 +784,7 @@ mod tests {
     }
 
     /// 未配置 resource 使用默认权重（1）：cost=5 → credits=5。
-    ///（weight=0 已被 `CreditSchedule::insert` / `with_default` 校验拒绝，
+    /// （weight=0 已被 `CreditSchedule::insert` / `with_default` 校验拒绝，
     /// 不存在「零权重免费」路径）
     #[tokio::test]
     async fn test_consume_unknown_resource_default_weight() {

@@ -4,7 +4,7 @@
 //! SQL 方言适配（backend-agnostic 辅助函数）。
 //!
 //! mod 接口隔离收口：实现函数不写在 `mod.rs`，此处承载占位符方言转换
-//!（SQLite `?` / PostgreSQL `$1,$2`）与 backend-agnostic Statement 构造；
+//! （SQLite `?` / PostgreSQL `$1,$2`）与 backend-agnostic Statement 构造；
 //! 公共路径经 `repository::{convert_placeholders, make_statement}` re-export 保持不变。
 
 /// 转换 SQL 占位符为指定后端的方言：Postgres 后端将第 n 个 `?` 替换为 `$n`，其他后端保留 `?`。

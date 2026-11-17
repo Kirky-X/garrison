@@ -165,7 +165,8 @@ impl Token for SimpleTokenStyle {
             Ok(h) => h,
             Err(_) => return Ok(None),
         };
-        // 常量时间比较统一走公共原语（ADR-0003 决策 2），防 timing side-channel。
+        // 常量时间比较统一走公共原语，防 timing side-channel。
+
         if crate::secure::ct_eq::constant_time_eq(expected_hmac.as_bytes(), hmac_part.as_bytes()) {
             Ok(Some(login_id.to_string()))
         } else {
@@ -200,7 +201,7 @@ impl Token for SimpleTokenStyle {
                 "core-simple-token-expired::".to_string(),
             ));
         }
-        // 校验 HMAC（常数时间比较，ADR-0003 决策 2）。
+        // 校验 HMAC（常数时间比较）。
         let expected_hmac = self.compute_hmac(login_id, uuid_part, exp)?;
         if !crate::secure::ct_eq::constant_time_eq(expected_hmac.as_bytes(), hmac_part.as_bytes()) {
             return Err(GarrisonError::InvalidToken(
@@ -440,7 +441,7 @@ mod simple_token_impl_tests {
     }
 
     /// 篡改 HMAC 段（单字节 + 末字节）：verify None、parse InvalidToken（HMAC 校验统一走
-    /// 公共原语，ADR-0003 决策 2/3）。
+    /// 公共原语）。
     #[test]
     fn simple_token_tampered_hmac_rejected() {
         let style = make_style();

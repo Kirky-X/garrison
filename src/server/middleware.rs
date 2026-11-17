@@ -254,7 +254,7 @@ const CT_EQ_FIXED_WORKLOAD: usize = 256;
 
 /// API Key 常量时间比较（固定工作量），防止 timing attack。
 ///
-/// 字节比较委托公共原语 [`crate::secure::ct_eq::constant_time_eq`]（ADR-0003：消除本地第二实现）；
+/// 字节比较委托公共原语 [`crate::secure::ct_eq::constant_time_eq`]（消除本地第二实现）；
 /// 为保留「比较工作量与输入长度无关、不泄露 API Key 长度」的强化语义，双方先按
 /// `CT_EQ_FIXED_WORKLOAD` 定长 0 填充再走原语（原语在定长缓冲上循环，次数与输入长度无关）：
 /// 不在首个不匹配字节短路，也不按长度决定循环次数。任一输入超上限返回 false，仅泄露
@@ -1144,7 +1144,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
-    /// 常量时间比较正确性验证（ADR-0003：字节比较委托公共原语 + 固定工作量定长填充，防长度泄露）。
+    /// 常量时间比较正确性验证（字节比较委托公共原语 + 固定工作量定长填充，防长度泄露）。
     #[test]
     fn test_api_key_ct_eq() {
         assert!(api_key_ct_eq("abc", "abc"));

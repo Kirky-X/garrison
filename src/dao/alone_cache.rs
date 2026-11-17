@@ -359,7 +359,7 @@ mod tests {
     }
 
     /// `AloneCache::decr` 透明委托内部 dao：prefix 拼接、返回值、TTL 保留均与 inner dao 一致。
-    ///（修复：此前走默认 get → parse → update/delete 组合，经 AloneCache 部署的 SMS 限速场景仍有 TOCTOU flaky。）
+    /// （修复：此前走默认 get → parse → update/delete 组合，经 AloneCache 部署的 SMS 限速场景仍有 TOCTOU flaky。）
     #[tokio::test]
     async fn alone_cache_decr_delegates_to_inner_with_prefix() {
         let mock = Arc::new(MockDao::new());
@@ -400,7 +400,7 @@ mod tests {
     }
 
     /// `AloneCache::decr` 并发原子性：10 个 task 并发 decr（初始 5），恰好 4 个非 0（4,3,2,1）+ 6 个 0，key 最终删除。
-    ///（修复前走默认组合，多 task 读到同一过时值产生「跨越式递减」；修复后逐 task 串行进入 MockDao 临界区。）
+    /// （修复前走默认组合，多 task 读到同一过时值产生「跨越式递减」；修复后逐 task 串行进入 MockDao 临界区。）
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn alone_cache_decr_concurrent_atomic() {
         let mock = Arc::new(MockDao::new());

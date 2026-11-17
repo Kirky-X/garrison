@@ -540,7 +540,8 @@ mod tests {
 
     #[test]
     fn validate_scopes_empty_request_ok_in_all_client_states() {
-        // R-oauth2-001：请求 scope 为空时，无论 client allowed_scopes 为空/通配/显式列表均 Ok
+        // 请求 scope 为空时，无论 client allowed_scopes 为空/通配/显式列表均 Ok
+
         for scopes in [Vec::new(), vec!["*".to_string()], vec!["read".to_string()]] {
             let client = OAuth2Client::new("c1", "s", vec![], vec![], scopes).unwrap();
             let empty: Vec<String> = Vec::new();

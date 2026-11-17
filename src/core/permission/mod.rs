@@ -151,7 +151,7 @@ pub trait PermissionChecker: Send + Sync {
 }
 
 /// `PermissionChecker` 的默认实现，委托 `GarrisonInterface` 获取权限/角色数据后做字符串匹配
-///（纯数据查询，返回 bool/Err 无副作用；校验编排、抛异常与事件广播归 `GarrisonPermissionStrategy`）。
+/// （纯数据查询，返回 bool/Err 无副作用；校验编排、抛异常与事件广播归 `GarrisonPermissionStrategy`）。
 pub struct PermissionCheckerDefault {
     /// 业务接口（提供 get_permission_list / get_role_list）。
     interface: Arc<dyn GarrisonInterface>,

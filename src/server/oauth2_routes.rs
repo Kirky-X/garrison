@@ -555,7 +555,7 @@ fn parse_form_body(body: &[u8]) -> Result<serde_json::Value, String> {
 }
 
 /// 按 Content-Type 提取请求结构体：仅接受 `application/x-www-form-urlencoded`
-///（RFC 6749 §3.2 / RFC 7009 §2.1 / RFC 7662 §2.2 规定的唯一请求格式）。
+/// （RFC 6749 §3.2 / RFC 7009 §2.1 / RFC 7662 §2.2 规定的唯一请求格式）。
 ///
 /// Content-Type 缺失或为其他类型（含 `application/json`）返回
 /// 415 Unsupported Media Type；表单解析或字段校验失败返回

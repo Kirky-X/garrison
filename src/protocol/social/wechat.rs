@@ -1231,7 +1231,7 @@ mod tests {
     // 安全修复回归测试：redirect_uri 校验 / raw 敏感字段剥离
 
     /// get_authorization_url 对非 https 的 redirect_uri 返回 InvalidParam
-    ///（基本格式校验：防 open-redirect / 明文回调）。
+    /// （基本格式校验：防 open-redirect / 明文回调）。
     #[tokio::test]
     async fn wechat_provider_get_authorization_url_rejects_non_https_redirect_uri() {
         let provider = WechatProvider::new("appid", "secret");

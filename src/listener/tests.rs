@@ -159,7 +159,7 @@ fn event_derives_debug_and_clone() {
 // 14 变体
 
 /// 验证 `GarrisonEvent` 含全部变体：spec 14 个变体 + 既有独有安全变体
-///（`TokenExpired`/`SessionTimeout`/`AccountLocked`/`FirewallBlock`/
+/// （`TokenExpired`/`SessionTimeout`/`AccountLocked`/`FirewallBlock`/
 /// `TempCredentialConsumed`——暴力破解检测 / 会话超时 / 防火墙阻断等关键
 /// 安全事件不能丢失），共 19 个。
 #[test]

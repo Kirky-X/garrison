@@ -91,7 +91,7 @@ fn generate_code_returns_six_digits() {
     }
 }
 
-// 验证码比对原语测试（ADR-0003 决策 2：统一走 secure::ct_eq）
+// 验证码比对原语测试（统一走 secure::ct_eq）
 
 #[test]
 fn code_ct_eq_equal_strings() {

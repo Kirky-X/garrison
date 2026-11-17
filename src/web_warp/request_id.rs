@@ -4,7 +4,7 @@
 //! X-Request-ID 中间件（warp）：warp 的 `wrap_fn` 只能组合 Filter、无法用自有 future 包住内层 filter 执行，
 //! handler（错误体渲染）必在 request id task-local scope 之外，故采用后置回填——`and_then` 内生成/校验 id，
 //! `scope` 包住后置处理：设置 `X-Request-ID` 头，对 4xx/5xx 的 JSON 体经 [`inject_request_id_into_error_body`]
-//! 注入 `request_id` 再重组（axum/actix 为前置渲染，三框架终态形状一致，详见 ADR-0004）；
+//! 注入 `request_id` 再重组（axum/actix 为前置渲染，三框架终态形状一致）；
 //! 成功与非 JSON 错误响应零缓冲透传（仅补 `X-Request-ID` 头）。
 //!
 //! # 用法

@@ -1311,7 +1311,7 @@ async fn acc_sec_027_brute_force_same_login_100_attempts_429() {
 }
 
 /// （异常）：字典攻击——100 个不同 login_id 登录请求无 500 错误
-///（服务器稳定）。登录成功属 InMemoryAuthBackend 行为偏差（不校验 login_id，
+/// （服务器稳定）。登录成功属 InMemoryAuthBackend 行为偏差（不校验 login_id，
 /// 非真实绕过；记录不 panic）。
 ///
 /// 对应 e2e 原用例（暴力破解字典 100 次登录），HARD 断言原样保留。

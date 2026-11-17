@@ -350,7 +350,7 @@ async fn acc_srv_004_external_refresh_returns_new_token() {
 }
 
 /// （正常）：内网 get-token-info 返回 token 元数据
-///（`data.token` 一致、`created_at=1000` 与 mock 契约一致）。
+/// （`data.token` 一致、`created_at=1000` 与 mock 契约一致）。
 /// 所有权校验强制必填，请求携带与主体一致的 caller_login_id。
 #[tokio::test]
 #[serial]
@@ -374,7 +374,7 @@ async fn acc_srv_005_internal_get_token_info() {
 }
 
 /// （正常）：内网 get-session 返回会话主体
-///（`data.login_id` 与登录主体一致）。
+/// （`data.login_id` 与登录主体一致）。
 /// 所有权校验强制必填，请求携带与主体一致的 caller_login_id。
 #[tokio::test]
 #[serial]
@@ -425,7 +425,7 @@ async fn acc_srv_007_internal_rejects_missing_and_wrong_api_key() {
 }
 
 /// （正常+异常）：内网 kickout 后同账号全部 token 失效
-///（check-login 均为 `data=false`）。
+/// （check-login 均为 `data=false`）。
 #[tokio::test]
 #[serial]
 async fn acc_srv_008_internal_kickout_invalidates_all_tokens() {
@@ -1747,9 +1747,9 @@ async fn acc_srv_021_auth_server_exits_with_empty_api_key() {
 }
 
 /// （异常）：端口冲突 fail-fast——外网端口被测试进程占住
-///（listener 全程保持监听，杜绝"绑定后 drop 再被子进程抢到"的竞态）时，
+/// （listener 全程保持监听，杜绝"绑定后 drop 再被子进程抢到"的竞态）时，
 /// auth_server 子进程 `listen()` 的 `TcpListener::bind` 返回 `Err`
-///（`server-external-bind::...`）→ `main()` 返回 `Err` → 以非零退出码终止。
+/// （`server-external-bind::...`）→ `main()` 返回 `Err` → 以非零退出码终止。
 ///
 /// 与 /021 的 env fail-closed 不同，本场景验证的是
 /// `GarrisonAuthServer::listen` 的 bind 失败传播契约（bin 层 `if let Err` → 返回 Err）。

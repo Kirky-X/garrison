@@ -25,7 +25,7 @@ impl Signer {
 
     /// 常量时间验证 HMAC-SHA256 签名，防时序侧信道。
     ///
-    /// 重算 HMAC 后委托 [`crate::secure::ct_eq::constant_time_eq`] 比较（ADR-0003 决策 2：消除本地第二实现）；
+    /// 重算 HMAC 后委托 [`crate::secure::ct_eq::constant_time_eq`] 比较（消除本地第二实现）；
     /// 该原语不做 early return、遍历到 `max_len`（短方 0 padding），编译器无法优化为短路比较。
     pub fn verify_hmac_sha256(secret: &[u8], data: &[u8], expected_sig: &str) -> bool {
         type HmacSha256 = Hmac<Sha256>;

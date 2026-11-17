@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! DAO 进程内实现（HashMap + Instant 模拟 TTL）：测试 mock + 单实例部署内存模式
-//!（PasswordRateLimiter / GarrisonFirewallCheckHookDefault 的内存后端）；**不跨实例共享**，多节点部署须用共享存储后端。
-
+//! （PasswordRateLimiter / GarrisonFirewallCheckHookDefault 的内存后端）；**不跨实例共享**，多节点部署须用共享存储后端。
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;

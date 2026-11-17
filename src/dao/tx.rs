@@ -28,7 +28,7 @@
 //! # 并发 guard 的锁等待语义（生产后端）
 //!
 //! 并发 guard 各持独立 Session = 独立事务：postgres / mysql 下触碰同一行将持行锁直至 `commit`
-//!（锁窗口显著长于 auto-commit）；sqlite 文件库并发写会 `SQLITE_BUSY`。begin→commit 之间只放该事务强相关的写与逻辑。
+//! （锁窗口显著长于 auto-commit）；sqlite 文件库并发写会 `SQLITE_BUSY`。begin→commit 之间只放该事务强相关的写与逻辑。
 //!
 //! # async 取消窗口（已知边界）
 //!
@@ -97,7 +97,7 @@ impl GarrisonEventTx {
     }
 
     /// 在本事务内执行写 SQL（INSERT / UPDATE / DELETE），返回受影响行数；仅经 guard 的写加入本事务
-    ///（DAO / Repository 经 `session.connection()` 的 SQL 为 auto-commit，不加入）。
+    /// （DAO / Repository 经 `session.connection()` 的 SQL 为 auto-commit，不加入）。
     ///
     /// # Security（特权直通通道）
     ///

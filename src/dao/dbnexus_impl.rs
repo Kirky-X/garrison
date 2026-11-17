@@ -57,7 +57,7 @@ pub async fn init_dbnexus_with_pool_config(
 }
 
 /// Garrison schema 迁移管理器：包装 `DbPool::run_migrations`，按 extensible-schema spec 分层
-///（`migrate_core` = `core/*.sql`（8 张核心表 + app_user_ext）、`migrate_extensions` = `extensions/*.sql`、
+/// （`migrate_core` = `core/*.sql`（8 张核心表 + app_user_ext）、`migrate_extensions` = `extensions/*.sql`、
 /// `migrate_tenant` = `tenant/*.sql`；`run_all()` 按 core→extensions→tenant 顺序执行）。
 ///
 /// 迁移文件命名 `{version}_{description}.sql`（如 `001_init.sql`），内容用 `-- UP:` / `-- DOWN:` 分隔。

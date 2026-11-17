@@ -29,6 +29,9 @@ ignore = [
     "RUSTSEC-2026-0387",
     "RUSTSEC-2026-0440",
     "RUSTSEC-2026-0459",
+    # RUSTSEC-2026-0543（2026-11-17 入库）：chrono 全版本 unmaintained（upstream chronotope/chrono#1768），
+    # patched=[] 无升级路径；依赖替换（jiff/time）归依赖治理 change。家族级豁免（confers 2026-11-17 同日先行）。
+    "RUSTSEC-2026-0543",
 ]
 
 [licenses]

@@ -418,10 +418,10 @@ mod tests {
         use crate::strategy::GarrisonPermissionStrategy;
         use std::sync::Arc;
 
-        ///simple 模式测试用的 HMAC 密钥（与 make_logic 中设置的 jwt_secret 一致）。
+        /// simple 模式测试用的 HMAC 密钥（与 make_logic 中设置的 jwt_secret 一致）。
         const STP_TOKEN_SIMPLE_TEST_SECRET: &str = "stp-token-simple-test-secret-0123456789";
 
-        ///构造测试用 JwtSecret（兼容 protocol-zeroize 启用/禁用两种配置）。
+        /// 构造测试用 JwtSecret（兼容 protocol-zeroize 启用/禁用两种配置）。
         fn test_jwt_secret(secret: &str) -> crate::config::JwtSecret {
             #[cfg(feature = "protocol-zeroize")]
             {

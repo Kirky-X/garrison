@@ -113,10 +113,11 @@ mod tests {
         assert!(!constant_time_eq(&a, &c));
     }
 
-    // ADR-0003 统一原语守卫（决策 2：消除第二实现）：需常量时间比较的 feature 一律依赖 secure-ct-eq，禁止本地复制实现；
+    // 统一原语守卫：需常量时间比较的 feature 一律依赖 secure-ct-eq，禁止本地复制实现；
+
     // 锁定两点——src/ 下无同名第二实现，敏感 feature 在 Cargo.toml 声明 secure-ct-eq 且源码不直连 subtle（防实现漂移）。
 
-    /// 全库常量时间比较统一原语守卫（ADR-0003 决策 2）。
+    /// 全库常量时间比较统一原语守卫。
     #[test]
     fn acc_adr0003_single_implementation_no_local_duplicates() {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -145,11 +146,11 @@ mod tests {
         );
     }
 
-    /// 敏感路径 feature 声明 + 源码 subtle 直连守卫（ADR-0003 决策 2/3）。
+    /// 敏感路径 feature 声明 + 源码 subtle 直连守卫。
     #[test]
     fn acc_adr0003_sensitive_paths_depend_on_secure_ct_eq() {
         let manifest = include_str!("../../Cargo.toml");
-        // ADR-0003 决策 2/3 适用路径对应的 feature（决策 3 清单五路径 + 验证码比对与 API Key 中间件两扩展路径，均已统一依赖 secure-ct-eq）
+        // 适用路径对应的 feature（清单五路径 + 验证码比对与 API Key 中间件两扩展路径，均已统一依赖 secure-ct-eq）
         const SENSITIVE_FEATURES: &[&str] = &[
             "protocol-apikey",
             "audit-log",

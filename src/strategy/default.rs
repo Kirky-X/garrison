@@ -554,7 +554,7 @@ impl GarrisonPermissionStrategyDefault {
     }
 
     /// `check_role_in_tenant` 的共享实现：数据源经 `GarrisonInterface::get_role_list_in_tenant(tenant_id, …)`
-    ///（默认委托全局方法，覆写的业务方获得租户隔离）；判定结果按 `garrison:role:cache:v{ver}:{tenant}:…` 缓存，
+    /// （默认委托全局方法，覆写的业务方获得租户隔离）；判定结果按 `garrison:role:cache:v{ver}:{tenant}:…` 缓存，
     /// 版本段与权限判定缓存共用（`invalidate_login_cache` 一次失效两套）。
     async fn check_role_scoped(
         &self,

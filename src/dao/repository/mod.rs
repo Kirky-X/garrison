@@ -681,7 +681,7 @@ pub enum RegisterOutcome {
 /// # 租户隔离
 ///
 /// 全局主键意味着不同租户无法注册同一标识；冲突命中他租户行时返回中性 `Registered`
-///（不带 `by_user_id`，不泄露 user_id），仅同租户冲突返回 `Taken`；租户感知归属查询用 [`find_owner_in_tenant`](Self::find_owner_in_tenant)。
+/// （不带 `by_user_id`，不泄露 user_id），仅同租户冲突返回 `Taken`；租户感知归属查询用 [`find_owner_in_tenant`](Self::find_owner_in_tenant)。
 #[async_trait::async_trait]
 pub trait UserIdentifierRepository: Send + Sync {
     /// 注册登录标识；`id_value` 由调用方归一化（框架提供 trim，格式校验属业务层）。

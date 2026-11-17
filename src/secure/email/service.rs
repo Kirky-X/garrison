@@ -124,7 +124,8 @@ impl EmailVerificationService {
         let stored = self.dao.get(&code_key).await?;
         let stored = stored.ok_or(GarrisonError::EmailCodeNotFound)?;
 
-        // 比对统一走 ADR-0003 常量时间原语；验证码定长 6 位，长度不符必然不等，长度检查提前短路——
+        // 比对统一走常量时间原语；验证码定长 6 位，长度不符必然不等，长度检查提前短路——
+
         // 用户可控输入长度不得进入比较循环（防 CPU DoS），且长度是公开参数、提前拒绝不泄露秘密。
         let matched = code.len() == 6 && constant_time_eq(stored.as_bytes(), code.as_bytes());
         if matched {

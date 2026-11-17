@@ -115,7 +115,7 @@ impl HttpDigestAuth {
         STANDARD.encode(raw.as_bytes())
     }
 
-    /// 校验 nonce 是否有效：格式正确、注入 `server_key` 时 HMAC 签名有效（公共常量时间原语，ADR-0003）、时间戳未过期；任一步失败即拒绝。
+    /// 校验 nonce 是否有效：格式正确、注入 `server_key` 时 HMAC 签名有效（公共常量时间原语）、时间戳未过期；任一步失败即拒绝。
     pub(super) fn is_nonce_valid(&self, nonce: &str) -> bool {
         let decoded = match STANDARD.decode(nonce) {
             Ok(d) => d,

@@ -66,7 +66,7 @@ async fn setup_db() -> dbnexus::DbPool {
 }
 
 /// 创建**未迁移**的 DbPool（所有表不存在），触发 `map_err` 缺表分支
-///。
+/// 。
 async fn setup_unmigrated_db() -> dbnexus::DbPool {
     init_dbnexus("sqlite::memory:")
         .await
@@ -767,7 +767,7 @@ async fn count_app_tables(pool: &dbnexus::DbPool) -> usize {
 
 /// （正常）：级联删除——删除用户后 `user_role` / `auth_method` /
 /// `session` / `user_ext` 关联级联清除；`login_log` 外键为 SET NULL
-///（记录保留、user_id 置空）。以实际外键行为为准：
+/// （记录保留、user_id 置空）。以实际外键行为为准：
 /// migrations/sqlite/core/001_init.sql 定义各表 ON DELETE 动作，
 /// sqlx-sqlite 默认 `PRAGMA foreign_keys=ON`。
 #[tokio::test(flavor = "multi_thread")]
@@ -1695,7 +1695,7 @@ async fn acc_repo_029_check_constraints_reject_invalid_values() {
 }
 
 /// （正常）：业务级事务回滚——begin → 跨表 INSERT
-///（user/role/user_role）→ rollback 后全部不可见（原子性）。
+/// （user/role/user_role）→ rollback 后全部不可见（原子性）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_repo_030_transaction_rollback_hides_writes() {
     let pool = setup_db().await;

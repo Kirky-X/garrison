@@ -795,7 +795,7 @@ impl GarrisonDao for OrderTrackingDao {
 }
 
 /// renew 必须先创建新 token session 再失效旧 token（先 create 后 delete），消除 DoS gap
-///（CWE-362 / CVSS 7.5）。
+/// （CWE-362 / CVSS 7.5）。
 #[tokio::test]
 async fn a9_renew_to_equivalent_creates_new_before_deleting_old() {
     // atomic + 默认 trait 方法覆盖
@@ -1340,7 +1340,7 @@ async fn renew_add_to_account_session_fails_rolls_back_new_token() {
 }
 
 /// renew 步骤 6 失败：失效旧 token 的 DAO delete 失败时**仍返回 Ok(new_token)**
-///（用户已持有新 token，返回 Err 反而制造新 DoS；旧 token 残留交由运维）。
+/// （用户已持有新 token，返回 Err 反而制造新 DoS；旧 token 残留交由运维）。
 #[tokio::test]
 async fn renew_old_token_cleanup_failure_still_returns_new_token() {
     let failing = Arc::new(FailingDao::new());

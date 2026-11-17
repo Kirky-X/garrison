@@ -3,8 +3,7 @@
 
 //! cache_redis 示例测试（cache-redis feature）：验证 GarrisonDaoOxcache L1 DAO 操作（`new()` +
 //! get/set/update/expire/delete CRUD）与 Redis L2 配置构造；实际 Redis 连接测试标 `#[ignore]`
-//!（需 Redis 实例运行），L1 DAO 测试无需 Redis 可独立运行。
-
+//! （需 Redis 实例运行），L1 DAO 测试无需 Redis 可独立运行。
 #![cfg(feature = "cache-redis")]
 
 use garrison::dao::GarrisonDao;

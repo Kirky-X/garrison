@@ -141,7 +141,8 @@ impl SmsVerificationService {
         let stored = self.dao.get(&code_key).await?;
         let stored = stored.ok_or(GarrisonError::SmsCodeNotFound)?;
 
-        // 比对走 ADR-0003 常量时间原语（sms-rate-limit 依赖 secure-ct-eq）；验证码定长 6 位，长度不符必然不等，
+        // 比对走常量时间原语（sms-rate-limit 依赖 secure-ct-eq）；验证码定长 6 位，长度不符必然不等，
+
         // 提前短路（用户可控长度不得进入比较循环，长度公开、提前拒绝不泄露秘密）；不等时走失败分支计入尝试次数。
         let matched = code.len() == 6 && constant_time_eq(stored.as_bytes(), code.as_bytes());
         if matched {

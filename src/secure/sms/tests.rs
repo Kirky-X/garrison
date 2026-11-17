@@ -1,8 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! SmsVerificationService / SmsRateLimiter / 验证码比对原语（secure::ct_eq，ADR-0003）单元测试。
-
+//! SmsVerificationService / SmsRateLimiter / 验证码比对原语（secure::ct_eq）单元测试。
 use super::*;
 use crate::dao::tests::MockDao;
 use crate::error::GarrisonError;

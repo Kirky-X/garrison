@@ -69,7 +69,7 @@ mod tests {
     }
 
     /// 测试用 MockAuthorizer：返回固定 Decision / Error 并捕获传入的 AuthRequest
-    ///（隔离测试 trait 契约，不依赖 GarrisonLogicDefault）。
+    /// （隔离测试 trait 契约，不依赖 GarrisonLogicDefault）。
     struct MockAuthorizer {
         outcome: MockOutcome,
         captured: Mutex<Option<AuthRequest>>,

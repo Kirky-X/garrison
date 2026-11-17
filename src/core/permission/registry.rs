@@ -25,8 +25,7 @@
 //! ```
 //!
 //! 参考 `crate::strategy::firewall::StrategyRegistration` 的 inventory 模式
-//!（启用 `firewall` feature 时可见）。
-
+//! （启用 `firewall` feature 时可见）。
 use std::collections::HashMap;
 
 use parking_lot::RwLock;

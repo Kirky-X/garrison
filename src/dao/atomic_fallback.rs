@@ -148,7 +148,7 @@ macro_rules! atomic_test_fallback {
 }
 
 /// 仅供**测试 mock**：展开 5 个原子必需方法，保留实现方自定义的原子 `get_and_delete`
-///（如 SSO ticket 单锁消费场景）。
+/// （如 SSO ticket 单锁消费场景）。
 /// ⚠️ 仅供测试（禁止生产使用）：组合回退非原子（TOCTOU / TTL 丢失），门控缺口见模块文档。
 #[macro_export]
 #[doc(hidden)]

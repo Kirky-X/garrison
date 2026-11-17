@@ -442,7 +442,7 @@ async fn wax_abac_deny_handler() -> &'static str {
 }
 
 /// strict 模式配置（`throw_on_not_login = true`）：未登录走 `Err(Session)` → 500
-///（与 integration/annotation_macros.rs 的 `make_config_strict` 惯例一致）。
+/// （与 integration/annotation_macros.rs 的 `make_config_strict` 惯例一致）。
 fn strict_test_config() -> Arc<garrison::config::GarrisonConfig> {
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.timeout = 3600;
@@ -1053,7 +1053,7 @@ async fn acc_wax_017_macro_check_role_and_semantics() {
 /// （正常+异常）：`#[check_access_token]` 宏展开为包装器（loose 配置）——
 /// 伪造 token 拒绝 401（宏把 `Ok(false)` 转为 NotLogin → 401）；有效 token 放行
 /// 200 + 原 body。单次 harness（loose）内覆盖原两条测试
-///（`check_access_token_expands_to_wrapper` / `_with_valid_token_returns_200`）。
+/// （`check_access_token_expands_to_wrapper` / `_with_valid_token_returns_200`）。
 #[cfg(feature = "annotation-macros")]
 #[tokio::test]
 #[serial]
@@ -1156,7 +1156,7 @@ async fn acc_wax_020_macro_check_temp_token_loose_and_valid() {
 /// （正常）：宏包装 handler 可挂载进 axum `Router`——经
 /// `with_current_token` 包裹 `oneshot` 调用，`#[check_login]` /
 /// `#[check_permission]` / `#[check_role]` 三路由均放行 200
-///（强化：原 `handler_works_with_axum_router` 仅断言 /login）。
+/// （强化：原 `handler_works_with_axum_router` 仅断言 /login）。
 #[cfg(feature = "annotation-macros")]
 #[tokio::test]
 #[serial]
@@ -1235,7 +1235,7 @@ async fn acc_wax_021_macro_handlers_mount_into_axum_router() {
 /// （正常）：`#[check_mfa]` 已登录 + 已开启二级认证 → 200 + 原 body。
 /// `check_safe` 依赖 `TokenSession.safe_services`，仅 `login_simple` 不足以通过，
 /// 需先调用 `GarrisonLogicDefault::open_safe("default", ...)` 开启二级认证标记
-///（仅 `security-extra` 启用时需要；无该 feature 时 `is_safe` 默认 `Ok(true)`）。
+/// （仅 `security-extra` 启用时需要；无该 feature 时 `is_safe` 默认 `Ok(true)`）。
 #[cfg(feature = "annotation-macros")]
 #[tokio::test]
 #[serial]

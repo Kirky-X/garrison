@@ -890,7 +890,7 @@ fn attribute_names_hash(attributes: &[ConsentAttributes]) -> String {
 }
 
 /// 属性值哈希：按属性名排序后，各属性的值序列以 `|` 连接取 SHA-512
-///（对齐 cas sha512ConsentAttributeValues 的值聚合）。仅 ATTRIBUTE_VALUE
+/// （对齐 cas sha512ConsentAttributeValues 的值聚合）。仅 ATTRIBUTE_VALUE
 /// 粒度参与比较。
 fn attribute_values_hash(attributes: &[ConsentAttributes]) -> String {
     let mut sorted: Vec<&ConsentAttributes> = attributes.iter().collect();

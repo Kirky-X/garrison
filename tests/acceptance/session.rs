@@ -219,7 +219,7 @@ async fn acc_sess_002_login_writes_dual_mode_sessions() {
 }
 
 /// （正常+异常）：TTL 续期——`renew` 将剩余 TTL 重置为完整 timeout
-///（`get_token_timeout` 观察：续期后剩余 TTL 明显大于续期前），续期后跨过原超时
+/// （`get_token_timeout` 观察：续期后剩余 TTL 明显大于续期前），续期后跨过原超时
 /// 点仍有效；异常侧：续期不存在的 token 返回 `InvalidToken`。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sess_003_renew_resets_ttl() {
@@ -382,7 +382,7 @@ async fn acc_sess_005_ip_change_triggers_security_listener() {
 }
 
 /// （异常）：设备绑定 strict 模式——新设备登录要求 MFA
-///（hard block：`NotPermission("secondary auth required")`），且不创建孤儿会话；
+/// （hard block：`NotPermission("secondary auth required")`），且不创建孤儿会话；
 /// 历史已绑定设备免 MFA 放行。
 #[cfg(feature = "device-binding")]
 #[tokio::test(flavor = "multi_thread")]
@@ -447,7 +447,7 @@ async fn acc_sess_006_device_binding_strict_requires_mfa_on_new_device() {
 }
 
 /// （异常）：匿名会话边界——匿名 Session 独立 key 空间
-///（`token:session:anon:*`），与同字符串登录 Session 共存互不干扰；
+/// （`token:session:anon:*`），与同字符串登录 Session 共存互不干扰；
 /// `logout` 只销毁匿名空间，登录会话保留。
 #[cfg(feature = "session-extra")]
 #[tokio::test(flavor = "multi_thread")]
@@ -796,7 +796,7 @@ fn reset_plugin_listener_counters() {
 }
 
 /// （正常）：`GarrisonPluginManager` 收集 inventory 注册的插件
-///（编译期注册 → 运行期收集）。
+/// （编译期注册 → 运行期收集）。
 #[cfg(feature = "listener")]
 #[test]
 #[serial]
@@ -844,7 +844,7 @@ async fn acc_sess_011_plugin_hooks_invoked_and_accumulate() {
 }
 
 /// （正常）：`GarrisonListenerManager` 收集 inventory 注册的 listener
-///。
+/// 。
 #[cfg(feature = "listener")]
 #[test]
 #[serial]
@@ -1067,7 +1067,7 @@ async fn acc_sess_016_auto_wire_logout_triggers_hooks() {
 /// （正常）：租户 42 用户 1001 的权限校验全链路——
 /// `check_permission` → `authorize` → `Decision`（ExplicitAllow）→ 广播
 /// `PermissionCheck` → `AuditLogListener` 写入 `audit_logs` 表
-///（tenant_id=42 / event_type=permission_check / login_id=1001）。
+/// （tenant_id=42 / event_type=permission_check / login_id=1001）。
 #[cfg(all(
     feature = "tenant-isolation",
     feature = "audit-log",
