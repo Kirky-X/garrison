@@ -657,6 +657,7 @@ The table below summarizes the main `[features]` of `Cargo.toml` grouped by capa
 <tr><td><code>db-retry</code> / <code>db-sharding</code> / <code>db-replica</code> / <code>db-saga</code></td><td align="center">❌</td><td>Database enhancements: retry / sharding / read-replica / Saga (dbnexus passthrough)</td></tr>
 <tr><td><code>three-tier-cache</code></td><td align="center">❌</td><td>Three-tier cache architecture (L1 local + L2 redis + DB)</td></tr>
 <tr><td><code>security-alert</code> / <code>device-binding</code> / <code>session-hijack-detection</code></td><td align="center">❌</td><td>Security alerting / device binding / session hijack detection</td></tr>
+<tr><td><code>risk-adaptive-auth</code></td><td align="center">❌</td><td>Risk-adaptive auth decision layer (depends on <code>security-extra</code>): aggregates anomaly signals into <code>RiskAssessment</code> and executes <code>RiskAction</code>. Public API: <code>RiskPolicy</code> / <code>ThresholdRiskPolicy</code> / <code>RiskEngine</code> / <code>RiskAction</code></td></tr>
 <tr><td><code>grpc</code></td><td align="center">❌</td><td>gRPC async auth layer (tonic interceptor)</td></tr>
 <tr><td><code>credit-metering</code></td><td align="center">❌</td><td>Credit/quota metering (throttled write-path aggregation for activity)</td></tr>
 <tr><td><code>audit-log</code></td><td align="center">❌</td><td>Audit logging (DB persistence + HMAC tamper-evident event chain)</td></tr>

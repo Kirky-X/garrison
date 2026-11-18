@@ -237,8 +237,48 @@ For the full config-item tables and TOML examples of session policy, token polic
 | Email verification | `email-verification` (+`-smtp`) | Verification codes + SMTP sending + hourly rate limits |
 | SMS rate limiting | `sms-rate-limit` | Hourly/daily dual-window rate limits and attempt controls |
 | Invitation-code registration | `protocol-invitation` | Invitation-code credentials + DAO brute-force counters |
+| Risk-adaptive auth | `risk-adaptive-auth` | Aggregates anomaly signals into an explainable `RiskAssessment` and maps it to a `RiskAction` during login (see below) |
 
 For security-configuration advice and the vulnerability reporting process see the [🔒 Security doc](SECURITY.md).
+
+### Risk-adaptive authentication (`risk-adaptive-auth`)
+
+With `risk-adaptive-auth` enabled, inject a `RiskEngine` via `GarrisonManager::builder().with_risk_engine(...)` (or `GarrisonLogicDefault::with_risk_engine(...)`). On login, anomaly detector events are aggregated into a structured `RiskAssessment { level, score, reasons }`, then mapped to an action. The default `ThresholdRiskPolicy::owasp_baseline()` and `DefaultRiskActionResolver` use this mapping:
+
+| RiskLevel | Default action | Effect |
+|-----------|----------------|--------|
+| Low | `Allow` | Login succeeds, no extra step |
+| Medium | `NotifyOnly` | Broadcast alert only; login succeeds |
+| High | `RequireSecondFactor` | Session gets a step-up marker; `check_safe` returns `NotSafe { reason: "MFA_RISK_STEP_UP" }` until the business completes the second factor |
+| Critical | `TemporaryLock { ttl_secs: 300 }` | A `service = "risk"` disable entry is written and login returns `DisableService { service: "risk" }` |
+
+`RequireReauthentication` (kick out the session, `Kickout` reason `risk_reauth`) is intentionally absent from the default mapping; enable it via a custom `RiskActionResolver`. A policy error fails open to `NotifyOnly` (with a warning) and never blocks login.
+
+Custom policy example:
+
+```rust,ignore
+use garrison::strategy::risk::{RiskEngine, RiskPolicy, RiskContext, RiskAssessment, RiskLevel};
+use async_trait::async_trait;
+
+struct MyPolicy;
+#[async_trait]
+impl RiskPolicy for MyPolicy {
+    async fn assess(&self, ctx: &RiskContext) -> garrison::error::GarrisonResult<RiskAssessment> {
+        // Return an explainable assessment; compute level/score/reasons per your own model.
+        let level = if ctx.recent_failure_count > 10 { RiskLevel::High } else { RiskLevel::Low };
+        Ok(RiskAssessment { level, score: ctx.recent_failure_count, reasons: vec![] })
+    }
+}
+
+let engine = std::sync::Arc::new(RiskEngine::new(std::sync::Arc::new(MyPolicy)));
+let manager = garrison::manager::GarrisonManager::builder()
+    // ... dao / config / interface ...
+    .with_risk_engine(engine)
+    .build()
+    .await?;
+```
+
+**Failure-count degradation**: `RiskContext.recent_failure_count` reads the `account-lockout` failure window when that feature is enabled. When `account-lockout` is absent (e.g. `--no-default-features --features "risk-adaptive-auth,db-sqlite"`), the count is `0`, so the `LoginFailureBurst` signal does not contribute; other signals score normally and the flow never errors.
 
 ---
 
