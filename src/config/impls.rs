@@ -664,8 +664,8 @@ impl GarrisonConfig {
     /// JWT 密钥强度校验（jwt/simple 两种消费密钥的风格均做弱密钥黑名单校验，见 [`Self::reject_weak_jwt_secret`]）。
     ///
     /// `jwt`：非对称算法（RS256/ES256/EdDSA）强度由 PEM 决定（jwt_secret 可留空占位），HS 系按 RFC 7518 最小长度硬校验；`simple`：jwt_secret 即 HMAC-SHA256 密钥可离线爆破，短于 32B 硬错误；`uuid`/`random_64` 等不透明风格不消费 jwt_secret，不要求配置。
-    /// `pub(super)`：`config-security-rules` 规则集模块复用同一规则。
-    pub(super) fn validate_jwt_secret(&self) -> GarrisonResult<()> {
+    /// `pub(crate)`：`config-security-rules` 规则集模块与 `cli::doctor` 审计共用同一规则（单一实现）。
+    pub(crate) fn validate_jwt_secret(&self) -> GarrisonResult<()> {
         if self.token_style == "jwt" {
             // 非对称算法强度由 PEM 决定（JwtHandler 构造期校验），jwt_secret 可留空占位，跳过对称密钥长度校验
             if matches!(self.jwt_algorithm.as_str(), "RS256" | "ES256" | "EdDSA") {

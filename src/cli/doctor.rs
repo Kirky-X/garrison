@@ -138,6 +138,99 @@ pub fn run_security_doctor(ctx: &DoctorContext) -> String {
     render_report(&findings)
 }
 
+/// `jwt-secret-strength`：复用 `validate_jwt_secret`，Err → Fail。
+fn check_jwt_secret_strength(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
+    let finding = match ctx.config.validate_jwt_secret() {
+        Ok(()) => SecurityCheckFinding::new(
+            "jwt-secret-strength",
+            FindingStatus::Pass,
+            "JWT secret strength meets the configured token style floor",
+        ),
+        Err(e) => SecurityCheckFinding::new(
+            "jwt-secret-strength",
+            FindingStatus::Fail,
+            format!("JWT secret is too weak: {e}"),
+        ),
+    };
+    vec![finding]
+}
+
+/// `config-security-rules`：feature 关闭记 Warn；启用时复用 `validate_security_rules`。
+fn check_config_security_rules(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
+    let finding = if !ctx.features.config_security_rules {
+        SecurityCheckFinding::new(
+            "config-security-rules",
+            FindingStatus::Warn,
+            "Config security rule set is not compiled in (enable config-security-rules)",
+        )
+    } else {
+        match ctx.config.validate_security_rules() {
+            Ok(()) => SecurityCheckFinding::new(
+                "config-security-rules",
+                FindingStatus::Pass,
+                "Config security rule set is enabled and passes",
+            ),
+            Err(e) => SecurityCheckFinding::new(
+                "config-security-rules",
+                FindingStatus::Fail,
+                format!("Config security rule set rejects current config: {e}"),
+            ),
+        }
+    };
+    vec![finding]
+}
+
+/// `internal-api-key`：空/短 → Fail（严格档语义），非严格档短 Key → Warn。
+fn check_internal_api_key(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
+    #[cfg(feature = "auth-server")]
+    {
+        let Some(server) = ctx.server.as_ref() else {
+            return vec![SecurityCheckFinding::new(
+                "internal-api-key",
+                FindingStatus::Pass,
+                "Skipped: auth-server not compiled in this build",
+            )];
+        };
+        let len = server.internal_api_key.len();
+        if len == 0 {
+            return vec![SecurityCheckFinding::new(
+                "internal-api-key",
+                FindingStatus::Fail,
+                "Internal API key is missing (empty keys are rejected at startup)",
+            )];
+        }
+        if len < crate::server::MIN_INTERNAL_API_KEY_LEN {
+            let status = if server.strict_security {
+                FindingStatus::Fail
+            } else {
+                FindingStatus::Warn
+            };
+            return vec![SecurityCheckFinding::new(
+                "internal-api-key",
+                status,
+                format!(
+                    "Internal API key is {len} bytes; rotate to >= {} bytes",
+                    crate::server::MIN_INTERNAL_API_KEY_LEN
+                ),
+            )];
+        }
+        return vec![SecurityCheckFinding::new(
+            "internal-api-key",
+            FindingStatus::Pass,
+            format!("Internal API key length is {len} bytes (>= required floor)"),
+        )];
+    }
+    #[cfg(not(feature = "auth-server"))]
+    {
+        let _ = ctx;
+        vec![SecurityCheckFinding::new(
+            "internal-api-key",
+            FindingStatus::Pass,
+            "Skipped: auth-server not compiled in this build",
+        )]
+    }
+}
+
 /// 退出码：Standard 仅 Fail 计失败；Strict 下 Fail 或 Warn 均计失败。
 pub fn doctor_exit_code(findings: &[SecurityCheckFinding], profile: DoctorProfile) -> i32 {
     let has_fail = findings.iter().any(|f| f.status == FindingStatus::Fail);
@@ -195,6 +288,93 @@ mod tests {
         assert_eq!(lines[1], "! warn: warn detail");
         assert_eq!(lines[2], "✗ bad: bad detail");
         assert_eq!(lines[3], "1 passed, 1 warnings, 1 failures");
+    }
+
+    #[test]
+    fn jwt_secret_strength_check_rejects_weak_simple_secret_and_accepts_strong() {
+        let mut weak = GarrisonConfig::default_config();
+        weak.token_style = "simple".to_string();
+        weak.jwt_secret = "short".into();
+        let ctx = DoctorContext {
+            config: weak,
+            #[cfg(feature = "auth-server")]
+            server: None,
+            features: FeatureMatrix::from_compilation(),
+            profile: DoctorProfile::Standard,
+        };
+        let findings = check_jwt_secret_strength(&ctx);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].id, "jwt-secret-strength");
+        assert_eq!(findings[0].status, FindingStatus::Fail);
+
+        let mut strong = GarrisonConfig::default_config();
+        strong.token_style = "simple".to_string();
+        strong.jwt_secret = "a-32-byte-or-longer-jwt-secret-value".into();
+        let ctx_strong = DoctorContext {
+            config: strong,
+            #[cfg(feature = "auth-server")]
+            server: None,
+            features: ctx.features,
+            profile: DoctorProfile::Standard,
+        };
+        let findings_strong = check_jwt_secret_strength(&ctx_strong);
+        assert_eq!(findings_strong[0].status, FindingStatus::Pass);
+    }
+
+    #[test]
+    fn config_security_rules_check_warns_when_feature_absent() {
+        let mut features = FeatureMatrix::from_compilation();
+        features.config_security_rules = false;
+        let ctx = DoctorContext {
+            config: GarrisonConfig::default_config(),
+            #[cfg(feature = "auth-server")]
+            server: None,
+            features,
+            profile: DoctorProfile::Standard,
+        };
+        let findings = check_config_security_rules(&ctx);
+        assert_eq!(findings[0].status, FindingStatus::Warn);
+        assert_eq!(findings[0].id, "config-security-rules");
+    }
+
+    #[cfg(feature = "auth-server")]
+    #[test]
+    fn internal_api_key_check_distinguishes_short_and_strong() {
+        let mut server = AuthServerConfig::default();
+        server.internal_api_key = "short".to_string();
+        let ctx = DoctorContext {
+            config: GarrisonConfig::default_config(),
+            server: Some(server.clone()),
+            features: FeatureMatrix::from_compilation(),
+            profile: DoctorProfile::Standard,
+        };
+        let findings = check_internal_api_key(&ctx);
+        assert_eq!(findings[0].status, FindingStatus::Fail);
+        assert_eq!(findings[0].id, "internal-api-key");
+
+        server.strict_security = false;
+        let ctx_relaxed = DoctorContext {
+            config: GarrisonConfig::default_config(),
+            server: Some(server.clone()),
+            features: ctx.features,
+            profile: DoctorProfile::Standard,
+        };
+        assert_eq!(
+            check_internal_api_key(&ctx_relaxed)[0].status,
+            FindingStatus::Warn
+        );
+
+        server.internal_api_key = "a-32-byte-or-longer-internal-key".to_string();
+        let ctx_ok = DoctorContext {
+            config: GarrisonConfig::default_config(),
+            server: Some(server),
+            features: ctx.features,
+            profile: DoctorProfile::Standard,
+        };
+        assert_eq!(
+            check_internal_api_key(&ctx_ok)[0].status,
+            FindingStatus::Pass
+        );
     }
 
     #[test]

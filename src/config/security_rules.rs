@@ -11,8 +11,8 @@ use super::*;
 use crate::error::GarrisonResult;
 
 impl GarrisonConfig {
-    /// 配置安全规则集校验入口。
-    pub(super) fn validate_security_rules(&self) -> GarrisonResult<()> {
+    /// 配置安全规则集校验入口（`cli::doctor` 审计复用，不放宽到公共 API）。
+    pub(crate) fn validate_security_rules(&self) -> GarrisonResult<()> {
         self.validate_jwt_secret()?;
         #[cfg(feature = "web-cors")]
         {
