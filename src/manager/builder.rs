@@ -1010,6 +1010,7 @@ mod tests {
         GarrisonManager::reset_for_test();
     }
 
+    #[cfg(feature = "listener")]
     #[tokio::test]
     #[serial]
     async fn build_injects_listener_manager() {
