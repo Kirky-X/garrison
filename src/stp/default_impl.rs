@@ -51,6 +51,8 @@ impl GarrisonLogicDefault {
             anomaly_detectors: None,
             #[cfg(feature = "security-extra")]
             alert_listener_manager: None,
+            #[cfg(feature = "risk-adaptive-auth")]
+            risk_engine: None,
             #[cfg(feature = "device-binding")]
             device_binding_policy: None,
             disable_repository,
@@ -175,6 +177,13 @@ impl GarrisonLogicDefault {
         self
     }
 
+    /// 注入风险引擎（builder 模式，需 `risk-adaptive-auth` feature）；未注入时登录异常检测走现状广播路径，行为零变化。
+    #[cfg(feature = "risk-adaptive-auth")]
+    pub fn with_risk_engine(mut self, engine: Arc<crate::strategy::risk::RiskEngine>) -> Self {
+        self.risk_engine = Some(engine);
+        self
+    }
+
     /// 注入设备绑定策略（builder 模式，需 `device-binding` feature）；login 创建 session 前检测新设备，要求二级认证时置 `LoginParams.require_mfa`，检测失败只 warn 不中断。
     #[cfg(feature = "device-binding")]
     pub fn with_device_binding_policy(
@@ -292,5 +301,43 @@ mod no_feature_tests {
             "feature 关闭时应返回 Err(Config)，实际: {:?}",
             result
         );
+    }
+}
+
+#[cfg(all(test, feature = "risk-adaptive-auth"))]
+mod risk_engine_tests {
+    use super::*;
+    use crate::config::GarrisonConfig;
+    use crate::dao::InMemoryDao;
+    use crate::stp::mock::MockFirewall;
+    use crate::strategy::risk::{RiskEngine, ThresholdRiskPolicy};
+
+    fn make_logic() -> GarrisonLogicDefault {
+        let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(InMemoryDao::new());
+        GarrisonLogicDefault::new(
+            Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0)),
+            Arc::new(GarrisonConfig::default_config()),
+            Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            }),
+            Arc::new(crate::account::disable::DefaultDisableRepository::new(dao)),
+        )
+    }
+
+    #[tokio::test]
+    async fn risk_engine_is_none_until_injected() {
+        let logic = make_logic();
+        assert!(logic.risk_engine.is_none());
+    }
+
+    #[tokio::test]
+    async fn with_risk_engine_stores_injected_engine() {
+        let engine = Arc::new(RiskEngine::new(Arc::new(
+            ThresholdRiskPolicy::owasp_baseline(),
+        )));
+        let logic = make_logic().with_risk_engine(engine.clone());
+        assert!(logic.risk_engine.is_some());
+        assert!(Arc::ptr_eq(logic.risk_engine.as_ref().unwrap(), &engine));
     }
 }

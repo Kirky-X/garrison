@@ -198,6 +198,9 @@ pub struct GarrisonLogicDefault {
     /// 告警监听器管理器（可选，`security-extra` feature，注入后广播异常检测事件；未注入时不广播）。
     #[cfg(feature = "security-extra")]
     pub(crate) alert_listener_manager: Option<Arc<crate::strategy::alert::AlertListenerManager>>,
+    /// 风险引擎（可选，`risk-adaptive-auth` feature，注入后在登录流程内评估异常信号并执行处置；未注入走现状广播路径，行为零变化）。
+    #[cfg(feature = "risk-adaptive-auth")]
+    pub(crate) risk_engine: Option<Arc<crate::strategy::risk::RiskEngine>>,
     /// 设备绑定策略（可选，`device-binding` feature，注入后 login 检测新设备并置 `require_mfa`；未注入跳过，检测失败仅 warn 不中断 login）。
     #[cfg(feature = "device-binding")]
     pub(crate) device_binding_policy:
