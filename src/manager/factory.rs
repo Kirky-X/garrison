@@ -37,6 +37,9 @@ pub struct GarrisonLogicFactoryContext {
     pub permission_checker: Option<Arc<dyn PermissionChecker>>,
     /// 封禁库（None 表示未提供，factory 回退为基于 session DAO 的 `DefaultDisableRepository`）。
     pub disable_repository: Option<Arc<dyn DisableRepository>>,
+    /// 风险引擎（仅 `risk-adaptive-auth` feature 下存在；None 表示不注入）。
+    #[cfg(feature = "risk-adaptive-auth")]
+    pub risk_engine: Option<Arc<crate::strategy::risk::RiskEngine>>,
     /// 三级缓存服务（仅 `three-tier-cache` feature 下存在；None 表示不注入）。
     #[cfg(feature = "three-tier-cache")]
     pub user_cache_service: Option<Arc<crate::cache::UserCacheService>>,
@@ -102,6 +105,10 @@ pub fn garrison_logic_factory_default(
     }
     if let Some(pc) = ctx.permission_checker.clone() {
         builder = builder.with_permission_checker(pc);
+    }
+    #[cfg(feature = "risk-adaptive-auth")]
+    if let Some(re) = ctx.risk_engine.clone() {
+        builder = builder.with_risk_engine(re);
     }
     #[cfg(feature = "three-tier-cache")]
     if let Some(ucs) = ctx.user_cache_service.clone() {

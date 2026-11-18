@@ -339,6 +339,8 @@ async fn default_factory_builds_working_logic() {
         auth_logic: None,
         permission_checker: None,
         disable_repository: None,
+        #[cfg(feature = "risk-adaptive-auth")]
+        risk_engine: None,
         #[cfg(feature = "three-tier-cache")]
         user_cache_service: None,
     };
@@ -348,6 +350,8 @@ async fn default_factory_builds_working_logic() {
         auth_logic: None,
         permission_checker: None,
         disable_repository: None,
+        #[cfg(feature = "risk-adaptive-auth")]
+        risk_engine: None,
         #[cfg(feature = "three-tier-cache")]
         user_cache_service: None,
     };

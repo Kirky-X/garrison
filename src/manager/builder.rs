@@ -84,6 +84,9 @@ pub struct GarrisonManagerBuilder {
     auth_logic: Option<Arc<dyn AuthLogic>>,
     permission_checker: Option<Arc<dyn PermissionChecker>>,
     disable_repository: Option<Arc<dyn DisableRepository>>,
+    /// 风险引擎（`risk-adaptive-auth` feature 下透传到 logic）。
+    #[cfg(feature = "risk-adaptive-auth")]
+    risk_engine: Option<Arc<crate::strategy::risk::RiskEngine>>,
     /// 限流运行时（`rate-limit-redis` 下按配置构造；`None` 沿用 DAO 自适应路径）。
     #[cfg(feature = "firewall")]
     limiter_runtime: Option<crate::limiteron::LimiterRuntime>,
@@ -121,6 +124,8 @@ impl GarrisonManagerBuilder {
             auth_logic: None,
             permission_checker: None,
             disable_repository: None,
+            #[cfg(feature = "risk-adaptive-auth")]
+            risk_engine: None,
             #[cfg(feature = "firewall")]
             limiter_runtime: None,
             #[cfg(feature = "three-tier-cache")]
@@ -186,6 +191,13 @@ impl GarrisonManagerBuilder {
     #[cfg(feature = "listener")]
     pub fn with_listener_manager(mut self, lm: Arc<GarrisonListenerManager>) -> Self {
         self.listener_manager = Some(lm);
+        self
+    }
+
+    /// 注入风险引擎（可选，需 `risk-adaptive-auth` feature；None 时登录异常检测走现状广播路径）。
+    #[cfg(feature = "risk-adaptive-auth")]
+    pub fn with_risk_engine(mut self, engine: Arc<crate::strategy::risk::RiskEngine>) -> Self {
+        self.risk_engine = Some(engine);
         self
     }
 
@@ -403,6 +415,8 @@ impl GarrisonManagerBuilder {
             Some(dr) => dr,
             None => Arc::new(DefaultDisableRepository::new(dao.clone())),
         };
+        #[cfg(feature = "risk-adaptive-auth")]
+        let risk_engine = self.risk_engine;
 
         // three-tier-cache feature 启用时构造 UserCacheService（复用 dao + firewall）
         #[cfg(feature = "three-tier-cache")]
@@ -425,6 +439,8 @@ impl GarrisonManagerBuilder {
             auth_logic: Some(auth_logic.clone()),
             permission_checker: Some(permission_checker.clone()),
             disable_repository: Some(disable_repo.clone()),
+            #[cfg(feature = "risk-adaptive-auth")]
+            risk_engine: risk_engine.clone(),
             #[cfg(feature = "three-tier-cache")]
             user_cache_service: Some(user_cache_service.clone()),
         };
@@ -434,6 +450,8 @@ impl GarrisonManagerBuilder {
             auth_logic: Some(auth_logic.clone()),
             permission_checker: Some(permission_checker.clone()),
             disable_repository: Some(disable_repo.clone()),
+            #[cfg(feature = "risk-adaptive-auth")]
+            risk_engine: risk_engine.clone(),
             #[cfg(feature = "three-tier-cache")]
             user_cache_service: Some(user_cache_service.clone()),
         };
@@ -469,6 +487,8 @@ impl GarrisonManagerBuilder {
                 auth_logic,
                 permission_checker,
                 disable_repo,
+                #[cfg(feature = "risk-adaptive-auth")]
+                risk_engine,
                 #[cfg(feature = "listener")]
                 listener_manager,
                 #[cfg(feature = "three-tier-cache")]
@@ -531,6 +551,9 @@ impl GarrisonManagerBuilder {
         auth_logic: Arc<dyn AuthLogic>,
         permission_checker: Arc<dyn PermissionChecker>,
         disable_repo: Arc<dyn DisableRepository>,
+        #[cfg(feature = "risk-adaptive-auth")] risk_engine: Option<
+            Arc<crate::strategy::risk::RiskEngine>,
+        >,
         #[cfg(feature = "listener")] listener_manager: Arc<GarrisonListenerManager>,
         #[cfg(feature = "three-tier-cache")] user_cache_service: Arc<
             crate::cache::UserCacheService,
@@ -548,6 +571,10 @@ impl GarrisonManagerBuilder {
         #[cfg(feature = "listener")]
         {
             builder = builder.with_listener_manager(listener_manager);
+        }
+        #[cfg(feature = "risk-adaptive-auth")]
+        if let Some(re) = risk_engine {
+            builder = builder.with_risk_engine(re);
         }
         #[cfg(feature = "three-tier-cache")]
         {
@@ -961,6 +988,28 @@ mod tests {
     }
 
     #[cfg(feature = "listener")]
+    #[cfg(feature = "risk-adaptive-auth")]
+    #[tokio::test]
+    #[serial]
+    async fn build_injects_risk_engine() {
+        use crate::strategy::risk::{RiskEngine, ThresholdRiskPolicy};
+        GarrisonManager::reset_for_test();
+        let engine = Arc::new(RiskEngine::new(Arc::new(
+            ThresholdRiskPolicy::owasp_baseline(),
+        )));
+        make_ready_builder()
+            .with_risk_engine(engine.clone())
+            .build()
+            .await
+            .unwrap();
+        let logic = GarrisonManager::logic().unwrap();
+        assert!(
+            Arc::ptr_eq(logic.risk_engine.as_ref().unwrap(), &engine),
+            "build 后 logic 应持有注入的同一 RiskEngine Arc"
+        );
+        GarrisonManager::reset_for_test();
+    }
+
     #[tokio::test]
     #[serial]
     async fn build_injects_listener_manager() {
@@ -1260,6 +1309,8 @@ mod tests {
             auth_logic,
             permission_checker,
             disable_repo,
+            #[cfg(feature = "risk-adaptive-auth")]
+            None,
             #[cfg(feature = "listener")]
             listener_manager,
             #[cfg(feature = "three-tier-cache")]
@@ -1335,6 +1386,8 @@ mod tests {
             auth_logic,
             permission_checker,
             disable_repo,
+            #[cfg(feature = "risk-adaptive-auth")]
+            None,
             #[cfg(feature = "listener")]
             Arc::new(crate::listener::GarrisonListenerManager::new()),
             #[cfg(feature = "three-tier-cache")]
