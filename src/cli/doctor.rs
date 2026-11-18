@@ -131,10 +131,22 @@ fn render_report(findings: &[SecurityCheckFinding]) -> String {
     lines.join("\n")
 }
 
-/// 执行全部检查项并渲染报告（CHECKS 在 T006 接入，当前为空集合）。
+/// 编译期封闭的 9 项检查表（顺序与 design D2 / delta spec 清单一致）。
+const CHECKS: &[SecurityCheck] = &[
+    check_jwt_secret_strength,
+    check_config_security_rules,
+    check_internal_api_key,
+    check_server_bind_address,
+    check_external_login_ack,
+    check_trusted_proxies,
+    check_web_security_stack,
+    check_audit_chain,
+    check_session_signal_sources,
+];
+
+/// 执行全部检查项并渲染报告。
 pub fn run_security_doctor(ctx: &DoctorContext) -> String {
-    let _ = ctx; // CHECKS 接入前显式消费，避免未使用参数告警
-    let findings: Vec<SecurityCheckFinding> = Vec::new();
+    let findings: Vec<SecurityCheckFinding> = CHECKS.iter().flat_map(|check| check(ctx)).collect();
     render_report(&findings)
 }
 
@@ -420,6 +432,51 @@ pub fn doctor_exit_code(findings: &[SecurityCheckFinding], profile: DoctorProfil
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checks_table_has_nine_unique_stable_ids() {
+        assert_eq!(CHECKS.len(), 9);
+        let expected = [
+            "jwt-secret-strength",
+            "config-security-rules",
+            "internal-api-key",
+            "server-bind-address",
+            "external-login-ack",
+            "trusted-proxies",
+            "web-security-stack",
+            "audit-chain",
+            "session-signal-sources",
+        ];
+        let ctx = DoctorContext {
+            config: GarrisonConfig::default_config(),
+            #[cfg(feature = "auth-server")]
+            server: None,
+            features: FeatureMatrix::from_compilation(),
+            profile: DoctorProfile::Standard,
+        };
+        let findings: Vec<SecurityCheckFinding> = CHECKS.iter().flat_map(|c| c(&ctx)).collect();
+        let ids: Vec<&str> = findings.iter().map(|f| f.id).collect();
+        assert_eq!(ids, expected);
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 9, "检查项 ID 不得重复");
+    }
+
+    #[test]
+    fn doctor_report_contains_nine_lines_and_summary() {
+        let ctx = DoctorContext {
+            config: GarrisonConfig::default_config(),
+            #[cfg(feature = "auth-server")]
+            server: None,
+            features: FeatureMatrix::from_compilation(),
+            profile: DoctorProfile::Standard,
+        };
+        let report = run_security_doctor(&ctx);
+        let lines: Vec<&str> = report.lines().collect();
+        assert_eq!(lines.len(), 10, "9 检查行 + 1 汇总行");
+        assert!(lines[9].contains("failures"));
+    }
 
     fn finding(id: &'static str, status: FindingStatus) -> SecurityCheckFinding {
         SecurityCheckFinding::new(id, status, format!("{id} detail"))
