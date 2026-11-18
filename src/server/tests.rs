@@ -495,17 +495,17 @@ fn test_auth_server_config_default() {
         config.internal_api_key.is_empty(),
         "Default internal_api_key 必须为空（fail-closed）"
     );
-    // 绑定地址默认 0.0.0.0（向后兼容既有下游 listen 行为）；安全收口由调用方 with_external_bind/with_internal_bind
-    // 注入（部署 bin 缺省 127.0.0.1）
+    // 1.0 契约变更：绑定地址默认回环（有意 Breaking，见 CHANGELOG 1.0 Breaking 段）；
+    // 容器部署须显式 with_external_bind/with_internal_bind 通配绑定
     assert_eq!(
         config.external_bind,
-        std::net::IpAddr::from([0, 0, 0, 0]),
-        "默认外网绑定必须保持 0.0.0.0（向后兼容）"
+        std::net::IpAddr::from([127, 0, 0, 1]),
+        "1.0 起默认外网绑定必须为回环（有意契约变更）"
     );
     assert_eq!(
         config.internal_bind,
-        std::net::IpAddr::from([0, 0, 0, 0]),
-        "默认内网绑定必须保持 0.0.0.0（向后兼容）"
+        std::net::IpAddr::from([127, 0, 0, 1]),
+        "1.0 起默认内网绑定必须为回环（有意契约变更）"
     );
 }
 

@@ -120,11 +120,11 @@ impl Default for AuthServerConfig {
     fn default() -> Self {
         Self {
             external_port: 8080,
-            // 绑定地址默认 0.0.0.0（框架层向后兼容）；安全收口由调用方
-            // 经 with_external_bind/with_internal_bind 显式注入。
-            external_bind: std::net::IpAddr::from([0, 0, 0, 0]),
+            // 1.0 契约变更：默认回环绑定（有意 Breaking，见 CHANGELOG 1.0 Breaking 段）；
+            // 容器部署须经 with_external_bind/with_internal_bind 显式注入通配绑定。
+            external_bind: std::net::IpAddr::from([127, 0, 0, 1]),
             internal_port: 8081,
-            internal_bind: std::net::IpAddr::from([0, 0, 0, 0]),
+            internal_bind: std::net::IpAddr::from([127, 0, 0, 1]),
             external_rate_limit_per_ip: 100,
             rate_limit_max_entries: 100_000,
             rate_limit_trusted_proxies: Vec::new(),
