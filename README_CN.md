@@ -241,7 +241,7 @@ cargo build -p garrison-examples --features full
 
 ## 🔒 安全
 
-Garrison 围绕身份认证全生命周期做纵深防护：Argon2id / Bcrypt 慢哈希经 `spawn_blocking` 下沉、Token 常量时间比较（`secure-ct-eq`，CWE-208）、API Key 哈希存储与 IP 级限速（CWE-916 / CWE-307）、多租户 IDOR 防护、审计事件 token 统一掩码（CWE-532）、外网登录端点 fail-closed 等。逐项机制的代码级细节见 [🏗️ 架构文档](docs/cn/ARCHITECTURE.md) 与 [📖 用户指南 · 安全与防护](docs/cn/USER_GUIDE.md)，安全配置最佳实践与漏洞处理流程见 [🔒 安全文档](docs/cn/SECURITY.md)。
+Garrison 围绕身份认证全生命周期做纵深防护：Argon2id / Bcrypt 慢哈希经 `spawn_blocking` 下沉、Token 常量时间比较（`secure-ct-eq`，CWE-208）、API Key 哈希存储与 IP 级限速（CWE-916 / CWE-307）、多租户 IDOR 防护、审计事件 token 统一掩码（CWE-532）、外网登录端点 fail-closed 等。自 1.0 起库层默认回环绑定（`127.0.0.1`）且严格安全档默认开启；外网登录端点默认关闭，容器部署须显式设置 `GARRISON_EXTERNAL_BIND=0.0.0.0`。逐项机制的代码级细节见 [🏗️ 架构文档](docs/cn/ARCHITECTURE.md) 与 [📖 用户指南 · 安全与防护](docs/cn/USER_GUIDE.md)，安全配置最佳实践与漏洞处理流程见 [🔒 安全文档](docs/cn/SECURITY.md)。
 
 CI 与发布流程内置两道供应链门禁（`cargo deny check` 与 gitleaks 私钥扫描），门禁标准与处置细节见 [🔒 安全文档 · 供应链与门禁](docs/cn/SECURITY.md)。
 

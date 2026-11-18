@@ -39,11 +39,11 @@ services:
       # 端口覆盖（默认 8080/8081，改动后需同步 ports 映射）：
       # GARRISON_EXTERNAL_PORT: 8080
       # GARRISON_INTERNAL_PORT: 8081
-      # 绑定地址：镜像已内置 GARRISON_EXTERNAL_BIND/GARRISON_INTERNAL_BIND=0.0.0.0
-      # （容器内必须绑 0.0.0.0 才能被 ports 映射）；对外暴露面由上方 ports 控制
-      # （内网端口已收敛为 127.0.0.1 宿主回环映射），勿改容器内绑定
-      # GARRISON_EXTERNAL_BIND: 0.0.0.0
-      # GARRISON_INTERNAL_BIND: 0.0.0.0
+      # 绑定地址：容器部署必须显式通配，框架默认已回环（1.0 起库层默认 127.0.0.1）；
+      # 容器内绑 0.0.0.0 才能被 ports 映射；对外暴露面由上方 ports 控制
+      # （内网端口已收敛为 127.0.0.1 宿主回环映射）
+      GARRISON_EXTERNAL_BIND: 0.0.0.0
+      GARRISON_INTERNAL_BIND: 0.0.0.0
       # 并发会话策略：同账号最多 10 个在线会话，超出踢最早会话（0 = 不限制）：
       # GARRISON_MAX_LOGIN_COUNT: 10
       # 可信代理：仅当本容器部署在可信反代（nginx/traefik 等）之后才配置，
