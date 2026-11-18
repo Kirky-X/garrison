@@ -24,6 +24,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 
+/// 风险二次验证强制标记：登录时由 `RiskEngine` 的 `RequireSecondFactor` 动作写入会话 attrs；
+/// `check_safe` 读取后返回 `NotSafe { reason: "MFA_RISK_STEP_UP" }`，直到业务完成二次验证清除该标记。
+#[cfg(feature = "risk-adaptive-auth")]
+pub const RISK_STEP_UP_ATTR_KEY: &str = "__garrison_risk_step_up";
+
 // ParameterQuery 参数化查询模块
 #[cfg(feature = "parameter-query")]
 pub mod parameter;

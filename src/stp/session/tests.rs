@@ -4605,3 +4605,168 @@ mod session_token_security_tests {
         );
     }
 }
+
+// 风险自适应认证处置集成（`risk-adaptive-auth` feature 门控）
+#[cfg(all(test, feature = "risk-adaptive-auth"))]
+mod risk_enforcement_tests {
+    use crate::backend::types::LoginParams;
+    use crate::config::GarrisonConfig;
+    use crate::dao::InMemoryDao;
+    use crate::error::{GarrisonError, GarrisonResult};
+    use crate::session::GarrisonSession;
+    use crate::stp::mock::MockFirewall;
+    use crate::stp::{with_current_token, GarrisonLogicDefault, MfaLogic, SessionLogic};
+    use crate::strategy::alert::{AnomalyDetector, AnomalyType, SecurityAlertEvent};
+    use crate::strategy::risk::{
+        RiskAction, RiskActionResolver, RiskAssessment, RiskEngine, RiskLevel, RiskPolicy,
+    };
+    use async_trait::async_trait;
+    use std::sync::Arc;
+
+    struct FixedPolicy {
+        assessment: RiskAssessment,
+    }
+
+    #[async_trait]
+    impl RiskPolicy for FixedPolicy {
+        async fn assess(
+            &self,
+            _ctx: &crate::strategy::risk::RiskContext,
+        ) -> GarrisonResult<RiskAssessment> {
+            Ok(self.assessment.clone())
+        }
+    }
+
+    struct FixedResolver {
+        action: RiskAction,
+    }
+
+    impl RiskActionResolver for FixedResolver {
+        fn resolve(&self, _assessment: &RiskAssessment) -> RiskAction {
+            self.action.clone()
+        }
+    }
+
+    struct EmitGeoJumpDetector;
+
+    #[async_trait]
+    impl AnomalyDetector for EmitGeoJumpDetector {
+        async fn check_on_login(
+            &self,
+            login_id: &str,
+            _d: &str,
+            _ip: Option<&str>,
+        ) -> GarrisonResult<Vec<SecurityAlertEvent>> {
+            Ok(vec![SecurityAlertEvent::AnomalyLogin {
+                login_id: login_id.to_string(),
+                anomaly_type: AnomalyType::GeoJump,
+                detail: "geo-jump".to_string(),
+                trace_id: "trace".to_string(),
+            }])
+        }
+        async fn check_on_check_login(
+            &self,
+            _login_id: &str,
+            _token: &str,
+        ) -> GarrisonResult<Vec<SecurityAlertEvent>> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn assessment(level: RiskLevel) -> RiskAssessment {
+        RiskAssessment {
+            level,
+            score: 100,
+            reasons: Vec::new(),
+        }
+    }
+
+    fn make_logic(action: RiskAction, detector: bool) -> (GarrisonLogicDefault, Arc<InMemoryDao>) {
+        let dao: Arc<InMemoryDao> = Arc::new(InMemoryDao::new());
+        let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
+        let mut config = GarrisonConfig::default_config();
+        config.throw_on_not_login = false;
+        config.token_style = "uuid".to_string();
+        let engine = Arc::new(RiskEngine::with_resolver(
+            Arc::new(FixedPolicy {
+                assessment: assessment(RiskLevel::High),
+            }),
+            Arc::new(FixedResolver { action }),
+        ));
+        let mut logic = GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            }),
+            Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        )
+        .with_risk_engine(engine);
+        if detector {
+            logic = logic.with_anomaly_detector(Arc::new(EmitGeoJumpDetector));
+        }
+        (logic, dao)
+    }
+
+    #[tokio::test]
+    async fn notify_only_keeps_login_success_and_no_step_up_marker() {
+        let (logic, _dao) = make_logic(RiskAction::NotifyOnly, true);
+        let token = logic
+            .login("risk-user-1", &LoginParams::default())
+            .await
+            .unwrap();
+        let marker = logic
+            .session
+            .get(&token, crate::stp::RISK_STEP_UP_ATTR_KEY)
+            .await
+            .unwrap();
+        assert!(marker.is_none(), "NotifyOnly 不应写二次验证标记");
+    }
+
+    #[tokio::test]
+    async fn require_second_factor_makes_check_safe_return_not_safe() {
+        let (logic, _dao) = make_logic(RiskAction::RequireSecondFactor, true);
+        let token = logic
+            .login("risk-user-2", &LoginParams::default())
+            .await
+            .unwrap();
+        let result = with_current_token(token, async { logic.check_safe().await }).await;
+        assert!(
+            matches!(&result, Err(GarrisonError::NotSafe { reason }) if reason == "MFA_RISK_STEP_UP"),
+            "高风险会话应要求二次验证，实际: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn temporary_lock_returns_disable_service_and_blocks_next_login() {
+        let (logic, _dao) = make_logic(RiskAction::TemporaryLock { ttl_secs: 300 }, true);
+        let result = logic.login("risk-user-3", &LoginParams::default()).await;
+        assert!(
+            matches!(&result, Err(GarrisonError::DisableService { service, .. }) if service == "risk"),
+            "Critical 应返回 DisableService，实际: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn no_engine_preserves_baseline_behavior() {
+        let dao: Arc<InMemoryDao> = Arc::new(InMemoryDao::new());
+        let logic = GarrisonLogicDefault::new(
+            Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0)),
+            Arc::new(GarrisonConfig::default_config()),
+            Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            }),
+            Arc::new(crate::account::disable::DefaultDisableRepository::new(dao)),
+        );
+        assert!(logic
+            .login("risk-user-4", &LoginParams::default())
+            .await
+            .is_ok());
+    }
+}

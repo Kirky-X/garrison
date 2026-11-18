@@ -911,6 +911,20 @@ impl MfaLogic for GarrisonLogicDefault {
     async fn check_safe(&self) -> GarrisonResult<()> {
         self.check_session_precondition().await?;
         self.check_mfa_chain(None).await?;
+        // 风险二次验证强制标记（`risk-adaptive-auth`）：RiskEngine 判定高风险后写入标记，
+        // 后续敏感操作的 check_safe 显性拒绝，直到业务完成二次验证并清除标记。
+        #[cfg(feature = "risk-adaptive-auth")]
+        if let Ok(token) = crate::stp::context::current_token() {
+            if let Some(marker) = self
+                .session
+                .get(&token, crate::stp::RISK_STEP_UP_ATTR_KEY)
+                .await?
+            {
+                if !marker.is_empty() {
+                    return Err(Self::not_safe("MFA_RISK_STEP_UP"));
+                }
+            }
+        }
         if !self.is_safe("default").await? {
             return Err(Self::not_safe("SAFE_EXPIRED"));
         }

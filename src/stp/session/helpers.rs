@@ -95,6 +95,11 @@ impl GarrisonLogicDefault {
 
         // 6. 事件通知（锁外执行，避免持锁跨 broadcast）
         self.notify_login_event(login_id, &token, &params).await;
+        // 6.5 风险自适应处置（`risk-adaptive-auth`）：在登录流程内同步执行，保证处置与登录结果一致。
+        // 未注入引擎时为 no-op；策略失败 fail-open；Critical 处置返回 DisableService 拒绝本次登录。
+        #[cfg(feature = "risk-adaptive-auth")]
+        self.run_risk_check_on_login(login_id, &token, &params)
+            .await?;
         Ok(token)
     }
 
@@ -914,6 +919,109 @@ impl GarrisonLogicDefault {
         };
         for event in events {
             manager.broadcast_alert(&event).await;
+        }
+    }
+}
+
+/// 风险处置执行（`risk-adaptive-auth` feature）：把检测事件喂给 RiskEngine，按动作执行。
+/// 检测/策略失败由引擎 fail-open 为 NotifyOnly，不阻断登录；仅成功评估出的 Critical 处置
+/// 返回 `DisableService`（合法的拒绝决策，非失败）。
+#[cfg(feature = "risk-adaptive-auth")]
+impl GarrisonLogicDefault {
+    /// 登录路径风险处置：运行检测器收集事件 → 构造 RiskContext → evaluate → enforce。
+    /// 与广播路径独立；返回 Err 仅当 Critical 处置要求拒绝本次登录（`DisableService`）。
+    pub(super) async fn run_risk_check_on_login(
+        &self,
+        login_id: &str,
+        token: &str,
+        params: &LoginParams,
+    ) -> GarrisonResult<()> {
+        use crate::strategy::risk::RiskAction;
+        let Some(engine) = &self.risk_engine else {
+            return Ok(());
+        };
+        let device_id = params.device.as_deref().unwrap_or("");
+        let mut events = Vec::new();
+        if let Some(detectors) = &self.anomaly_detectors {
+            for detector in detectors {
+                match detector
+                    .check_on_login(login_id, device_id, params.ip.as_deref())
+                    .await
+                {
+                    Ok(mut evs) => events.append(&mut evs),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "AnomalyDetector::check_on_login failed (risk eval)")
+                    },
+                }
+            }
+        }
+        let ctx = crate::strategy::risk::RiskContext {
+            login_id: login_id.to_string(),
+            device_id: device_id.to_string(),
+            ip: params.ip.clone(),
+            events,
+            recent_failure_count: 0, // account-lockout 失败窗口未接线时恒 0（D4 退化语义）
+        };
+        match engine.evaluate(&ctx).await {
+            RiskAction::Allow | RiskAction::NotifyOnly => Ok(()),
+            RiskAction::RequireSecondFactor => {
+                let method = engine.step_up_factor.clone();
+                match self
+                    .session
+                    .set(token, crate::stp::RISK_STEP_UP_ATTR_KEY, method.as_str())
+                    .await
+                {
+                    Ok(()) => {
+                        tracing::info!(login_id, factor = %method, "risk step-up required");
+                        Ok(())
+                    },
+                    Err(e) => {
+                        tracing::warn!(error = %e, login_id, "risk step-up marker write failed (fail-open)");
+                        Ok(())
+                    },
+                }
+            },
+            RiskAction::RequireReauthentication => {
+                if let Err(e) = self.kickout_by_token(token).await {
+                    tracing::warn!(error = %e, login_id, "risk reauth kickout failed (fail-open)");
+                }
+                #[cfg(feature = "listener")]
+                if let Some(lm) = &self.listener_manager {
+                    lm.broadcast(&GarrisonEvent::Kickout {
+                        login_id: login_id.to_string(),
+                        token: crate::listener::mask_token_for_event(token),
+                        reason: "risk_reauth".to_string(),
+                        request_context: None,
+                    })
+                    .await;
+                }
+                Ok(())
+            },
+            RiskAction::TemporaryLock { ttl_secs } => {
+                let until = chrono::Utc::now()
+                    + chrono::Duration::seconds(i64::try_from(ttl_secs).unwrap_or(300));
+                match self
+                    .disable_repository
+                    .disable(login_id, "risk", Some(until), 0, ttl_secs)
+                    .await
+                {
+                    Ok(()) => {
+                        tracing::info!(
+                            login_id,
+                            ttl_secs,
+                            "risk temporary lock applied (service=risk)"
+                        );
+                        Err(GarrisonError::DisableService {
+                            service: "risk".to_string(),
+                            until: Some(until),
+                        })
+                    },
+                    Err(e) => {
+                        tracing::warn!(error = %e, login_id, "risk temporary lock write failed (fail-open)");
+                        Ok(())
+                    },
+                }
+            },
         }
     }
 }
