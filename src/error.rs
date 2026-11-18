@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! 错误类型定义模块：定义框架统一错误类型与 `GarrisonResult` 别名。
+//!
+//! `suggested_action()` 的动作词表封闭七值（authenticate / reauthenticate / refresh_token /
+//! request_access / complete_second_factor / retry_later / contact_admin），与 `error_id` 同为
+//! 面向客户端代码的稳定机器 token。**禁止本地扩展词表**——新增/修订须同步
+//! `docs/en/adr-0004-unified-error-model-request-id-retry-after.md`「Decision 4」与单一事实来源
+//! `suggested_action()` 的逐 arm 静态映射（纪律同 `secure-ct-eq` 禁止本地实现）。
 
 use crate::exception::GarrisonException;
 use thiserror::Error;
