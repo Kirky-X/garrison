@@ -8,6 +8,10 @@
 
 use crate::config::GarrisonConfig;
 
+use sdforge::cli::{CliArgInfo, CliArgType, CliCommandRegistration, CliHandlerRegistration};
+use sdforge::core::{ApiError, HandlerArgs, HandlerFuture, HandlerState};
+use sdforge::inventory;
+
 #[cfg(feature = "auth-server")]
 use crate::server::AuthServerConfig;
 
@@ -442,9 +446,99 @@ pub fn doctor_exit_code(findings: &[SecurityCheckFinding], profile: DoctorProfil
     }
 }
 
+// ---- CLI 注册与 handler（机制同 cli/ops.rs 的 key-rotate） ----
+
+inventory::submit! {
+    CliCommandRegistration::new(
+        "doctor",
+        env!("CARGO_PKG_VERSION"),
+        "Run static security posture audit and print findings",
+        "handle_doctor_cmd",
+    )
+    .with_args(&[CliArgInfo::new(
+        "profile",
+        "Exit nonzero on warnings when set to strict (standard|strict)",
+        CliArgType::Body,
+        false,
+        Some("standard"),
+    )])
+}
+inventory::submit! { CliHandlerRegistration { name: "doctor", handler: handle_doctor_cmd } }
+
+/// 解析 `profile` 参数：缺省 `standard`；仅 `standard|strict` 合法。
+fn parse_profile_arg(args: &HandlerArgs) -> Result<DoctorProfile, String> {
+    let raw = args
+        .get("profile")
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "standard".to_string());
+    match raw.as_str() {
+        "standard" => Ok(DoctorProfile::Standard),
+        "strict" => Ok(DoctorProfile::Strict),
+        other => Err(format!("cli-arg-invalid::profile::{other}")),
+    }
+}
+
+/// 从环境装配 doctor 上下文：库层 `GarrisonConfig::load` 是环境覆盖的唯一来源。
+fn build_doctor_context(profile: DoctorProfile) -> DoctorContext {
+    let config = GarrisonConfig::load(None).unwrap_or_else(|_| GarrisonConfig::default_config());
+    DoctorContext {
+        config,
+        #[cfg(feature = "auth-server")]
+        server: Some(AuthServerConfig::default()),
+        features: FeatureMatrix::from_compilation(),
+        profile,
+    }
+}
+
+fn handle_doctor_cmd(args: HandlerArgs, _state: HandlerState) -> HandlerFuture {
+    Box::pin(async move {
+        let profile = parse_profile_arg(&args)
+            .map_err(|reason| ApiError::internal_error(reason, "garrison.cli"))?;
+        let ctx = build_doctor_context(profile);
+        let findings: Vec<SecurityCheckFinding> =
+            CHECKS.iter().flat_map(|check| check(&ctx)).collect();
+        let report = render_report(&findings);
+        let exit_code = doctor_exit_code(&findings, profile);
+        let payload = serde_json::json!({"report": report, "exit_code": exit_code});
+        if exit_code == 0 {
+            Ok(payload)
+        } else {
+            // 与 healthcheck 同路：非零语义经 ApiError → main 退出码 1；报告已随错误 reason 输出。
+            Err(ApiError::internal_error(
+                report,
+                "garrison.doctor.posture".to_string(),
+            ))
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_arg_defaults_to_standard() {
+        let args = HandlerArgs::new();
+        assert_eq!(parse_profile_arg(&args).unwrap(), DoctorProfile::Standard);
+    }
+
+    #[test]
+    fn profile_arg_accepts_standard_and_strict_case_insensitive() {
+        let mut args = HandlerArgs::new();
+        args.insert("profile".to_string(), "STRICT".to_string());
+        assert_eq!(parse_profile_arg(&args).unwrap(), DoctorProfile::Strict);
+        args.insert("profile".to_string(), " standard ".to_string());
+        assert_eq!(parse_profile_arg(&args).unwrap(), DoctorProfile::Standard);
+    }
+
+    #[test]
+    fn profile_arg_rejects_unknown_value() {
+        let mut args = HandlerArgs::new();
+        args.insert("profile".to_string(), "loose".to_string());
+        let err = parse_profile_arg(&args).unwrap_err();
+        assert_eq!(err, "cli-arg-invalid::profile::loose");
+    }
 
     #[test]
     fn checks_table_has_nine_unique_stable_ids() {
