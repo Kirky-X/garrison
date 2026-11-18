@@ -7,12 +7,31 @@ and versioning follows [Semantic Versioning](https://semver.org/).
 
 ## 📋 Table of Contents
 
+- [1.0.0 (Unreleased)](#100---unreleased)
 - [0.9.0](#090---2026-11-14)
 - [0.9.0-rc.5](#090-rc5---2026-11-01)
 - [0.9.0-rc.4](#090-rc4---2026-10-20)
 - [0.9.0-rc.3](#090-rc3---2026-10-14)
 - [0.9.0-rc.2](#090-rc2---2026-08-26)
 - [0.9.0-rc.1](#090-rc1---2026-08-25)
+
+---
+
+## [1.0.0] - Unreleased
+
+### Breaking — Secure-by-Default Profile
+
+The library default posture now matches the hardened reference deployment. These flips are visible to embedders that relied on the old defaults:
+
+- **Bind addresses default to loopback**: `AuthServerConfig::default().external_bind` and `internal_bind` move from `0.0.0.0` to `127.0.0.1`.
+- **`strict_security` defaults to `true`**: short internal API keys (<32 bytes) and un-ACKed external login exposure are now rejected by `validate()` at startup rather than only warned about.
+- **`require_tenant_bound_jwt` defaults to `true`**: stateless JWTs without the `tid` tenant-binding claim are rejected in a tenant context (`stp-check-login-tenant-unbound`).
+- **`require_session_tenant_binding` defaults to `true`**: sessions without a tenant binding are rejected in a tenant context (`stp-check-login-session-tenant-unbound`).
+
+### Migration Actions
+
+1. **Container / network deployments**: the framework now binds `127.0.0.1` by default. Set `GARRISON_EXTERNAL_BIND=0.0.0.0` (and `GARRISON_INTERNAL_BIND=0.0.0.0` when needed) explicitly, or call `with_external_bind`/`with_internal_bind`, to preserve wildcard binding. The image compose example sets these variables explicitly.
+2. **Embedded deployments with existing credentials/sessions**: rotate the internal API key to at least 32 bytes. Migrate or invalidate legacy unbound sessions and stateless tokens before upgrading, or use the single-version rollback switches for one release: `GARRISON_STRICT_SECURITY=false`, `GARRISON_REQUIRE_TENANT_BOUND_JWT=false`, `GARRISON_REQUIRE_SESSION_TENANT_BINDING=false`. These rollback switches are removed in 1.1.
 
 ---
 
