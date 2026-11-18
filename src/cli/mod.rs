@@ -20,6 +20,10 @@ use sdforge::cli::{CliBuilder, CliCommandRegistration, CliHandlerRegistration};
 use sdforge::core::{ApiError, HandlerArgs, HandlerFuture, HandlerState};
 use sdforge::inventory;
 
+/// 静态安全姿态审计命令 `doctor`（`cli-ops` feature 门控）。
+#[cfg(feature = "cli-ops")]
+pub mod doctor;
+
 /// 原 `garrison-cli` 运维命令组（`cli-ops` 及其依赖 feature 满足时编译）。
 #[cfg(all(
     feature = "cli-ops",
