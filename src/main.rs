@@ -55,10 +55,20 @@ async fn async_main() {
     let matches = cli.get_matches();
     let format = sdforge::cli::output::OutputFormat::from_matches(&matches);
     match sdforge::cli::dispatch::dispatch(&matches, None).await {
-        Ok((_name, value)) => {
-            // Value::Null = 「子命令已自行输出」哨兵（serve/运维命令组契约）：
-            // 不得再渲染——否则 `extract_value` 会把 Null 序列化成字面 "null" 尾行。
-            if !value.is_null() {
+        Ok((name, value)) => {
+            // `doctor` 把安全姿态结论放进 JSON 的 `exit_code`（0/1）；CLI 外壳按此透传进程退出码，
+            // 使 `--profile strict` 可作 CI 门禁与容器启动探针。报告正文只渲染 `report` 字段，
+            // 不把整个 JSON 对象打到 stdout（终端读者只需报告）。
+            if name == "doctor" {
+                if let Some(report) = value.get("report").and_then(|v| v.as_str()) {
+                    println!("{report}");
+                }
+                if let Some(code) = value.get("exit_code").and_then(|v| v.as_i64()) {
+                    if code != 0 {
+                        std::process::exit(1);
+                    }
+                }
+            } else if !value.is_null() {
                 let output = sdforge::core::extract_value(&value);
                 if !output.is_empty() {
                     println!("{output}");

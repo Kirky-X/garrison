@@ -500,16 +500,8 @@ fn handle_doctor_cmd(args: HandlerArgs, _state: HandlerState) -> HandlerFuture {
             CHECKS.iter().flat_map(|check| check(&ctx)).collect();
         let report = render_report(&findings);
         let exit_code = doctor_exit_code(&findings, profile);
-        let payload = serde_json::json!({"report": report, "exit_code": exit_code});
-        if exit_code == 0 {
-            Ok(payload)
-        } else {
-            // 与 healthcheck 同路：非零语义经 ApiError → main 退出码 1；报告已随错误 reason 输出。
-            Err(ApiError::internal_error(
-                report,
-                "garrison.doctor.posture".to_string(),
-            ))
-        }
+        // 报告正文与退出码随 JSON 返回，由 CLI 外壳（src/main.rs）渲染报告并按 exit_code 透传退出码。
+        Ok(serde_json::json!({"report": report, "exit_code": exit_code}))
     })
 }
 
