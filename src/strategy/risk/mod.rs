@@ -47,13 +47,26 @@ impl RiskEngine {
 
     /// 评估风险并映射动作；策略失败时 fail-open 为 `NotifyOnly` 并 warn，不返回错误、不 panic。
     pub async fn evaluate(&self, ctx: &RiskContext) -> RiskAction {
+        match self.assess(ctx).await {
+            Some(assessment) => self.resolver.resolve(&assessment),
+            None => RiskAction::NotifyOnly,
+        }
+    }
+
+    /// 返回结构化评估；策略失败时 warn 并返回 `None`（fail-open）。
+    pub async fn assess(&self, ctx: &RiskContext) -> Option<RiskAssessment> {
         match self.policy.assess(ctx).await {
-            Ok(assessment) => self.resolver.resolve(&assessment),
+            Ok(assessment) => Some(assessment),
             Err(e) => {
                 tracing::warn!(error = %e, "RiskPolicy::assess failed; fail-open to NotifyOnly");
-                RiskAction::NotifyOnly
+                None
             },
         }
+    }
+
+    /// 用本引擎的 resolver 把评估映射为动作（供需同时拿到评估与动作的调用方使用）。
+    pub fn resolve(&self, assessment: &RiskAssessment) -> RiskAction {
+        self.resolver.resolve(assessment)
     }
 }
 

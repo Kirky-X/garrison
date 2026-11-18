@@ -962,7 +962,28 @@ impl GarrisonLogicDefault {
             events,
             recent_failure_count: 0, // account-lockout 失败窗口未接线时恒 0（D4 退化语义）
         };
-        match engine.evaluate(&ctx).await {
+        let assessment = engine.assess(&ctx).await;
+        // 处置播报：携带 level/score/信号名摘要；detail 为固定结构，不含 token/IP 全文（掩码纪律）。
+        #[cfg(all(feature = "listener", feature = "anomalous-detector-dual"))]
+        if let (Some(lm), Some(a)) = (&self.listener_manager, &assessment) {
+            lm.broadcast(&GarrisonEvent::AnomalousLoginDetected {
+                login_id: login_id.to_string(),
+                reason: format!("risk-{:?}", a.level).to_ascii_lowercase(),
+                detail: serde_json::json!({
+                    "level": a.level,
+                    "score": a.score,
+                    "signals": a.reasons.iter().map(|r| &r.signal).collect::<Vec<_>>(),
+                }),
+                timestamp: chrono::Utc::now().timestamp(),
+                request_context: None,
+            })
+            .await;
+        }
+        let action = match &assessment {
+            Some(a) => engine.resolve(a),
+            None => RiskAction::NotifyOnly,
+        };
+        match action {
             RiskAction::Allow | RiskAction::NotifyOnly => Ok(()),
             RiskAction::RequireSecondFactor => {
                 let method = engine.step_up_factor.clone();

@@ -4677,7 +4677,10 @@ mod risk_enforcement_tests {
         RiskAssessment {
             level,
             score: 100,
-            reasons: Vec::new(),
+            reasons: vec![crate::strategy::risk::RiskReason {
+                signal: crate::strategy::risk::RiskSignal::GeoJump,
+                detail: "geo-jump-detected".to_string(),
+            }],
         }
     }
 
@@ -4768,5 +4771,68 @@ mod risk_enforcement_tests {
             .login("risk-user-4", &LoginParams::default())
             .await
             .is_ok());
+    }
+
+    #[cfg(all(feature = "listener", feature = "anomalous-detector-dual"))]
+    #[tokio::test]
+    async fn risk_assessment_broadcast_carries_level_score_signals_without_secrets() {
+        use crate::listener::{GarrisonEvent, GarrisonListener, GarrisonListenerManager};
+
+        #[derive(Clone)]
+        struct CaptureListener(Arc<std::sync::Mutex<Vec<GarrisonEvent>>>);
+        #[async_trait]
+        impl GarrisonListener for CaptureListener {
+            async fn on_event(&self, event: &GarrisonEvent) -> crate::error::GarrisonResult<()> {
+                self.0.lock().unwrap().push(event.clone());
+                Ok(())
+            }
+        }
+
+        let dao: Arc<InMemoryDao> = Arc::new(InMemoryDao::new());
+        let captured: Arc<std::sync::Mutex<Vec<GarrisonEvent>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let lm = GarrisonListenerManager::new();
+        lm.register(Arc::new(CaptureListener(captured.clone())));
+
+        let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
+        let engine = Arc::new(RiskEngine::with_resolver(
+            Arc::new(FixedPolicy {
+                assessment: assessment(RiskLevel::High),
+            }),
+            Arc::new(FixedResolver {
+                action: RiskAction::NotifyOnly,
+            }),
+        ));
+        let logic = GarrisonLogicDefault::new(
+            session,
+            Arc::new(GarrisonConfig::default_config()),
+            Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            }),
+            Arc::new(crate::account::disable::DefaultDisableRepository::new(dao)),
+        )
+        .with_risk_engine(engine)
+        .with_anomaly_detector(Arc::new(EmitGeoJumpDetector))
+        .with_listener_manager(Arc::new(lm));
+
+        let _ = logic
+            .login("risk-broadcast-user", &LoginParams::default())
+            .await
+            .unwrap();
+
+        let events = captured.lock().unwrap();
+        let risk_event = events
+            .iter()
+            .find_map(|e| match e {
+                GarrisonEvent::AnomalousLoginDetected { detail, .. } => Some(detail),
+                _ => None,
+            })
+            .expect("应广播 AnomalousLoginDetected 事件");
+        let text = risk_event.to_string();
+        assert!(text.contains("High"), "detail 应含 level，实际: {text}");
+        assert!(text.contains("100"), "detail 应含 score，实际: {text}");
+        assert!(text.contains("GeoJump"), "detail 应含信号名，实际: {text}");
+        assert!(!text.contains("token"), "detail 不得含 token 原文");
     }
 }
