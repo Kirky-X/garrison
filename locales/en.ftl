@@ -1870,3 +1870,6 @@ dao-conformance-credential-must-exist-after-rollback = [{$prefix}] the credentia
 dao-conformance-unbind-must-succeed = [{$prefix}] unbinding must succeed
 dao-conformance-unbind-must-be-idempotent = [{$prefix}] repeated unbinding must stay Ok (idempotent)
 cli-healthcheck-healthy = healthy: /healthz on 127.0.0.1:{$port} returned {$code}
+
+risk-step-up-required = Elevated login risk detected, second factor required
+risk-temp-locked = Login temporarily locked due to elevated risk; retry later

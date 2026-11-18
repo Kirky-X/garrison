@@ -1865,3 +1865,6 @@ dao-conformance-credential-must-exist-after-rollback = [{$prefix}] 回退拒绝�
 dao-conformance-unbind-must-succeed = [{$prefix}] 解绑应成功
 dao-conformance-unbind-must-be-idempotent = [{$prefix}] 重复解绑应幂等 Ok
 cli-healthcheck-healthy = 健康：127.0.0.1:{$port} 的 /healthz 返回 {$code}
+
+risk-step-up-required = 检测到异常登录风险，需完成二次验证
+risk-temp-locked = 因登录风险过高，账号已临时锁定，请稍后重试
