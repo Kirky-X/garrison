@@ -13,6 +13,9 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
+/// 统一测试内网 Key（≥32 字节）：strict_security 1.0 起默认开启，所有触达 validate 的测试共用。
+const TEST_INTERNAL_API_KEY: &str = "garrison-test-internal-api-key-0123456789abcdef";
+
 /// 测试用 Mock AuthBackend。
 struct MockAuthBackend;
 
@@ -904,7 +907,7 @@ async fn test_listen_starts_and_runs() {
     let server = GarrisonAuthServer::new(backend)
         .with_external_port(0)
         .with_internal_port(0)
-        .with_internal_api_key("test-api-key");
+        .with_internal_api_key(TEST_INTERNAL_API_KEY);
 
     tokio::select! {
            result = server.listen() => {
@@ -935,7 +938,7 @@ async fn test_listen_uses_configured_external_bind() {
         .with_external_port(port)
         .with_external_bind(std::net::IpAddr::from([127, 0, 0, 2]))
         .with_internal_port(0)
-        .with_internal_api_key("test-api-key");
+        .with_internal_api_key(TEST_INTERNAL_API_KEY);
 
     tokio::select! {
         result = server.listen() => {
@@ -961,7 +964,7 @@ async fn test_listen_bind_failure_on_configured_external_bind() {
         .with_external_port(port)
         .with_external_bind(std::net::IpAddr::from([127, 0, 0, 1]))
         .with_internal_port(0)
-        .with_internal_api_key("test-api-key");
+        .with_internal_api_key(TEST_INTERNAL_API_KEY);
 
     let result = server.listen().await;
     assert!(
@@ -1642,7 +1645,8 @@ async fn test_listen_validate_fails_when_internal_api_key_empty() {
 /// 本测试设置合法 api_key、真正进入 tokio::spawn 的 bind 路径，覆盖外网 bind 失败分支与 select 的 external 错误臂。
 #[tokio::test]
 async fn test_listen_bind_failure_external_port_with_valid_config() {
-    let external_listener = tokio::net::TcpListener::bind("0.0.0.0:0")
+    // 1.0 默认外网绑定回环，占用同址端口才会触发 bind 冲突（占 0.0.0.0 与回环可并存）
+    let external_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("占用测试端口应成功");
     let external_port = external_listener.local_addr().unwrap().port();
@@ -1651,7 +1655,7 @@ async fn test_listen_bind_failure_external_port_with_valid_config() {
     let server = GarrisonAuthServer::new(backend)
         .with_external_port(external_port)
         .with_internal_port(0)
-        .with_internal_api_key("test-api-key");
+        .with_internal_api_key(TEST_INTERNAL_API_KEY);
 
     let result = server.listen().await;
     assert!(
@@ -1665,7 +1669,8 @@ async fn test_listen_bind_failure_external_port_with_valid_config() {
 /// internal 失败时显式 abort external task）。
 #[tokio::test]
 async fn test_listen_bind_failure_internal_port_with_valid_config() {
-    let internal_listener = tokio::net::TcpListener::bind("0.0.0.0:0")
+    // 1.0 默认内网绑定回环，占用同址端口才会触发 bind 冲突（占 0.0.0.0 与回环可并存）
+    let internal_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("占用测试端口应成功");
     let internal_port = internal_listener.local_addr().unwrap().port();
@@ -1674,7 +1679,7 @@ async fn test_listen_bind_failure_internal_port_with_valid_config() {
     let server = GarrisonAuthServer::new(backend)
         .with_external_port(0)
         .with_internal_port(internal_port)
-        .with_internal_api_key("test-api-key");
+        .with_internal_api_key(TEST_INTERNAL_API_KEY);
 
     let result = server.listen().await;
     assert!(
