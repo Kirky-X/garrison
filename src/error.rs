@@ -655,6 +655,9 @@ impl GarrisonError {
         if let Some(code) = ex_code {
             body["code"] = serde_json::json!(code);
         }
+        if let Some(action) = self.suggested_action() {
+            body["suggested_action"] = serde_json::json!(action);
+        }
         if let Some(id) = crate::context::request_id::current() {
             body[crate::context::request_id::REQUEST_ID_BODY_FIELD] =
                 serde_json::json!(id.as_ref());
@@ -2307,6 +2310,76 @@ mod tests {
         assert_eq!(body["error_code"], "NOT_LOGIN", "旧码冻结输出");
         assert_eq!(body["error_id"], "auth.not_login", "新码并存输出");
         assert_eq!(body["message"], "Not logged in");
+    }
+
+    #[test]
+    fn to_json_body_suggested_action_omitempty_and_vocab() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
+        // NotSafe → complete_second_factor
+        let body = GarrisonError::NotSafe {
+            reason: "MFA_TOTP_REQUIRED".into(),
+        }
+        .to_json_body();
+        assert_eq!(body["suggested_action"], "complete_second_factor");
+        // Exception 通道 → authenticate
+        let ex =
+            GarrisonError::Exception(Box::new(crate::exception::GarrisonException::new(-1, "a")));
+        assert_eq!(ex.to_json_body()["suggested_action"], "authenticate");
+        // RateLimited → retry_later
+        let body = GarrisonError::RateLimited {
+            retry_after_secs: 5,
+        }
+        .to_json_body();
+        assert_eq!(body["suggested_action"], "retry_later");
+        // Internal → omitempty（字段不出现）
+        let body = GarrisonError::Internal("x".into()).to_json_body();
+        assert!(
+            body.get("suggested_action").is_none(),
+            "服务端侧错误不得输出 suggested_action"
+        );
+    }
+
+    #[test]
+    fn suggested_action_body_values_are_always_in_closed_vocab() {
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
+        const VOCAB: &[&str] = &[
+            "authenticate",
+            "reauthenticate",
+            "refresh_token",
+            "request_access",
+            "complete_second_factor",
+            "retry_later",
+            "contact_admin",
+        ];
+        let cases = vec![
+            GarrisonError::NotLogin("x".into()),
+            GarrisonError::InvalidToken("x".into()),
+            GarrisonError::ExpiredToken("x".into()),
+            GarrisonError::TokenRevoked("x".into()),
+            GarrisonError::NotPermission("x".into()),
+            GarrisonError::NotRole("x".into()),
+            GarrisonError::NotSafe { reason: "x".into() },
+            GarrisonError::RateLimited {
+                retry_after_secs: 1,
+            },
+            GarrisonError::DisableService {
+                service: "risk".into(),
+                until: None,
+            },
+        ];
+        for err in cases {
+            if let Some(value) = err.to_json_body().get("suggested_action") {
+                let token = value.as_str().unwrap();
+                assert!(VOCAB.contains(&token), "动作值必须来自封闭词表: {token}");
+                assert!(
+                    !token.contains("tenant")
+                        && !token.contains("192.")
+                        && !token.contains("MFA_TOTP")
+                        && !token.chars().any(|c| c.is_ascii_digit()),
+                    "动作 token 不得含请求上下文: {token}"
+                );
+            }
+        }
     }
 
     #[tokio::test]
