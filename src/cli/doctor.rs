@@ -255,6 +255,65 @@ fn check_trusted_proxies(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
     }
 }
 
+/// `web-security-stack`：`web_security=false` → Warn；`auth_server=true` 隐含 headers → Pass 并注明。
+fn check_web_security_stack(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
+    if ctx.features.web_security {
+        return vec![SecurityCheckFinding::new(
+            "web-security-stack",
+            FindingStatus::Pass,
+            "Web security stack (CORS/CSRF/security headers) is enabled",
+        )];
+    }
+    if ctx.features.auth_server {
+        return vec![SecurityCheckFinding::new(
+            "web-security-stack",
+            FindingStatus::Pass,
+            "web-security-headers is implied by auth-server (CORS/CSRF still need web-security)",
+        )];
+    }
+    vec![SecurityCheckFinding::new(
+        "web-security-stack",
+        FindingStatus::Warn,
+        "CORS/CSRF/security headers are missing (enable web-security)",
+    )]
+}
+
+/// `audit-chain`：`audit_log=false` → Warn。
+fn check_audit_chain(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
+    let finding = if ctx.features.audit_log {
+        SecurityCheckFinding::new(
+            "audit-chain",
+            FindingStatus::Pass,
+            "Audit event chain is enabled",
+        )
+    } else {
+        SecurityCheckFinding::new(
+            "audit-chain",
+            FindingStatus::Warn,
+            "Audit event chain is missing; events cannot be traced (enable audit-log)",
+        )
+    };
+    vec![finding]
+}
+
+/// `session-signal-sources`：两个信号源均关 → Warn，任一启用 → Pass。
+fn check_session_signal_sources(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
+    let finding = if ctx.features.session_hijack || ctx.features.device_binding {
+        SecurityCheckFinding::new(
+            "session-signal-sources",
+            FindingStatus::Pass,
+            "At least one risk signal source (session-hijack/device-binding) is enabled",
+        )
+    } else {
+        SecurityCheckFinding::new(
+            "session-signal-sources",
+            FindingStatus::Warn,
+            "Risk signal sources are missing (enable session-hijack-detection or device-binding)",
+        )
+    };
+    vec![finding]
+}
+
 /// `jwt-secret-strength`：复用 `validate_jwt_secret`，Err → Fail。
 fn check_jwt_secret_strength(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
     let finding = match ctx.config.validate_jwt_secret() {
@@ -405,6 +464,84 @@ mod tests {
         assert_eq!(lines[1], "! warn: warn detail");
         assert_eq!(lines[2], "✗ bad: bad detail");
         assert_eq!(lines[3], "1 passed, 1 warnings, 1 failures");
+    }
+
+    #[test]
+    fn feature_face_checks_warn_when_absent_and_pass_when_present() {
+        let all_off = FeatureMatrix {
+            web_security: false,
+            audit_log: false,
+            session_hijack: false,
+            device_binding: false,
+            config_security_rules: false,
+            auth_server: false,
+        };
+        let ctx = DoctorContext {
+            config: GarrisonConfig::default_config(),
+            #[cfg(feature = "auth-server")]
+            server: None,
+            features: all_off,
+            profile: DoctorProfile::Standard,
+        };
+        assert_eq!(
+            check_web_security_stack(&ctx)[0].status,
+            FindingStatus::Warn
+        );
+        assert_eq!(check_audit_chain(&ctx)[0].status, FindingStatus::Warn);
+        assert_eq!(
+            check_session_signal_sources(&ctx)[0].status,
+            FindingStatus::Warn
+        );
+
+        let all_on = FeatureMatrix {
+            web_security: true,
+            audit_log: true,
+            session_hijack: true,
+            device_binding: true,
+            config_security_rules: true,
+            auth_server: false,
+        };
+        let ctx_on = DoctorContext {
+            config: GarrisonConfig::default_config(),
+            #[cfg(feature = "auth-server")]
+            server: None,
+            features: all_on,
+            profile: DoctorProfile::Standard,
+        };
+        assert_eq!(
+            check_web_security_stack(&ctx_on)[0].status,
+            FindingStatus::Pass
+        );
+        assert_eq!(check_audit_chain(&ctx_on)[0].status, FindingStatus::Pass);
+        assert_eq!(
+            check_session_signal_sources(&ctx_on)[0].status,
+            FindingStatus::Pass
+        );
+    }
+
+    #[test]
+    fn auth_server_implies_web_security_headers_with_note() {
+        let ctx = DoctorContext {
+            config: GarrisonConfig::default_config(),
+            #[cfg(feature = "auth-server")]
+            server: None,
+            features: FeatureMatrix {
+                web_security: false,
+                audit_log: false,
+                session_hijack: false,
+                device_binding: false,
+                config_security_rules: false,
+                auth_server: true,
+            },
+            profile: DoctorProfile::Standard,
+        };
+        let findings = check_web_security_stack(&ctx);
+        assert_eq!(findings[0].status, FindingStatus::Pass);
+        assert!(
+            findings[0].message.contains("implied by auth-server"),
+            "应注明隐含来源，实际: {}",
+            findings[0].message
+        );
     }
 
     #[test]
