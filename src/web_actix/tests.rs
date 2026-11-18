@@ -232,9 +232,18 @@ fn make_config() -> GarrisonConfig {
 
 /// 初始化 GarrisonManager（带权限/角色数据）。
 async fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
+    init_manager_with_config(permissions, roles, make_config()).await
+}
+
+/// 自定义 config 的初始化入口：供租户绑定等默认值翻转后需显式回退的用例隔离变量。
+async fn init_manager_with_config(
+    permissions: &[(&str, &[&str])],
+    roles: &[(&str, &[&str])],
+    config: GarrisonConfig,
+) {
     GarrisonManager::reset_for_test();
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let config = Arc::new(make_config());
+    let config = Arc::new(config);
     let mut interface = MockInterface::new();
     for (id, perms) in permissions {
         interface = interface.with_permission(id, perms);
@@ -538,11 +547,15 @@ async fn middleware_with_header_tenant_rejects_invalid_tenant_header() {
 }
 
 /// 租户上下文传播到 CheckLogin 路径（`check_login` 不校验租户但 scope 不报错，登录通过）。
+/// 登录在租户上下文外签发（无绑定），显式回退租户绑定开关以隔离本用例要验证的中间件传播行为。
 #[cfg(feature = "tenant-isolation")]
 #[tokio::test]
 #[serial]
 async fn middleware_with_header_tenant_allows_check_login() {
-    init_manager(&[], &[]).await;
+    let mut config = make_config();
+    config.require_session_tenant_binding = false;
+    config.require_tenant_bound_jwt = false;
+    init_manager_with_config(&[], &[], config).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let service =
         make_middleware_service_with_header_tenant(&[("/protected", Annotation::CheckLogin)]).await;

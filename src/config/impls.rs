@@ -211,8 +211,9 @@ impl GarrisonConfig {
             session_hijack_mode: SessionHijackMode::default(),
             enable_jwt_revocation: false,
             allow_stateless_jwt_no_revocation: false,
-            require_tenant_bound_jwt: false,
-            require_session_tenant_binding: false,
+            // 1.0 契约变更：租户绑定默认开启（有意 Breaking，回退见 CHANGELOG）
+            require_tenant_bound_jwt: true,
+            require_session_tenant_binding: true,
             recent_reuse_behaviour: RecentReuseBehaviour::default(),
             refresh_grace_period_secs: DEFAULT_REFRESH_GRACE_PERIOD_SECS,
             refresh_grace_max_uses: DEFAULT_REFRESH_GRACE_MAX_USES,
@@ -392,8 +393,8 @@ impl GarrisonConfig {
                 "refresh_grace_max_uses",
                 ConfigValue::uint(DEFAULT_REFRESH_GRACE_MAX_USES as u64),
             )
-            .default("require_tenant_bound_jwt", ConfigValue::bool(false))
-            .default("require_session_tenant_binding", ConfigValue::bool(false));
+            .default("require_tenant_bound_jwt", ConfigValue::bool(true))
+            .default("require_session_tenant_binding", ConfigValue::bool(true));
 
         #[cfg(feature = "session-extra")]
         {

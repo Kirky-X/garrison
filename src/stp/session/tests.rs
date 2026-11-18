@@ -3710,10 +3710,10 @@ mod tenant_binding_tests {
         }
     }
 
-    /// 无绑定会话（旧会话/非多租户部署创建）在租户上下文内仍放行（向后兼容）。
+    /// 非严格档（显式 `require_session_tenant_binding=false` 单版本回退）：无绑定会话（旧会话/非多租户部署创建）在租户上下文内仍放行。
     #[tokio::test]
     async fn check_login_unbound_session_under_tenant_context_allowed() {
-        let logic = make_logic();
+        let logic = make_logic_with(|c| c.require_session_tenant_binding = false);
         // 无租户上下文登录 → 会话无绑定
         let token = logic
             .login("tb-user-3", &LoginParams::default())
@@ -3765,8 +3765,8 @@ mod tenant_binding_tests {
             other => panic!("严格档下无绑定会话不得放行，实际: {:?}", other.map(|_| ())),
         }
 
-        // 档位对比：开关关闭（缺省）时同样形态的会话仍放行（棘轮非破坏）
-        let relaxed = make_logic();
+        // 档位对比：显式关回开关（单版本回退）时同样形态的会话仍放行
+        let relaxed = make_logic_with(|c| c.require_session_tenant_binding = false);
         let relaxed_token = relaxed
             .login("tb-user-6", &LoginParams::default())
             .await
@@ -3776,7 +3776,35 @@ mod tenant_binding_tests {
         })
         .await
         .unwrap();
-        assert!(ok, "非严格档（默认）无绑定会话应继续放行");
+        assert!(ok, "显式回退关闭开关后无绑定会话应继续放行");
+    }
+
+    /// 1.0 默认开启后：不显式配置开关，无绑定会话在租户上下文即被拒绝（钉住默认值翻转的端到端效果）。
+    #[tokio::test]
+    async fn check_login_unbound_session_rejected_by_default() {
+        assert!(
+            GarrisonConfig::default_config().require_session_tenant_binding,
+            "前置：1.0 默认 require_session_tenant_binding 应为 true"
+        );
+        let logic = make_logic();
+        let token = logic
+            .login("tb-user-default", &LoginParams::default())
+            .await
+            .unwrap();
+        let result = with_current_token(token, async {
+            TENANT.scope(tenant_ctx(0), logic.check_login()).await
+        })
+        .await;
+        match result {
+            Err(GarrisonError::Session(msg)) => assert!(
+                msg.contains("stp-check-login-session-tenant-unbound"),
+                "默认配置下无绑定会话应被拒绝，实际: {msg}"
+            ),
+            other => panic!(
+                "默认配置下无绑定会话不得放行，实际: {:?}",
+                other.map(|_| ())
+            ),
+        }
     }
 
     /// 无租户上下文时行为不变：绑定会话在无上下文请求中照常放行。
@@ -4367,11 +4395,11 @@ mod session_token_security_tests {
         );
     }
 
-    /// 无租户签发的 token（无 tid 绑定）在租户上下文内仍放行（升级兼容对照）。
+    /// 无租户签发的 token（无 tid 绑定）在显式回退 `require_tenant_bound_jwt=false` 时仍放行（升级兼容对照）。
     #[cfg(feature = "protocol-jwt")]
     #[tokio::test]
     async fn stateless_unbound_token_allowed_under_tenant_context() {
-        let (logic, _dao) = make_jwt_stateless_logic(|_| {});
+        let (logic, _dao) = make_jwt_stateless_logic(|c| c.require_tenant_bound_jwt = false);
         let token = logic
             .login("sec-tenant-4", &LoginParams::default())
             .await
@@ -4517,7 +4545,11 @@ mod session_token_security_tests {
     #[cfg(feature = "protocol-jwt")]
     #[tokio::test]
     async fn require_session_tenant_binding_does_not_affect_stateless() {
-        let (logic, _dao) = make_jwt_stateless_logic(|c| c.require_session_tenant_binding = true);
+        let (logic, _dao) = make_jwt_stateless_logic(|c| {
+            c.require_session_tenant_binding = true;
+            // 本用例只验证会话侧开关不误伤 Stateless；JWT 侧默认已收紧，显式回退以隔离变量
+            c.require_tenant_bound_jwt = false;
+        });
         // 无租户上下文签发：既无 tid claim 也无会话绑定
         let token = logic
             .login("sec-unbound-5", &LoginParams::default())

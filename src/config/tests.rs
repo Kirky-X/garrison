@@ -2899,11 +2899,11 @@ fn config_env_seed_primary_amr_invalid_type_rejected() {
 // require_tenant_bound_jwt 配置测试
 
 #[test]
-fn config_default_require_tenant_bound_jwt_is_false() {
+fn config_default_require_tenant_bound_jwt_is_true() {
     let config = GarrisonConfig::default_config();
     assert!(
-        !config.require_tenant_bound_jwt,
-        "require_tenant_bound_jwt 默认应为 false（开关默认放行存量无 tid token，安全敏感部署显式开启）"
+        config.require_tenant_bound_jwt,
+        "1.0 起 require_tenant_bound_jwt 默认应为 true（有意契约变更）"
     );
 }
 
@@ -2935,11 +2935,11 @@ fn config_env_require_tenant_bound_jwt_invalid_type_rejected() {
 // require_session_tenant_binding 配置测试（与 require_tenant_bound_jwt 互补：覆盖 Simple/Mixin 与 Stateless 两半）
 
 #[test]
-fn config_default_require_session_tenant_binding_is_false() {
+fn config_default_require_session_tenant_binding_is_true() {
     let config = GarrisonConfig::default_config();
     assert!(
-        !config.require_session_tenant_binding,
-        "require_session_tenant_binding 默认应为 false（存量无绑定会话放行，安全敏感部署显式开启）"
+        config.require_session_tenant_binding,
+        "1.0 起 require_session_tenant_binding 默认应为 true（有意契约变更）"
     );
 }
 
