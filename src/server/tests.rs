@@ -509,6 +509,55 @@ fn test_auth_server_config_default() {
     );
 }
 
+/// 1.0 默认构造即 fail-closed：四类拒绝面错误码与 0.9 逐字节一致（下游按码匹配不破坏）。
+#[test]
+#[serial_test::serial]
+fn test_default_config_validate_fail_closed_surface() {
+    // 空 Key → 缺失（默认构造的直接后果）
+    let empty = AuthServerConfig::default();
+    assert!(
+        matches!(empty.validate(), Err(m) if m.contains("server-internal-api-key-missing")),
+        "默认空 Key 应拒绝，实际: {:?}",
+        empty.validate()
+    );
+
+    // 短 Key（严格档默认开启）→ too-short
+    let short = AuthServerConfig {
+        internal_api_key: "short-key-12".to_string(),
+        ..AuthServerConfig::default()
+    };
+    assert!(
+        matches!(short.validate(), Err(m) if m.contains("server-internal-api-key-too-short")),
+        "默认严格档短 Key 应拒绝，实际: {:?}",
+        short.validate()
+    );
+
+    // 未 ACK 的非回环外网登录 → unacknowledged
+    let unacked = AuthServerConfig {
+        internal_api_key: "0123456789abcdef0123456789abcdef".to_string(),
+        external_login_enabled: true,
+        external_bind: std::net::IpAddr::from([0, 0, 0, 0]),
+        ..AuthServerConfig::default()
+    };
+    assert!(
+        matches!(unacked.validate(), Err(m) if m.contains("server-external-login-unacknowledged")),
+        "默认严格档未 ACK 外网登录应拒绝，实际: {:?}",
+        unacked.validate()
+    );
+
+    // 可信代理含公网地址 → 无条件拒绝（两档一致）
+    let bad_proxy = AuthServerConfig {
+        internal_api_key: "0123456789abcdef0123456789abcdef".to_string(),
+        rate_limit_trusted_proxies: vec![std::net::IpAddr::from([8, 8, 8, 8])],
+        ..AuthServerConfig::default()
+    };
+    assert!(
+        matches!(bad_proxy.validate(), Err(m) if m.contains("server-trusted-proxy-not-private")),
+        "公网可信代理应拒绝，实际: {:?}",
+        bad_proxy.validate()
+    );
+}
+
 /// Debug 输出必须脱敏 `internal_api_key`（CWE-532：防日志/错误报告泄露内网 API Key）。
 #[test]
 fn test_auth_server_config_debug_redacts_internal_api_key() {
