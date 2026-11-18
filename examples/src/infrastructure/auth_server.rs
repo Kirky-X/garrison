@@ -13,7 +13,7 @@
 //! cargo run -p garrison-examples --bin auth_server --features full
 //!
 //! # 服务模式（启动双端口，阻塞监听）
-//! EXAMPLE_INTERNAL_API_KEY=test \
+//! EXAMPLE_INTERNAL_API_KEY=replace-with-a-32-byte-real-key-here \
 //! cargo run -p garrison-examples --bin auth_server_serve --features full
 //! ```
 
@@ -27,6 +27,9 @@ use garrison::manager::GarrisonManager;
 use garrison::server::GarrisonAuthServer;
 use garrison::stp::GarrisonInterface;
 use std::sync::Arc;
+
+/// 示例占位内网 Key（≥32 字节）：满足 1.0 严格档最短 Key 要求；仅用于演示，生产须经环境变量注入真实 Key。
+const EXAMPLE_PLACEHOLDER_INTERNAL_API_KEY: &str = "GARRISON-EXAMPLE-INTERNAL-KEY-0123456789abcdef";
 
 /// 简单的 GarrisonInterface 实现（空权限/空角色），供 `auth_server_serve` bin 启动时初始化。
 /// 生产 bin 不使用 testing feature 的 MockInterface；check_permission / check_role 将全部拒绝，真实场景应替换为业务方 RBAC 实现。
@@ -67,10 +70,10 @@ pub async fn run() -> GarrisonResult<()> {
     // 2. 从环境变量读取 internal API Key（禁止硬编码，防止泄漏）
     let internal_api_key = std::env::var("EXAMPLE_INTERNAL_API_KEY").unwrap_or_else(|_| {
         eprintln!(
-            "⚠️  Warning: EXAMPLE_INTERNAL_API_KEY environment variable is not set; using placeholder \"REPLACE_ME\".\n\
-             Set a real API key via `export EXAMPLE_INTERNAL_API_KEY=<your-key>` before running this example."
+            "⚠️  Warning: EXAMPLE_INTERNAL_API_KEY environment variable is not set; using the example placeholder key.\n\
+             The placeholder satisfies strict-mode length but is public; replace it with a real key via `export EXAMPLE_INTERNAL_API_KEY=<your-key>` in production."
         );
-        "REPLACE_ME".to_string()
+        EXAMPLE_PLACEHOLDER_INTERNAL_API_KEY.to_string()
     });
 
     let server = GarrisonAuthServer::new(backend)

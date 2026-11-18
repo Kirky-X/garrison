@@ -6,7 +6,7 @@
 //! # 运行方式
 //!
 //! ```sh
-//! EXAMPLE_INTERNAL_API_KEY=test \
+//! EXAMPLE_INTERNAL_API_KEY=replace-with-a-32-byte-real-key-here \
 //! cargo run -p garrison-examples --bin auth_server_serve --features full
 //! ```
 //!
