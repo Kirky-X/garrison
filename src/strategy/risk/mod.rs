@@ -6,8 +6,10 @@
 //! 把既有异常检测信号聚合为结构化 [`RiskAssessment`]，经策略评分与动作映射后
 //! 在登录流程内同步处置；未注入引擎时行为与基线一致。
 
+mod action;
 mod model;
 mod policy;
 
+pub use action::{DefaultRiskActionResolver, RiskAction, RiskActionResolver};
 pub use model::{RiskAssessment, RiskContext, RiskLevel, RiskReason, RiskSignal};
 pub use policy::{RiskPolicy, RiskThresholds, RiskWeights, ThresholdRiskPolicy};
