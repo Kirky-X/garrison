@@ -33,6 +33,10 @@ The library default posture now matches the hardened reference deployment. These
 1. **Container / network deployments**: the framework now binds `127.0.0.1` by default. Set `GARRISON_EXTERNAL_BIND=0.0.0.0` (and `GARRISON_INTERNAL_BIND=0.0.0.0` when needed) explicitly, or call `with_external_bind`/`with_internal_bind`, to preserve wildcard binding. The image compose example sets these variables explicitly.
 2. **Embedded deployments with existing credentials/sessions**: rotate the internal API key to at least 32 bytes. Migrate or invalidate legacy unbound sessions and stateless tokens before upgrading, or use the single-version rollback switches for one release: `GARRISON_STRICT_SECURITY=false`, `GARRISON_REQUIRE_TENANT_BOUND_JWT=false`, `GARRISON_REQUIRE_SESSION_TENANT_BINDING=false`. These rollback switches are removed in 1.1.
 
+### Added
+
+- **`garrison doctor` static security audit (`cli-ops`)**: a read-only command that aggregates the framework's existing validators into a nine-item ✓/✗/! posture report with stable Finding IDs. `--profile strict` makes any Warn exit nonzero for CI gates and container startup probes. No new security rules, no config writeback, no runtime dependency probing. See [DEPLOYMENT.md](DEPLOYMENT.md) · Static security posture audit and [CONFIGURATION.md](CONFIGURATION.md) · Doctor checks.
+
 ---
 
 ## [0.9.0] - 2026-11-14

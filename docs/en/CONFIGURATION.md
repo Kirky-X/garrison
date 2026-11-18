@@ -459,6 +459,26 @@ The full `RedisConfig` fields: `mode` (the deployment mode) / `password` (the au
 
 ---
 
+### Doctor checks (`garrison doctor`, `cli-ops`)
+
+`garrison doctor` (see [DEPLOYMENT.md](DEPLOYMENT.md) · Static security posture audit) reports nine findings with these stable IDs. A finding is ✓ Pass, ✗ Fail, or ! Warn; the profile changes only the exit-code threshold, not the report.
+
+| Finding ID | Pass | Fail | Warn |
+|-----------|------|------|------|
+| `jwt-secret-strength` | `validate_jwt_secret()` passes | validator returns Err | — |
+| `config-security-rules` | rule set enabled and passes | rule set rejects config | rule set feature not compiled in |
+| `internal-api-key` | key ≥ 32 bytes | empty key, or short key in strict tier | short key in non-strict tier |
+| `server-bind-address` | specific (loopback/private) bind | — | wildcard bind (legal in containers) |
+| `external-login-ack` | login off / loopback / ACKed | strict tier, un-ACKed exposure | non-strict tier, un-ACKed exposure |
+| `trusted-proxies` | all proxies loopback/private | a proxy is public | — |
+| `web-security-stack` | `web-security` on, or implied by `auth-server` | — | CORS/CSRF/security headers missing |
+| `audit-chain` | `audit-log` on | — | audit event chain missing |
+| `session-signal-sources` | `session-hijack-detection` or `device-binding` on | — | both risk signal sources off |
+
+When `auth-server` is not compiled in, the server-face checks (`internal-api-key` / `server-bind-address` / `external-login-ack` / `trusted-proxies`) skip and report Pass.
+
+---
+
 ## 6. Per-feature configuration notes
 
 Garrison trims at compile time via feature flags; the required config items differ per feature:

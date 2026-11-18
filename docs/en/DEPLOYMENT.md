@@ -191,6 +191,25 @@ Confirm item by item before deployment:
 | RP back-channel endpoints configured per client | ⚠️ | With `backchannel-logout` enabled, configure notification endpoints per client; the framework does no RP discovery fetch |
 | `field-encryption` key configured | ⚠️ | Enabling the feature without a key is fail-closed at startup; key rotation uses the change_key/check_key ops interfaces |
 
+### Static security posture audit (`doctor`, `cli-ops`)
+
+Run `garrison doctor` before deployment to get a read-only ✓/✗/! report over the current configuration and compiled feature surface. It reuses the framework's existing validators and does not start services or connect to dependencies:
+
+```sh
+# Standard profile: report only; exits 0 unless a Fail finding exists.
+cargo run --features "cli-ops,auth-server" --bin garrison -- doctor
+
+# Strict profile: any Warn also produces a nonzero exit code.
+cargo run --features "cli-ops,auth-server" --bin garrison -- doctor --profile strict
+```
+
+Exit-code semantics:
+
+- Standard: `0` when there are no Fail findings; `1` when any Fail is present.
+- Strict: `0` only when there are no Fail and no Warn findings; `1` otherwise.
+
+Use `--profile strict` as a CI gate or container startup probe: a nonzero exit means the security posture has regressed (the report lists the offending Finding IDs). The 9 stable Finding IDs are listed in [CONFIGURATION.md](CONFIGURATION.md) · Doctor checks. The report is never altered by the profile — only the exit-code threshold changes.
+
 ---
 
 ### Back-Channel Logout operations notes (backchannel-logout)
