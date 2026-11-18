@@ -967,7 +967,11 @@ impl MfaLogic for GarrisonLogicDefault {
             Err(_) => {
                 tracing::warn!(
                     reason = "no_current_token",
-                    "check_disable skipped: no current token (not logged in)"
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-check-disable-skipped-no-current-token-not-logged-in",
+                        &[]
+                    )
                 );
                 return Ok(());
             },

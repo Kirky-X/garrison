@@ -67,11 +67,9 @@ impl GarrisonSession {
                 // 脱敏：只打印 token 前 8 字符，避免完整 token 泄露到日志
                 let token_preview = token.get(..8).unwrap_or(token);
                 tracing::warn!(
-                    "SessionExpiryListener callback failed (login_id={}, token={}...): {}",
-                    login_id,
-                    token_preview,
-                    e
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-sessionexpirylistener-callback-failed-login-id-value-token-value-value", &[("arg0", login_id), ("arg1", token_preview), ("arg2", &(e).to_string())]
+                ));
             }
         }
     }
@@ -354,9 +352,14 @@ impl GarrisonSession {
             Ok(None) => return, // 已被并发删除
             Err(e) => {
                 tracing::warn!(
-                    "double-check reread failed, skip deleting expired Token-Session (token={}...): {}",
-                    token.get(..8).unwrap_or(token),
-                    e
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-double-check-reread-failed-skip-deleting-expired-token-session",
+                        &[
+                            ("arg0", token.get(..8).unwrap_or(token)),
+                            ("arg1", &(e).to_string())
+                        ]
+                    )
                 );
                 return;
             },
@@ -372,9 +375,14 @@ impl GarrisonSession {
             self.trigger_expiry_listeners(&ts.login_id, token).await;
             if let Err(e) = self.dao.delete(&token_key(token)).await {
                 tracing::warn!(
-                    "failed to delete expired Token-Session (token={}...): {}",
-                    token.get(..8).unwrap_or(token),
-                    e
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-failed-to-delete-expired-token-session-token-value-value",
+                        &[
+                            ("arg0", token.get(..8).unwrap_or(token)),
+                            ("arg1", &(e).to_string())
+                        ]
+                    )
                 );
             }
         }
@@ -387,9 +395,11 @@ impl GarrisonSession {
             Ok(None) => return,
             Err(e) => {
                 tracing::warn!(
-                    "double-check reread failed, skip deleting expired Account-Session (login_id={}): {}",
-                    login_id,
-                    e
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-double-check-reread-failed-skip-deleting-expired-account-session",
+                        &[("arg0", login_id), ("arg1", &(e).to_string())]
+                    )
                 );
                 return;
             },
@@ -402,9 +412,11 @@ impl GarrisonSession {
             self.trigger_expiry_listeners(login_id, "").await;
             if let Err(e) = self.dao.delete(&account_key(login_id)).await {
                 tracing::warn!(
-                    "failed to delete expired Account-Session (login_id={}): {}",
-                    login_id,
-                    e
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-failed-to-delete-expired-account-session-login-id-value",
+                        &[("arg0", login_id), ("arg1", &(e).to_string())]
+                    )
                 );
             }
         }
@@ -552,9 +564,11 @@ impl GarrisonSession {
                     Ok(None) => expired.push(token.clone()),
                     Ok(Some(_)) => {}, // token 仍有效，保留
                     Err(e) => tracing::warn!(
-                        "cleanup_expired_tokens: token={} DAO read failed, skipping this token: {}",
-                        token,
-                        e
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "logs-cleanup-expired-tokens-token-value-dao-read-failed-skipping",
+                            &[("arg0", &(token).to_string()), ("arg1", &(e).to_string())]
+                        )
                     ),
                 }
             }
@@ -595,8 +609,11 @@ impl GarrisonSession {
         for key in keys {
             let Some(login_id) = key.strip_prefix("account:session:") else {
                 tracing::warn!(
-                    "rebuild_login_token_map: skipping key not matching account:session:{{login_id}} pattern: {}",
-                    key
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-rebuild-login-token-map-skipping-key-not-matching-account",
+                        &[("arg0", "{login_id}"), ("arg1", &(key).to_string())]
+                    )
                 );
                 continue;
             };
@@ -606,10 +623,11 @@ impl GarrisonSession {
                     Ok(s) => s,
                     Err(e) => {
                         tracing::warn!(
-                            key = %key,
-                            error = %e,
-                            "rebuild_login_token_map: skipping AccountSession that failed deserialization"
-                        );
+                                    key = %key,
+                                    error = %e,
+                                    "{}", crate::i18n::translate_detail(
+                            "logs-rebuild-login-token-map-skipping-accountsession-that-failed-deserialization", &[]
+                        ));
                         continue;
                     },
                 };
@@ -1104,9 +1122,11 @@ impl GarrisonSession {
             let sso_key = format!("garrison:sso:ticket:{}", ticket);
             if let Err(e) = self.dao.delete(&sso_key).await {
                 tracing::warn!(
-                    "logout failed to delete SSO ticket (key={}): {}",
-                    sso_key,
-                    e
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-logout-failed-to-delete-sso-ticket-key-value-value",
+                        &[("arg0", &(sso_key).to_string()), ("arg1", &(e).to_string())]
+                    )
                 );
             }
         }

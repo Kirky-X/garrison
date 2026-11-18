@@ -195,7 +195,8 @@ impl PasswordLogic for GarrisonLogicDefault {
                 tracing::warn!(
                     login_id = login_id,
                     reason = EventReason::InvalidCredentials.as_str(),
-                    "login_with_password failed"
+                    "{}",
+                    crate::i18n::translate_detail("logs-login-with-password-failed", &[])
                 );
                 #[cfg(feature = "listener")]
                 if let Some(lm) = &self.listener_manager {
@@ -255,7 +256,8 @@ impl PasswordLogic for GarrisonLogicDefault {
             tracing::warn!(
                 login_id = login_id,
                 reason = EventReason::InvalidCredentials.as_str(),
-                "login_with_password failed"
+                "{}",
+                crate::i18n::translate_detail("logs-login-with-password-failed", &[])
             );
             #[cfg(feature = "listener")]
             if let Some(lm) = &self.listener_manager {

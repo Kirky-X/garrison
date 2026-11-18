@@ -62,8 +62,9 @@ impl EmailVerificationService {
                 tracing::error!(
                     error = %re,
                     email = mask_email_for_log(&normalized),
-                    "rollback rate limiter counter failed after code store failure"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-rollback-rate-limiter-counter-failed-after-code-store-failure", &[]
+                ));
             }
             return Err(e);
         }
@@ -77,10 +78,14 @@ impl EmailVerificationService {
                 .rollback_inner_with(&normalized, &windows)
                 .await
             {
-                tracing::error!(error = %e, email = mask_email_for_log(&normalized), "rollback rate limiter counter failed during channel recycling");
+                tracing::error!(error = %e, email = mask_email_for_log(&normalized), "{}", crate::i18n::translate_detail(
+                    "logs-rollback-rate-limiter-counter-failed-during-channel-recycling", &[]
+                ));
             }
             if let Err(e) = EmailRateLimiter::decrement_counter(&*self.dao, &unverified_key).await {
-                tracing::error!(error = %e, key = %unverified_key, "rollback unverified counter failed");
+                tracing::error!(error = %e, key = %unverified_key, "{}", crate::i18n::translate_detail(
+                    "logs-rollback-unverified-counter-failed", &[]
+                ));
             }
             self.dao.set(&recycled_key, "1", 86400).await?;
             return Err(GarrisonError::EmailChannelRecycled);
@@ -100,14 +105,20 @@ impl EmailVerificationService {
                 .rollback_inner_with(&normalized, &windows)
                 .await
             {
-                tracing::error!(error = %re, email = mask_email_for_log(&normalized), "rollback rate limiter counter failed after send failure");
+                tracing::error!(error = %re, email = mask_email_for_log(&normalized), "{}", crate::i18n::translate_detail(
+                    "logs-rollback-rate-limiter-counter-failed-after-send-failure", &[]
+                ));
             }
             if let Err(re) = self.dao.delete(&code_key).await {
-                tracing::error!(error = %re, key = %code_key, "delete code failed after send failure");
+                tracing::error!(error = %re, key = %code_key, "{}", crate::i18n::translate_detail(
+                    "logs-delete-code-failed-after-send-failure", &[]
+                ));
             }
             if let Err(re) = EmailRateLimiter::decrement_counter(&*self.dao, &unverified_key).await
             {
-                tracing::error!(error = %re, key = %unverified_key, "rollback unverified counter failed after send failure");
+                tracing::error!(error = %re, key = %unverified_key, "{}", crate::i18n::translate_detail(
+                    "logs-rollback-unverified-counter-failed-after-send-failure", &[]
+                ));
             }
             return Err(e);
         }

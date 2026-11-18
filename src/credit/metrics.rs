@@ -175,7 +175,9 @@ impl CreditMetrics {
         let mut buffer = Vec::new();
         let encoder = prometheus::TextEncoder::new();
         if let Err(e) = encoder.encode(&metric_families, &mut buffer) {
-            tracing::warn!(error = %e, "CreditMetrics::gather prometheus encode failed");
+            tracing::warn!(error = %e, "{}", crate::i18n::translate_detail(
+                "logs-creditmetrics-gather-prometheus-encode-failed", &[]
+            ));
         }
         String::from_utf8_lossy(&buffer).into_owned()
     }

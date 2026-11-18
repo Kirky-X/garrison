@@ -575,10 +575,11 @@ impl GarrisonDao for GarrisonDaoOxcache {
                     // backend 故障 ≠ 键不存在：保留索引条目，仅 warn
                     // （不误删有效 key 的索引条目，下次 keys() 重试）
                     tracing::warn!(
-                        key = %key,
-                        error = %e,
-                        "keys() exists_sync failed; keep key_index entry"
-                    );
+                            key = %key,
+                            error = %e,
+                            "{}", crate::i18n::translate_detail(
+                        "logs-keys-exists-sync-failed-keep-key-index-entry", &[]
+                    ));
                 },
             }
         }
@@ -589,7 +590,13 @@ impl GarrisonDao for GarrisonDaoOxcache {
             for key in &expired_keys {
                 index.remove(key);
             }
-            tracing::debug!("keys() cleaned up {} expired keys", expired_keys.len());
+            tracing::debug!(
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-keys-cleaned-up-value-expired-keys",
+                    &[("arg0", &(expired_keys.len()).to_string())]
+                )
+            );
         }
 
         Ok(result)

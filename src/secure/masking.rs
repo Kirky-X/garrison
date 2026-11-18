@@ -205,10 +205,11 @@ fn mask_custom(value: &str, regex_str: &str) -> String {
                 // 编译失败不入缓存：保持原有的每次失败告警语义
                 Err(e) => {
                     tracing::error!(
-                        error = %e,
-                        pattern = regex_str,
-                        "Custom mask regex compilation failed; returning '***' as safe fallback"
-                    );
+                            error = %e,
+                            pattern = regex_str,
+                            "{}", crate::i18n::translate_detail(
+                        "logs-custom-mask-regex-compilation-failed-returning-as-safe-fallback", &[]
+                    ));
                     None
                 },
             }

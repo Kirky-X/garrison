@@ -85,11 +85,17 @@ impl WafHookChain {
             match hook.check(ctx).await {
                 WafVerdict::Allow => continue,
                 WafVerdict::AllowAndSkip => {
-                    tracing::debug!(hook = hook.name(), "WAF whitelist allowed");
+                    tracing::debug!(
+                        hook = hook.name(),
+                        "{}",
+                        crate::i18n::translate_detail("logs-waf-whitelist-allowed", &[])
+                    );
                     return Ok(());
                 },
                 WafVerdict::Deny { reason, hook: name } => {
-                    tracing::warn!(hook = name, reason = %reason, "WAF blocked request");
+                    tracing::warn!(hook = name, reason = %reason, "{}", crate::i18n::translate_detail(
+                        "logs-waf-blocked-request", &[]
+                    ));
                     return Err(GarrisonError::FirewallBlocked(reason));
                 },
             }

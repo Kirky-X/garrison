@@ -202,7 +202,11 @@ impl AnomalousLoginAnalyzer {
             tracing::warn!(
                 login_id,
                 fallback_ts = timestamp_secs,
-                "anomalous_analyzer: system clock error, storage key falls back to second-precision timestamp (uniqueness not guaranteed)"
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-anomalous-analyzer-system-clock-error-storage-key-falls-back",
+                    &[]
+                )
             );
         }
         format!("anomalous:login:{}:{}", login_id, nanos)
@@ -247,12 +251,24 @@ impl AnomalousLoginAnalyzer {
                         }
                     },
                     Err(e) => {
-                        tracing::warn!("failed to deserialize login record (key={}): {}", key, e);
+                        tracing::warn!(
+                            "{}",
+                            crate::i18n::translate_detail(
+                                "logs-failed-to-deserialize-login-record-key-value-value",
+                                &[("arg0", &(key).to_string()), ("arg1", &(e).to_string())]
+                            )
+                        );
                     },
                 },
                 Ok(None) => {},
                 Err(e) => {
-                    tracing::warn!("failed to read login record (key={}): {}", key, e);
+                    tracing::warn!(
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "logs-failed-to-read-login-record-key-value-value",
+                            &[("arg0", &(key).to_string()), ("arg1", &(e).to_string())]
+                        )
+                    );
                 },
             }
         }
@@ -310,13 +326,18 @@ impl AnomalousLoginAnalyzer {
             tracing::warn!(
                 elapsed_ms = scan_elapsed.as_millis(),
                 key_count = keys.len(),
-                "anomaly login analysis scan exceeded 1s, Redis backend needs optimization to batch mget"
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-anomaly-login-analysis-scan-exceeded-1s-redis-backend-needs",
+                    &[]
+                )
             );
         } else {
             tracing::debug!(
                 elapsed_ms = scan_elapsed.as_millis(),
                 key_count = keys.len(),
-                "anomaly login analysis scan completed"
+                "{}",
+                crate::i18n::translate_detail("logs-anomaly-login-analysis-scan-completed", &[])
             );
         }
 
@@ -349,14 +370,17 @@ impl AnomalousLoginAnalyzer {
                                 }
                             },
                             Err(e) => {
-                                tracing::warn!("anomaly login analysis failed: {}", e);
+                                tracing::warn!("{}", crate::i18n::translate_detail(
+                    "logs-anomaly-login-analysis-failed-value", &[("arg0", &(e).to_string())]
+                ));
                             },
                         }
                     },
                     _ = shutdown_rx.changed() => {
                         tracing::info!(
-                            "anomaly login analysis engine received shutdown signal, stopping"
-                        );
+                            "{}", crate::i18n::translate_detail(
+                    "logs-anomaly-login-analysis-engine-received-shutdown-signal-stopping", &[]
+                ));
                         break;
                     },
                 }

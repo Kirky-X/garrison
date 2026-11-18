@@ -46,7 +46,11 @@ impl DeviceBindingPolicy for StrictBinding {
         // 调用方已通过 is_new_device 确认是新设备,直接返回 true;debug! 留痕使该 no-op 决策可审计。
         tracing::debug!(
             login_id,
-            "StrictBinding::require_secondary_auth: unconditional true (new-device confirmed by caller contract)"
+            "{}",
+            crate::i18n::translate_detail(
+                "logs-strictbinding-require-secondary-auth-unconditional-true-new-device-confirmed",
+                &[]
+            )
         );
         Ok(true)
     }

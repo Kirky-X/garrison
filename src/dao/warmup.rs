@@ -49,7 +49,11 @@ impl CacheWarmupService {
             Ok(keys) => keys,
             Err(crate::error::GarrisonError::NotImplemented(_)) => {
                 tracing::warn!(
-                    "DAO backend does not support role keys(), role warmup skipped (tenants still warmed)"
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-dao-backend-does-not-support-role-keys-role-warmup",
+                        &[]
+                    )
                 );
                 Vec::new()
             },
@@ -59,7 +63,11 @@ impl CacheWarmupService {
             Ok(keys) => keys,
             Err(crate::error::GarrisonError::NotImplemented(_)) => {
                 tracing::warn!(
-                    "DAO backend does not support tenant keys(), tenant warmup skipped (roles still warmed)"
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-dao-backend-does-not-support-tenant-keys-tenant-warmup",
+                        &[]
+                    )
                 );
                 Vec::new()
             },

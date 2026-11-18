@@ -66,7 +66,9 @@ impl HealthRegistry {
                                 .map(|s| (*s).to_string())
                                 .or_else(|| panic_payload.downcast_ref::<String>().cloned())
                                 .unwrap_or_else(|| "unknown panic".to_string());
-                            tracing::warn!(check = %name, panic = %msg, "health check panicked");
+                            tracing::warn!(check = %name, panic = %msg, "{}", crate::i18n::translate_detail(
+                    "logs-health-check-panicked", &[]
+                ));
                             (
                                 name,
                                 Err(GarrisonError::Internal("health-check-panicked".to_string())),
@@ -76,8 +78,9 @@ impl HealthRegistry {
                             tracing::warn!(
                                 check = %name,
                                 timeout_secs = timeout.as_secs(),
-                                "health check timed out"
-                            );
+                                "{}", crate::i18n::translate_detail(
+                    "logs-health-check-timed-out", &[]
+                ));
                             (
                                 name,
                                 Err(GarrisonError::Internal(format!(
@@ -105,10 +108,11 @@ impl HealthRegistry {
                 }),
                 Err(e) => {
                     tracing::warn!(
-                        check = %name,
-                        error = %e,
-                        "health check failed"
-                    );
+                            check = %name,
+                            error = %e,
+                            "{}", crate::i18n::translate_detail(
+                        "logs-health-check-failed", &[]
+                    ));
                     results.push(CheckResult {
                         name,
                         status: HealthStatus::Unhealthy,

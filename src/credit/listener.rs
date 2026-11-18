@@ -33,17 +33,19 @@ impl GarrisonListener for CreditMeteringListener {
                 Ok(tenant_id) => {
                     if let Err(e) = self.meter.consume_credit(tenant_id, "login", 1).await {
                         tracing::warn!(
-                            tenant_id,
-                            error = %e,
-                            "credit: auto-deduct on login failed"
-                        );
+                                    tenant_id,
+                                    error = %e,
+                                    "{}", crate::i18n::translate_detail(
+                            "logs-credit-auto-deduct-on-login-failed", &[]
+                        ));
                     }
                 },
                 Err(e) => {
                     tracing::warn!(
-                        error = %e,
-                        "credit: cannot get tenant_id for auto-deduct on login"
-                    );
+                            error = %e,
+                            "{}", crate::i18n::translate_detail(
+                        "logs-credit-cannot-get-tenant-id-for-auto-deduct-on", &[]
+                    ));
                 },
             }
         }

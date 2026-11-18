@@ -108,7 +108,11 @@ pub async fn search_token_value(
         tracing::warn!(
             actual = keys.len(),
             max = MAX_SCAN,
-            "search scan exceeded the key count limit, truncated"
+            "{}",
+            crate::i18n::translate_detail(
+                "logs-search-scan-exceeded-the-key-count-limit-truncated",
+                &[]
+            )
         );
         keys.truncate(MAX_SCAN);
     }
@@ -135,8 +139,9 @@ pub async fn search_token_value(
                 tracing::warn!(
                     key = %mask_key(&key),
                     error = %e,
-                    "skipping corrupted TokenSession record"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-skipping-corrupted-tokensession-record", &[]
+                ));
                 skipped += 1;
                 continue;
             },
@@ -152,7 +157,8 @@ pub async fn search_token_value(
         tracing::warn!(
             skipped,
             total = entries.len() + skipped,
-            "search completed with skipped records"
+            "{}",
+            crate::i18n::translate_detail("logs-search-completed-with-skipped-records", &[])
         );
     }
 
@@ -204,7 +210,11 @@ pub async fn search_session_id(
         tracing::warn!(
             actual = keys.len(),
             max = MAX_SCAN,
-            "search scan exceeded the key count limit, truncated"
+            "{}",
+            crate::i18n::translate_detail(
+                "logs-search-scan-exceeded-the-key-count-limit-truncated",
+                &[]
+            )
         );
         keys.truncate(MAX_SCAN);
     }
@@ -232,8 +242,9 @@ pub async fn search_session_id(
                 tracing::warn!(
                     key = %mask_key(&key),
                     error = %e,
-                    "skipping corrupted AccountSession record"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-skipping-corrupted-accountsession-record", &[]
+                ));
                 skipped += 1;
                 continue;
             },
@@ -249,7 +260,8 @@ pub async fn search_session_id(
         tracing::warn!(
             skipped,
             total = entries.len() + skipped,
-            "search completed with skipped records"
+            "{}",
+            crate::i18n::translate_detail("logs-search-completed-with-skipped-records", &[])
         );
     }
 
@@ -302,7 +314,11 @@ pub async fn search_token_session_id(
         tracing::warn!(
             actual = keys.len(),
             max = MAX_SCAN,
-            "search scan exceeded the key count limit, truncated"
+            "{}",
+            crate::i18n::translate_detail(
+                "logs-search-scan-exceeded-the-key-count-limit-truncated",
+                &[]
+            )
         );
         keys.truncate(MAX_SCAN);
     }
@@ -329,8 +345,9 @@ pub async fn search_token_session_id(
                 tracing::warn!(
                     key = %mask_key(&key),
                     error = %e,
-                    "skipping corrupted TokenSession record"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-skipping-corrupted-tokensession-record", &[]
+                ));
                 skipped += 1;
                 continue;
             },
@@ -346,7 +363,8 @@ pub async fn search_token_session_id(
         tracing::warn!(
             skipped,
             total = entries.len() + skipped,
-            "search completed with skipped records"
+            "{}",
+            crate::i18n::translate_detail("logs-search-completed-with-skipped-records", &[])
         );
     }
 

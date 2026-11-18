@@ -366,15 +366,17 @@ impl GarrisonLogicDefault {
                         },
                         Ok(false) => {},
                         Err(e) => tracing::warn!(
-                            error = %e,
-                            "DeviceBindingPolicy::require_secondary_auth failed"
-                        ),
+                                    error = %e,
+                                    "{}", crate::i18n::translate_detail(
+                            "logs-devicebindingpolicy-require-secondary-auth-failed", &[]
+                        )),
                     },
                     Ok(false) => {},
                     Err(e) => tracing::warn!(
-                        error = %e,
-                        "DeviceBindingPolicy::is_new_device failed"
-                    ),
+                            error = %e,
+                            "{}", crate::i18n::translate_detail(
+                        "logs-devicebindingpolicy-is-new-device-failed", &[]
+                    )),
                 }
             }
         }
@@ -897,7 +899,9 @@ impl GarrisonLogicDefault {
         for detector in detectors {
             match detector.check_on_login(login_id, device_id, ip).await {
                 Ok(events) => self.broadcast_anomaly_events(events).await,
-                Err(e) => tracing::warn!(error = %e, "AnomalyDetector::check_on_login failed"),
+                Err(e) => tracing::warn!(error = %e, "{}", crate::i18n::translate_detail(
+                    "logs-anomalydetector-check-on-login-failed", &[]
+                )),
             }
         }
     }
@@ -911,7 +915,9 @@ impl GarrisonLogicDefault {
             match detector.check_on_check_login(login_id, token).await {
                 Ok(events) => self.broadcast_anomaly_events(events).await,
                 Err(e) => {
-                    tracing::warn!(error = %e, "AnomalyDetector::check_on_check_login failed")
+                    tracing::warn!(error = %e, "{}", crate::i18n::translate_detail(
+                        "logs-anomalydetector-check-on-check-login-failed", &[]
+                    ))
                 },
             }
         }

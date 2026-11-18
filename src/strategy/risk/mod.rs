@@ -58,7 +58,9 @@ impl RiskEngine {
         match self.policy.assess(ctx).await {
             Ok(assessment) => Some(assessment),
             Err(e) => {
-                tracing::warn!(error = %e, "RiskPolicy::assess failed; fail-open to NotifyOnly");
+                tracing::warn!(error = %e, "{}", crate::i18n::translate_detail(
+                    "logs-riskpolicy-assess-failed-fail-open-to-notifyonly", &[]
+                ));
                 None
             },
         }

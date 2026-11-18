@@ -56,8 +56,11 @@ impl SocialBindingService {
             .map(|d| d.as_secs() as i64)
             .unwrap_or_else(|e| {
                 tracing::warn!(
-                    "system clock before UNIX_EPOCH, created_at falls back to 0: {}",
-                    e
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-system-clock-before-unix-epoch-created-at-falls-back",
+                        &[("arg0", &(e).to_string())]
+                    )
                 );
                 0
             });

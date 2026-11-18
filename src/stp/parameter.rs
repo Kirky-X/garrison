@@ -87,8 +87,9 @@ impl ParameterQueryBuilder {
             if let Err(e) = GarrisonUtil::kickout_by_token(&token_for_cleanup).await {
                 tracing::warn!(
                     error = %e,
-                    "ParameterQuery temporary session cleanup failed (non-fatal, TTL will clean it up)"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-parameterquery-temporary-session-cleanup-failed-non-fatal-ttl-will", &[]
+                ));
             }
             result
         } else {

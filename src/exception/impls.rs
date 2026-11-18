@@ -206,7 +206,9 @@ impl axum::response::IntoResponse for GarrisonException {
         use axum::http::StatusCode;
 
         // 完整异常记录到日志（不返回客户端）；?self 走手动 Debug，token_value/login_id/extras 均已脱敏
-        tracing::error!(exception = ?self, "garrison exception");
+        tracing::error!(exception = ?self, "{}", crate::i18n::translate_detail(
+            "logs-garrison-exception", &[]
+        ));
 
         let status = match self.code {
             -1 => StatusCode::UNAUTHORIZED,

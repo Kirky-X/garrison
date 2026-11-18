@@ -14,8 +14,11 @@ impl GarrisonListenerManager {
             .collect();
         // 逐条日志对所有监听器恒为同一字符串（无 per-listener 信息），故只输出数量
         tracing::info!(
-            "listener loaded: {} listener(s) registered",
-            listeners.len()
+            "{}",
+            crate::i18n::translate_detail(
+                "logs-listener-loaded-value-listener-s-registered",
+                &[("arg0", &(listeners.len()).to_string())]
+            )
         );
         Self {
             listeners: Arc::new(RwLock::new(listeners)),
@@ -56,7 +59,13 @@ impl GarrisonListenerManager {
             {
                 Ok(Ok(())) => {},
                 Ok(Err(e)) => {
-                    tracing::warn!("listener on_event failed: {}", e);
+                    tracing::warn!(
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "logs-listener-on-event-failed-value",
+                            &[("arg0", &(e).to_string())]
+                        )
+                    );
                     dispatched = false;
                 },
                 Err(panic_payload) => {
@@ -65,7 +74,13 @@ impl GarrisonListenerManager {
                         .map(|s| (*s).to_string())
                         .or_else(|| panic_payload.downcast_ref::<String>().cloned())
                         .unwrap_or_else(|| "unknown panic".to_string());
-                    tracing::warn!("listener on_event panicked: {}", msg);
+                    tracing::warn!(
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "logs-listener-on-event-panicked-value",
+                            &[("arg0", &(msg).to_string())]
+                        )
+                    );
                     dispatched = false;
                 },
             }

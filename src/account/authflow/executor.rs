@@ -572,7 +572,9 @@ impl AuthExecutor {
             let session_token = self.logic.login(user_id, &LoginParams::default()).await?;
             if let Some(lockout) = &self.lockout {
                 if let Err(e) = lockout.record_success(user_id).await {
-                    tracing::warn!(user_id = %user_id, error = %e, "lockout record_success failed");
+                    tracing::warn!(user_id = %user_id, error = %e, "{}", crate::i18n::translate_detail(
+                        "logs-lockout-record-success-failed", &[]
+                    ));
                 }
             }
             Ok(StepOutcome::Success {
@@ -581,7 +583,9 @@ impl AuthExecutor {
         } else {
             if let Some(lockout) = &self.lockout {
                 if let Err(e) = lockout.record_failure(user_id).await {
-                    tracing::warn!(user_id = %user_id, error = %e, "lockout record_failure failed");
+                    tracing::warn!(user_id = %user_id, error = %e, "{}", crate::i18n::translate_detail(
+                        "logs-lockout-record-failure-failed", &[]
+                    ));
                 }
             }
             Ok(StepOutcome::Failed(loc!(
@@ -824,8 +828,9 @@ impl AuthExecutor {
                     server_id,
                     raw = %s,
                     error = %e,
-                    "SSO client_id parse failed, falling back to default value 0"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-sso-client-id-parse-failed-falling-back-to-default", &[]
+                ));
                 0
             }),
             None => 0,
@@ -884,7 +889,13 @@ impl AuthExecutor {
                 Some(whitelist) => Ok(whitelist.contains(&ctx.ip)),
                 None => {
                     // 未注入白名单恒 false（fail-safe），留 debug 痕迹
-                    tracing::debug!("authflow-ip-whitelist-not-configured (ip={})", ctx.ip);
+                    tracing::debug!(
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "logs-authflow-ip-whitelist-not-configured-ip-value",
+                            &[("arg0", &(ctx.ip).to_string())]
+                        )
+                    );
                     Ok(false)
                 },
             },

@@ -134,8 +134,9 @@ impl AbacEngine {
             Err(e) => {
                 tracing::warn!(
                     error = %e,
-                    "abac-decision-cache-read: cache read failed, falling back to Cedar evaluation"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-abac-decision-cache-read-cache-read-failed-falling-back", &[]
+                ));
             },
         }
 
@@ -168,19 +169,21 @@ impl AbacEngine {
         // 写缓存前重读代数：若求值期间发生热加载（已清空缓存并递增代数），本决策基于旧策略快照，写入会回填陈旧决策（TTL 60s）——跳过写入
         if self.policy_generation.load(Ordering::Acquire) != generation {
             tracing::warn!(
-                principal = %principal,
-                action = %action,
-                resource = %resource,
-                "abac-decision-cache: policy set changed during evaluation, skipping cache write"
-            );
+            principal = %principal,
+            action = %action,
+            resource = %resource,
+            "{}", crate::i18n::translate_detail(
+                "logs-abac-decision-cache-policy-set-changed-during-evaluation-skipping", &[]
+            ));
             return Ok(decision);
         }
         // 缓存写失败不影响求值结果，仅记录警告
         if let Err(e) = self.cache.set(&cache_key, &decision).await {
             tracing::warn!(
-                error = %e,
-                    "abac-decision-cache-write: cache write failed, decision still returned"
-            );
+            error = %e,
+                "{}", crate::i18n::translate_detail(
+                "logs-abac-decision-cache-write-cache-write-failed-decision-still", &[]
+            ));
         }
 
         Ok(decision)
@@ -312,24 +315,24 @@ impl AbacEngine {
         for error in response.diagnostics().errors() {
             has_eval_errors = true;
             tracing::warn!(
-                principal = %principal,
-                action = %action,
-                resource = %resource,
-                error = %error,
-                "Cedar {} evaluation diagnostic error",
-                label
-            );
+            principal = %principal,
+            action = %action,
+            resource = %resource,
+            error = %error,
+            "{}", crate::i18n::translate_detail(
+                "logs-cedar-value-evaluation-diagnostic-error", &[("arg0", label)]
+            ));
         }
 
         // 诊断含错误时 fail-closed 拒绝：策略求值故障必须显性化为 Deny + 日志告警，绝不静默采用 Cedar 的 Allow
         if has_eval_errors {
             tracing::error!(
-                principal = %principal,
-                action = %action,
-                resource = %resource,
-                "Cedar {} evaluation produced diagnostic errors; denying (fail-closed, issue 2756)",
-                label
-            );
+            principal = %principal,
+            action = %action,
+            resource = %resource,
+            "{}", crate::i18n::translate_detail(
+                "logs-cedar-value-evaluation-produced-diagnostic-errors-denying-fail-closed", &[("arg0", label)]
+            ));
             return Ok((Decision::deny(DecisionReason::EvaluationError), true));
         }
 

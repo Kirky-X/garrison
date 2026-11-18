@@ -327,7 +327,9 @@ impl GarrisonError {
         if matches!(self, Self::RateLimited { .. }) {
             tracing::warn!(error = ?self, "{}", crate::i18n::translate_detail("logs-error-rejection-rate-limited", &[]));
         } else {
-            tracing::error!(error = ?self, "garrison rejection");
+            tracing::error!(error = ?self, "{}", crate::i18n::translate_detail(
+                "logs-garrison-rejection", &[]
+            ));
         }
     }
 

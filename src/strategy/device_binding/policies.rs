@@ -21,7 +21,11 @@ pub(super) async fn check_is_new_device(
     if device_id.is_empty() {
         tracing::warn!(
             login_id,
-            "check_is_new_device: empty device_id treated as known device (device binding check skipped; reject empty device upstream for fail-closed)"
+            "{}",
+            crate::i18n::translate_detail(
+                "logs-check-is-new-device-empty-device-id-treated-as",
+                &[]
+            )
         );
         return Ok(false);
     }

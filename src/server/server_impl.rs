@@ -642,12 +642,13 @@ impl GarrisonAuthServer {
         let internal_router = self.internal_router();
 
         tracing::info!(
-            external_bind = %external_addr,
-            internal_bind = %internal_addr,
-            external_port = self.config.external_port,
-            internal_port = self.config.internal_port,
-            "GarrisonAuthServer starting"
-        );
+        external_bind = %external_addr,
+        internal_bind = %internal_addr,
+        external_port = self.config.external_port,
+        internal_port = self.config.internal_port,
+        "{}", crate::i18n::translate_detail(
+                "logs-garrisonauthserver-starting", &[]
+            ));
         // 显式开启外网 login 时提醒业务方凭证校验责任
         if self.config.external_login_enabled {
             tracing::warn!(

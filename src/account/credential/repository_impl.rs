@@ -70,7 +70,11 @@ impl CredentialRepository for DaoCredentialRepository {
             tracing::warn!(
                 caller_login_id = caller_login_id,
                 target_user_id = user_id,
-                "credential find_by_user denied: caller != target (IDOR)"
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-credential-find-by-user-denied-caller-target-idor",
+                    &[]
+                )
             );
             return Err(GarrisonError::NotPermission(format!(
                 "credential-query-forbidden::{}::{}",
@@ -138,11 +142,12 @@ impl CredentialRepository for DaoCredentialRepository {
         // IDOR 防护 1：caller 必须是凭证原 owner
         if existing.user_id != caller_login_id {
             tracing::warn!(
-                caller_login_id = caller_login_id,
-                owner_user_id = %existing.user_id,
-                credential_id = %credential.id,
-                "credential update denied: caller != owner (IDOR)"
-            );
+            caller_login_id = caller_login_id,
+            owner_user_id = %existing.user_id,
+            credential_id = %credential.id,
+            "{}", crate::i18n::translate_detail(
+                "logs-credential-update-denied-caller-owner-idor", &[]
+            ));
             return Err(GarrisonError::NotPermission(format!(
                 "credential-update-forbidden::{}::{} (owner {})",
                 caller_login_id, credential.id, existing.user_id
@@ -152,12 +157,13 @@ impl CredentialRepository for DaoCredentialRepository {
         // IDOR 防护 2：禁止通过 update 改变 user_id（防止凭证跨用户转移）
         if credential.user_id != existing.user_id {
             tracing::warn!(
-                caller_login_id = caller_login_id,
-                old_user_id = %existing.user_id,
-                new_user_id = %credential.user_id,
-                credential_id = %credential.id,
-                "credential update denied: user_id transfer forbidden (IDOR)"
-            );
+            caller_login_id = caller_login_id,
+            old_user_id = %existing.user_id,
+            new_user_id = %credential.user_id,
+            credential_id = %credential.id,
+            "{}", crate::i18n::translate_detail(
+                "logs-credential-update-denied-user-id-transfer-forbidden-idor", &[]
+            ));
             return Err(GarrisonError::NotPermission(format!(
                 "credential-transfer-forbidden::{}::{} -> {}",
                 credential.id, existing.user_id, credential.user_id
@@ -181,10 +187,11 @@ impl CredentialRepository for DaoCredentialRepository {
             .await?;
         if !swapped {
             tracing::warn!(
-                caller_login_id = caller_login_id,
-                credential_id = %credential.id,
-                "credential update aborted: concurrent modification detected (CAS mismatch)"
-            );
+            caller_login_id = caller_login_id,
+            credential_id = %credential.id,
+            "{}", crate::i18n::translate_detail(
+                "logs-credential-update-aborted-concurrent-modification-detected-cas-mismatch", &[]
+            ));
             return Err(GarrisonError::Internal(format!(
                 "credential-concurrent-modification::{}",
                 credential.id
@@ -219,8 +226,9 @@ impl CredentialRepository for DaoCredentialRepository {
                     caller_login_id = caller_login_id,
                     owner_user_id = %existing.user_id,
                     credential_id = %credential_id,
-                    "credential delete denied: caller != owner (IDOR)"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-credential-delete-denied-caller-owner-idor", &[]
+                ));
                 return Err(GarrisonError::NotPermission(format!(
                     "credential-delete-forbidden::{}::{} (owner {})",
                     caller_login_id, credential_id, existing.user_id

@@ -180,7 +180,11 @@ where
                                 Err(_elapsed) => {
                                     tracing::warn!(
                                         timeout_secs = timeout.as_secs_f64(),
-                                        "garrison middleware: inner handler timed out"
+                                        "{}",
+                                        crate::i18n::translate_detail(
+                                            "logs-garrison-middleware-inner-handler-timed-out",
+                                            &[]
+                                        )
                                     );
                                     return Err(actix_web::error::ErrorGatewayTimeout(
                                         "gateway timeout",
@@ -195,7 +199,9 @@ where
                 },
                 Err(e) => {
                     // 鉴权失败，req 未被 move，直接构造错误响应（不执行 handler）
-                    tracing::error!(error = ?e, "garrison middleware rejection");
+                    tracing::error!(error = ?e, "{}", crate::i18n::translate_detail(
+                        "logs-garrison-middleware-rejection", &[]
+                    ));
                     let resp = e.error_response();
                     Ok(req.into_response(resp).map_into_right_body())
                 },

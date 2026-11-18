@@ -70,8 +70,11 @@ pub async fn init_inklog_logging_with_fallback() -> InklogInit {
                     let msg = init_err.to_string();
                     if msg.contains("already") {
                         tracing::debug!(
-                            "tracing subscriber already initialized, skip: {}",
-                            init_err
+                            "{}",
+                            crate::i18n::translate_detail(
+                                "logs-tracing-subscriber-already-initialized-skip-value",
+                                &[("arg0", &(init_err).to_string())]
+                            )
                         );
                     } else {
                         tracing::warn!(
@@ -91,9 +94,10 @@ pub async fn init_inklog_logging_with_fallback() -> InklogInit {
                 );
             }
             tracing::warn!(
-                error = %e,
-                "inklog init failed, degraded to tracing-subscriber default config (spec R-dep-003)"
-            );
+            error = %e,
+            "{}", crate::i18n::translate_detail(
+                "logs-inklog-init-failed-degraded-to-tracing-subscriber-default-config", &[]
+            ));
             InklogInit {
                 guard: None,
                 degraded: true,

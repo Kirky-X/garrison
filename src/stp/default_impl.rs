@@ -245,10 +245,11 @@ impl GarrisonLogicDefault {
                     // 记录失败（超阈值封禁）；record_failure 自身失败不得覆盖原始认证错误 e，否则 401/403 会误报为 500。
                     if let Err(record_err) = strategy.record_failure(&fw_ctx).await {
                         tracing::warn!(
-                            ip = %ip,
-                            error = %record_err,
-                            "brute force record_failure failed (does not affect the auth result, original auth error is still returned)"
-                        );
+                                    ip = %ip,
+                                    error = %record_err,
+                                    "{}", crate::i18n::translate_detail(
+                            "logs-brute-force-record-failure-failed-does-not-affect-the", &[]
+                        ));
                     }
                     Err(e)
                 },

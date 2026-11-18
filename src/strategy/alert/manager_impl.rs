@@ -28,7 +28,13 @@ impl AlertListenerManager {
         let listeners = self.listeners.read().clone();
         for listener in &listeners {
             if let Err(e) = listener.on_alert(event).await {
-                tracing::warn!("alert listener on_alert failed: {}", e);
+                tracing::warn!(
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-alert-listener-on-alert-failed-value",
+                        &[("arg0", &(e).to_string())]
+                    )
+                );
             }
         }
     }

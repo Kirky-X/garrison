@@ -64,9 +64,10 @@ impl RevokeHandler {
         // 认证通过后的任何失败（含 DAO 瞬态错误）均不得作为错误返回给客户端（RFC 7009 §2.2），记录告警后返回成功
         if let Err(e) = self.revoke_owned_token(req).await {
             tracing::warn!(
-                error = %e,
-                "oauth2-server-revoke: revocation failed, returning success per RFC 7009 §2.2"
-            );
+            error = %e,
+            "{}", crate::i18n::translate_detail(
+                "logs-oauth2-server-revoke-revocation-failed-returning-success-per-rfc", &[]
+            ));
         }
         Ok(())
     }

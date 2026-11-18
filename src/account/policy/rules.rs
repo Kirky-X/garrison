@@ -121,10 +121,11 @@ impl PasswordPolicyRule for HistoryRule {
                 Ok(false) => {},
                 Err(e) => {
                     tracing::warn!(
-                        rule = "history",
-                        error = %e,
-                        "password history hash verify failed, skipping entry (fail-open)"
-                    );
+                            rule = "history",
+                            error = %e,
+                            "{}", crate::i18n::translate_detail(
+                        "logs-password-history-hash-verify-failed-skipping-entry-fail-open", &[]
+                    ));
                 },
             }
         }

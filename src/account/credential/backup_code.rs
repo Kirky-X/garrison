@@ -185,18 +185,23 @@ impl BackupCodeCredential {
                     // 使同一实例的 verify() 不再对已消费码返回 true
                     self.model.secret_data = new_secret;
                     tracing::info!(
-                        user_id = %self.model.user_id,
-                        remaining = data.codes.len(),
-                        attempt = attempt + 1,
-                        "backup code consumed via atomic CAS"
-                    );
+                            user_id = %self.model.user_id,
+                            remaining = data.codes.len(),
+                            attempt = attempt + 1,
+                            "{}", crate::i18n::translate_detail(
+                        "logs-backup-code-consumed-via-atomic-cas", &[]
+                    ));
                     return Ok(true);
                 }
                 // CAS 失败：并发修改，重试
                 tracing::debug!(
                     attempt = attempt + 1,
                     max_retries = MAX_CAS_RETRIES,
-                    "CAS conflict on backup code consume, retrying"
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-cas-conflict-on-backup-code-consume-retrying",
+                        &[]
+                    )
                 );
             } else {
                 return Ok(false);

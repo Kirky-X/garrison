@@ -2024,3 +2024,148 @@ logs-stp-revoke-all-session-cleanup-failed = revoke_all_sessions: Account-Sessio
 logs-stp-bruteforce-reset-verify-failed = brute force reset-on-success failed (does not affect the verification result)
 logs-stp-bruteforce-record-verify-failed = brute force record_failure failed (does not affect the verification result)
 logs-strategy-permission-cache-write-failed = permission cache write failed (login_id={$login_id}, perm={$perm}): {$arg0}
+
+logs-abac-decision-cache-policy-set-changed-during-evaluation-skipping = abac-decision-cache: policy set changed during evaluation, skipping cache write
+logs-abac-decision-cache-read-cache-read-failed-falling-back = abac-decision-cache-read: cache read failed, falling back to Cedar evaluation
+logs-abac-decision-cache-write-cache-write-failed-decision-still = abac-decision-cache-write: cache write failed, decision still returned
+logs-abac-policy-denied = ABAC policy denied
+logs-account-failure-count-get-count-failed-value = account_failure_count get_count failed: {$arg0}
+logs-accountmetrics-gather-prometheus-encode-failed = AccountMetrics::gather prometheus encode failed
+logs-alert-listener-on-alert-failed-value = alert listener on_alert failed: {$arg0}
+logs-anomalous-analyzer-system-clock-error-storage-key-falls-back = anomalous_analyzer: system clock error, storage key falls back to second-precision timestamp (uniqueness not guaranteed)
+logs-anomaly-login-analysis-engine-received-shutdown-signal-stopping = anomaly login analysis engine received shutdown signal, stopping
+logs-anomaly-login-analysis-failed-value = anomaly login analysis failed: {$arg0}
+logs-anomaly-login-analysis-scan-completed = anomaly login analysis scan completed
+logs-anomaly-login-analysis-scan-exceeded-1s-redis-backend-needs = anomaly login analysis scan exceeded 1s, Redis backend needs optimization to batch mget
+logs-anomalydetector-check-on-check-login-failed = AnomalyDetector::check_on_check_login failed
+logs-anomalydetector-check-on-login-failed = AnomalyDetector::check_on_login failed
+logs-authflow-ip-whitelist-not-configured-ip-value = authflow-ip-whitelist-not-configured (ip={$arg0})
+logs-backup-code-consumed-via-atomic-cas = backup code consumed via atomic CAS
+logs-brute-force-record-failure-failed-does-not-affect-the = brute force record_failure failed (does not affect the auth result, original auth error is still returned)
+logs-c7-http-method-does-not-allow-extracting-token-from = C7: HTTP method does not allow extracting token from body, skipping body read
+logs-captcha-attempts-key-delete-failed-non-fatal-ttl-will = CAPTCHA attempts key delete failed (non-fatal, TTL will clean it up)
+logs-captcha-challenge-discarded-due-to-exceeding-max-attempts = CAPTCHA challenge discarded due to exceeding max attempts
+logs-cas-conflict-on-backup-code-consume-retrying = CAS conflict on backup code consume, retrying
+logs-cedar-value-evaluation-diagnostic-error = Cedar {$arg0} evaluation diagnostic error
+logs-cedar-value-evaluation-produced-diagnostic-errors-denying-fail-closed = Cedar {$arg0} evaluation produced diagnostic errors; denying (fail-closed, issue 2756)
+logs-check-disable-skipped-no-current-token-not-logged-in = check_disable skipped: no current token (not logged in)
+logs-check-ip-change-dao-read-failed-degrading-to-no = check_ip_change DAO read failed, degrading to no alert (token={$arg0}): {$arg1}
+logs-check-is-new-device-empty-device-id-treated-as = check_is_new_device: empty device_id treated as known device (device binding check skipped; reject empty device upstream for fail-closed)
+logs-cleanup-expired-tokens-failed-value = cleanup_expired_tokens failed: {$arg0}
+logs-cleanup-expired-tokens-token-value-dao-read-failed-skipping = cleanup_expired_tokens: token={$arg0} DAO read failed, skipping this token: {$arg1}
+logs-confusable-characters-detected-in-permission-name = confusable characters detected in permission name
+logs-credential-delete-denied-caller-owner-idor = credential delete denied: caller != owner (IDOR)
+logs-credential-find-by-user-denied-caller-target-idor = credential find_by_user denied: caller != target (IDOR)
+logs-credential-update-aborted-concurrent-modification-detected-cas-mismatch = credential update aborted: concurrent modification detected (CAS mismatch)
+logs-credential-update-denied-caller-owner-idor = credential update denied: caller != owner (IDOR)
+logs-credential-update-denied-user-id-transfer-forbidden-idor = credential update denied: user_id transfer forbidden (IDOR)
+logs-credit-async-persist-consumption-record-failed = credit: async persist consumption record failed
+logs-credit-auto-deduct-on-login-failed = credit: auto-deduct on login failed
+logs-credit-cannot-get-tenant-id-for-auto-deduct-on = credit: cannot get tenant_id for auto-deduct on login
+logs-creditmetrics-gather-prometheus-encode-failed = CreditMetrics::gather prometheus encode failed
+logs-custom-mask-regex-compilation-failed-returning-as-safe-fallback = Custom mask regex compilation failed; returning '***' as safe fallback
+logs-dao-backend-does-not-support-role-keys-role-warmup = DAO backend does not support role keys(), role warmup skipped (tenants still warmed)
+logs-dao-backend-does-not-support-tenant-keys-tenant-warmup = DAO backend does not support tenant keys(), tenant warmup skipped (roles still warmed)
+logs-delete-code-failed-after-send-failure = delete code failed after send failure
+logs-delete-stored-code-failed-after-unverified-incr-failure = delete stored code failed after unverified incr failure
+logs-devicebindingpolicy-is-new-device-failed = DeviceBindingPolicy::is_new_device failed
+logs-devicebindingpolicy-require-secondary-auth-failed = DeviceBindingPolicy::require_secondary_auth failed
+logs-double-check-reread-failed-skip-deleting-expired-account-session = double-check reread failed, skip deleting expired Account-Session (login_id={$arg0}): {$arg1}
+logs-double-check-reread-failed-skip-deleting-expired-token-session = double-check reread failed, skip deleting expired Token-Session (token={$arg0}...): {$arg1}
+logs-failed-to-delete-expired-account-session-login-id-value = failed to delete expired Account-Session (login_id={$arg0}): {$arg1}
+logs-failed-to-delete-expired-token-session-token-value-value = failed to delete expired Token-Session (token={$arg0}...): {$arg1}
+logs-failed-to-deserialize-login-record-key-value-value = failed to deserialize login record (key={$arg0}): {$arg1}
+logs-failed-to-initialize-garrisonmanager = failed to initialize GarrisonManager
+logs-failed-to-read-login-record-key-value-value = failed to read login record (key={$arg0}): {$arg1}
+logs-garrison-exception = garrison exception
+logs-garrison-middleware-inner-handler-timed-out = garrison middleware: inner handler timed out
+logs-garrison-middleware-rejection = garrison middleware rejection
+logs-garrison-rejection = garrison rejection
+logs-garrisonauthserver-starting = GarrisonAuthServer starting
+logs-garrisonmetrics-gather-prometheus-encode-failed = GarrisonMetrics::gather prometheus encode failed
+logs-health-check-failed = health check failed
+logs-health-check-panicked = health check panicked
+logs-health-check-timed-out = health check timed out
+logs-httpdigestauth-constructed-with-md5-md5-is-collision-broken-and = HttpDigestAuth constructed with MD5; MD5 is collision-broken and must not be used in new deployments (use SHA256)
+logs-identity-switch-value-value = identity switch: {$arg0} -> {$arg1}
+logs-init-otlp-tracing-called-more-than-once-keeping-the = init_otlp_tracing called more than once; keeping the first tracer provider (no-op)
+logs-init-otlp-tracing-lost-a-concurrent-init-race-keeping = init_otlp_tracing lost a concurrent init race; keeping the first tracer provider
+logs-inklog-init-failed-degraded-to-tracing-subscriber-default-config = inklog init failed, degraded to tracing-subscriber default config (spec R-dep-003)
+logs-ip-failure-count-get-count-failed-value = ip_failure_count get_count failed: {$arg0}
+logs-ipchangedetector-token-session-read-failed-skipping-token-detection-continues = IpChangeDetector: token session read failed, skipping token (detection continues)
+logs-keys-cleaned-up-value-expired-keys = keys() cleaned up {$arg0} expired keys
+logs-keys-exists-sync-failed-keep-key-index-entry = keys() exists_sync failed; keep key_index entry
+logs-listener-loaded-value-listener-s-registered = listener loaded: {$arg0} listener(s) registered
+logs-listener-on-event-failed-value = listener on_event failed: {$arg0}
+logs-listener-on-event-panicked-value = listener on_event panicked: {$arg0}
+logs-lockout-record-failure-failed = lockout record_failure failed
+logs-lockout-record-success-failed = lockout record_success failed
+logs-lockout-state-cas-conflict-on-record-failure-retrying = lockout state CAS conflict on record_failure, retrying
+logs-lockout-state-cas-conflict-on-record-success-retrying = lockout state CAS conflict on record_success, retrying
+logs-login-ip-recorded-token-value-login-id-value-ip = login IP recorded (token={$arg0}, login_id={$arg1}, ip={$arg2})
+logs-login-with-password-failed = login_with_password failed
+logs-logout-failed-to-delete-sso-ticket-key-value-value = logout failed to delete SSO ticket (key={$arg0}): {$arg1}
+logs-oauth2-server-revoke-revocation-failed-returning-success-per-rfc = oauth2-server-revoke: revocation failed, returning success per RFC 7009 §2.2
+logs-parameterquery-temporary-session-cleanup-failed-non-fatal-ttl-will = ParameterQuery temporary session cleanup failed (non-fatal, TTL will clean it up)
+logs-password-history-hash-verify-failed-skipping-entry-fail-open = password history hash verify failed, skipping entry (fail-open)
+logs-passwordratelimiter-reset-failed-value = PasswordRateLimiter::reset failed: {$arg0}
+logs-plugin-factory-panicked-plugin-skipped-value = plugin factory panicked, plugin skipped: {$arg0}
+logs-plugin-loaded-value = plugin loaded: {$arg0}
+logs-plugin-value-on-login-failed-value = plugin {$arg0} on_login failed: {$arg1}
+logs-plugin-value-on-logout-failed-value = plugin {$arg0} on_logout failed: {$arg1}
+logs-plugin-value-on-permission-check-failed-value = plugin {$arg0} on_permission_check failed: {$arg1}
+logs-rapidsuccessivedetector-token-session-read-failed-skipping-token = RapidSuccessiveDetector: token session read failed, skipping token
+logs-rate-limit-sliding-window-unsupported-by-backend-falling-back = rate_limit: sliding window unsupported by backend, falling back to atomic_lock path (in-process atomic only)
+logs-rate-limit-timestamp-parse-failed-skipping-entry-possible-storage = rate_limit: timestamp parse failed, skipping entry (possible storage layer concurrent write truncation)
+logs-rebuild-login-token-map-skipping-accountsession-that-failed-deserialization = rebuild_login_token_map: skipping AccountSession that failed deserialization
+logs-rebuild-login-token-map-skipping-key-not-matching-account = rebuild_login_token_map: skipping key not matching account:session:{$arg0} pattern: {$arg1}
+logs-renew-to-equivalent-failed-to-add-new-token-to = renew_to_equivalent: failed to add new token to Account-Session, cleaning up new token
+logs-renew-to-equivalent-failed-to-clean-up-new-token = renew_to_equivalent: failed to clean up new token session, new token may be orphaned
+logs-renew-to-equivalent-failed-to-create-new-token-session = renew_to_equivalent: failed to create new token session, old token still valid (A9 no DoS)
+logs-renew-to-equivalent-failed-to-invalidate-old-token-old = renew_to_equivalent: failed to invalidate old token, old token left behind (CWE-613 security risk), new token established with no DoS, but operators must clean up the old token immediately to prevent attacker reuse. Alert rule: trigger P2 alert whenever error_code="renew_old_token_cleanup_failed" appears
+logs-request-body-exceeds-token-extraction-parse-limit-skipping-body = request body exceeds token-extraction parse limit, skipping body token read
+logs-riskpolicy-assess-failed-fail-open-to-notifyonly = RiskPolicy::assess failed; fail-open to NotifyOnly
+logs-rollback-rate-limiter-counter-failed-after-code-store-failure = rollback rate limiter counter failed after code store failure
+logs-rollback-rate-limiter-counter-failed-after-send-failure = rollback rate limiter counter failed after send failure
+logs-rollback-rate-limiter-counter-failed-after-unverified-incr-failure = rollback rate limiter counter failed after unverified incr failure
+logs-rollback-rate-limiter-counter-failed-during-channel-recycling = rollback rate limiter counter failed during channel recycling
+logs-rollback-unverified-counter-failed = rollback unverified counter failed
+logs-rollback-unverified-counter-failed-after-send-failure = rollback unverified counter failed after send failure
+logs-saml-assertion-contains-duplicate-attribute-name-possible-attribute-pollution = SAML Assertion contains duplicate attribute name, possible attribute pollution attack
+logs-saml-assertion-missing-ds-signature-element-signature-verification-failed = SAML Assertion missing <ds:Signature> element, signature verification failed
+logs-saml-assertion-missing-ds-signedinfo = SAML Assertion missing <ds:SignedInfo>
+logs-saml-assertion-signature-verification-failed-stripped = SAML Assertion signature verification failed, stripped
+logs-saml-audience-validation-opted-out-allow-unvalidated-audience-cross = SAML Audience validation opted out (allow_unvalidated_audience), cross-SP replay risk
+logs-saml-destination-validation-opted-out-allow-unvalidated-destination-open = SAML Destination validation opted out (allow_unvalidated_destination), open redirect attack risk
+logs-saml-ds-reference-binding-verification-failed = SAML <ds:Reference> binding verification failed
+logs-saml-ds-signature-missing-ds-signaturemethod-algorithm = SAML <ds:Signature> missing <ds:SignatureMethod Algorithm=...>
+logs-saml-ds-signature-missing-ds-signaturevalue = SAML <ds:Signature> missing <ds:SignatureValue>
+logs-saml-ds-signedinfo-contains-xml-comments-rejected-c14n-no = SAML <ds:SignedInfo> contains XML comments, rejected (C14N no-comments mode)
+logs-saml-request-dao-not-configured-inresponseto-binding-and-assertion = SAML request_dao not configured: InResponseTo binding and Assertion replay protection disabled
+logs-saml-signature-algorithm-ecdsa-sha256-is-whitelisted-but-verification = SAML signature algorithm ecdsa-sha256 is whitelisted but verification is not implemented yet (awaiting an ECDSA library)
+logs-saml-signature-algorithm-not-whitelisted-only-rsa-sha256-ecdsa = SAML signature algorithm not whitelisted (only rsa-sha256 / ecdsa-sha256 allowed)
+logs-saml-signature-algorithm-rsa-1-5-rejected-weak-algorithm = SAML signature algorithm rsa-1_5 rejected (weak algorithm, Bleichenbacher attack risk)
+logs-saml-signature-verification-failed-signature-value-does-not-match = SAML signature verification failed: signature value does not match SignedInfo
+logs-saml-signature-verification-not-implemented-assertion-stripped-fail-closed = SAML signature verification not implemented, Assertion stripped (fail-closed)
+logs-saml-signedinfo-missing-ds-reference-rejected-xsw-protection = SAML SignedInfo missing <ds:Reference>, rejected (XSW protection)
+logs-saml-xml-element-uses-non-standard-namespace-prefix-possible = SAML XML element uses non-standard namespace prefix, possible namespace confusion attack
+logs-search-completed-with-skipped-records = search completed with skipped records
+logs-search-scan-exceeded-the-key-count-limit-truncated = search scan exceeded the key count limit, truncated
+logs-sessionexpirylistener-callback-failed-login-id-value-token-value-value = SessionExpiryListener callback failed (login_id={$arg0}, token={$arg1}...): {$arg2}
+logs-sessionhijackdetector-kickout-failed = SessionHijackDetector: kickout failed
+logs-skipping-corrupted-accountsession-record = skipping corrupted AccountSession record
+logs-skipping-corrupted-tokensession-record = skipping corrupted TokenSession record
+logs-smtp-configured-without-tls-builder-dangerous-credentials-may-be = SMTP configured without TLS (builder_dangerous); credentials may be exposed in plaintext
+logs-sso-client-id-parse-failed-falling-back-to-default = SSO client_id parse failed, falling back to default value 0
+logs-strictbinding-require-secondary-auth-unconditional-true-new-device-confirmed = StrictBinding::require_secondary_auth: unconditional true (new-device confirmed by caller contract)
+logs-system-clock-before-unix-epoch-created-at-falls-back = system clock before UNIX_EPOCH, created_at falls back to 0: {$arg0}
+logs-tokenratelimiter-check-client-failed-value = TokenRateLimiter::check_client failed: {$arg0}
+logs-tracing-subscriber-already-initialized-skip-value = tracing subscriber already initialized, skip: {$arg0}
+logs-validate-nc-dao-compare-and-update-if-greater-failed = validate_nc: DAO compare_and_update_if_greater failed, fail-closed (sampled 1/{$arg0})
+logs-validate-nc-dao-compare-and-update-if-greater-failed-2 = validate_nc: DAO compare_and_update_if_greater failed, fail-closed (sampled, suppressed warn)
+logs-validate-nc-no-dao-injected-skipping-nc-monotonicity-check = validate_nc: no DAO injected, skipping nc monotonicity check (fail-open, replay possible within the 300s window); in production inject a DAO via with_dao to enable RFC 7616 §3.4.6 replay protection
+logs-validate-nc-rejected-current-thread-runtime-does-not-support = validate_nc rejected: current_thread runtime does not support block_in_place (fail-closed per vuln-0012)
+logs-validate-nc-rejected-no-tokio-runtime-available-fail-closed = validate_nc rejected: no tokio runtime available (fail-closed per vuln-0012)
+logs-waf-blocked-request = WAF blocked request
+logs-waf-whitelist-allowed = WAF whitelist allowed
+logs-session-expired = session expired

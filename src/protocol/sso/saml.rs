@@ -241,11 +241,19 @@ impl SamlProvider for DefaultSamlProvider {
                     }
                 },
                 Ok(false) => {
-                    tracing::warn!("SAML Assertion signature verification failed, stripped");
+                    tracing::warn!(
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "logs-saml-assertion-signature-verification-failed-stripped",
+                            &[]
+                        )
+                    );
                     response.assertion = None;
                 },
                 Err(GarrisonError::NotImplemented(_)) => {
-                    tracing::warn!("SAML signature verification not implemented, Assertion stripped (fail-closed)");
+                    tracing::warn!("{}", crate::i18n::translate_detail(
+                    "logs-saml-signature-verification-not-implemented-assertion-stripped-fail-closed", &[]
+                ));
                     response.assertion = None;
                 },
                 Err(e) => return Err(e),
@@ -296,8 +304,9 @@ fn validate_destination(
             if !actual.is_empty() {
                 tracing::warn!(
                     actual = %actual,
-                    "SAML Destination validation opted out (allow_unvalidated_destination), open redirect attack risk"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-saml-destination-validation-opted-out-allow-unvalidated-destination-open", &[]
+                ));
             }
             Ok(())
         },
@@ -329,8 +338,9 @@ fn validate_audience(
             if !actual.is_empty() {
                 tracing::warn!(
                     actual = %actual,
-                    "SAML Audience validation opted out (allow_unvalidated_audience), cross-SP replay risk"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-saml-audience-validation-opted-out-allow-unvalidated-audience-cross", &[]
+                ));
             }
             Ok(())
         },
@@ -515,9 +525,10 @@ impl SamlParseContext {
                     .any(|(n, _)| n == &self.current_attr_name)
                 {
                     tracing::warn!(
-                        attr_name = %self.current_attr_name,
-                        "SAML Assertion contains duplicate attribute name, possible attribute pollution attack"
-                    );
+                            attr_name = %self.current_attr_name,
+                            "{}", crate::i18n::translate_detail(
+                        "logs-saml-assertion-contains-duplicate-attribute-name-possible-attribute-pollution", &[]
+                    ));
                 }
                 self.assertion_attributes
                     .push((self.current_attr_name.clone(), String::new()));
@@ -588,9 +599,10 @@ impl SamlParseContext {
                         .any(|(n, _)| n == &self.current_attr_name)
                     {
                         tracing::warn!(
-                            attr_name = %self.current_attr_name,
-                            "SAML Assertion contains duplicate attribute name, possible attribute pollution attack"
-                        );
+                                    attr_name = %self.current_attr_name,
+                                    "{}", crate::i18n::translate_detail(
+                            "logs-saml-assertion-contains-duplicate-attribute-name-possible-attribute-pollution", &[]
+                        ));
                     }
                     self.assertion_attributes
                         .push((self.current_attr_name.clone(), self.current_text.clone()));
@@ -767,7 +779,11 @@ pub(crate) async fn enforce_in_response_to(
             }
             if !warned_no_dao.swap(true, Ordering::Relaxed) {
                 tracing::warn!(
-                    "SAML request_dao not configured: InResponseTo binding and Assertion replay protection disabled"
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-saml-request-dao-not-configured-inresponseto-binding-and-assertion",
+                        &[]
+                    )
                 );
             }
             Ok(())
@@ -794,8 +810,9 @@ fn check_saml_namespace(qualified: &str) -> bool {
             if !valid {
                 tracing::warn!(
                     qualified = %qualified,
-                    "SAML XML element uses non-standard namespace prefix, possible namespace confusion attack"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-saml-xml-element-uses-non-standard-namespace-prefix-possible", &[]
+                ));
             }
             valid
         },
@@ -1306,8 +1323,9 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
         Some(xml) => xml,
         None => {
             tracing::warn!(
-                "SAML Assertion missing <ds:Signature> element, signature verification failed"
-            );
+                "{}", crate::i18n::translate_detail(
+                    "logs-saml-assertion-missing-ds-signature-element-signature-verification-failed", &[]
+                ));
             return Ok(false);
         },
     };
@@ -1318,27 +1336,36 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
         Some(SIG_ALG_RSA_SHA256) => {}, // 唯一支持的验证算法，继续
         Some(SIG_ALG_ECDSA_SHA256) => {
             tracing::warn!(
-                algorithm = %SIG_ALG_ECDSA_SHA256,
-                "SAML signature algorithm ecdsa-sha256 is whitelisted but verification is not implemented yet (awaiting an ECDSA library)"
-            );
+            algorithm = %SIG_ALG_ECDSA_SHA256,
+            "{}", crate::i18n::translate_detail(
+                "logs-saml-signature-algorithm-ecdsa-sha256-is-whitelisted-but-verification", &[]
+            ));
             return Ok(false);
         },
         Some(alg) if alg == SIG_ALG_RSA_1_5 => {
             tracing::warn!(
-                algorithm = %alg,
-                "SAML signature algorithm rsa-1_5 rejected (weak algorithm, Bleichenbacher attack risk)"
-            );
+            algorithm = %alg,
+            "{}", crate::i18n::translate_detail(
+                "logs-saml-signature-algorithm-rsa-1-5-rejected-weak-algorithm", &[]
+            ));
             return Ok(false);
         },
         Some(alg) => {
             tracing::warn!(
-                algorithm = %alg,
-                "SAML signature algorithm not whitelisted (only rsa-sha256 / ecdsa-sha256 allowed)"
-            );
+            algorithm = %alg,
+            "{}", crate::i18n::translate_detail(
+                "logs-saml-signature-algorithm-not-whitelisted-only-rsa-sha256-ecdsa", &[]
+            ));
             return Ok(false);
         },
         None => {
-            tracing::warn!("SAML <ds:Signature> missing <ds:SignatureMethod Algorithm=...>");
+            tracing::warn!(
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-saml-ds-signature-missing-ds-signaturemethod-algorithm",
+                    &[]
+                )
+            );
             return Ok(false);
         },
     }
@@ -1347,7 +1374,13 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
     let signature_value_b64 = match extract_signature_value(&signature_xml) {
         Some(v) => v,
         None => {
-            tracing::warn!("SAML <ds:Signature> missing <ds:SignatureValue>");
+            tracing::warn!(
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-saml-ds-signature-missing-ds-signaturevalue",
+                    &[]
+                )
+            );
             return Ok(false);
         },
     };
@@ -1362,7 +1395,10 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
     let signed_info_xml = match extract_signed_info_xml(assertion_xml) {
         Some(xml) => xml,
         None => {
-            tracing::warn!("SAML Assertion missing <ds:SignedInfo>");
+            tracing::warn!(
+                "{}",
+                crate::i18n::translate_detail("logs-saml-assertion-missing-ds-signedinfo", &[])
+            );
             return Ok(false);
         },
     };
@@ -1371,7 +1407,11 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
     // 攻击者可借注释差异构造语义不明的签名输入），出现即拒绝。
     if signed_info_xml.contains("<!--") {
         tracing::warn!(
-            "SAML <ds:SignedInfo> contains XML comments, rejected (C14N no-comments mode)"
+            "{}",
+            crate::i18n::translate_detail(
+                "logs-saml-ds-signedinfo-contains-xml-comments-rejected-c14n-no",
+                &[]
+            )
         );
         return Ok(false);
     }
@@ -1416,7 +1456,11 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
         Ok(()) => {},
         Err(_) => {
             tracing::warn!(
-                "SAML signature verification failed: signature value does not match SignedInfo"
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-saml-signature-verification-failed-signature-value-does-not-match",
+                    &[]
+                )
             );
             return Ok(false);
         },
@@ -1426,16 +1470,23 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
     // 缺失此环时签名与断言内容解耦，攻击者可拷贝合法 Signature 伪造任意身份（XSW）。
     let references = extract_reference_bindings(&signed_info_xml);
     if references.is_empty() {
-        tracing::warn!("SAML SignedInfo missing <ds:Reference>, rejected (XSW protection)");
+        tracing::warn!(
+            "{}",
+            crate::i18n::translate_detail(
+                "logs-saml-signedinfo-missing-ds-reference-rejected-xsw-protection",
+                &[]
+            )
+        );
         return Ok(false);
     }
     for binding in &references {
         if let Err(reason) = validate_reference_binding(assertion_xml, binding) {
             tracing::warn!(
-                reason = %reason,
-                uri = %binding.uri,
-                "SAML <ds:Reference> binding verification failed"
-            );
+            reason = %reason,
+            uri = %binding.uri,
+            "{}", crate::i18n::translate_detail(
+                "logs-saml-ds-reference-binding-verification-failed", &[]
+            ));
             return Ok(false);
         }
     }
@@ -1624,7 +1675,13 @@ impl SamlProvider for XmlSecSamlProvider {
                     }
                 },
                 Ok(false) => {
-                    tracing::warn!("SAML Assertion signature verification failed, stripped");
+                    tracing::warn!(
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "logs-saml-assertion-signature-verification-failed-stripped",
+                            &[]
+                        )
+                    );
                     response.assertion = None;
                 },
                 Err(e) => return Err(e),

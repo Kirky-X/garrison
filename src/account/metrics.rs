@@ -181,7 +181,9 @@ impl AccountMetrics {
         match encoder.encode(&metric_families, &mut buffer) {
             Ok(()) => String::from_utf8_lossy(&buffer).into_owned(),
             Err(e) => {
-                tracing::warn!(error = %e, "AccountMetrics::gather prometheus encode failed");
+                tracing::warn!(error = %e, "{}", crate::i18n::translate_detail(
+                    "logs-accountmetrics-gather-prometheus-encode-failed", &[]
+                ));
                 format!("# garrison account-metrics gather encode failed: {e}")
             },
         }

@@ -214,7 +214,13 @@ impl GarrisonFirewallCheckHookDefault {
         match self.limiter.get_count(&key).await {
             Ok(c) => c as u32,
             Err(e) => {
-                tracing::warn!("ip_failure_count get_count failed: {}", e);
+                tracing::warn!(
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-ip-failure-count-get-count-failed-value",
+                        &[("arg0", &(e).to_string())]
+                    )
+                );
                 0
             },
         }
@@ -226,7 +232,13 @@ impl GarrisonFirewallCheckHookDefault {
         match self.limiter.get_count(&key).await {
             Ok(c) => c as u32,
             Err(e) => {
-                tracing::warn!("account_failure_count get_count failed: {}", e);
+                tracing::warn!(
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-account-failure-count-get-count-failed-value",
+                        &[("arg0", &(e).to_string())]
+                    )
+                );
                 0
             },
         }

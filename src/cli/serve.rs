@@ -427,7 +427,13 @@ pub async fn serve_main() -> GarrisonResult<()> {
             .with_span_list(false)
             .try_init();
         if let Err(e) = result {
-            tracing::debug!("tracing subscriber already initialized, skip: {}", e);
+            tracing::debug!(
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-tracing-subscriber-already-initialized-skip-value",
+                    &[("arg0", &(e).to_string())]
+                )
+            );
         }
     }
 
@@ -456,7 +462,9 @@ pub async fn serve_main() -> GarrisonResult<()> {
     )
     .await
     {
-        tracing::error!(error = %e, "failed to initialize GarrisonManager");
+        tracing::error!(error = %e, "{}", crate::i18n::translate_detail(
+            "logs-failed-to-initialize-garrisonmanager", &[]
+        ));
         return Err(e);
     }
     let backend: Arc<dyn AuthBackend> = Arc::new(BackendEmbedded::new());

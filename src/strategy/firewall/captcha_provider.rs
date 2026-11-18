@@ -117,8 +117,9 @@ impl MathCaptchaProvider {
                 tracing::warn!(
                     challenge_id,
                     error = %e,
-                    "CAPTCHA attempts key delete failed (non-fatal, TTL will clean it up)"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-captcha-attempts-key-delete-failed-non-fatal-ttl-will", &[]
+                ));
             });
             return Ok(true);
         }
@@ -132,14 +133,19 @@ impl MathCaptchaProvider {
                 tracing::warn!(
                     challenge_id,
                     error = %e,
-                    "CAPTCHA attempts key delete failed (non-fatal, TTL will clean it up)"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-captcha-attempts-key-delete-failed-non-fatal-ttl-will", &[]
+                ));
             });
             tracing::warn!(
                 challenge_id,
                 attempts = new_count,
                 max = self.max_attempts,
-                "CAPTCHA challenge discarded due to exceeding max attempts"
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-captcha-challenge-discarded-due-to-exceeding-max-attempts",
+                    &[]
+                )
             );
             return Ok(false);
         }

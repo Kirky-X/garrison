@@ -127,7 +127,9 @@ impl GarrisonMetrics {
         let metric_families = self.registry.gather();
         // 编码失败显式记录 warn（不中断主流程，但禁止静默吞掉）
         if let Err(e) = encoder.encode(&metric_families, &mut buffer) {
-            tracing::warn!(error = %e, "GarrisonMetrics::gather prometheus encode failed");
+            tracing::warn!(error = %e, "{}", crate::i18n::translate_detail(
+                "logs-garrisonmetrics-gather-prometheus-encode-failed", &[]
+            ));
         }
         String::from_utf8_lossy(&buffer).into_owned()
     }

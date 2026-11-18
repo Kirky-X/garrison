@@ -366,11 +366,12 @@ impl CreditMeter {
                             .await
                         {
                             tracing::warn!(
-                                tenant_id,
-                                resource = %res,
-                                error = %e,
-                                "credit: async persist consumption record failed"
-                            );
+                                            tenant_id,
+                                            resource = %res,
+                                            error = %e,
+                                            "{}", crate::i18n::translate_detail(
+                                "logs-credit-async-persist-consumption-record-failed", &[]
+                            ));
                         }
                     });
                 },

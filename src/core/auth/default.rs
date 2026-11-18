@@ -316,13 +316,12 @@ impl AuthLogic for AuthLogicDefault {
         // 日志脱敏：仅记录前 8 字符。
         let token_prefix = if token.len() >= 8 { &token[..8] } else { token };
         tracing::info!(
-            original_login_id = %original_login_id,
-            target_login_id = %target_login_id,
-            token_prefix = %token_prefix,
-            "identity switch: {} -> {}",
-            original_login_id,
-            target_login_id
-        );
+        original_login_id = %original_login_id,
+        target_login_id = %target_login_id,
+        token_prefix = %token_prefix,
+        "{}", crate::i18n::translate_detail(
+                "logs-identity-switch-value-value", &[("arg0", &(original_login_id).to_string()), ("arg1", target_login_id)]
+            ));
 
         Ok(())
     }
@@ -407,8 +406,9 @@ impl AuthLogic for AuthLogicDefault {
                 tracing::error!(
                     error = %e,
                     new_token_prefix = %new_prefix,
-                    "renew_to_equivalent: failed to create new token session, old token still valid (A9 no DoS)"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-renew-to-equivalent-failed-to-create-new-token-session", &[]
+                ));
                 return Err(GarrisonError::Internal(
                     "core-auth-token-renew-create-failed".to_string(),
                 ));
@@ -428,15 +428,17 @@ impl AuthLogic for AuthLogicDefault {
                 tracing::error!(
                     error = %e,
                     new_token_prefix = %new_prefix,
-                    "renew_to_equivalent: failed to add new token to Account-Session, cleaning up new token"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-renew-to-equivalent-failed-to-add-new-token-to", &[]
+                ));
                 // best-effort 清理新 token session。
                 if let Err(rb_err) = self.session.logout(&new_token).await {
                     tracing::error!(
-                        rollback_error = %rb_err,
-                        new_token_prefix = %new_prefix,
-                        "renew_to_equivalent: failed to clean up new token session, new token may be orphaned"
-                    );
+                            rollback_error = %rb_err,
+                            new_token_prefix = %new_prefix,
+                            "{}", crate::i18n::translate_detail(
+                        "logs-renew-to-equivalent-failed-to-clean-up-new-token", &[]
+                    ));
                 }
                 // 失败显性化；旧 token 仍有效，用户可重试。
                 return Err(GarrisonError::Internal(
@@ -456,10 +458,9 @@ impl AuthLogic for AuthLogicDefault {
                     error = %e,
                     old_token_prefix = %old_prefix,
                     new_token_prefix = %&new_token[..new_token.len().min(8)],
-                    "renew_to_equivalent: failed to invalidate old token, old token left behind (CWE-613 security risk), \
-                     new token established with no DoS, but operators must clean up the old token immediately to prevent attacker reuse. \
-                     Alert rule: trigger P2 alert whenever error_code=\"renew_old_token_cleanup_failed\" appears"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-renew-to-equivalent-failed-to-invalidate-old-token-old", &[]
+                ));
             }
 
             Ok(new_token)

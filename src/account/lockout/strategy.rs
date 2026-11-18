@@ -215,7 +215,11 @@ impl UserLockoutStrategy {
                 user_id = user_id,
                 attempt = attempt,
                 max_retries = MAX_STATE_CAS_RETRIES,
-                "lockout state CAS conflict on record_failure, retrying"
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-lockout-state-cas-conflict-on-record-failure-retrying",
+                    &[]
+                )
             );
         }
         Err(GarrisonError::Dao(format!(
@@ -292,7 +296,11 @@ impl UserLockoutStrategy {
                 user_id = user_id,
                 attempt = attempt,
                 max_retries = MAX_STATE_CAS_RETRIES,
-                "lockout state CAS conflict on record_success, retrying"
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-lockout-state-cas-conflict-on-record-success-retrying",
+                    &[]
+                )
             );
         }
         Err(GarrisonError::Dao(format!(

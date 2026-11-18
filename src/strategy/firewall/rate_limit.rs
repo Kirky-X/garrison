@@ -318,7 +318,11 @@ impl GarrisonFirewallStrategy for RateLimitStrategy {
             Err(e) if is_lua_unsupported(&e) => {
                 // 后端不支持 Lua：降级到 atomic_lock 保护的非原子路径（进程内原子）
                 tracing::debug!(
-                    "rate_limit: sliding window unsupported by backend, falling back to atomic_lock path (in-process atomic only)"
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-rate-limit-sliding-window-unsupported-by-backend-falling-back",
+                        &[]
+                    )
                 );
                 self.check_fallback(&key, &scope_id, threshold).await
             },
@@ -400,7 +404,9 @@ impl RateLimitStrategy {
             .filter_map(|s| match s.parse::<u64>() {
                 Ok(v) => Some(v),
                 Err(_) => {
-                    tracing::warn!(key = %key, raw = %s, "rate_limit: timestamp parse failed, skipping entry (possible storage layer concurrent write truncation)");
+                    tracing::warn!(key = %key, raw = %s, "{}", crate::i18n::translate_detail(
+                    "logs-rate-limit-timestamp-parse-failed-skipping-entry-possible-storage", &[]
+                ));
                     None
                 }
             })

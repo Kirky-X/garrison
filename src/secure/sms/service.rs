@@ -52,8 +52,9 @@ impl SmsVerificationService {
                 tracing::error!(
                     error = %re,
                     phone = %mask_phone(phone),
-                    "rollback rate limiter counter failed after code store failure"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-rollback-rate-limiter-counter-failed-after-code-store-failure", &[]
+                ));
             }
             return Err(e);
         }
@@ -65,17 +66,19 @@ impl SmsVerificationService {
             Err(e) => {
                 if let Err(re) = self.rate_limiter.rollback_with(phone, &windows).await {
                     tracing::error!(
-                        error = %re,
-                        phone = %mask_phone(phone),
-                        "rollback rate limiter counter failed after unverified incr failure"
-                    );
+                            error = %re,
+                            phone = %mask_phone(phone),
+                            "{}", crate::i18n::translate_detail(
+                        "logs-rollback-rate-limiter-counter-failed-after-unverified-incr-failure", &[]
+                    ));
                 }
                 if let Err(re) = self.dao.delete(&code_key).await {
                     tracing::error!(
-                        error = %re,
-                        key = %code_key,
-                        "delete stored code failed after unverified incr failure"
-                    );
+                            error = %re,
+                            key = %code_key,
+                            "{}", crate::i18n::translate_detail(
+                        "logs-delete-stored-code-failed-after-unverified-incr-failure", &[]
+                    ));
                 }
                 return Err(e);
             },
@@ -87,16 +90,18 @@ impl SmsVerificationService {
                 tracing::error!(
                     error = %e,
                     phone = %mask_phone(phone),
-                    "rollback rate limiter counter failed during channel recycling"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-rollback-rate-limiter-counter-failed-during-channel-recycling", &[]
+                ));
             }
             if let Err(e) = SmsRateLimiter::decrement_counter(&*self.dao, &unverified_key).await {
                 // 以 error 触发运维告警
                 tracing::error!(
                     error = %e,
                     key = %mask_phone_in_key(&unverified_key),
-                    "rollback unverified counter failed"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-rollback-unverified-counter-failed", &[]
+                ));
             }
             self.dao.set(&recycled_key, "1", 86400).await?;
             return Err(GarrisonError::SmsChannelRecycled);
@@ -109,23 +114,26 @@ impl SmsVerificationService {
                 tracing::error!(
                     error = %re,
                     phone = %mask_phone(phone),
-                    "rollback rate limiter counter failed after send failure"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-rollback-rate-limiter-counter-failed-after-send-failure", &[]
+                ));
             }
             if let Err(re) = self.dao.delete(&code_key).await {
                 tracing::error!(
                     error = %re,
                     key = %code_key,
-                    "delete code failed after send failure"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-delete-code-failed-after-send-failure", &[]
+                ));
             }
             if let Err(re) = SmsRateLimiter::decrement_counter(&*self.dao, &unverified_key).await {
                 // 以 error 触发运维告警
                 tracing::error!(
                     error = %re,
                     key = %mask_phone_in_key(&unverified_key),
-                    "rollback unverified counter failed after send failure"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-rollback-unverified-counter-failed-after-send-failure", &[]
+                ));
             }
             return Err(e);
         }

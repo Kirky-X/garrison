@@ -161,7 +161,11 @@ fn extract_token_from_body(
     if !is_body_token_allowed_method(method) {
         tracing::warn!(
             method = method,
-            "C7: HTTP method does not allow extracting token from body, skipping body read"
+            "{}",
+            crate::i18n::translate_detail(
+                "logs-c7-http-method-does-not-allow-extracting-token-from",
+                &[]
+            )
         );
         return Ok(None);
     }
@@ -172,7 +176,11 @@ fn extract_token_from_body(
         tracing::warn!(
             size = body_bytes.len(),
             limit = MAX_BODY_TOKEN_PARSE_BYTES,
-            "request body exceeds token-extraction parse limit, skipping body token read"
+            "{}",
+            crate::i18n::translate_detail(
+                "logs-request-body-exceeds-token-extraction-parse-limit-skipping-body",
+                &[]
+            )
         );
         return Ok(None);
     }

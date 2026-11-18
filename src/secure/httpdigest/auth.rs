@@ -36,10 +36,11 @@ impl HttpDigestAuth {
         if algorithm == DigestAlgorithm::Md5 {
             // MD5 无 feature 门控，改为运行时告警便于审计每次使用（碰撞攻击风险，新系统须用 SHA256）
             tracing::warn!(
-                realm = %realm,
-                algorithm = "MD5",
-                "HttpDigestAuth constructed with MD5; MD5 is collision-broken and must not be used in new deployments (use SHA256)"
-            );
+            realm = %realm,
+            algorithm = "MD5",
+            "{}", crate::i18n::translate_detail(
+                "logs-httpdigestauth-constructed-with-md5-md5-is-collision-broken-and", &[]
+            ));
         }
         Ok(Self {
             realm: realm.to_string(),
@@ -184,9 +185,10 @@ impl HttpDigestAuth {
                     std::sync::atomic::AtomicBool::new(false);
                 if !WARNED_NO_DAO.swap(true, std::sync::atomic::Ordering::Relaxed) {
                     tracing::warn!(
-                        realm = %self.realm,
-                        "validate_nc: no DAO injected, skipping nc monotonicity check (fail-open, replay possible within the 300s window); in production inject a DAO via with_dao to enable RFC 7616 §3.4.6 replay protection"
-                    );
+                            realm = %self.realm,
+                            "{}", crate::i18n::translate_detail(
+                        "logs-validate-nc-no-dao-injected-skipping-nc-monotonicity-check", &[]
+                    ));
                 }
                 return true;
             },
@@ -202,9 +204,10 @@ impl HttpDigestAuth {
             Ok(handle) => {
                 if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
                     tracing::warn!(
-                        realm = %self.realm,
-                        "validate_nc rejected: current_thread runtime does not support block_in_place (fail-closed per vuln-0012)"
-                    );
+                            realm = %self.realm,
+                            "{}", crate::i18n::translate_detail(
+                        "logs-validate-nc-rejected-current-thread-runtime-does-not-support", &[]
+                    ));
                     return false; // fail-closed
                 }
                 let realm = self.realm.clone();
@@ -217,8 +220,9 @@ impl HttpDigestAuth {
             Err(_) => {
                 tracing::warn!(
                     realm = %self.realm,
-                    "validate_nc rejected: no tokio runtime available (fail-closed per vuln-0012)"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-validate-nc-rejected-no-tokio-runtime-available-fail-closed", &[]
+                ));
                 false // fail-closed
             },
         }
@@ -247,17 +251,21 @@ impl HttpDigestAuth {
                     DAO_ERROR_LOG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if count.is_multiple_of(DAO_ERROR_LOG_INTERVAL) {
                     tracing::warn!(
-                        realm = realm,
-                        count = count + 1,
-                        error = %e,
-                        "validate_nc: DAO compare_and_update_if_greater failed, fail-closed (sampled 1/{})",
-                        DAO_ERROR_LOG_INTERVAL
-                    );
+                            realm = realm,
+                            count = count + 1,
+                            error = %e,
+                            "{}", crate::i18n::translate_detail(
+                        "logs-validate-nc-dao-compare-and-update-if-greater-failed", &[("arg0", &(DAO_ERROR_LOG_INTERVAL).to_string())]
+                    ));
                 } else {
                     tracing::debug!(
                         realm = realm,
                         count = count + 1,
-                        "validate_nc: DAO compare_and_update_if_greater failed, fail-closed (sampled, suppressed warn)"
+                        "{}",
+                        crate::i18n::translate_detail(
+                            "logs-validate-nc-dao-compare-and-update-if-greater-failed-2",
+                            &[]
+                        )
                     );
                 }
                 false

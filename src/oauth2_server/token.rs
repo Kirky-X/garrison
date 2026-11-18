@@ -210,7 +210,13 @@ impl PasswordRateLimiter {
     pub async fn reset(&self, username: &str) {
         let key = format!("rate_limit:pw:{}", username);
         if let Err(e) = self.limiter.reset(&key).await {
-            tracing::warn!("PasswordRateLimiter::reset failed: {}", e);
+            tracing::warn!(
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-passwordratelimiter-reset-failed-value",
+                    &[("arg0", &(e).to_string())]
+                )
+            );
         }
     }
 
@@ -295,7 +301,13 @@ impl TokenRateLimiter {
         {
             Ok(allowed) => allowed,
             Err(e) => {
-                tracing::warn!("TokenRateLimiter::check_client failed: {}", e);
+                tracing::warn!(
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-tokenratelimiter-check-client-failed-value",
+                        &[("arg0", &(e).to_string())]
+                    )
+                );
                 true
             },
         }

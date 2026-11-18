@@ -24,14 +24,23 @@ impl GarrisonPluginManager {
                             .map(|s| (*s).to_string())
                             .or_else(|| panic_payload.downcast_ref::<String>().cloned())
                             .unwrap_or_else(|| "unknown panic".to_string());
-                        tracing::warn!("plugin factory panicked, plugin skipped: {}", msg);
+                        tracing::warn!(
+                            "{}",
+                            crate::i18n::translate_detail(
+                                "logs-plugin-factory-panicked-plugin-skipped-value",
+                                &[("arg0", &(msg).to_string())]
+                            )
+                        );
                         None
                     },
                 }
             })
             .collect();
         for p in &plugins {
-            tracing::info!("plugin loaded: {}", p.name());
+            tracing::info!(
+                "{}",
+                crate::i18n::translate_detail("logs-plugin-loaded-value", &[("arg0", p.name())])
+            );
         }
         Self { plugins }
     }
@@ -45,7 +54,13 @@ impl GarrisonPluginManager {
     pub fn on_login(&self, login_id: &str, token: &str) {
         for plugin in &self.plugins {
             if let Err(e) = plugin.on_login(login_id, token) {
-                tracing::warn!("plugin {} on_login failed: {}", plugin.name(), e);
+                tracing::warn!(
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-plugin-value-on-login-failed-value",
+                        &[("arg0", plugin.name()), ("arg1", &(e).to_string())]
+                    )
+                );
             }
         }
     }
@@ -54,7 +69,13 @@ impl GarrisonPluginManager {
     pub fn on_logout(&self, login_id: &str, token: &str) {
         for plugin in &self.plugins {
             if let Err(e) = plugin.on_logout(login_id, token) {
-                tracing::warn!("plugin {} on_logout failed: {}", plugin.name(), e);
+                tracing::warn!(
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-plugin-value-on-logout-failed-value",
+                        &[("arg0", plugin.name()), ("arg1", &(e).to_string())]
+                    )
+                );
             }
         }
     }
@@ -63,7 +84,13 @@ impl GarrisonPluginManager {
     pub fn on_permission_check(&self, login_id: &str, permission: &str) {
         for plugin in &self.plugins {
             if let Err(e) = plugin.on_permission_check(login_id, permission) {
-                tracing::warn!("plugin {} on_permission_check failed: {}", plugin.name(), e);
+                tracing::warn!(
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-plugin-value-on-permission-check-failed-value",
+                        &[("arg0", plugin.name()), ("arg1", &(e).to_string())]
+                    )
+                );
             }
         }
     }

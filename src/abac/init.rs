@@ -161,7 +161,9 @@ pub async fn check_abac_with_policy(
         Ok(())
     } else {
         // expr 不编码进错误消息（避免破坏 parse_keyed_detail 解析），仅 debug 日志保持可观测性
-        tracing::debug!(expr = %abac_expr, "ABAC policy denied");
+        tracing::debug!(expr = %abac_expr, "{}", crate::i18n::translate_detail(
+            "logs-abac-policy-denied", &[]
+        ));
         Err(GarrisonError::NotPermission(format!(
             "abac-policy-denied::{}::{}",
             action, resource

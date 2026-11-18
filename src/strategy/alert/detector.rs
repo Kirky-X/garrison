@@ -64,11 +64,12 @@ impl AnomalyDetector for IpChangeDetector {
                 Ok(None) => {},
                 Err(e) => {
                     tracing::warn!(
-                        login_id,
-                        token = token.get(..8).unwrap_or(token),
-                        error = %e,
-                        "IpChangeDetector: token session read failed, skipping token (detection continues)"
-                    );
+                            login_id,
+                            token = token.get(..8).unwrap_or(token),
+                            error = %e,
+                            "{}", crate::i18n::translate_detail(
+                        "logs-ipchangedetector-token-session-read-failed-skipping-token-detection-continues", &[]
+                    ));
                 },
             }
         }
@@ -166,7 +167,9 @@ impl AnomalyDetector for SessionHijackDetector {
         // Kickout 模式踢出疑似被劫持的会话
         if self.mode == SessionHijackMode::Kickout {
             if let Err(e) = self.session.logout(token).await {
-                tracing::warn!(error = %e, token = &token[..token.len().min(8)], "SessionHijackDetector: kickout failed");
+                tracing::warn!(error = %e, token = &token[..token.len().min(8)], "{}", crate::i18n::translate_detail(
+                    "logs-sessionhijackdetector-kickout-failed", &[]
+                ));
             }
         }
 
@@ -225,11 +228,12 @@ impl AnomalyDetector for RapidSuccessiveDetector {
                 Ok(None) => {},
                 Err(e) => {
                     tracing::warn!(
-                        login_id,
-                        token = token.get(..8).unwrap_or(token),
-                        error = %e,
-                        "RapidSuccessiveDetector: token session read failed, skipping token"
-                    );
+                            login_id,
+                            token = token.get(..8).unwrap_or(token),
+                            error = %e,
+                            "{}", crate::i18n::translate_detail(
+                        "logs-rapidsuccessivedetector-token-session-read-failed-skipping-token", &[]
+                    ));
                 },
             }
         }

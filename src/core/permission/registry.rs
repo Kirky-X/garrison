@@ -91,8 +91,9 @@ impl PermissionRegistry {
                 tracing::warn!(
                     permission = %spec.name,
                     warnings = ?warnings,
-                    "confusable characters detected in permission name"
-                );
+                    "{}", crate::i18n::translate_detail(
+                    "logs-confusable-characters-detected-in-permission-name", &[]
+                ));
             }
         }
 

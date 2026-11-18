@@ -2019,3 +2019,148 @@ logs-stp-revoke-all-session-cleanup-failed = 撤销所有会话：账号会话�
 logs-stp-bruteforce-reset-verify-failed = 暴力破解成功重置失败（不影响验证结果）
 logs-stp-bruteforce-record-verify-failed = 暴力破解失败记录写入失败（不影响验证结果）
 logs-strategy-permission-cache-write-failed = 权限缓存写入失败（login_id={$login_id}，perm={$perm}）：{$arg0}
+
+logs-abac-decision-cache-policy-set-changed-during-evaluation-skipping = abac-decision-cache: 求值期间策略集发生变化，跳过缓存写入
+logs-abac-decision-cache-read-cache-read-failed-falling-back = abac-decision-cache-read: 缓存读取失败，回退到 Cedar 求值
+logs-abac-decision-cache-write-cache-write-failed-decision-still = abac-decision-cache-write: 缓存写入失败，仍返回决策结果
+logs-abac-policy-denied = ABAC 策略拒绝
+logs-account-failure-count-get-count-failed-value = account_failure_count get_count 失败: {$arg0}
+logs-accountmetrics-gather-prometheus-encode-failed = AccountMetrics::gather prometheus 编码失败
+logs-alert-listener-on-alert-failed-value = alert 监听器 on_alert 失败: {$arg0}
+logs-anomalous-analyzer-system-clock-error-storage-key-falls-back = anomalous_analyzer: 系统时钟错误，存储键回退为秒级时间戳（不保证唯一性）
+logs-anomaly-login-analysis-engine-received-shutdown-signal-stopping = 异常登录分析引擎收到关停信号，正在停止
+logs-anomaly-login-analysis-failed-value = 异常登录分析失败: {$arg0}
+logs-anomaly-login-analysis-scan-completed = 异常登录分析扫描完成
+logs-anomaly-login-analysis-scan-exceeded-1s-redis-backend-needs = 异常登录分析扫描超过 1s，Redis 后端需优化以批量 mget
+logs-anomalydetector-check-on-check-login-failed = AnomalyDetector::check_on_check_login 失败
+logs-anomalydetector-check-on-login-failed = AnomalyDetector::check_on_login 失败
+logs-authflow-ip-whitelist-not-configured-ip-value = authflow-ip-whitelist-not-configured（ip={$arg0}）
+logs-backup-code-consumed-via-atomic-cas = 备用码已通过原子 CAS 消费
+logs-brute-force-record-failure-failed-does-not-affect-the = brute force record_failure 失败（不影响认证结果，原始认证错误仍会返回）
+logs-c7-http-method-does-not-allow-extracting-token-from = C7: HTTP 方法不允许从 body 提取 token，跳过 body 读取
+logs-captcha-attempts-key-delete-failed-non-fatal-ttl-will = CAPTCHA 尝试次数键删除失败（非致命，TTL 会清理）
+logs-captcha-challenge-discarded-due-to-exceeding-max-attempts = CAPTCHA 挑战因超过最大尝试次数而被丢弃
+logs-cas-conflict-on-backup-code-consume-retrying = 备用码消费时 CAS 冲突，重试中
+logs-cedar-value-evaluation-diagnostic-error = Cedar {$arg0} 求值诊断错误
+logs-cedar-value-evaluation-produced-diagnostic-errors-denying-fail-closed = Cedar {$arg0} 求值产生诊断错误；拒绝请求（fail-closed，issue 2756）
+logs-check-disable-skipped-no-current-token-not-logged-in = check_disable 已跳过：无当前 token（未登录）
+logs-check-ip-change-dao-read-failed-degrading-to-no = check_ip_change DAO 读取失败，降级为不告警（token={$arg0}）: {$arg1}
+logs-check-is-new-device-empty-device-id-treated-as = check_is_new_device: 空 device_id 被视为已知设备（跳过设备绑定检查；应在上游拒绝空设备以实现 fail-closed）
+logs-cleanup-expired-tokens-failed-value = cleanup_expired_tokens 失败: {$arg0}
+logs-cleanup-expired-tokens-token-value-dao-read-failed-skipping = cleanup_expired_tokens: token={$arg0} DAO 读取失败，跳过该 token: {$arg1}
+logs-confusable-characters-detected-in-permission-name = 权限名称中检测到易混淆字符
+logs-credential-delete-denied-caller-owner-idor = credential delete 被拒绝: caller != owner（IDOR）
+logs-credential-find-by-user-denied-caller-target-idor = credential find_by_user 被拒绝: caller != target（IDOR）
+logs-credential-update-aborted-concurrent-modification-detected-cas-mismatch = credential update 中止: 检测到并发修改（CAS 不匹配）
+logs-credential-update-denied-caller-owner-idor = credential update 被拒绝: caller != owner（IDOR）
+logs-credential-update-denied-user-id-transfer-forbidden-idor = credential update 被拒绝: 禁止转移 user_id（IDOR）
+logs-credit-async-persist-consumption-record-failed = credit: 异步持久化消费记录失败
+logs-credit-auto-deduct-on-login-failed = credit: 登录时自动扣费失败
+logs-credit-cannot-get-tenant-id-for-auto-deduct-on = credit: 无法获取 tenant_id 用于登录自动扣费
+logs-creditmetrics-gather-prometheus-encode-failed = CreditMetrics::gather prometheus 编码失败
+logs-custom-mask-regex-compilation-failed-returning-as-safe-fallback = 自定义掩码正则编译失败；返回 '***' 作为安全回退
+logs-dao-backend-does-not-support-role-keys-role-warmup = DAO 后端不支持 role keys()，跳过角色预热（租户仍会预热）
+logs-dao-backend-does-not-support-tenant-keys-tenant-warmup = DAO 后端不支持 tenant keys()，跳过租户预热（角色仍会预热）
+logs-delete-code-failed-after-send-failure = 发送失败后删除验证码失败
+logs-delete-stored-code-failed-after-unverified-incr-failure = 未验证计数递增失败后删除已存验证码失败
+logs-devicebindingpolicy-is-new-device-failed = DeviceBindingPolicy::is_new_device 失败
+logs-devicebindingpolicy-require-secondary-auth-failed = DeviceBindingPolicy::require_secondary_auth 失败
+logs-double-check-reread-failed-skip-deleting-expired-account-session = 二次检查重读失败，跳过删除过期 Account-Session（login_id={$arg0}）: {$arg1}
+logs-double-check-reread-failed-skip-deleting-expired-token-session = 二次检查重读失败，跳过删除过期 Token-Session（token={$arg0}...）: {$arg1}
+logs-failed-to-delete-expired-account-session-login-id-value = 删除过期 Account-Session 失败（login_id={$arg0}）: {$arg1}
+logs-failed-to-delete-expired-token-session-token-value-value = 删除过期 Token-Session 失败（token={$arg0}...）: {$arg1}
+logs-failed-to-deserialize-login-record-key-value-value = 反序列化登录记录失败（key={$arg0}）: {$arg1}
+logs-failed-to-initialize-garrisonmanager = GarrisonManager 初始化失败
+logs-failed-to-read-login-record-key-value-value = 读取登录记录失败（key={$arg0}）: {$arg1}
+logs-garrison-exception = garrison 业务异常
+logs-garrison-middleware-inner-handler-timed-out = garrison 中间件: 内部 handler 超时
+logs-garrison-middleware-rejection = garrison 中间件拒绝
+logs-garrison-rejection = garrison 拒绝请求
+logs-garrisonauthserver-starting = GarrisonAuthServer 启动中
+logs-garrisonmetrics-gather-prometheus-encode-failed = GarrisonMetrics::gather prometheus 编码失败
+logs-health-check-failed = 健康检查失败
+logs-health-check-panicked = 健康检查 panic
+logs-health-check-timed-out = 健康检查超时
+logs-httpdigestauth-constructed-with-md5-md5-is-collision-broken-and = HttpDigestAuth 使用 MD5 构造；MD5 存在碰撞漏洞，不得用于新部署（改用 SHA256）
+logs-identity-switch-value-value = 身份切换: {$arg0} -> {$arg1}
+logs-init-otlp-tracing-called-more-than-once-keeping-the = init_otlp_tracing 被多次调用；保留首个 tracer provider（no-op）
+logs-init-otlp-tracing-lost-a-concurrent-init-race-keeping = init_otlp_tracing 并发初始化竞争失败；保留首个 tracer provider
+logs-inklog-init-failed-degraded-to-tracing-subscriber-default-config = inklog 初始化失败，降级为 tracing-subscriber 默认配置（spec R-dep-003）
+logs-ip-failure-count-get-count-failed-value = ip_failure_count get_count 失败: {$arg0}
+logs-ipchangedetector-token-session-read-failed-skipping-token-detection-continues = IpChangeDetector: token session 读取失败，跳过该 token（检测继续）
+logs-keys-cleaned-up-value-expired-keys = keys() 已清理 {$arg0} 个过期键
+logs-keys-exists-sync-failed-keep-key-index-entry = keys() exists_sync 失败；保留 key_index 条目
+logs-listener-loaded-value-listener-s-registered = 监听器已加载：注册了 {$arg0} 个监听器
+logs-listener-on-event-failed-value = 监听器 on_event 失败: {$arg0}
+logs-listener-on-event-panicked-value = 监听器 on_event panic: {$arg0}
+logs-lockout-record-failure-failed = lockout record_failure 失败
+logs-lockout-record-success-failed = lockout record_success 失败
+logs-lockout-state-cas-conflict-on-record-failure-retrying = lockout 状态在 record_failure 时 CAS 冲突，重试中
+logs-lockout-state-cas-conflict-on-record-success-retrying = lockout 状态在 record_success 时 CAS 冲突，重试中
+logs-login-ip-recorded-token-value-login-id-value-ip = 登录 IP 已记录（token={$arg0}, login_id={$arg1}, ip={$arg2}）
+logs-login-with-password-failed = login_with_password 失败
+logs-logout-failed-to-delete-sso-ticket-key-value-value = logout 删除 SSO ticket 失败（key={$arg0}）: {$arg1}
+logs-oauth2-server-revoke-revocation-failed-returning-success-per-rfc = oauth2-server-revoke: 吊销失败，依据 RFC 7009 §2.2 返回成功
+logs-parameterquery-temporary-session-cleanup-failed-non-fatal-ttl-will = ParameterQuery 临时会话清理失败（非致命，TTL 会清理）
+logs-password-history-hash-verify-failed-skipping-entry-fail-open = 密码历史哈希校验失败，跳过该条目（fail-open）
+logs-passwordratelimiter-reset-failed-value = PasswordRateLimiter::reset 失败: {$arg0}
+logs-plugin-factory-panicked-plugin-skipped-value = 插件工厂 panic，已跳过插件: {$arg0}
+logs-plugin-loaded-value = 插件已加载: {$arg0}
+logs-plugin-value-on-login-failed-value = 插件 {$arg0} on_login 失败: {$arg1}
+logs-plugin-value-on-logout-failed-value = 插件 {$arg0} on_logout 失败: {$arg1}
+logs-plugin-value-on-permission-check-failed-value = 插件 {$arg0} on_permission_check 失败: {$arg1}
+logs-rapidsuccessivedetector-token-session-read-failed-skipping-token = RapidSuccessiveDetector: token session 读取失败，跳过该 token
+logs-rate-limit-sliding-window-unsupported-by-backend-falling-back = rate_limit: 后端不支持滑动窗口，回退到 atomic_lock 路径（仅进程内原子）
+logs-rate-limit-timestamp-parse-failed-skipping-entry-possible-storage = rate_limit: 时间戳解析失败，跳过该条目（可能是存储层并发写入截断）
+logs-rebuild-login-token-map-skipping-accountsession-that-failed-deserialization = rebuild_login_token_map: 跳过反序列化失败的 AccountSession
+logs-rebuild-login-token-map-skipping-key-not-matching-account = rebuild_login_token_map: 跳过不匹配 account:session:{$arg0} 模式的键: {$arg1}
+logs-renew-to-equivalent-failed-to-add-new-token-to = renew_to_equivalent: 向 Account-Session 添加新 token 失败，正在清理新 token
+logs-renew-to-equivalent-failed-to-clean-up-new-token = renew_to_equivalent: 清理新 token session 失败，新 token 可能成为孤立数据
+logs-renew-to-equivalent-failed-to-create-new-token-session = renew_to_equivalent: 创建新 token session 失败，旧 token 仍有效（A9 无 DoS）
+logs-renew-to-equivalent-failed-to-invalidate-old-token-old = renew_to_equivalent: 使旧 token 失效失败，旧 token 残留（CWE-613 安全风险），新 token 已建立且无 DoS，但运维必须立即清理旧 token 以防攻击者复用。告警规则：当 error_code="renew_old_token_cleanup_failed" 出现时触发 P2 告警
+logs-request-body-exceeds-token-extraction-parse-limit-skipping-body = 请求体超过 token 提取解析上限，跳过 body token 读取
+logs-riskpolicy-assess-failed-fail-open-to-notifyonly = RiskPolicy::assess 失败；fail-open 降级为 NotifyOnly
+logs-rollback-rate-limiter-counter-failed-after-code-store-failure = 存储验证码失败后回滚限速计数器失败
+logs-rollback-rate-limiter-counter-failed-after-send-failure = 发送失败后回滚限速计数器失败
+logs-rollback-rate-limiter-counter-failed-after-unverified-incr-failure = 未验证计数递增失败后回滚限速计数器失败
+logs-rollback-rate-limiter-counter-failed-during-channel-recycling = 通道回收期间回滚限速计数器失败
+logs-rollback-unverified-counter-failed = 回滚未验证计数器失败
+logs-rollback-unverified-counter-failed-after-send-failure = 发送失败后回滚未验证计数器失败
+logs-saml-assertion-contains-duplicate-attribute-name-possible-attribute-pollution = SAML Assertion 含重复属性名，可能存在属性污染攻击
+logs-saml-assertion-missing-ds-signature-element-signature-verification-failed = SAML Assertion 缺少 <ds:Signature> 元素，签名校验失败
+logs-saml-assertion-missing-ds-signedinfo = SAML Assertion 缺少 <ds:SignedInfo>
+logs-saml-assertion-signature-verification-failed-stripped = SAML Assertion 签名校验失败，已剥离
+logs-saml-audience-validation-opted-out-allow-unvalidated-audience-cross = SAML Audience 校验已豁免（allow_unvalidated_audience），存在跨 SP 重放风险
+logs-saml-destination-validation-opted-out-allow-unvalidated-destination-open = SAML Destination 校验已豁免（allow_unvalidated_destination），存在开放重定向攻击风险
+logs-saml-ds-reference-binding-verification-failed = SAML <ds:Reference> 绑定校验失败
+logs-saml-ds-signature-missing-ds-signaturemethod-algorithm = SAML <ds:Signature> 缺少 <ds:SignatureMethod Algorithm=...>
+logs-saml-ds-signature-missing-ds-signaturevalue = SAML <ds:Signature> 缺少 <ds:SignatureValue>
+logs-saml-ds-signedinfo-contains-xml-comments-rejected-c14n-no = SAML <ds:SignedInfo> 含 XML 注释，已拒绝（C14N no-comments 模式）
+logs-saml-request-dao-not-configured-inresponseto-binding-and-assertion = SAML request_dao 未配置：InResponseTo 绑定与 Assertion 重放防护已禁用
+logs-saml-signature-algorithm-ecdsa-sha256-is-whitelisted-but-verification = SAML 签名算法 ecdsa-sha256 在白名单中但校验尚未实现（等待 ECDSA 库）
+logs-saml-signature-algorithm-not-whitelisted-only-rsa-sha256-ecdsa = SAML 签名算法不在白名单中（仅允许 rsa-sha256 / ecdsa-sha256）
+logs-saml-signature-algorithm-rsa-1-5-rejected-weak-algorithm = SAML 签名算法 rsa-1_5 被拒绝（弱算法，存在 Bleichenbacher 攻击风险）
+logs-saml-signature-verification-failed-signature-value-does-not-match = SAML 签名校验失败：签名值与 SignedInfo 不匹配
+logs-saml-signature-verification-not-implemented-assertion-stripped-fail-closed = SAML 签名校验未实现，Assertion 已剥离（fail-closed）
+logs-saml-signedinfo-missing-ds-reference-rejected-xsw-protection = SAML SignedInfo 缺少 <ds:Reference>，已拒绝（XSW 防护）
+logs-saml-xml-element-uses-non-standard-namespace-prefix-possible = SAML XML 元素使用非标准命名空间前缀，可能存在命名空间混淆攻击
+logs-search-completed-with-skipped-records = 搜索完成，但有记录被跳过
+logs-search-scan-exceeded-the-key-count-limit-truncated = 搜索扫描超过键数量上限，已截断
+logs-sessionexpirylistener-callback-failed-login-id-value-token-value-value = SessionExpiryListener 回调失败（login_id={$arg0}, token={$arg1}...）: {$arg2}
+logs-sessionhijackdetector-kickout-failed = SessionHijackDetector: kickout 失败
+logs-skipping-corrupted-accountsession-record = 跳过损坏的 AccountSession 记录
+logs-skipping-corrupted-tokensession-record = 跳过损坏的 TokenSession 记录
+logs-smtp-configured-without-tls-builder-dangerous-credentials-may-be = SMTP 未配置 TLS（builder_dangerous）；凭据可能以明文暴露
+logs-sso-client-id-parse-failed-falling-back-to-default = SSO client_id 解析失败，回退默认值 0
+logs-strictbinding-require-secondary-auth-unconditional-true-new-device-confirmed = StrictBinding::require_secondary_auth: 无条件返回 true（调用方契约已确认是新设备）
+logs-system-clock-before-unix-epoch-created-at-falls-back = 系统时间早于 UNIX_EPOCH，created_at 回退为 0: {$arg0}
+logs-tokenratelimiter-check-client-failed-value = TokenRateLimiter::check_client 失败: {$arg0}
+logs-tracing-subscriber-already-initialized-skip-value = tracing subscriber 已初始化，跳过: {$arg0}
+logs-validate-nc-dao-compare-and-update-if-greater-failed = validate_nc: DAO compare_and_update_if_greater 失败，fail-closed（每 {$arg0} 次采样一次）
+logs-validate-nc-dao-compare-and-update-if-greater-failed-2 = validate_nc: DAO compare_and_update_if_greater 失败，fail-closed（已采样，抑制 warn）
+logs-validate-nc-no-dao-injected-skipping-nc-monotonicity-check = validate_nc: 未注入 DAO，跳过 nc 单调性检查（fail-open，300s 窗口内可重放）；生产环境请通过 with_dao 注入 DAO 以启用 RFC 7616 §3.4.6 重放防护
+logs-validate-nc-rejected-current-thread-runtime-does-not-support = validate_nc 已拒绝: current_thread runtime 不支持 block_in_place（fail-closed，依据 vuln-0012）
+logs-validate-nc-rejected-no-tokio-runtime-available-fail-closed = validate_nc 已拒绝: 无可用 tokio runtime（fail-closed，依据 vuln-0012）
+logs-waf-blocked-request = WAF 拦截请求
+logs-waf-whitelist-allowed = WAF 白名单放行
+logs-session-expired = 会话已过期

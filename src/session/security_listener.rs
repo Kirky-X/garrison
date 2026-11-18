@@ -52,10 +52,15 @@ impl SessionSecurityListener {
         let key = format!("{}ip:{}", DaoKeyPrefix::Session, token);
         self.dao.set(&key, ip, IP_RECORD_TTL).await?;
         tracing::info!(
-            "login IP recorded (token={}, login_id={}, ip={})",
-            mask_token(token),
-            login_id,
-            ip
+            "{}",
+            crate::i18n::translate_detail(
+                "logs-login-ip-recorded-token-value-login-id-value-ip",
+                &[
+                    ("arg0", &(mask_token(token)).to_string()),
+                    ("arg1", login_id),
+                    ("arg2", ip)
+                ]
+            )
         );
         Ok(())
     }
@@ -75,9 +80,14 @@ impl SessionSecurityListener {
             Err(e) => {
                 // DAO 错误降级：不阻断认证主流程，仅记录警告
                 tracing::warn!(
-                    "check_ip_change DAO read failed, degrading to no alert (token={}): {}",
-                    mask_token(token),
-                    e
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-check-ip-change-dao-read-failed-degrading-to-no",
+                        &[
+                            ("arg0", &(mask_token(token)).to_string()),
+                            ("arg1", &(e).to_string())
+                        ]
+                    )
                 );
                 return Ok(None);
             },

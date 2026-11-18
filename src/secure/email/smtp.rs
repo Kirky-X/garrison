@@ -85,12 +85,18 @@ impl SmtpEmailSender {
             lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::starttls_relay(&config.host)
         } else {
             tracing::warn!(
-                host = %config.host,
-                port = config.port,
-                "SMTP configured without TLS (builder_dangerous); credentials may be exposed in plaintext"
-            );
-            Ok(lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::builder_dangerous(&config.host))
-        }.map_err(|e| GarrisonError::Config(format!("email-smtp-builder-failed::{}", e)))?;
+            host = %config.host,
+            port = config.port,
+            "{}", crate::i18n::translate_detail(
+                "logs-smtp-configured-without-tls-builder-dangerous-credentials-may-be", &[]
+            ));
+            Ok(
+                lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::builder_dangerous(
+                    &config.host,
+                ),
+            )
+        }
+        .map_err(|e| GarrisonError::Config(format!("email-smtp-builder-failed::{}", e)))?;
 
         let transport = builder
             .port(config.port)

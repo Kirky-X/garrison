@@ -571,7 +571,13 @@ pub fn spawn_cleanup_task(
         loop {
             interval.tick().await;
             if let Err(e) = session.cleanup_expired_tokens().await {
-                tracing::warn!("cleanup_expired_tokens failed: {}", e);
+                tracing::warn!(
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-cleanup-expired-tokens-failed-value",
+                        &[("arg0", &(e).to_string())]
+                    )
+                );
             }
         }
     });

@@ -43,7 +43,11 @@ pub fn init_otlp_tracing(endpoint: &str) -> Result<(), GarrisonOtelError> {
     // 并发/重复调用只初始化一次，保留首个 provider（防 last-writer-wins 静默覆盖）
     if TRACER_PROVIDER.get().is_some() {
         tracing::warn!(
-            "init_otlp_tracing called more than once; keeping the first tracer provider (no-op)"
+            "{}",
+            crate::i18n::translate_detail(
+                "logs-init-otlp-tracing-called-more-than-once-keeping-the",
+                &[]
+            )
         );
         drop(exporter); // 丢弃本次多建的 exporter，不构建孤儿 provider
         return Ok(());
@@ -59,7 +63,11 @@ pub fn init_otlp_tracing(endpoint: &str) -> Result<(), GarrisonOtelError> {
     // 句柄供退出前 flush；set 失败说明并发调用抢先注册，保留首个并关闭本次多建的
     if TRACER_PROVIDER.set(provider.clone()).is_err() {
         tracing::warn!(
-            "init_otlp_tracing lost a concurrent init race; keeping the first tracer provider"
+            "{}",
+            crate::i18n::translate_detail(
+                "logs-init-otlp-tracing-lost-a-concurrent-init-race-keeping",
+                &[]
+            )
         );
         provider.shutdown().ok();
         return Ok(());
