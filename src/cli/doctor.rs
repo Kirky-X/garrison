@@ -99,9 +99,123 @@ pub struct DoctorContext {
 /// 同步检查项签名（既有校验函数均为同步签名，不引入异步运行时依赖）。
 pub type SecurityCheck = fn(&DoctorContext) -> Vec<SecurityCheckFinding>;
 
+/// 将发现项渲染为逐行报告 + 汇总行。
+///
+/// 逐行格式 `✓|✗|! <id>: <message>`，末行 `<p> passed, <w> warnings, <f> failures`。
+fn render_report(findings: &[SecurityCheckFinding]) -> String {
+    let mut lines = Vec::with_capacity(findings.len() + 1);
+    let mut passed = 0usize;
+    let mut warned = 0usize;
+    let mut failed = 0usize;
+    for finding in findings {
+        let mark = match finding.status {
+            FindingStatus::Pass => {
+                passed += 1;
+                "✓"
+            },
+            FindingStatus::Warn => {
+                warned += 1;
+                "!"
+            },
+            FindingStatus::Fail => {
+                failed += 1;
+                "✗"
+            },
+        };
+        lines.push(format!("{} {}: {}", mark, finding.id, finding.message));
+    }
+    lines.push(format!(
+        "{} passed, {} warnings, {} failures",
+        passed, warned, failed
+    ));
+    lines.join("\n")
+}
+
+/// 执行全部检查项并渲染报告（CHECKS 在 T006 接入，当前为空集合）。
+pub fn run_security_doctor(ctx: &DoctorContext) -> String {
+    let _ = ctx; // CHECKS 接入前显式消费，避免未使用参数告警
+    let findings: Vec<SecurityCheckFinding> = Vec::new();
+    render_report(&findings)
+}
+
+/// 退出码：Standard 仅 Fail 计失败；Strict 下 Fail 或 Warn 均计失败。
+pub fn doctor_exit_code(findings: &[SecurityCheckFinding], profile: DoctorProfile) -> i32 {
+    let has_fail = findings.iter().any(|f| f.status == FindingStatus::Fail);
+    let has_warn = findings.iter().any(|f| f.status == FindingStatus::Warn);
+    match profile {
+        DoctorProfile::Standard => i32::from(has_fail),
+        DoctorProfile::Strict => i32::from(has_fail || has_warn),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn finding(id: &'static str, status: FindingStatus) -> SecurityCheckFinding {
+        SecurityCheckFinding::new(id, status, format!("{id} detail"))
+    }
+
+    #[test]
+    fn exit_code_zero_for_clean_report_in_both_profiles() {
+        let findings = [finding("clean-check", FindingStatus::Pass)];
+        assert_eq!(doctor_exit_code(&findings, DoctorProfile::Standard), 0);
+        assert_eq!(doctor_exit_code(&findings, DoctorProfile::Strict), 0);
+        assert_eq!(doctor_exit_code(&[], DoctorProfile::Strict), 0);
+    }
+
+    #[test]
+    fn exit_code_warn_only_is_zero_standard_and_one_strict() {
+        let findings = [finding("warn-check", FindingStatus::Warn)];
+        assert_eq!(doctor_exit_code(&findings, DoctorProfile::Standard), 0);
+        assert_eq!(doctor_exit_code(&findings, DoctorProfile::Strict), 1);
+    }
+
+    #[test]
+    fn exit_code_fail_is_one_in_both_profiles() {
+        let findings = [
+            finding("warn-check", FindingStatus::Warn),
+            finding("fail-check", FindingStatus::Fail),
+        ];
+        assert_eq!(doctor_exit_code(&findings, DoctorProfile::Standard), 1);
+        assert_eq!(doctor_exit_code(&findings, DoctorProfile::Strict), 1);
+    }
+
+    #[test]
+    fn report_renders_marks_and_summary() {
+        let findings = [
+            finding("ok", FindingStatus::Pass),
+            finding("warn", FindingStatus::Warn),
+            finding("bad", FindingStatus::Fail),
+        ];
+        let report = render_report(&findings);
+        let lines: Vec<&str> = report.lines().collect();
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0], "✓ ok: ok detail");
+        assert_eq!(lines[1], "! warn: warn detail");
+        assert_eq!(lines[2], "✗ bad: bad detail");
+        assert_eq!(lines[3], "1 passed, 1 warnings, 1 failures");
+    }
+
+    #[test]
+    fn profile_does_not_change_report_content() {
+        let ctx = DoctorContext {
+            config: GarrisonConfig::default_config(),
+            #[cfg(feature = "auth-server")]
+            server: None,
+            features: FeatureMatrix::from_compilation(),
+            profile: DoctorProfile::Standard,
+        };
+        let standard = run_security_doctor(&ctx);
+        let strict_ctx = DoctorContext {
+            profile: DoctorProfile::Strict,
+            config: ctx.config.clone(),
+            #[cfg(feature = "auth-server")]
+            server: ctx.server.clone(),
+            features: ctx.features,
+        };
+        assert_eq!(standard, run_security_doctor(&strict_ctx));
+    }
 
     #[test]
     fn synthetic_feature_matrix_is_injected_into_context() {
