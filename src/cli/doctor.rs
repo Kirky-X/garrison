@@ -345,27 +345,40 @@ fn check_jwt_secret_strength(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
 
 /// `config-security-rules`：feature 关闭记 Warn；启用时复用 `validate_security_rules`。
 fn check_config_security_rules(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
-    let finding = if !ctx.features.config_security_rules {
-        SecurityCheckFinding::new(
+    // 编译期未启用时，无论注入矩阵如何都记 Warn（方法不存在）。
+    #[cfg(not(feature = "config-security-rules"))]
+    {
+        let _ = ctx;
+        return vec![SecurityCheckFinding::new(
             "config-security-rules",
             FindingStatus::Warn,
             "Config security rule set is not compiled in (enable config-security-rules)",
-        )
-    } else {
-        match ctx.config.validate_security_rules() {
-            Ok(()) => SecurityCheckFinding::new(
+        )];
+    }
+    #[cfg(feature = "config-security-rules")]
+    {
+        let finding = if !ctx.features.config_security_rules {
+            SecurityCheckFinding::new(
                 "config-security-rules",
-                FindingStatus::Pass,
-                "Config security rule set is enabled and passes",
-            ),
-            Err(e) => SecurityCheckFinding::new(
-                "config-security-rules",
-                FindingStatus::Fail,
-                format!("Config security rule set rejects current config: {e}"),
-            ),
-        }
-    };
-    vec![finding]
+                FindingStatus::Warn,
+                "Config security rule set is not compiled in (enable config-security-rules)",
+            )
+        } else {
+            match ctx.config.validate_security_rules() {
+                Ok(()) => SecurityCheckFinding::new(
+                    "config-security-rules",
+                    FindingStatus::Pass,
+                    "Config security rule set is enabled and passes",
+                ),
+                Err(e) => SecurityCheckFinding::new(
+                    "config-security-rules",
+                    FindingStatus::Fail,
+                    format!("Config security rule set rejects current config: {e}"),
+                ),
+            }
+        };
+        vec![finding]
+    }
 }
 
 /// `internal-api-key`：空/短 → Fail（严格档语义），非严格档短 Key → Warn。
