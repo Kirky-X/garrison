@@ -138,6 +138,123 @@ pub fn run_security_doctor(ctx: &DoctorContext) -> String {
     render_report(&findings)
 }
 
+/// `server-bind-address`：通配绑定 → Warn（容器合法，公网须收口）。
+fn check_server_bind_address(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
+    #[cfg(feature = "auth-server")]
+    {
+        let Some(server) = ctx.server.as_ref() else {
+            return vec![SecurityCheckFinding::new(
+                "server-bind-address",
+                FindingStatus::Pass,
+                "Skipped: auth-server not available in this context",
+            )];
+        };
+        if server.external_bind.is_unspecified() || server.internal_bind.is_unspecified() {
+            return vec![SecurityCheckFinding::new(
+                "server-bind-address",
+                FindingStatus::Warn,
+                "Wildcard bind is set; legal in containers, but restrict exposure on public hosts",
+            )];
+        }
+        vec![SecurityCheckFinding::new(
+            "server-bind-address",
+            FindingStatus::Pass,
+            "Bind addresses are specific (loopback/private), not wildcard",
+        )]
+    }
+    #[cfg(not(feature = "auth-server"))]
+    {
+        let _ = ctx;
+        vec![SecurityCheckFinding::new(
+            "server-bind-address",
+            FindingStatus::Pass,
+            "Skipped: auth-server not compiled in this build",
+        )]
+    }
+}
+
+/// `external-login-ack`：外网登录开启且非回环绑定未 ACK → 严格档 Fail / 非严格档 Warn。
+fn check_external_login_ack(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
+    #[cfg(feature = "auth-server")]
+    {
+        let Some(server) = ctx.server.as_ref() else {
+            return vec![SecurityCheckFinding::new(
+                "external-login-ack",
+                FindingStatus::Pass,
+                "Skipped: auth-server not available in this context",
+            )];
+        };
+        let unacked = server.external_login_enabled
+            && !server.external_bind.is_loopback()
+            && server.external_login_ack.as_deref() != Some(crate::server::EXTERNAL_LOGIN_ACK);
+        if !unacked {
+            return vec![SecurityCheckFinding::new(
+                "external-login-ack",
+                FindingStatus::Pass,
+                "External login is off, loopback-only, or explicitly acknowledged",
+            )];
+        }
+        let status = if server.strict_security {
+            FindingStatus::Fail
+        } else {
+            FindingStatus::Warn
+        };
+        vec![SecurityCheckFinding::new(
+            "external-login-ack",
+            status,
+            "External login is exposed on a non-loopback bind without the risk acknowledgement",
+        )]
+    }
+    #[cfg(not(feature = "auth-server"))]
+    {
+        let _ = ctx;
+        vec![SecurityCheckFinding::new(
+            "external-login-ack",
+            FindingStatus::Pass,
+            "Skipped: auth-server not compiled in this build",
+        )]
+    }
+}
+
+/// `trusted-proxies`：含公网地址 → Fail（与 validate() 无条件拒绝一致）。
+fn check_trusted_proxies(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
+    #[cfg(feature = "auth-server")]
+    {
+        let Some(server) = ctx.server.as_ref() else {
+            return vec![SecurityCheckFinding::new(
+                "trusted-proxies",
+                FindingStatus::Pass,
+                "Skipped: auth-server not available in this context",
+            )];
+        };
+        let public = server
+            .rate_limit_trusted_proxies
+            .iter()
+            .find(|ip| !crate::server::config::is_private_proxy_addr(ip));
+        match public {
+            Some(ip) => vec![SecurityCheckFinding::new(
+                "trusted-proxies",
+                FindingStatus::Fail,
+                format!("Trusted proxy {ip} is not a private/loopback address"),
+            )],
+            None => vec![SecurityCheckFinding::new(
+                "trusted-proxies",
+                FindingStatus::Pass,
+                "All trusted proxies are loopback/private addresses",
+            )],
+        }
+    }
+    #[cfg(not(feature = "auth-server"))]
+    {
+        let _ = ctx;
+        vec![SecurityCheckFinding::new(
+            "trusted-proxies",
+            FindingStatus::Pass,
+            "Skipped: auth-server not compiled in this build",
+        )]
+    }
+}
+
 /// `jwt-secret-strength`：复用 `validate_jwt_secret`，Err → Fail。
 fn check_jwt_secret_strength(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
     let finding = match ctx.config.validate_jwt_secret() {
@@ -338,6 +455,67 @@ mod tests {
     }
 
     #[cfg(feature = "auth-server")]
+    #[test]
+    fn server_face_checks_align_with_validate_semantics() {
+        let mut server = AuthServerConfig::default();
+        server.external_bind = std::net::IpAddr::from([0, 0, 0, 0]);
+        server.internal_api_key = "short".to_string();
+        server.external_login_enabled = true;
+        server.rate_limit_trusted_proxies = vec![std::net::IpAddr::from([8, 8, 8, 8])];
+        let ctx = DoctorContext {
+            config: GarrisonConfig::default_config(),
+            server: Some(server.clone()),
+            features: FeatureMatrix::from_compilation(),
+            profile: DoctorProfile::Standard,
+        };
+
+        let bind = check_server_bind_address(&ctx);
+        assert_eq!(bind[0].id, "server-bind-address");
+        assert_eq!(bind[0].status, FindingStatus::Warn);
+
+        let ack = check_external_login_ack(&ctx);
+        assert_eq!(ack[0].id, "external-login-ack");
+        assert_eq!(ack[0].status, FindingStatus::Fail);
+
+        let proxies = check_trusted_proxies(&ctx);
+        assert_eq!(proxies[0].id, "trusted-proxies");
+        assert_eq!(proxies[0].status, FindingStatus::Fail);
+
+        let relaxed = DoctorContext {
+            config: GarrisonConfig::default_config(),
+            server: Some(AuthServerConfig {
+                strict_security: false,
+                ..server
+            }),
+            features: ctx.features,
+            profile: DoctorProfile::Standard,
+        };
+        assert_eq!(
+            check_external_login_ack(&relaxed)[0].status,
+            FindingStatus::Warn
+        );
+    }
+
+    #[cfg(feature = "auth-server")]
+    #[test]
+    fn server_face_checks_skip_when_server_absent() {
+        let ctx = DoctorContext {
+            config: GarrisonConfig::default_config(),
+            server: None,
+            features: FeatureMatrix::from_compilation(),
+            profile: DoctorProfile::Standard,
+        };
+        for findings in [
+            check_server_bind_address(&ctx),
+            check_external_login_ack(&ctx),
+            check_trusted_proxies(&ctx),
+            check_internal_api_key(&ctx),
+        ] {
+            assert_eq!(findings.len(), 1);
+            assert_eq!(findings[0].status, FindingStatus::Pass);
+        }
+    }
+
     #[test]
     fn internal_api_key_check_distinguishes_short_and_strong() {
         let mut server = AuthServerConfig::default();
