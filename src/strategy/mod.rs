@@ -51,6 +51,9 @@ pub mod hooks;
 pub mod rate_limiter_backend;
 /// 策略注册表模块。
 pub mod registry;
+/// 风险自适应认证模块（feature-gated: `risk-adaptive-auth`，聚合异常信号为处置动作）。
+#[cfg(feature = "risk-adaptive-auth")]
+pub mod risk;
 
 /// `GarrisonPermissionStrategyDefault` 的实现块。
 mod default;
