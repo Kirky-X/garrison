@@ -140,8 +140,8 @@ impl Default for AuthServerConfig {
                 .unwrap_or(300),
             // readyz details 默认剥离（可能含内部依赖拓扑），显式 opt-in
             health_details_enabled: env_flag("GARRISON_HEALTH_DETAILS").unwrap_or(false),
-            // 棘轮语义：缺省 false，只告警不拒绝。
-            strict_security: env_flag("GARRISON_STRICT_SECURITY").unwrap_or(false),
+            // 1.0 起严格档默认开启（fail-closed，有意 Breaking）；单版本回退：GARRISON_STRICT_SECURITY=false
+            strict_security: env_flag("GARRISON_STRICT_SECURITY").unwrap_or(true),
             external_login_ack: std::env::var("GARRISON_EXTERNAL_LOGIN_ACK")
                 .ok()
                 .filter(|s| !s.is_empty()),

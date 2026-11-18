@@ -614,6 +614,42 @@ fn test_strict_security_tiers() {
     let _ = loopback;
 }
 
+/// 1.0 默认严格档：不设环境变量时 `strict_security == true`（fail-closed）。
+#[test]
+#[serial_test::serial]
+fn test_strict_security_enabled_by_default() {
+    assert!(
+        AuthServerConfig::default().strict_security,
+        "1.0 起 strict_security 默认必须为 true（有意契约变更）"
+    );
+}
+
+/// `GARRISON_STRICT_SECURITY=false` 单版本回退：严格档两条拒绝降级为仅告警。
+/// 与所有读写进程 env 的测试同队列串行（沿用 config/tests.rs EnvVarGuard 范式）。
+#[test]
+#[serial_test::serial]
+fn test_strict_security_env_fallback_disables_rejection() {
+    std::env::set_var("GARRISON_STRICT_SECURITY", "false");
+    let config = AuthServerConfig {
+        internal_api_key: "short-key-12".to_string(),
+        external_login_enabled: true,
+        external_bind: std::net::IpAddr::from([0, 0, 0, 0]),
+        ..AuthServerConfig::default()
+    };
+    std::env::remove_var("GARRISON_STRICT_SECURITY");
+
+    assert!(
+        !config.strict_security,
+        "回退开关应使 strict_security 为 false"
+    );
+    let result = config.validate();
+    assert!(
+        result.is_ok(),
+        "非严格档短 Key / 未 ACK 外网登录应只告警不拒绝，实际: {:?}",
+        result
+    );
+}
+
 // 非严格档告警锁定：只告警不拒绝且逐条可观测（LogCapture 范式沿用 `src/oauth2_server/token.rs`，set_default 线程局部不互干）。
 
 /// 进程内日志捕获 writer（收集格式化后的行）。
