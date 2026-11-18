@@ -14,8 +14,6 @@ pub use action::{DefaultRiskActionResolver, RiskAction, RiskActionResolver};
 pub use model::{RiskAssessment, RiskContext, RiskLevel, RiskReason, RiskSignal};
 pub use policy::{RiskPolicy, RiskThresholds, RiskWeights, ThresholdRiskPolicy};
 
-use crate::error::GarrisonResult;
-use async_trait::async_trait;
 use std::sync::Arc;
 
 /// 风险引擎：聚合策略评分与动作映射；策略失败 fail-open 为 `NotifyOnly`。
@@ -62,7 +60,8 @@ impl RiskEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::GarrisonError;
+    use crate::error::{GarrisonError, GarrisonResult};
+    use async_trait::async_trait;
 
     struct FailingPolicy;
     #[async_trait]
