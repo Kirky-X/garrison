@@ -18,7 +18,9 @@
 
 #![cfg(feature = "web-axum")]
 
-use crate::common::harness::{web_test_config, GarrisonTestHarness, MockInterface};
+use crate::common::harness::{
+    web_test_config, web_test_config_relaxed_tenant, GarrisonTestHarness, MockInterface,
+};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::response::Response;
@@ -1165,7 +1167,7 @@ async fn acc_wax_021_macro_handlers_mount_into_axum_router() {
     interface.allow("1001", &["user:read"], &["admin"]);
     let _h = GarrisonTestHarness::builder()
         .interface(interface.clone())
-        .config(web_test_config())
+        .config(web_test_config_relaxed_tenant())
         .init()
         .await
         .expect("harness init 应成功");

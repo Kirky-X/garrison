@@ -400,6 +400,17 @@ pub fn web_test_config() -> Arc<GarrisonConfig> {
     Arc::new(config)
 }
 
+/// 带租户头但 token 无绑定、仅需验证中间件/handler 装配的用例专用配置。
+/// 显式回退 1.0 起默认开启的租户绑定开关，隔离断言目标（租户拒绝语义由
+/// `tenant_binding_tests` 覆盖）。
+pub fn web_test_config_relaxed_tenant() -> Arc<GarrisonConfig> {
+    let mut config = GarrisonConfig::default_config();
+    config.throw_on_not_login = false;
+    config.require_tenant_bound_jwt = false;
+    config.require_session_tenant_binding = false;
+    Arc::new(config)
+}
+
 /// 各框架关停通道（差异收敛在 [`SpawnedServer::shutdown`] 内部）。
 enum ShutdownHandle {
     #[cfg(any(feature = "web-axum", feature = "web-warp"))]

@@ -16,7 +16,9 @@
 
 #![cfg(feature = "web-actix")]
 
-use crate::common::harness::{web_test_config, GarrisonTestHarness, MockInterface};
+use crate::common::harness::{
+    web_test_config, web_test_config_relaxed_tenant, GarrisonTestHarness, MockInterface,
+};
 use actix_web::body::to_bytes;
 use actix_web::web;
 use actix_web::{test, App};
@@ -93,7 +95,7 @@ async fn acc_actx_001_middleware_into_middleware_matrix() {
     interface.allow("1001", &["admin:read"], &[]);
     let _h = GarrisonTestHarness::builder()
         .interface(interface.clone())
-        .config(web_test_config())
+        .config(web_test_config_relaxed_tenant())
         .init()
         .await
         .expect("harness init 应成功");
@@ -101,7 +103,7 @@ async fn acc_actx_001_middleware_into_middleware_matrix() {
         .await
         .expect("login_simple 应签发 token");
 
-    let middleware = GarrisonRouter::new(web_test_config())
+    let middleware = GarrisonRouter::new(web_test_config_relaxed_tenant())
         .with_header_tenant()
         .route_protected("/protected", Annotation::CheckLogin)
         .route_protected(
