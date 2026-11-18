@@ -294,6 +294,24 @@ impl GarrisonError {
         }
     }
 
+    /// 客户端可执行的下一步动作（封闭词表七值，稳定机器 token，非 i18n 文案）。
+    ///
+    /// 单一事实来源：逐 arm 显式静态书写（风格同 `retry_after_secs`，ADR-0004 决策同源）；
+    /// 只给「客户端改变行为后请求可成功」的变体发动作，服务端侧错误返回 `None`（字段省略）。
+    /// 词表封闭，新增须修订 ADR-0004「Decision 4: suggested_action」。
+    pub fn suggested_action(&self) -> Option<&'static str> {
+        match self {
+            Self::NotLogin(_) | Self::Exception(_) => Some("authenticate"),
+            Self::ExpiredToken(_) | Self::TokenRevoked(_) => Some("refresh_token"),
+            Self::InvalidToken(_) => Some("reauthenticate"),
+            Self::NotPermission(_) | Self::NotRole(_) => Some("request_access"),
+            Self::NotSafe { .. } => Some("complete_second_factor"),
+            Self::RateLimited { .. } => Some("retry_later"),
+            Self::DisableService { .. } => Some("contact_admin"),
+            _ => None,
+        }
+    }
+
     /// 错误响应渲染的统一日志（axum / actix / warp 三框架适配器共用）。
     ///
     /// 限流拒绝是预期行为：429 攻击路径下 error 级无法被 EnvFilter 静音，构成日志洪水向量，故 `RateLimited` 降级 `warn`；其余变体保持 `error`。
@@ -845,6 +863,126 @@ mod tests {
         }
         assert_eq!(GarrisonError::NotLogin("x".into()).code(), "NOT_LOGIN");
         assert_eq!(GarrisonError::Session("x".into()).code(), "SESSION_ERROR");
+    }
+
+    /// `suggested_action` 全变体覆盖：逐变体钉住动作 token（含 None）；新增变体漏配会让本测试构造列表与映射同步失败。
+    #[test]
+    #[cfg_attr(
+        not(any(feature = "email-verification", feature = "credit-metering")),
+        allow(unused_mut)
+    )]
+    fn suggested_action_covers_all_variants() {
+        let mut cases: Vec<(GarrisonError, Option<&'static str>)> = vec![
+            (GarrisonError::NotLogin("a".into()), Some("authenticate")),
+            (
+                GarrisonError::NotPermission("a".into()),
+                Some("request_access"),
+            ),
+            (GarrisonError::NotRole("a".into()), Some("request_access")),
+            (
+                GarrisonError::InvalidToken("a".into()),
+                Some("reauthenticate"),
+            ),
+            (
+                GarrisonError::TokenRevoked("a".into()),
+                Some("refresh_token"),
+            ),
+            (
+                GarrisonError::ExpiredToken("a".into()),
+                Some("refresh_token"),
+            ),
+            (GarrisonError::Dao("a".into()), None),
+            (GarrisonError::Config("a".into()), None),
+            (GarrisonError::Internal("a".into()), None),
+            (GarrisonError::Session("a".into()), None),
+            (GarrisonError::Annotation("a".into()), None),
+            (GarrisonError::Context("a".into()), None),
+            (
+                GarrisonError::Exception(Box::new(crate::exception::GarrisonException::new(
+                    -1, "a",
+                ))),
+                Some("authenticate"),
+            ),
+            (GarrisonError::OAuth2("a".into()), None),
+            (GarrisonError::Network("a".into()), None),
+            (GarrisonError::InvalidResponse("a".into()), None),
+            (GarrisonError::InvalidParam("a".into()), None),
+            (GarrisonError::NotImplemented("a".into()), None),
+            (GarrisonError::FirewallBlocked("a".into()), None),
+            (
+                GarrisonError::DisableService {
+                    service: "default".into(),
+                    until: None,
+                },
+                Some("contact_admin"),
+            ),
+            (
+                GarrisonError::NotSafe {
+                    reason: "MFA_TOTP_REQUIRED".into(),
+                },
+                Some("complete_second_factor"),
+            ),
+            (
+                GarrisonError::InvalidStateTransition {
+                    from: "A".into(),
+                    to: "B".into(),
+                },
+                None,
+            ),
+            (
+                GarrisonError::SmsRateLimitExceeded {
+                    window: "hourly".into(),
+                },
+                None,
+            ),
+            (GarrisonError::SmsVerifyMaxAttempts, None),
+            (GarrisonError::SmsCodeNotFound, None),
+            (GarrisonError::SmsChannelRecycled, None),
+            (
+                GarrisonError::RateLimited {
+                    retry_after_secs: 30,
+                },
+                Some("retry_later"),
+            ),
+        ];
+        #[cfg(feature = "email-verification")]
+        cases.extend([
+            (
+                GarrisonError::EmailRateLimitExceeded {
+                    window: "hourly".into(),
+                },
+                None,
+            ),
+            (GarrisonError::EmailVerifyMaxAttempts, None),
+            (GarrisonError::EmailCodeNotFound, None),
+            (GarrisonError::EmailChannelRecycled, None),
+        ]);
+        #[cfg(feature = "credit-metering")]
+        cases.push((
+            GarrisonError::CreditInsufficient {
+                tenant_id: 1,
+                requested: 10,
+                remaining: 0,
+            },
+            None,
+        ));
+
+        const VOCAB: &[&str] = &[
+            "authenticate",
+            "reauthenticate",
+            "refresh_token",
+            "request_access",
+            "complete_second_factor",
+            "retry_later",
+            "contact_admin",
+        ];
+        for (err, expected) in &cases {
+            let actual = err.suggested_action();
+            assert_eq!(actual, *expected, "suggested_action 漂移: {err:?}");
+            if let Some(action) = actual {
+                assert!(VOCAB.contains(&action), "动作必须来自封闭词表: {action}");
+            }
+        }
     }
 
     /// 哨兵：`GarrisonError` 经 `Exception(Box<..>)` 后体积必须远低于 clippy `result_large_err` 阈值（128B），防未来变体膨胀回归。
