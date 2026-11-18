@@ -820,6 +820,8 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["error_code"], "RATE_LIMITED");
         assert_eq!(json["error_id"], "ratelimit.rate_limited");
+        // 统一错误体经 to_json_body 输出客户端动作指引（单一事实来源，无第二映射点）
+        assert_eq!(json["suggested_action"], "retry_later");
     }
 
     /// 429 响应携带 Retry-After（合法 delta-seconds ≥ 1）。
