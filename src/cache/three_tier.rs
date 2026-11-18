@@ -443,7 +443,7 @@ impl UserCacheService {
                 deleted,
                 total = keys.len() * 2,
                 error = %e,
-                "cache invalidate completed with errors; all deletes were attempted, retry is idempotent"
+                "{}", crate::i18n::translate_detail("logs-cache-invalidate-completed-with-errors", &[])
             );
             return Err(e);
         }

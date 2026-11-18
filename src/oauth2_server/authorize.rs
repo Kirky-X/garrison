@@ -756,20 +756,20 @@ impl AuthorizeHandler {
         let record: CodeUsedRecord = match serde_json::from_str(&json) {
             Ok(r) => r,
             Err(e) => {
-                tracing::warn!(error = %e, "revoke_replayed_code_tokens: failed to deserialize codeused record, skipping revocation");
+                tracing::warn!(error = %e, "{}", crate::i18n::translate_detail("logs-oauth2-revoke-replayed-deserialize-failed", &[]));
                 return Ok(false);
             },
         };
         // 吊销 access token（introspection / 资源服务器按 DAO 记录校验时失效）
         let at_key = DaoKeyPrefix::OAuth2AccessToken.build_key(&record.access_token);
         if let Err(e) = self.dao.delete(&at_key).await {
-            tracing::warn!(error = %e, "revoke_replayed_code_tokens: failed to delete access token record");
+            tracing::warn!(error = %e, "{}", crate::i18n::translate_detail("logs-oauth2-revoke-replayed-access-token-delete-failed", &[]));
         }
         // 吊销 refresh token（阻止后续 refresh 轮换）
         if let Some(rt) = &record.refresh_token {
             let rt_key = oauth2_refresh_token_key(rt);
             if let Err(e) = self.dao.delete(&rt_key).await {
-                tracing::warn!(error = %e, "revoke_replayed_code_tokens: failed to delete refresh token record");
+                tracing::warn!(error = %e, "{}", crate::i18n::translate_detail("logs-oauth2-revoke-replayed-refresh-token-delete-failed", &[]));
             }
         }
         Ok(true)

@@ -723,7 +723,7 @@ impl GarrisonAuthServer {
                 .await
                 {
                     Some(Err(e)) => {
-                        tracing::error!(error = %e, "external server error");
+                        tracing::error!(error = %e, "{}", crate::i18n::translate_detail("logs-server-external-error", &[]));
                         Err(GarrisonError::Internal(format!(
                             "server-external-server-error::{}",
                             e
@@ -746,7 +746,7 @@ impl GarrisonAuthServer {
             #[cfg(not(feature = "server-graceful-shutdown"))]
             {
                 if let Err(e) = serve.await {
-                    tracing::error!(error = %e, "external server error");
+                    tracing::error!(error = %e, "{}", crate::i18n::translate_detail("logs-server-external-error", &[]));
                     return Err(GarrisonError::Internal(format!(
                         "server-external-server-error::{}",
                         e
@@ -818,7 +818,7 @@ impl GarrisonAuthServer {
                 .await
                 {
                     Some(Err(e)) => {
-                        tracing::error!(error = %e, "internal server error");
+                        tracing::error!(error = %e, "{}", crate::i18n::translate_detail("logs-server-internal-error", &[]));
                         Err(GarrisonError::Internal(format!(
                             "server-internal-server-error::{}",
                             e
@@ -841,7 +841,7 @@ impl GarrisonAuthServer {
             #[cfg(not(feature = "server-graceful-shutdown"))]
             {
                 if let Err(e) = serve.await {
-                    tracing::error!(error = %e, "internal server error");
+                    tracing::error!(error = %e, "{}", crate::i18n::translate_detail("logs-server-internal-error", &[]));
                     return Err(GarrisonError::Internal(format!(
                         "server-internal-server-error::{}",
                         e
@@ -900,7 +900,7 @@ async fn shutdown_signal() {
             },
             Err(e) => {
                 // 信号处理器安装失败（罕见）：不 panic，退化为仅监听 Ctrl-C
-                tracing::warn!(error = %e, "failed to install SIGTERM handler");
+                tracing::warn!(error = %e, "{}", crate::i18n::translate_detail("logs-server-sigterm-handler-install-failed", &[]));
                 std::future::pending::<()>().await;
             },
         }
@@ -913,7 +913,8 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
     tracing::info!(
-        "shutdown signal received; stopping new connections and draining in-flight requests"
+        "{}",
+        crate::i18n::translate_detail("logs-server-shutdown-signal-received", &[])
     );
 }
 

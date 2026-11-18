@@ -724,7 +724,10 @@ async fn token_endpoint(
         return apply_no_store(
             (
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "error": "invalid_request", "message": "request body too large" })),
+                Json(json!({
+                    "error": "invalid_request",
+                    "message": crate::i18n::translate_detail("server-http-body-too-large-msg", &[])
+                })),
             )
                 .into_response(),
         );

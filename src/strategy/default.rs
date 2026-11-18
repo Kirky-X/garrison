@@ -542,10 +542,15 @@ impl GarrisonPermissionStrategyDefault {
                 .await
             {
                 tracing::warn!(
-                    "permission cache write failed (login_id={}, perm={}): {}",
-                    login_id,
-                    permission,
-                    e
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-strategy-permission-cache-write-failed",
+                        &[
+                            ("login_id", login_id),
+                            ("perm", permission),
+                            ("arg0", &e.to_string()),
+                        ]
+                    )
                 );
             }
         }

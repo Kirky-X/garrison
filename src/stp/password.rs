@@ -235,7 +235,7 @@ impl PasswordLogic for GarrisonLogicDefault {
                     login_id = login_id,
                     reason = EventReason::HashFormatError.as_str(),
                     error = %hash_err,
-                    "login_with_password: unsupported password hash format"
+                    "{}", crate::i18n::translate_detail("logs-stp-password-unsupported-hash-format", &[])
                 );
                 // 哈希数据类错误同样计入失败计数
                 #[cfg(feature = "firewall-bruteforce")]

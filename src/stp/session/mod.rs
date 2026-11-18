@@ -170,7 +170,7 @@ impl SessionLogic for GarrisonLogicDefault {
                         tracing::warn!(
                             ip = %ip,
                             error = %e,
-                            "brute force reset-on-success failed (does not affect the login result)"
+                            "{}", crate::i18n::translate_detail("logs-stp-bruteforce-reset-on-success-failed", &[])
                         );
                     }
                 },
@@ -179,7 +179,7 @@ impl SessionLogic for GarrisonLogicDefault {
                         tracing::warn!(
                             ip = %ip,
                             error = %record_err,
-                            "brute force record_failure failed (does not affect the login result)"
+                            "{}", crate::i18n::translate_detail("logs-stp-bruteforce-record-failure-failed", &[])
                         );
                     }
                 },
@@ -255,7 +255,7 @@ impl SessionLogic for GarrisonLogicDefault {
                 #[cfg(feature = "three-tier-cache")]
                 if let (Some(ucs), Some(id)) = (&self.user_cache_service, login_id.as_ref()) {
                     if let Err(e) = ucs.invalidate(id).await {
-                        tracing::warn!(error = %e, login_id = id, "logout invalidate user cache failed");
+                        tracing::warn!(error = %e, login_id = id, "{}", crate::i18n::translate_detail("logs-stp-logout-cache-invalidate-failed", &[]));
                     }
                 }
                 Ok(())
@@ -283,7 +283,7 @@ impl SessionLogic for GarrisonLogicDefault {
         #[cfg(feature = "three-tier-cache")]
         if let Some(ucs) = &self.user_cache_service {
             if let Err(e) = ucs.invalidate(login_id).await {
-                tracing::warn!(error = %e, login_id, "logout_by_login_id invalidate user cache failed");
+                tracing::warn!(error = %e, login_id, "{}", crate::i18n::translate_detail("logs-stp-logout-by-id-cache-invalidate-failed", &[]));
             }
         }
         Ok(())
@@ -364,7 +364,7 @@ impl SessionLogic for GarrisonLogicDefault {
                         error = %e,
                         login_id,
                         token = %token_preview,
-                        "revoke_all_sessions: single token revoke failed, continuing"
+                        "{}", crate::i18n::translate_detail("logs-stp-revoke-all-token-failed", &[])
                     );
                 },
             }
@@ -374,7 +374,7 @@ impl SessionLogic for GarrisonLogicDefault {
             tracing::warn!(
                 error = %e,
                 login_id,
-                "revoke_all_sessions: Account-Session cleanup failed"
+                "{}", crate::i18n::translate_detail("logs-stp-revoke-all-session-cleanup-failed", &[])
             );
         }
         Ok(count)
@@ -451,7 +451,7 @@ impl SessionLogic for GarrisonLogicDefault {
                         tracing::warn!(
                             ip = %ip,
                             error = %e,
-                            "brute force reset-on-success failed (does not affect the verification result)"
+                            "{}", crate::i18n::translate_detail("logs-stp-bruteforce-reset-verify-failed", &[])
                         );
                     }
                 },
@@ -460,7 +460,7 @@ impl SessionLogic for GarrisonLogicDefault {
                         tracing::warn!(
                             ip = %ip,
                             error = %record_err,
-                            "brute force record_failure failed (does not affect the verification result)"
+                            "{}", crate::i18n::translate_detail("logs-stp-bruteforce-record-verify-failed", &[])
                         );
                     }
                 },

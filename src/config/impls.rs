@@ -764,7 +764,8 @@ impl GarrisonConfig {
         }
         if self.frontend_separation {
             tracing::info!(
-                "frontend separation mode enabled: token read from Authorization header, no cookie set"
+                "{}",
+                crate::i18n::translate_detail("logs-config-frontend-separation-enabled", &[])
             );
         }
         if self.auto_renewal_threshold != -1 && !(0..=100).contains(&self.auto_renewal_threshold) {

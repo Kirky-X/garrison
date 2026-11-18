@@ -179,8 +179,11 @@ impl PasswordRateLimiter {
             Ok(count) => count < self.max_attempts as u64,
             Err(e) => {
                 tracing::warn!(
-                    "PasswordRateLimiter::check get_count failed (fail-closed, rejecting): {}",
-                    e
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-oauth2-password-rate-limiter-check-failed",
+                        &[("arg0", &e.to_string())]
+                    )
                 );
                 false
             },
@@ -194,8 +197,11 @@ impl PasswordRateLimiter {
         let ttl = StdDuration::from_secs(self.window_seconds);
         if let Err(e) = self.limiter.incr_with_ttl(&key, 1, ttl).await {
             tracing::warn!(
-                "PasswordRateLimiter::record_failure incr_with_ttl failed: {}",
-                e
+                "{}",
+                crate::i18n::translate_detail(
+                    "logs-oauth2-password-rate-limiter-record-failed",
+                    &[("arg0", &e.to_string())]
+                )
             );
         }
     }
@@ -309,8 +315,11 @@ impl TokenRateLimiter {
             Ok(allowed) => allowed,
             Err(e) => {
                 tracing::warn!(
-                    "TokenRateLimiter::check_username failed (fail-closed, rejecting): {}",
-                    e
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-oauth2-token-rate-limiter-check-failed",
+                        &[("arg0", &e.to_string())]
+                    )
                 );
                 false
             },
@@ -709,7 +718,7 @@ impl TokenHandler {
                     if let Err(set_err) = self.dao.set(&key, &json, remaining as u64).await {
                         tracing::warn!(
                             error = %set_err,
-                            "handle_refresh_token: failed to restore refresh token after issue failure"
+                            "{}", crate::i18n::translate_detail("logs-oauth2-refresh-token-restore-failed", &[])
                         );
                     }
                 }

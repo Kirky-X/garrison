@@ -83,8 +83,12 @@ fn handle_healthcheck_cmd(args: HandlerArgs, _state: HandlerState) -> HandlerFut
 async fn run_healthcheck(args: HandlerArgs) -> Result<serde_json::Value, ApiError> {
     let port_override: Option<u16> = match args.get("port") {
         Some(raw) => Some(raw.parse::<u16>().map_err(|e| {
+            let reason = e.to_string();
             ApiError::internal_error(
-                format!("healthcheck-port-invalid::{raw}::{e}"),
+                crate::i18n::translate_detail(
+                    "healthcheck-port-invalid",
+                    &[("arg0", raw.as_str()), ("arg1", reason.as_str())],
+                ),
                 "garrison.healthcheck.port",
             )
         })?),
@@ -108,8 +112,9 @@ async fn run_healthcheck(args: HandlerArgs) -> Result<serde_json::Value, ApiErro
     let result = tokio::task::spawn_blocking(move || crate::health::probe::probe(port))
         .await
         .map_err(|e| {
+            let reason = e.to_string();
             ApiError::internal_error(
-                format!("healthcheck-join::{e}"),
+                crate::i18n::translate_detail("healthcheck-join", &[("arg0", reason.as_str())]),
                 "garrison.healthcheck.join",
             )
         })?;

@@ -1188,19 +1188,37 @@ impl GarrisonListener for AuditLogListener {
                         let listener = AuditLogListener::new(pool, config);
                         match listener.insert(&entry).await {
                             Ok(_) => audit_log_written(&entry),
-                            Err(e) => tracing::warn!("audit log async write failed: {}", e),
+                            Err(e) => tracing::warn!(
+                                "{}",
+                                crate::i18n::translate_detail(
+                                    "logs-audit-async-write-failed",
+                                    &[("arg0", &e.to_string())]
+                                )
+                            ),
                         }
                     });
                 } else {
                     // 同步写入：失败时 tracing::warn 不传播错误（不中断主流程）
                     match self.insert(&entry).await {
                         Ok(_) => audit_log_written(&entry),
-                        Err(e) => tracing::warn!("audit log write failed: {}", e),
+                        Err(e) => tracing::warn!(
+                            "{}",
+                            crate::i18n::translate_detail(
+                                "logs-audit-write-failed",
+                                &[("arg0", &e.to_string())]
+                            )
+                        ),
                     }
                 }
             },
             Err(e) => {
-                tracing::warn!("audit log event conversion failed: {}", e);
+                tracing::warn!(
+                    "{}",
+                    crate::i18n::translate_detail(
+                        "logs-audit-event-conversion-failed",
+                        &[("arg0", &e.to_string())]
+                    )
+                );
             },
         }
         Ok(())
@@ -1216,20 +1234,30 @@ fn audit_log_written(entry: &AuditEntry) {
     use crate::i18n::icu_enhanced::format_datetime_locale;
     let dt = chrono::DateTime::from_timestamp(entry.created_at, 0).unwrap_or_else(chrono::Utc::now);
     tracing::info!(
-        "audit log written: event_type={}, login_id={:?}, time={}",
-        entry.event_type,
-        entry.login_id,
-        format_datetime_locale(&dt)
+        "{}",
+        crate::i18n::translate_detail(
+            "logs-audit-written-with-time",
+            &[
+                ("event_type", &entry.event_type.to_string()),
+                ("login_id", &format!("{:?}", entry.login_id)),
+                ("time", &format_datetime_locale(&dt)),
+            ]
+        )
     );
 }
 
 #[cfg(all(not(feature = "i18n-icu"), feature = "db-sqlite"))]
 fn audit_log_written(entry: &AuditEntry) {
     tracing::info!(
-        "audit log written: event_type={}, login_id={:?}, created_at={}",
-        entry.event_type,
-        entry.login_id,
-        entry.created_at
+        "{}",
+        crate::i18n::translate_detail(
+            "logs-audit-written-with-timestamp",
+            &[
+                ("event_type", &entry.event_type.to_string()),
+                ("login_id", &format!("{:?}", entry.login_id)),
+                ("created_at", &entry.created_at.to_string()),
+            ]
+        )
     );
 }
 

@@ -226,7 +226,7 @@ impl GarrisonLogicDefault {
                     {
                         tracing::error!(
                             error = %e,
-                            "enforce_max_login_count failed, rolling back newly created session"
+                            "{}", crate::i18n::translate_detail("logs-stp-session-max-login-rollback", &[])
                         );
                         match self.session.get_token_session(&token_owned).await {
                             Ok(Some(ts)) => {
@@ -235,19 +235,19 @@ impl GarrisonLogicDefault {
                                 {
                                     tracing::error!(
                                         error = %logout_err,
-                                        "rollback logout_inner failed, may produce orphan session (token still in DAO but login returned Err)"
+                                        "{}", crate::i18n::translate_detail("logs-stp-session-rollback-logout-failed", &[])
                                     );
                                 }
                             },
                             Ok(None) => {
                                 tracing::warn!(
-                                    "token session no longer exists during rollback, skipping logout_inner"
+                                    "{}", crate::i18n::translate_detail("logs-stp-session-rollback-token-missing", &[])
                                 );
                             },
                             Err(get_err) => {
                                 tracing::error!(
                                     error = %get_err,
-                                    "rollback get_token_session failed, token may remain as orphan session"
+                                    "{}", crate::i18n::translate_detail("logs-stp-session-rollback-get-token-failed", &[])
                                 );
                             },
                         }
@@ -289,7 +289,11 @@ impl GarrisonLogicDefault {
                         tracing::warn!(
                             login_id,
                             mode = "new_device",
-                            "new device login rejected: currently in NewDevice mode, valid existing session exists"
+                            "{}",
+                            crate::i18n::translate_detail(
+                                "logs-stp-session-new-device-rejected",
+                                &[]
+                            )
                         );
                         return Err(GarrisonError::NotLogin(
                             "stp-new-device-login-rejected-not-allowed::".to_string(),
@@ -350,7 +354,11 @@ impl GarrisonLogicDefault {
                             tracing::info!(
                                 login_id,
                                 device_id,
-                                "device binding policy triggered secondary auth block (hard block)"
+                                "{}",
+                                crate::i18n::translate_detail(
+                                    "logs-stp-session-device-binding-block",
+                                    &[]
+                                )
                             );
                             return Err(GarrisonError::NotPermission(
                                 "secondary auth required".to_string(),
@@ -453,7 +461,7 @@ impl GarrisonLogicDefault {
                     let token_preview = token.get(..8).unwrap_or(token);
                     tracing::warn!(
                         token = %token_preview,
-                        "enforce_max_login_count: token not found, skipping logout_inner"
+                        "{}", crate::i18n::translate_detail("logs-stp-session-max-login-token-missing", &[])
                     );
                 },
             }
@@ -688,7 +696,7 @@ impl GarrisonLogicDefault {
             }
             // Token 自动续签（若启用且剩余 TTL 低于阈值）
             if let Err(e) = self.check_and_renew(token).await {
-                tracing::warn!(error = %e, "Token auto-renewal failed, old Token still in use");
+                tracing::warn!(error = %e, "{}", crate::i18n::translate_detail("logs-stp-session-token-renewal-failed", &[]));
             }
             return (Ok((true, login_id)), ts_opt);
         }
@@ -713,7 +721,7 @@ impl GarrisonLogicDefault {
             };
             if should_evict {
                 if let Err(e) = self.session.logout(token).await {
-                    tracing::warn!(error = %e, "hover timeout logout failed");
+                    tracing::warn!(error = %e, "{}", crate::i18n::translate_detail("logs-stp-session-hover-timeout-logout-failed", &[]));
                 }
                 #[cfg(feature = "listener")]
                 if let Some(lm) = &self.listener_manager {
@@ -781,7 +789,7 @@ impl GarrisonLogicDefault {
             }
             // Token 自动续签（若启用且剩余 TTL 低于阈值）
             if let Err(e) = self.check_and_renew(token).await {
-                tracing::warn!(error = %e, "Token auto-renewal failed, old Token still in use");
+                tracing::warn!(error = %e, "{}", crate::i18n::translate_detail("logs-stp-session-token-renewal-failed", &[]));
             }
             return (Ok((true, login_id)), ts_opt);
         }
@@ -950,7 +958,7 @@ impl GarrisonLogicDefault {
                 {
                     Ok(mut evs) => events.append(&mut evs),
                     Err(e) => {
-                        tracing::warn!(error = %e, "AnomalyDetector::check_on_login failed (risk eval)")
+                        tracing::warn!(error = %e, "{}", crate::i18n::translate_detail("logs-stp-session-anomaly-check-failed", &[]))
                     },
                 }
             }
@@ -993,18 +1001,18 @@ impl GarrisonLogicDefault {
                     .await
                 {
                     Ok(()) => {
-                        tracing::info!(login_id, factor = %method, "risk step-up required");
+                        tracing::info!(login_id, factor = %method, "{}", crate::i18n::translate_detail("logs-stp-session-risk-step-up-required", &[]));
                         Ok(())
                     },
                     Err(e) => {
-                        tracing::warn!(error = %e, login_id, "risk step-up marker write failed (fail-open)");
+                        tracing::warn!(error = %e, login_id, "{}", crate::i18n::translate_detail("logs-stp-session-risk-marker-write-failed", &[]));
                         Ok(())
                     },
                 }
             },
             RiskAction::RequireReauthentication => {
                 if let Err(e) = self.kickout_by_token(token).await {
-                    tracing::warn!(error = %e, login_id, "risk reauth kickout failed (fail-open)");
+                    tracing::warn!(error = %e, login_id, "{}", crate::i18n::translate_detail("logs-stp-session-risk-reauth-kickout-failed", &[]));
                 }
                 #[cfg(feature = "listener")]
                 if let Some(lm) = &self.listener_manager {
@@ -1030,7 +1038,11 @@ impl GarrisonLogicDefault {
                         tracing::info!(
                             login_id,
                             ttl_secs,
-                            "risk temporary lock applied (service=risk)"
+                            "{}",
+                            crate::i18n::translate_detail(
+                                "logs-stp-session-risk-temp-lock-applied",
+                                &[]
+                            )
                         );
                         Err(GarrisonError::DisableService {
                             service: "risk".to_string(),
@@ -1038,7 +1050,7 @@ impl GarrisonLogicDefault {
                         })
                     },
                     Err(e) => {
-                        tracing::warn!(error = %e, login_id, "risk temporary lock write failed (fail-open)");
+                        tracing::warn!(error = %e, login_id, "{}", crate::i18n::translate_detail("logs-stp-session-risk-temp-lock-write-failed", &[]));
                         Ok(())
                     },
                 }

@@ -238,7 +238,7 @@ fn api_error(code: &str, message: &str) -> GarrisonError {
         },
         _ => return GarrisonError::Network(format!("backend-api-error::{}::{}", code, message)),
     };
-    tracing::debug!(error_code = %code, api_message = %message, "remote backend API business error mapped");
+    tracing::debug!(error_code = %code, api_message = %message, "{}", crate::i18n::translate_detail("logs-backend-remote-business-error-mapped", &[]));
     mapped
 }
 

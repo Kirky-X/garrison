@@ -194,7 +194,7 @@ pub async fn rate_limit_middleware(
         Err(e) => {
             // LimiteronError 仅在 cost 非法时出现（cost=0 或超限）；cost=1 不应触发，
             // 仍按 fail-closed 处理为限速拒绝并记录日志（失败显性化）
-            tracing::warn!(error = %e, "rate limiter error");
+            tracing::warn!(error = %e, "{}", crate::i18n::translate_detail("logs-server-rate-limiter-error", &[]));
             false
         },
     };
@@ -601,7 +601,7 @@ pub async fn inject_login_client_ip(req: Request, next: Next) -> Response {
     let mut json: serde_json::Value = match serde_json::from_slice(&bytes) {
         Ok(v) => v,
         Err(e) => {
-            tracing::warn!(error = %e, "inject_login_client_ip: malformed JSON body");
+            tracing::warn!(error = %e, "{}", crate::i18n::translate_detail("logs-server-inject-login-client-ip-malformed-json", &[]));
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({

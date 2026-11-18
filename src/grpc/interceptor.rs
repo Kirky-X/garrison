@@ -39,9 +39,19 @@ impl GarrisonGrpcInterceptor {
         // tonic metadata key 全小写
         let auth_header = metadata
             .get("authorization")
-            .ok_or_else(|| Status::unauthenticated("missing Authorization metadata"))?
+            .ok_or_else(|| {
+                Status::unauthenticated(crate::i18n::translate_detail(
+                    "grpc-missing-authorization-metadata",
+                    &[],
+                ))
+            })?
             .to_str()
-            .map_err(|_| Status::unauthenticated("Authorization metadata is not valid UTF-8"))?;
+            .map_err(|_| {
+                Status::unauthenticated(crate::i18n::translate_detail(
+                    "grpc-authorization-metadata-invalid-utf8",
+                    &[],
+                ))
+            })?;
 
         Self::parse_bearer(auth_header)
     }
@@ -52,9 +62,19 @@ impl GarrisonGrpcInterceptor {
     pub fn extract_token_from_headers(headers: &http::HeaderMap) -> Result<String, Status> {
         let auth_header = headers
             .get("authorization")
-            .ok_or_else(|| Status::unauthenticated("missing Authorization metadata"))?
+            .ok_or_else(|| {
+                Status::unauthenticated(crate::i18n::translate_detail(
+                    "grpc-missing-authorization-metadata",
+                    &[],
+                ))
+            })?
             .to_str()
-            .map_err(|_| Status::unauthenticated("Authorization metadata is not valid UTF-8"))?;
+            .map_err(|_| {
+                Status::unauthenticated(crate::i18n::translate_detail(
+                    "grpc-authorization-metadata-invalid-utf8",
+                    &[],
+                ))
+            })?;
 
         Self::parse_bearer(auth_header)
     }
@@ -69,13 +89,24 @@ impl GarrisonGrpcInterceptor {
             .get(..7)
             .filter(|prefix| prefix.eq_ignore_ascii_case("Bearer "))
             .map(|_| &auth_header[7..])
-            .ok_or_else(|| Status::unauthenticated("Authorization scheme must be Bearer"))?;
+            .ok_or_else(|| {
+                Status::unauthenticated(crate::i18n::translate_detail(
+                    "grpc-authorization-scheme-must-be-bearer",
+                    &[],
+                ))
+            })?;
 
         if token.is_empty() {
-            return Err(Status::unauthenticated("empty token after Bearer prefix"));
+            return Err(Status::unauthenticated(crate::i18n::translate_detail(
+                "grpc-empty-token-after-bearer-prefix",
+                &[],
+            )));
         }
         if token.len() > MAX_TOKEN_LEN {
-            return Err(Status::unauthenticated("token exceeds maximum length"));
+            return Err(Status::unauthenticated(crate::i18n::translate_detail(
+                "grpc-token-exceeds-max-length",
+                &[],
+            )));
         }
         Ok(token.to_string())
     }
