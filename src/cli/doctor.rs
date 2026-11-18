@@ -349,15 +349,15 @@ fn check_jwt_secret_strength(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
 
 /// `config-security-rules`：feature 关闭记 Warn；启用时复用 `validate_security_rules`。
 fn check_config_security_rules(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
-    // 编译期未启用时，无论注入矩阵如何都记 Warn（方法不存在）。
+    // 编译期未启用时，无论注入矩阵如何都记 Warn（校验方法不存在）。
     #[cfg(not(feature = "config-security-rules"))]
     {
         let _ = ctx;
-        return vec![SecurityCheckFinding::new(
+        vec![SecurityCheckFinding::new(
             "config-security-rules",
             FindingStatus::Warn,
             "Config security rule set is not compiled in (enable config-security-rules)",
-        )];
+        )]
     }
     #[cfg(feature = "config-security-rules")]
     {
@@ -419,11 +419,11 @@ fn check_internal_api_key(ctx: &DoctorContext) -> Vec<SecurityCheckFinding> {
                 ),
             )];
         }
-        return vec![SecurityCheckFinding::new(
+        vec![SecurityCheckFinding::new(
             "internal-api-key",
             FindingStatus::Pass,
             format!("Internal API key length is {len} bytes (>= required floor)"),
-        )];
+        )]
     }
     #[cfg(not(feature = "auth-server"))]
     {
