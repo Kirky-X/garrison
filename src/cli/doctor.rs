@@ -517,6 +517,23 @@ fn handle_doctor_cmd(args: HandlerArgs, _state: HandlerState) -> HandlerFuture {
 mod tests {
     use super::*;
 
+    /// panic 安全的 env 守卫：Drop（含 unwind）时 remove_var，防断言失败污染共享进程环境。
+    struct EnvGuard(&'static str);
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            std::env::remove_var(self.0);
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn doctor_context_config_reflects_env_override() {
+        let _guard = EnvGuard("GARRISON_TIMEOUT");
+        std::env::set_var("GARRISON_TIMEOUT", "4321");
+        let ctx = build_doctor_context(DoctorProfile::Standard);
+        assert_eq!(ctx.config.timeout, 4321);
+    }
+
     #[test]
     fn profile_arg_defaults_to_standard() {
         let args = HandlerArgs::new();
