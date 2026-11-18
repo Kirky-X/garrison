@@ -445,6 +445,7 @@ The HTTP error response body of `GarrisonError` / `GarrisonException` (identical
   "error_code": "NOT_LOGIN",
   "error_id": "auth.not_login",
   "message": "Not logged in",
+  "suggested_action": "authenticate",
   "request_id": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
@@ -457,6 +458,22 @@ The HTTP error response body of `GarrisonError` / `GarrisonException` (identical
   **When there is no request id the field is omitted** (omitempty semantics).
 - The `Exception` variant additionally carries the `code` field (the `i32` business code).
 - `message`: the i18n'd generic description, excluding variant details (leak prevention).
+- `suggested_action`: an optional **machine token** telling the client what to do next, so clients do not hardcode branches by `error_code`. It is a closed vocabulary of seven values, `omitempty` (absent for server-side errors with no client action), and carries no request context. See the full mapping below and ADR-0004 Decision 6.
+
+The `suggested_action` mapping (single source of truth: `GarrisonError::suggested_action()`):
+
+| Variant(s) | `suggested_action` |
+|------------|--------------------|
+| `NotLogin` / `Exception` | `authenticate` |
+| `ExpiredToken` / `TokenRevoked` | `refresh_token` |
+| `InvalidToken` | `reauthenticate` |
+| `NotPermission` / `NotRole` | `request_access` |
+| `NotSafe { .. }` | `complete_second_factor` |
+| `RateLimited { .. }` | `retry_later` |
+| `DisableService { .. }` | `contact_admin` |
+| all other variants (`Dao` / `Config` / `Internal` / `Network` / OAuth2 / SMS / Email / Credit / …) | field omitted (`None` = server-side error, no client action) |
+
+The vocabulary is deliberately closed; adding a value requires amending ADR-0004. `detail` (tenant IDs / session ownership) is intentionally never emitted — sensitive context stays in audit logs.
 
 The legacy code → `error_id` mapping table (complete; the `Exception` variant splits three ways by business `code` into `exception.*`):
 

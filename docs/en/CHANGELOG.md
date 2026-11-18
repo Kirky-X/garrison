@@ -36,6 +36,7 @@ The library default posture now matches the hardened reference deployment. These
 ### Added
 
 - **`garrison doctor` static security audit (`cli-ops`)**: a read-only command that aggregates the framework's existing validators into a nine-item ✓/✗/! posture report with stable Finding IDs. `--profile strict` makes any Warn exit nonzero for CI gates and container startup probes. No new security rules, no config writeback, no runtime dependency probing. See [DEPLOYMENT.md](DEPLOYMENT.md) · Static security posture audit and [CONFIGURATION.md](CONFIGURATION.md) · Doctor checks.
+- **`suggested_action` in the unified error body**: an optional machine token (`authenticate` / `reauthenticate` / `refresh_token` / `request_access` / `complete_second_factor` / `retry_later` / `contact_admin`) tells clients what to do next without hardcoding by `error_code`. Closed vocabulary, omitempty, no sensitive context. See [API_REFERENCE.md](API_REFERENCE.md) error model and ADR-0004 Decision 6.
 
 ---
 
