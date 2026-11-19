@@ -80,7 +80,10 @@ fn test_extract_token_missing_metadata() {
     assert!(result.is_err());
     let status = result.unwrap_err();
     assert_eq!(status.code(), tonic::Code::Unauthenticated);
-    assert!(status.message().contains("missing Authorization"));
+    assert!(status.message().contains(&crate::i18n::translate_detail(
+        "grpc-missing-authorization-metadata",
+        &[]
+    )));
 }
 
 /// extract_token 在 Bearer 后 token 为空时返回 UNAUTHENTICATED。
